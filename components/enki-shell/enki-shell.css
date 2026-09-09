@@ -545,6 +545,14 @@
 .ek-sidebar-mobile-close { display: none; }
 
 @media (max-width: 768px) {
+  /* The sidebar is an off-canvas drawer here, so it reserves NO column: every
+     fixed element positioned off --ek-sw (the feed's category+filter bar, the
+     top bar, the node editor, the panel scrim, the toast) would otherwise
+     start 256px from the left of a 375px screen. The rail variant is listed
+     explicitly because .ek-app.ek-root--rail outranks a bare .ek-app. */
+  .ek-app,
+  .ek-app.ek-root--rail { --ek-sw: 0px; }
+
   /* ── Mobile Top Header ── */
   .ek-mobile-header {
     display: flex;

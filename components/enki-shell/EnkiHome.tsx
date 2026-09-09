@@ -447,15 +447,20 @@ export default function EnkiHome() {
           <img className="ek-mobile-header-logo" src="/enki-art-logo.png" alt="Enki Art" />
         </div>
         <div className="ek-mobile-header-right">
-          <button
-            type="button"
-            className="ek-mobile-balance"
-            onClick={() => { setNodeOpen(false); setPayFocus(true); openPanel("billing"); }}
-            title="Add funds"
-          >
-            <Icon name="dollar" size={12} stroke={2.4} />
-            {(balance ?? 0).toFixed(2)}
-          </button>
+          {/* No balance chip for guests — the same rule the sidebar follows:
+              $0 opens payment settings for someone who cannot pay yet, so
+              login comes first (Kev, 2026-08-24). */}
+          {authed && (
+            <button
+              type="button"
+              className="ek-mobile-balance"
+              onClick={() => { setNodeOpen(false); setPayFocus(true); openPanel("billing"); }}
+              title="Add funds"
+            >
+              <Icon name="dollar" size={12} stroke={2.4} />
+              {(balance ?? 0).toFixed(2)}
+            </button>
+          )}
           <button
             type="button"
             className="ek-mobile-burger-btn"
@@ -464,7 +469,7 @@ export default function EnkiHome() {
             aria-expanded={mobileDrawerOpen}
           >
             <Icon name={mobileDrawerOpen ? "x" : "menu"} size={18} stroke={2.2} />
-            {(unseen + dmUnread) > 0 && !mobileDrawerOpen && (
+            {authed && (unseen + dmUnread) > 0 && !mobileDrawerOpen && (
               <span className="ek-mobile-burger-badge">{unseen + dmUnread}</span>
             )}
           </button>
@@ -555,29 +560,36 @@ export default function EnkiHome() {
             <Icon name="pen" size={18} stroke={2.4} />
           </span>
         </button>
-        <button
-          type="button"
-          className={"ek-mobile-nav-btn" + (panel === "favorites" ? " active" : "")}
-          onClick={() => onNav("favorites")}
-          aria-label="Bookmarks"
-        >
-          <Icon name="bookmark" size={20} stroke={panel === "favorites" ? 2.4 : 1.9} />
-          <span>Saved</span>
-        </button>
+        {/* Bookmarks are AUTHED_ONLY: the desktop nav filters them out for
+            guests, so the bar must not offer them either (guest honesty). */}
+        {authed && (
+          <button
+            type="button"
+            className={"ek-mobile-nav-btn" + (panel === "favorites" ? " active" : "")}
+            onClick={() => onNav("favorites")}
+            aria-label="Bookmarks"
+          >
+            <Icon name="bookmark" size={20} stroke={panel === "favorites" ? 2.4 : 1.9} />
+            <span>Saved</span>
+          </button>
+        )}
         <button
           type="button"
           className={"ek-mobile-nav-btn" + (panel === "profile" ? " active" : "")}
-          onClick={() => { setNodeOpen(false); setActiveNav(""); openPanel("profile"); }}
-          aria-label="Profile"
+          onClick={() => {
+            if (!authed) { openLogin(); return; }
+            setNodeOpen(false); setActiveNav(""); openPanel("profile");
+          }}
+          aria-label={authed ? "Profile" : "Log in"}
         >
           <span className="ek-avatar" style={{ width: 22, height: 22, fontSize: 10 }}>
-            {myProfile?.avatarUrl ? (
+            {authed && myProfile?.avatarUrl ? (
               /* eslint-disable-next-line @next/next/no-img-element */
               <img src={myProfile.avatarUrl} alt="" />
-            ) : initials}
+            ) : authed ? initials : <Icon name="user" size={13} stroke={2} />}
           </span>
-          <span>Profile</span>
-          {unseen > 0 && <span className="ek-mobile-nav-badge">{unseen}</span>}
+          <span>{authed ? "Profile" : "Log in"}</span>
+          {authed && unseen > 0 && <span className="ek-mobile-nav-badge">{unseen}</span>}
         </button>
       </nav>
 
