@@ -42,11 +42,14 @@ interface SidebarProps {
   onLogoff?: () => void;
   theme: ThemeId;
   setTheme: (t: ThemeId) => void;
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
 }
 
 export default function EnkiSidebar({
   nav, active, onNav, rail, onCreate, onCreate2, nodeActive, onRefer, onFeedback, guest = false,
   account, onToggleCollapse, collapsed, balance, onProfile, onTopUp, onLogoff, theme, setTheme,
+  mobileOpen = false, onCloseMobile,
 }: SidebarProps) {
   const [colorOpen, setColorOpen] = useState(false);
   const colorRef = useRef<HTMLDivElement>(null);
@@ -82,7 +85,17 @@ export default function EnkiSidebar({
   }, [burgerOpen]);
 
   return (
-    <aside className="ek-sidebar">
+    <aside className={"ek-sidebar" + (mobileOpen ? " ek-sidebar--mobile-open" : "")}>
+      {onCloseMobile && (
+        <button
+          className="ek-sidebar-mobile-close"
+          type="button"
+          onClick={onCloseMobile}
+          aria-label="Close menu"
+        >
+          <Icon name="x" size={16} stroke={2.4} />
+        </button>
+      )}
       <button
         className="ek-collapse-btn"
         type="button"

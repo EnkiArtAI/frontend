@@ -538,3 +538,313 @@
 @media (prefers-reduced-motion: reduce) { .ek-notice, .ek-notice-scrim.leaving, .ek-notice-scrim.leaving .ek-notice { animation: none; } }
 /* Disabled earn rows stay readable, just clearly inactive. */
 .ek-earn-row:disabled { opacity: 0.55; cursor: default; }
+
+/* ════════════════ Mobile Shell (≤ 768px) ════════════════ */
+.ek-mobile-header { display: none; }
+.ek-mobile-bottom-nav { display: none; }
+.ek-sidebar-mobile-close { display: none; }
+
+@media (max-width: 768px) {
+  /* ── Mobile Top Header ── */
+  .ek-mobile-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: fixed;
+    top: var(--ek-banner-h, 0px);
+    left: 0;
+    right: 0;
+    height: 54px;
+    padding: 0 16px;
+    z-index: 155;
+    background: var(--header-bg);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--enki-rule);
+    transition: top 0.2s ease;
+  }
+  .ek-mobile-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .ek-mobile-header-logo {
+    height: 28px;
+    width: auto;
+    display: block;
+    object-fit: contain;
+  }
+  .ek-mobile-header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .ek-mobile-balance {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--enki-rule);
+    background: var(--enki-paper-2);
+    color: var(--enki-ink);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .ek-mobile-burger-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: 1px solid var(--enki-rule);
+    background: var(--enki-paper-2);
+    color: var(--enki-ink);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    position: relative;
+  }
+  .ek-mobile-burger-badge {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    min-width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    background: var(--enki-ember);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+  }
+
+  /* ── Mobile Off-canvas Drawer ── */
+  .ek-mobile-drawer-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 164;
+    background: rgba(0, 0, 0, 0.52);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    animation: ek-fade 0.2s ease;
+  }
+  .ek-sidebar {
+    width: min(300px, 82vw) !important;
+    max-width: 300px !important;
+    transform: translateX(-100%);
+    transition: transform 0.26s cubic-bezier(0.32, 0.72, 0, 1) !important;
+    z-index: 166 !important;
+    box-shadow: 8px 0 32px rgba(0, 0, 0, 0.35);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    top: var(--ek-banner-h, 0px) !important;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  }
+  .ek-sidebar.ek-sidebar--mobile-open {
+    transform: translateX(0) !important;
+  }
+  .ek-collapse-btn {
+    display: none !important;
+  }
+  .ek-sidebar-mobile-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid var(--enki-rule);
+    background: var(--enki-paper-2);
+    color: var(--enki-ink-2);
+    cursor: pointer;
+  }
+
+  /* ── Mobile Main Content Bounds ── */
+  .ek-main {
+    margin-left: 0 !important;
+    padding-top: calc(54px + var(--ek-banner-h, 0px));
+    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+    min-width: 100vw;
+  }
+
+  /* ── Mobile Bottom Navigation Bar ── */
+  .ek-mobile-bottom-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: calc(58px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    z-index: 150;
+    background: var(--header-bg);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-top: 1px solid var(--enki-rule);
+  }
+  .ek-mobile-nav-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    height: 56px;
+    border: none;
+    background: transparent;
+    color: var(--enki-ink-3);
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+    position: relative;
+    padding: 4px 0;
+    transition: color 0.15s ease;
+  }
+  .ek-mobile-nav-btn.active {
+    color: var(--enki-ember);
+    font-weight: 600;
+  }
+  .ek-mobile-nav-btn.active svg {
+    color: var(--enki-ember);
+  }
+  .ek-mobile-nav-badge {
+    position: absolute;
+    top: 4px;
+    right: calc(50% - 16px);
+    min-width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    background: var(--enki-ember);
+    color: #fff;
+    font-size: 8.5px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 3px;
+  }
+  .ek-mobile-nav-btn--create {
+    position: relative;
+  }
+  .ek-mobile-nav-create-pill {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: var(--cta-bg);
+    color: var(--cta-ink);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 3px 12px rgba(var(--ember-rgb), 0.35);
+    transition: transform 0.15s ease;
+  }
+  .ek-mobile-nav-btn--create:active .ek-mobile-nav-create-pill {
+    transform: scale(0.92);
+  }
+
+  /* ── Right-side Panels on Mobile ── */
+  .ek-panel-scrim {
+    left: 0 !important;
+    top: var(--ek-banner-h, 0px) !important;
+    width: 100vw !important;
+    z-index: 160 !important;
+  }
+  .ek-panel {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    border-left: none !important;
+    box-shadow: none !important;
+  }
+  .ek-panel-hero {
+    padding: 24px 20px 14px !important;
+  }
+  .ek-panel-hero h1 {
+    font-size: 26px !important;
+  }
+  .ek-panel-hero p {
+    font-size: 13px !important;
+  }
+  .ek-panel-body {
+    padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)) !important;
+    -webkit-overflow-scrolling: touch;
+  }
+  .ek-panel-x--float {
+    top: 14px !important;
+    right: 14px !important;
+    z-index: 100 !important;
+  }
+
+  /* ── Generate Launcher on Mobile: lift above bottom bar ── */
+  .ek-generate-launcher {
+    bottom: calc(70px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  /* ── Toast on Mobile: lift above bottom bar ── */
+  .ek-toast {
+    left: 50% !important;
+    bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
+    transform: translateX(-50%) !important;
+    width: max-content;
+    max-width: calc(100vw - 32px);
+    font-size: 13px;
+    padding: 10px 16px;
+  }
+
+  /* ── Leaderboard (Hall of Fame) on Mobile ── */
+  .ek-leaderboard-container {
+    padding: 16px 14px calc(70px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+  .ek-podium-grid {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 14px !important;
+    margin-bottom: 20px !important;
+  }
+  .ek-podium-card {
+    order: initial !important;
+    margin-top: 0 !important;
+  }
+  .ek-podium-card--first {
+    order: -1 !important;
+  }
+  .ek-leaderboard-table-wrap {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+  .ek-leaderboard-table-inner {
+    min-width: 540px !important;
+  }
+}
+
+/* ── Base Leaderboard styles ── */
+.ek-leaderboard-container {
+  padding: 34px 28px 60px;
+}
+.ek-podium-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.25fr 1fr;
+  gap: 10px;
+  align-items: stretch;
+  margin-bottom: 26px;
+}
+.ek-leaderboard-table-wrap {
+  background: var(--enki-paper);
+  border: 1px solid var(--enki-rule);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+.ek-leaderboard-table-inner {
+  min-width: 0;
+}
+
