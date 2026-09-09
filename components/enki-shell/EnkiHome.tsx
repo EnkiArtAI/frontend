@@ -424,8 +424,27 @@ export default function EnkiHome() {
   const rootClass = "ek-app" + (rail ? " ek-root--rail" : "") + (nodeOpen ? " ek-node-open" : "")
     + (showRecoveryBanner ? " ek-with-banner" : "");
 
+  /* The node editor converts screen coordinates into canvas coordinates by
+     subtracting the width of the column the shell reserves on its left. That
+     number lives in --ek-sw, and a media query may change it (phones give the
+     sidebar no column at all), so it is READ from the variable rather than
+     guessed from the rail state — a guess put every click 78px off. */
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [shellOffset, setShellOffset] = useState(0);
+  useEffect(() => {
+    const read = () => {
+      const el = rootRef.current;
+      if (!el) return;
+      const px = parseFloat(getComputedStyle(el).getPropertyValue("--ek-sw"));
+      setShellOffset(Number.isFinite(px) ? px : (rail ? 78 : 256));
+    };
+    read();
+    window.addEventListener("resize", read);
+    return () => window.removeEventListener("resize", read);
+  }, [rail, nodeOpen]);
+
   return (
-    <div className={rootClass}>
+    <div className={rootClass} ref={rootRef}>
       {showRecoveryBanner && (
         <div className="ek-recovery-banner" role="alert">
           <button className="ek-recovery-banner-msg" onClick={openRecoverySettings}>
@@ -606,7 +625,7 @@ export default function EnkiHome() {
       )}
 
       {nodeOpen && (
-        <NodeCreator onClose={closeNode} onToast={showToast} userKey={walletAddress} sidebarW={rail ? 78 : 256} editPrompt={editPrompt} />
+        <NodeCreator onClose={closeNode} onToast={showToast} userKey={walletAddress} sidebarW={shellOffset} editPrompt={editPrompt} />
       )}
 
       {creatorNotice && (

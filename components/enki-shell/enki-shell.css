@@ -675,6 +675,11 @@
     cursor: pointer;
   }
 
+  /* The category + filter row is fixed, so the header's 54px does not push
+     it down — without this it renders underneath the header (z155 over z45)
+     and the whole row, search included, is invisible on a phone. */
+  .ek-main .enki-catbar { top: calc(54px + var(--ek-banner-h, 0px)); }
+
   /* ── Mobile Main Content Bounds ── */
   .ek-main {
     margin-left: 0 !important;
