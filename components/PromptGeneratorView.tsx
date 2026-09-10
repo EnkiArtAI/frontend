@@ -1128,9 +1128,8 @@ export default function PromptGeneratorView({
     <div className="pgv-page">
       {/* ═══ LEFT SIDEBAR ═══ */}
       <aside className="pgv-sidebar">
-        <div className="pgv-sidebar-scroll">
-          {/* Title + meta */}
-          <div className="pgv-sidebar-header">
+        {/* Title + meta */}
+        <div className="pgv-sidebar-header">
             {/* A small way back, directly above the title. Kev asked for it
                 "very small to save space": the header is the top of a 230px
                 column, so a full-width Back row would cost a line that the
@@ -1271,6 +1270,7 @@ export default function PromptGeneratorView({
             </div>
           </div>
 
+          <div className="pgv-sidebar-scroll">
           {/* Free: the prompt IS the interface.
               A free prompt has nothing to hide, so the text is the thing worth
               showing — and its variables are edited IN it rather than in a

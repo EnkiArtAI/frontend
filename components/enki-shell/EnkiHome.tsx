@@ -156,6 +156,7 @@ export default function EnkiHome() {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   // Balance chip → Payment panel, scrolled to "Add money" with a heartbeat.
   const [payFocus, setPayFocus] = useState(false);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const closePanel = () => {
     setPanel(null); setPayFocus(false);
     /* Whatever the panel covered comes back — a detail hidden by openPanel
@@ -172,6 +173,7 @@ export default function EnkiHome() {
   // specific tab; a plain Settings nav click clears it back to the first page.
   const [settingsTab, setSettingsTab] = useState<string | undefined>(undefined);
   const openPanel = (id: string, tab?: string) => {
+    setMobileDrawerOpen(false);
     /* A menu panel covering the image view HIDES it (kept mounted) — its
        scrim (z 160) sits under the detail panel (z 162), so without this the
        leaderboard opened invisibly beneath the image (Kev, 2026-08-22). */
@@ -287,6 +289,7 @@ export default function EnkiHome() {
   };
 
   const onNav = (id: string) => {
+    setMobileDrawerOpen(false);
     if (nodeOpen) closeNode();
     // Guests can browse, but personal areas need an account.
     if (!authed && AUTHED_ONLY.has(id)) { showToast("Sign in to use this."); return; }
@@ -419,6 +422,42 @@ export default function EnkiHome() {
           </button>
         </div>
       )}
+      {/* Mobile Top Header (≤ 768px) */}
+      <header className="ek-mobile-header">
+        <div className="ek-mobile-header-left" onClick={() => onNav("home")}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className="ek-mobile-header-logo" src="/enki-art-logo.png" alt="Enki Art" />
+        </div>
+        <div className="ek-mobile-header-right">
+          <button
+            type="button"
+            className="ek-mobile-balance"
+            onClick={() => { setNodeOpen(false); setPayFocus(true); openPanel("billing"); }}
+            title="Add funds"
+          >
+            <Icon name="dollar" size={12} stroke={2.4} />
+            {(balance ?? 0).toFixed(2)}
+          </button>
+          <button
+            type="button"
+            className="ek-mobile-burger-btn"
+            onClick={() => setMobileDrawerOpen((o) => !o)}
+            aria-label="Open menu"
+            aria-expanded={mobileDrawerOpen}
+          >
+            <Icon name={mobileDrawerOpen ? "x" : "menu"} size={18} stroke={2.2} />
+            {(unseen + dmUnread) > 0 && !mobileDrawerOpen && (
+              <span className="ek-mobile-burger-badge">{unseen + dmUnread}</span>
+            )}
+          </button>
+        </div>
+      </header>
+
+      {/* Mobile Drawer Scrim */}
+      {mobileDrawerOpen && (
+        <div className="ek-mobile-drawer-scrim" onClick={() => setMobileDrawerOpen(false)} />
+      )}
+
       <div className="ek-shell">
         <EnkiSidebar
           nav={(authed ? NAV : NAV.filter((n) => !AUTHED_ONLY.has(n.id))).map((n) =>
@@ -452,6 +491,8 @@ export default function EnkiHome() {
           onLogoff={authed ? () => setLogoffOpen(true) : undefined}
           theme={theme}
           setTheme={setTheme}
+          mobileOpen={mobileDrawerOpen}
+          onCloseMobile={() => setMobileDrawerOpen(false)}
         />
 
         <main className="ek-main">
@@ -462,6 +503,65 @@ export default function EnkiHome() {
           <EnkiFeedPage />
         </main>
       </div>
+
+      {/* Mobile Bottom Navigation Bar (≤ 768px) */}
+      <nav className="ek-mobile-bottom-nav" aria-label="Mobile navigation">
+        <button
+          type="button"
+          className={"ek-mobile-nav-btn" + (activeNav === "home" && !panel ? " active" : "")}
+          onClick={() => onNav("home")}
+          aria-label="Home"
+        >
+          <Icon name="home" size={20} stroke={activeNav === "home" && !panel ? 2.4 : 1.9} />
+          <span>Home</span>
+        </button>
+        <button
+          type="button"
+          className={"ek-mobile-nav-btn" + (activeNav === "search" && !panel ? " active" : "")}
+          onClick={() => onNav("search")}
+          aria-label="Search"
+        >
+          <Icon name="search" size={20} stroke={activeNav === "search" && !panel ? 2.4 : 1.9} />
+          <span>Search</span>
+        </button>
+        <button
+          type="button"
+          className="ek-mobile-nav-btn ek-mobile-nav-btn--create"
+          onClick={() => {
+            if (!authed) { setCreatorNotice("open"); return; }
+            router.push("/editor");
+          }}
+          aria-label="Create Prompt"
+        >
+          <span className="ek-mobile-nav-create-pill">
+            <Icon name="pen" size={18} stroke={2.4} />
+          </span>
+        </button>
+        <button
+          type="button"
+          className={"ek-mobile-nav-btn" + (panel === "favorites" ? " active" : "")}
+          onClick={() => onNav("favorites")}
+          aria-label="Bookmarks"
+        >
+          <Icon name="bookmark" size={20} stroke={panel === "favorites" ? 2.4 : 1.9} />
+          <span>Saved</span>
+        </button>
+        <button
+          type="button"
+          className={"ek-mobile-nav-btn" + (panel === "profile" ? " active" : "")}
+          onClick={() => { setNodeOpen(false); setActiveNav(""); openPanel("profile"); }}
+          aria-label="Profile"
+        >
+          <span className="ek-avatar" style={{ width: 22, height: 22, fontSize: 10 }}>
+            {myProfile?.avatarUrl ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img src={myProfile.avatarUrl} alt="" />
+            ) : initials}
+          </span>
+          <span>Profile</span>
+          {unseen > 0 && <span className="ek-mobile-nav-badge">{unseen}</span>}
+        </button>
+      </nav>
 
       {panel && (
         <EnkiPanel title={PANEL_TITLES[panel] || panel} onClose={closePanel} full>

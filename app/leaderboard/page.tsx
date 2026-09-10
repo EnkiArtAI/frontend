@@ -106,7 +106,7 @@ export default function LeaderboardPage() {
   const listRows = rows ? (podium.length ? rows.slice(3) : rows) : [];
 
   return (
-    <div style={{ maxWidth: 880, margin: "0 auto", padding: "34px 28px 60px" }}>
+    <div className="ek-leaderboard-container" style={{ maxWidth: 880, margin: "0 auto" }}>
       {/* ── header: title + tabs + periods (no eyebrow) ── */}
       <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 22 }}>
         <div>
@@ -159,11 +159,11 @@ export default function LeaderboardPage() {
         <>
           {/* ── top 3: editorial cards (#1 centered + lifted) ── */}
           {podium.length === 3 && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1.25fr 1fr", gap: 10, alignItems: "stretch", marginBottom: 26 }}>
+            <div className="ek-podium-grid">
               {podium.map((r, i) => {
                 const first = i === 0;
                 return (
-                  <div key={r.rank} style={{
+                  <div key={r.rank} className={"ek-podium-card" + (first ? " ek-podium-card--first" : "")} style={{
                     order: [2, 1, 3][i],
                     position: "relative", display: "flex", flexDirection: "column", gap: 8,
                     background: "var(--enki-paper)",
@@ -234,7 +234,8 @@ export default function LeaderboardPage() {
 
           {/* ── ranks 4+ (or everyone when there's no full podium) ── */}
           {listRows.length > 0 && (
-            <div style={{ background: "var(--enki-paper)", border: "1px solid var(--enki-rule)", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+            <div className="ek-leaderboard-table-wrap" style={{ background: "var(--enki-paper)", border: "1px solid var(--enki-rule)", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+              <div className="ek-leaderboard-table-inner">
               <div style={{ display: "grid", gridTemplateColumns: "44px 1fr 110px 84px 90px 70px", gap: 8, alignItems: "center", padding: "8px 14px", borderBottom: "1px solid var(--enki-rule-2, var(--enki-rule))" }}>
                 <span style={headCell()}>Rank</span>
                 <span style={headCell()}>Creator</span>
@@ -285,12 +286,13 @@ export default function LeaderboardPage() {
                   </div>
                 );
               })}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", background: "var(--enki-paper-2)", flexWrap: "wrap" }}>
+              <div className="ek-leaderboard-footer" style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", background: "var(--enki-paper-2)", flexWrap: "wrap" }}>
                 <span style={headCell({ fontSize: 9 })}>Visibility</span>
                 <span style={{ fontSize: 11, color: "var(--enki-ink-3)" }}>You can hide yourself from this list in Settings → Profile.</span>
                 <button onClick={() => router.push("/editor")} style={{ marginLeft: "auto", border: "none", background: "none", padding: 0, cursor: "pointer", fontSize: 11, fontWeight: 600, color: "var(--enki-ember)" }}>
                   Climb the board — create a prompt →
                 </button>
+              </div>
               </div>
             </div>
           )}
