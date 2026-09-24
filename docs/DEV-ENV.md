@@ -9,7 +9,7 @@ copying one big file.
 
 | Tier | Who | Contains |
 | --- | --- | --- |
-| core | every developer | dev Supabase project, generated pepper and encryption key, localhost URLs, devnet chain, optional mail and blob |
+| core | every developer | dev Supabase project, the environment's pepper and encryption key (shared through the vault), localhost URLs, devnet chain, optional mail and blob |
 | generation | only who works on image generation | Gemini, OpenAI, WaveSpeed, xAI: one key per developer with a hard spend cap, revoked when the task ends |
 | payments | only backend developers on wallet, payments or login | devnet fee payer, wallet JWT key, CDP dev project, Google and X dev OAuth clients |
 
@@ -51,8 +51,13 @@ node scripts/make-dev-env.mjs --tier generation
 node scripts/make-dev-env.mjs --tier payments
 ```
 
-It writes `.env.local` with freshly generated dev secrets, fixed dev values and
-`PASTE_FROM_DASHBOARD` markers for the rest. It prints which variables it set
+It writes `.env.local` with per developer secrets generated locally (fee payer,
+wallet JWT key), fixed dev values and `PASTE_FROM_DASHBOARD` markers for the
+rest. Three values are ENVIRONMENT secrets, not per developer: `AUTH_PEPPER`,
+`FIELD_ENCRYPTION_KEY_B64` and `CONTENT_ACCESS_TOKEN_SECRET`. Every developer on
+the same database must use the same three, otherwise a prompt encrypted by one
+developer cannot be read by the next. Kev generates them once per environment
+with `--new-environment` and puts them into the vault next to the Supabase keys. It prints which variables it set
 and the devnet fee payer's public key for the faucet, never a value.
 
 ## Rotation and offboarding
@@ -62,9 +67,20 @@ and the devnet fee payer's public key for the faucet, never a value.
 - When a developer leaves, revoke their provider keys and remove their vault or
   Infisical access. If they had the `enki-dev` service role key, regenerate it
   in the Supabase dashboard and update the others.
-- Generated secrets (`AUTH_PEPPER`, `FIELD_ENCRYPTION_KEY_B64`) are per
-  developer and per machine; a developer who reruns the generator simply gets a
-  fresh dev database state for encrypted fields, which is fine on `enki-dev`.
+- The environment secrets of `enki-dev` (pepper, encryption key) are dev only;
+  rotating them means re-creating the dev data, which is acceptable there.
+  Production has its own, held by Kev and Vercel only.
+
+## Why not simply share the current database
+
+Sharing one database also means sharing its `FIELD_ENCRYPTION_KEY_B64` and
+`AUTH_PEPPER`, because every encrypted prompt and every password hash depends
+on them. Whoever works against the production database therefore holds two
+production secrets, and one careless migration or a test that deletes rows hits
+real users. Today the live database holds only test data, so sharing it with a
+first developer is tolerable for a few days; the moment a backend developer
+writes a migration, or the first real user signs up, `enki-dev` must exist.
+It is a second free Supabase project and takes ten minutes.
 
 ## What must never happen
 

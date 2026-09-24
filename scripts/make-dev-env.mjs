@@ -9,6 +9,12 @@
 //   node scripts/make-dev-env.mjs --tier payments    # core + wallet, payments, login
 //   node scripts/make-dev-env.mjs --tier all
 //   options: --out <path> (default .env.local)  --force (overwrite)
+//            --new-environment  generate the ENVIRONMENT secrets (pepper, encryption
+//                               key, content token secret) instead of pasting them.
+//                               Run once per environment (Kev), then share the three
+//                               values through the vault: every developer on the same
+//                               database must use the same ones, or encrypted rows
+//                               written by one developer are unreadable for the others.
 //
 // Tiers are described in docs/DEV-ENV.md and mirrored in .env.example.
 import { randomBytes, generateKeyPairSync } from "node:crypto";
@@ -20,6 +26,7 @@ const opt = (name, fallback) => { const i = args.indexOf(name); return i >= 0 &&
 const tier = opt("--tier", "core");
 const out = opt("--out", ".env.local");
 const force = args.includes("--force");
+const newEnvironment = args.includes("--new-environment");
 const TIERS = ["core", "generation", "payments", "all"];
 if (!TIERS.includes(tier)) { console.error(`--tier must be one of ${TIERS.join(", ")}`); process.exit(2); }
 if (existsSync(out) && !force) { console.error(`${out} exists. Pass --force to overwrite it.`); process.exit(2); }
@@ -48,10 +55,16 @@ paste("SUPABASE_URL", "Supabase dashboard > enki-dev > Settings > API > Project 
 paste("SUPABASE_SERVICE_ROLE_KEY", "Supabase dashboard > enki-dev > Settings > API > service_role");
 paste("SUPABASE_ANON_KEY", "Supabase dashboard > enki-dev > Settings > API > anon");
 
-section("core: secrets generated for this developer only");
-gen("AUTH_PEPPER", b64(32));
-gen("FIELD_ENCRYPTION_KEY_B64", b64(32));
-gen("CONTENT_ACCESS_TOKEN_SECRET", b64(32));
+section("core: ENVIRONMENT secrets, identical for everyone on the same database");
+if (newEnvironment) {
+  gen("AUTH_PEPPER", b64(32));
+  gen("FIELD_ENCRYPTION_KEY_B64", b64(32));
+  gen("CONTENT_ACCESS_TOKEN_SECRET", b64(32));
+} else {
+  paste("AUTH_PEPPER", "team vault > enki-dev > AUTH_PEPPER (generated once with --new-environment)");
+  paste("FIELD_ENCRYPTION_KEY_B64", "team vault > enki-dev > FIELD_ENCRYPTION_KEY_B64 (same for every dev, or prompts written by one dev are unreadable for the next)");
+  paste("CONTENT_ACCESS_TOKEN_SECRET", "team vault > enki-dev > CONTENT_ACCESS_TOKEN_SECRET");
+}
 
 section("core: chain (devnet only)");
 fixed("SOLANA_PAYMENT_CHAIN", "solana-devnet");
