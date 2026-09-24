@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Heart, Star, Bookmark, Play, Image as ImageIcon, Film, PencilLine } from "lucide-react";
 import BookmarkPicker from "@/components/enki/BookmarkPicker";
+import CurtainImage from "@/components/enki/CurtainImage";
 import { useBetaAccess } from "@/components/BetaGate";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
@@ -44,10 +45,18 @@ export default function EnkiCard({ prompt, onOpen, onEdit }: EnkiCardProps) {
       onClick={() => onOpen?.(prompt)}
       onMouseEnter={warm}
       onFocus={warm}
+      /* A card with an input image is the curtain's interaction surface: it
+         takes focus so the arrow keys can move the edge. */
+      data-curtain-host={prompt.before ? "" : undefined}
+      tabIndex={prompt.before ? 0 : undefined}
     >
       <div className="enki-card-img">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={prompt.art.url} alt={prompt.title} />
+        {prompt.before ? (
+          <CurtainImage after={prompt.art.url} before={prompt.before} alt={prompt.title} />
+        ) : (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img src={prompt.art.url} alt={prompt.title} />
+        )}
         <span className={`enki-card-badge${prompt.isVideo ? " video" : " image"}`}>
           {prompt.isVideo ? <Film size={12} style={{ color: "var(--enki-ember)" }} /> : <ImageIcon size={12} style={{ color: "var(--enki-ink-3)" }} />}
           {prompt.isVideo ? "Video" : "Image"}

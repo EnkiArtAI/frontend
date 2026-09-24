@@ -358,6 +358,95 @@
   transform: scale(1.025);
 }
 
+/* Before/after curtain (CurtainImage). The input image sits over the output,
+   clipped to the left of a diagonal edge; --cut moves that edge from -0.25
+   (hidden) to 1.25 (input fully shown). pan-y keeps vertical scroll free
+   while a touch drags the edge sideways. */
+.enki-curtain {
+  position: relative;
+  height: 100%;
+  touch-action: pan-y;
+}
+
+.enki-curtain-before {
+  --cut: -0.25;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: var(--enki-paper-3);
+  clip-path: polygon(0 0, calc(var(--cut) * 100% + 22%) 0, calc(var(--cut) * 100% - 22%) 100%, 0 100%);
+  transition: clip-path 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.enki-curtain-before.is-live {
+  transition: none;
+}
+
+.enki-curtain-before img {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  object-fit: cover;
+}
+
+.enki-curtain-before svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.enki-curtain-before line {
+  stroke: var(--enki-paper);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Same chip as .enki-card-badge. Input sits where the type badge is and
+   covers it while the curtain is open; Output sits in the free corner and
+   moves left when the bookmark button holds the top right. */
+.enki-curtain-tag {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 4;
+  background: color-mix(in oklab, var(--enki-paper) 86%, transparent);
+  border: 1px solid var(--enki-rule);
+  color: var(--enki-ink);
+  font-family: var(--font-jetbrains-mono), ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  padding: 3px 7px;
+  border-radius: 2px;
+  text-transform: uppercase;
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
+.enki-curtain-tag-out {
+  left: auto;
+  right: 8px;
+  border-color: var(--enki-ember);
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.enki-curtain.is-open .enki-curtain-tag-out {
+  opacity: 1;
+}
+
+.enki-card-img:has(.enki-heart) .enki-curtain-tag-out {
+  right: 44px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .enki-curtain-before {
+    --cut: 0.5;
+    transition: none;
+  }
+}
+
 .enki-card-badge {
   position: absolute;
   top: 8px;
