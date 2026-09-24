@@ -13,6 +13,7 @@
     "test": "vitest run",
     "check": "tsc",
     "db:push": "drizzle-kit push",
+    "db:copy": "node scripts/db-copy.mjs",
     "dev:webpack": "next dev --webpack"
   },
   "dependencies": {
