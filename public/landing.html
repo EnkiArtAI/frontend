@@ -2313,8 +2313,6 @@
   .auth-social:hover { background: rgba(var(--lp-text-rgb),0.1); border-color: rgba(var(--lp-text-rgb),0.2); }
   .auth-social-row { display: flex; justify-content: center; gap: 14px; margin-bottom: 14px; }
   .auth-social-icon { width: 44px; height: 44px; padding: 0; margin: 0; flex: none; }
-  .auth-social-icon[aria-disabled="true"] { opacity: 0.35; cursor: not-allowed; }
-  .auth-social-icon[aria-disabled="true"]:hover { background: rgba(var(--lp-text-rgb),0.06); border-color: rgba(var(--lp-text-rgb),0.1); }
   .auth-social-note { font-size: 0.74rem; line-height: 1.5; text-align: center; color: rgba(var(--lp-text-rgb),0.6); margin: -4px 0 12px; }
   .auth-social-note:empty { display: none; }
   .auth-switch {
@@ -4435,9 +4433,6 @@ function closeMobileMenu() {
         <button type="button" class="auth-social auth-social-icon" aria-label="Continue with X" onclick="socialLogin('x','login')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
         </button>
-        <button type="button" class="auth-social auth-social-icon" aria-label="Instagram" aria-disabled="true" title="Instagram does not offer sign in for personal accounts." onclick="socialLogin('instagram','login')">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="2.5" width="19" height="19" rx="5.5"/><circle cx="12" cy="12" r="4.2"/><circle cx="17.4" cy="6.6" r="0.9" fill="currentColor" stroke="none"/></svg>
-        </button>
       </div>
       <div class="auth-social-note" id="socialNoteLogin" aria-live="polite"></div>
       <div class="auth-divider"><span>or with email</span></div>
@@ -4477,9 +4472,6 @@ function closeMobileMenu() {
           </button>
           <button type="button" class="auth-social auth-social-icon" aria-label="Continue with X" onclick="socialLogin('x','signup')">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
-          </button>
-          <button type="button" class="auth-social auth-social-icon" aria-label="Instagram" aria-disabled="true" title="Instagram does not offer sign in for personal accounts." onclick="socialLogin('instagram','signup')">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="2.5" width="19" height="19" rx="5.5"/><circle cx="12" cy="12" r="4.2"/><circle cx="17.4" cy="6.6" r="0.9" fill="currentColor" stroke="none"/></svg>
           </button>
         </div>
         <div class="auth-social-note" id="socialNoteSignup" aria-live="polite"></div>
@@ -4617,10 +4609,8 @@ function checkStrength(val) {
 const WHITELIST = ['kirikev4d@gmail.com'];
 // Social sign-in hands the TOP window to the OAuth start route. That backend
 // is not built yet, so probe first and say so instead of landing on a 404.
-// Instagram stays visible but inert: Meta offers no sign-in for personal accounts.
 function socialLogin(provider, form) {
   var note = document.getElementById(form === 'login' ? 'socialNoteLogin' : 'socialNoteSignup');
-  if (provider === 'instagram') { note.textContent = 'Instagram does not offer sign in for personal accounts.'; return; }
   var name = provider === 'google' ? 'Google' : 'X';
   var top = window.top || window;
   var next = '/';
