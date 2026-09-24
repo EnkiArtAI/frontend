@@ -1,19 +1,43 @@
 # Generations that outlive the function
 
-Design note, 2026-08-07. Not implemented — nothing in this document has been built.
+Design note, 2026-08-07. The status block below is the only part that
+describes the code as it is; the rest is the reasoning and the state that
+prompted the change. Status checked against the tree on 2026-09-24.
 
-## The headline, first
+## Status, 2026-09-24
 
-> **Applied 2026-08-07.** Recommendation A has been carried out in full: the
-> route now exports `maxDuration = 300` and all three dependent budgets moved
-> with it (285 / 300 / 330 / 360). The paragraph below describes the state that
-> prompted the change and is kept for the reasoning, not as a current reading.
+> **Applied.** Recommendation A: `app/api/generate-image/route.ts` exports
+> `maxDuration = 300` and so does `app/api/x402/generate/route.ts`
+> (`app/api/workflow/variables/route.ts` exports 30). The dependent budgets
+> moved with it: `SOLANA_GENERATION_TIMEOUT_MS = 285_000` in the generate
+> route, `SLOT_TTL_MS = 330_000` in `lib/generation/concurrency.ts`,
+> `STALE_CLAIM_MS = 360_000` in `lib/payments/generation-redemption.ts`.
 >
-> Raising `maxDuration` alone — which is what happened first — inverted the
+> **Not applied.** The in-process cap still applies only when `paidUpfront`
+> (Solana header or a consumed intent, route line `const paidUpfront =`);
+> the EVM x402 `paymentEngine.settle` branch still generates with no cap.
+>
+> **Superseded since this note was written.**
+> - Authorise then capture is wired: the generate route imports
+>   `captureAndBroadcast`, `voidAndFlush` and `sweepAndFlush` from
+>   `lib/payments/settle.ts`, captures after the image is stored, voids on
+>   provider failure, and schedules `sweepAndFlush` with `after()` on every
+>   request.
+> - The heartbeat is gone. `lib/payments/authorization.ts` anchors on
+>   `consumed_at` and voids after `ABANDONED_AFTER_MS = 360_000`, derived
+>   from the same budget ladder; `HEARTBEAT_GRACE_MS` no longer exists.
+> - The generation row is written with `after(recordGeneration(...))` in the
+>   generate route, so path 3 below (blob stored, row never lands) now
+>   depends on `after()` surviving the function, which it does inside the
+>   300 s budget.
+> - `generation_jobs` is still untouched by any code.
+>
+> Raising `maxDuration` alone, which is what happened first, inverted the
 > ordering this document warns about: the slot TTL (150s) and the stale-claim
 > release (180s) both sat *below* the new platform budget, so a generation
 > still running would lose its concurrency slot and have its payment claim
-> released. Fixed in the same commit that records this note.
+> released. Fixed in the same commit that recorded the first version of
+> this note.
 
 We were not near Vercel's limit. We were near a number we chose ourselves.
 
@@ -23,8 +47,8 @@ a 1800s per-function beta above that — source: [Configuring Maximum Duration f
 Vercel Functions](https://vercel.com/docs/functions/configuring-functions/duration),
 doc last updated 2026-07-01, retrieved 2026-08-07. The default on every plan is
 300s. `vercel.json` declares only `framework: nextjs` — no `functions` block, so
-the 120 comes entirely from the route export, and no other route in the repo
-exports `maxDuration` at all.
+the 120 came entirely from the route export, and at the time no other route
+in the repo exported `maxDuration` (see the status block for today).
 
 The plan is **not determinable from the repo** (`.vercel/project.json` holds only
 `orgId`/`projectId`). It only matters if we ever want more than 300s. Kev can
@@ -90,8 +114,8 @@ default or configured max duration of your route"
 takes the callback with it. A paid image exists, unreferenced, billed to us forever.
 Genuinely orphaned rather than lost.
 
-**Also true, and worth knowing before any of this is designed further:** the
-authorise-then-capture flow is **built and unwired**. `lib/payments/settle.ts`
+**Was true on 2026-08-07, no longer (see the status block):** the
+authorise-then-capture flow was **built and unwired**. `lib/payments/settle.ts`
 exports `captureAndBroadcast`, `voidAndFlush` and `sweepAndFlush`; a repo-wide grep
 finds **no caller for any of the three**. Only `/api/payments/generation/submit`
 calls `storeAuthorization`, and no UI code calls that route either. The columns are
