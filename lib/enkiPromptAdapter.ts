@@ -5,6 +5,15 @@ export type EnkiArtwork = {
   ratio: string;
 };
 
+/* One showcase image as the feed reads it: `after` is the output, `before`
+   the input it was generated from (null for text to image), `addition` the
+   text appended to the prompt when someone generates from this image. */
+export type EnkiShowcaseImage = {
+  after: string;
+  before: string | null;
+  addition: string | null;
+};
+
 export type EnkiArtist = {
   id?: string;
   name: string;
@@ -33,6 +42,8 @@ export type EnkiPrompt = {
   isVideo: boolean;
   visibility: "full" | "vars-only";
   art: EnkiArtwork;
+  before: string | null;
+  showcase: EnkiShowcaseImage[];
   versions: EnkiArtwork[];
   variables: EnkiPromptVariable[];
   promptTemplate: string;
@@ -72,11 +83,27 @@ function readArray(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
 
-function firstImageUrl(value: unknown) {
-  const first = readArray(value)[0];
-  if (typeof first === "string" && first.trim()) return first;
-  const record = asRecord(first);
-  return readString(record.url) || readString(record.thumbnail);
+/* A URL the card can put in an <img>: https or site relative. Anything else
+   (blob:, javascript:, plain text, http) is dropped with its entry. */
+function imageUrl(value: unknown) {
+  const url = readString(value)?.trim();
+  return url && /^(https:\/\/|\/(?!\/))/.test(url) ? url : undefined;
+}
+
+/* Showcase entries arrive as bare URL strings, as { url } objects (the
+   marketplace API today) or as { after, before, addition } objects once the
+   backend carries input images. All three become one shape. */
+export function normaliseShowcase(value: unknown): EnkiShowcaseImage[] {
+  return readArray(value).flatMap((entry) => {
+    const record: UnknownRecord = typeof entry === "string" ? { after: entry } : asRecord(entry);
+    const after = imageUrl(record.after ?? record.url);
+    if (!after) return [];
+    return [{
+      after,
+      before: imageUrl(record.before) ?? null,
+      addition: readString(record.addition)?.trim() || null,
+    }];
+  });
 }
 
 function imageFromUnknown(source: unknown): EnkiArtwork {
@@ -90,9 +117,7 @@ function imageFromUnknown(source: unknown): EnkiArtwork {
     readString(record.thumbnail) ||
     readString(record.imageUrl) ||
     readString(record.url) ||
-    readString(record.src) ||
-    firstImageUrl(record.previewImages) ||
-    firstImageUrl(record.showcaseImages);
+    readString(record.src);
 
   if (typeof image === "string" && image.trim()) {
     return { url: image, width: 720, height: 960, ratio: "3:4" };
@@ -144,14 +169,13 @@ export function mapMarketplacePromptToEnkiPrompt(prompt: unknown, index = 0): En
   const creator = asRecord(record.creator);
   const name = readString(creator.displayName) || readString(creator.username) || readString(record.artist) || "Enki Artist";
   const variables = variablesFromUnknown(prompt);
-  const art = imageFromUnknown(prompt);
   const pricing = asRecord(record.pricing);
   const price = dollars(readNumber(record.priceUsdCents) ?? readNumber(record.price) ?? readNumber(pricing.pricePerGeneration));
   const id = String(readString(record.id) || readString(record._id) || `prompt_${index}`);
   const stats = asRecord(record.stats);
   const reviews = asRecord(stats.reviews);
-  const previewImages = readArray(record.previewImages);
-  const showcaseImages = readArray(record.showcaseImages);
+  const showcase = normaliseShowcase(readArray(record.showcaseImages).length ? record.showcaseImages : record.previewImages);
+  const art = imageFromUnknown(showcase[0]?.after ?? prompt);
   const listedAt = readString(record.listedAt);
   const createdAt = readString(record.createdAt);
 
@@ -184,7 +208,9 @@ export function mapMarketplacePromptToEnkiPrompt(prompt: unknown, index = 0): En
     isVideo: String(readString(record.category) || readString(record.promptType) || "").toLowerCase().includes("video") || Boolean(record.isVideo),
     visibility: record.visibility === "vars-only" || record.type === "premium" ? "vars-only" : "full",
     art,
-    versions: [1, 2, 3, 4].map((offset) => imageFromUnknown(previewImages[offset] || showcaseImages[offset])),
+    before: showcase[0]?.before ?? null,
+    showcase,
+    versions: [1, 2, 3, 4].map((offset) => imageFromUnknown(showcase[offset]?.after)),
     variables,
     promptTemplate: promptTemplateFrom(prompt, variables),
     model: readString(record.model) || readString(record.aiModel) || "Nano Banana Pro",
