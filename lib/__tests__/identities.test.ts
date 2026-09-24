@@ -4,7 +4,7 @@ import { fakeDb, type FakeDb } from "./_fake-supabase";
 
 /** SOC-7 backend: connected accounts, password set, Instagram handle. */
 // password-auth derives its decoy hash at import time, so the pepper must exist before the route loads.
-const state = vi.hoisted(async () => {
+const state = await vi.hoisted(async () => {
   const { randomBytes } = await import("node:crypto");
   process.env.AUTH_PEPPER = randomBytes(32).toString("base64");
   return { db: null as unknown as FakeDb };
