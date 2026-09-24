@@ -2311,6 +2311,12 @@
     gap: 10px; transition: all 0.15s; margin-bottom: 20px;
   }
   .auth-social:hover { background: rgba(var(--lp-text-rgb),0.1); border-color: rgba(var(--lp-text-rgb),0.2); }
+  .auth-social-row { display: flex; justify-content: center; gap: 14px; margin-bottom: 14px; }
+  .auth-social-icon { width: 44px; height: 44px; padding: 0; margin: 0; flex: none; }
+  .auth-social-icon[aria-disabled="true"] { opacity: 0.35; cursor: not-allowed; }
+  .auth-social-icon[aria-disabled="true"]:hover { background: rgba(var(--lp-text-rgb),0.06); border-color: rgba(var(--lp-text-rgb),0.1); }
+  .auth-social-note { font-size: 0.74rem; line-height: 1.5; text-align: center; color: rgba(var(--lp-text-rgb),0.6); margin: -4px 0 12px; }
+  .auth-social-note:empty { display: none; }
   .auth-switch {
     text-align: center; font-size: 0.75rem; color: rgba(var(--lp-text-rgb),0.4);
   }
@@ -4422,6 +4428,19 @@ function closeMobileMenu() {
     </div>
     <!-- LOGIN FORM -->
     <form class="auth-form" id="formLogin" onsubmit="submitAuth(event,'login')">
+      <div class="auth-social-row" role="group" aria-label="Continue with a social account">
+        <button type="button" class="auth-social auth-social-icon" aria-label="Continue with Google" onclick="socialLogin('google','login')">
+          <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+        </button>
+        <button type="button" class="auth-social auth-social-icon" aria-label="Continue with X" onclick="socialLogin('x','login')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+        </button>
+        <button type="button" class="auth-social auth-social-icon" aria-label="Instagram" aria-disabled="true" title="Instagram does not offer sign in for personal accounts." onclick="socialLogin('instagram','login')">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="2.5" width="19" height="19" rx="5.5"/><circle cx="12" cy="12" r="4.2"/><circle cx="17.4" cy="6.6" r="0.9" fill="currentColor" stroke="none"/></svg>
+        </button>
+      </div>
+      <div class="auth-social-note" id="socialNoteLogin" aria-live="polite"></div>
+      <div class="auth-divider"><span>or with email</span></div>
       <div class="auth-field">
         <label class="auth-label">Email</label>
         <input class="auth-input" type="email" id="loginEmail" placeholder="you@example.com" required autocomplete="email"/>
@@ -4452,6 +4471,19 @@ function closeMobileMenu() {
     <form class="auth-form" id="formSignup" style="display:none" onsubmit="submitAuth(event,'signup')">
       <div class="auth-note">Enki Art is invite-only during the whitelist stage.<br>Apply below — if your email is already whitelisted you're in right away; otherwise we review your application and email you when you're accepted.</div>
       <div class="auth-form-scroll">
+        <div class="auth-social-row" role="group" aria-label="Continue with a social account">
+          <button type="button" class="auth-social auth-social-icon" aria-label="Continue with Google" onclick="socialLogin('google','signup')">
+            <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+          </button>
+          <button type="button" class="auth-social auth-social-icon" aria-label="Continue with X" onclick="socialLogin('x','signup')">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+          </button>
+          <button type="button" class="auth-social auth-social-icon" aria-label="Instagram" aria-disabled="true" title="Instagram does not offer sign in for personal accounts." onclick="socialLogin('instagram','signup')">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="2.5" width="19" height="19" rx="5.5"/><circle cx="12" cy="12" r="4.2"/><circle cx="17.4" cy="6.6" r="0.9" fill="currentColor" stroke="none"/></svg>
+          </button>
+        </div>
+        <div class="auth-social-note" id="socialNoteSignup" aria-live="polite"></div>
+        <div class="auth-divider"><span>or with email</span></div>
         <div class="auth-field">
           <label class="auth-label">Email</label>
           <input class="auth-input" type="email" id="signupEmail" placeholder="you@example.com" required autocomplete="email"/>
@@ -4503,6 +4535,7 @@ function switchAuthTab(tab) {
   document.getElementById('tabSignup').classList.toggle('active', tab === 'signup');
   document.getElementById('formLogin').style.display  = tab === 'login'  ? '' : 'none';
   document.getElementById('formSignup').style.display = tab === 'signup' ? '' : 'none';
+  document.querySelectorAll('.auth-social-note').forEach(function (n) { n.textContent = ''; });
 }
 function togglePass(id, btn) {
   const inp = document.getElementById(id);
@@ -4582,6 +4615,25 @@ function checkStrength(val) {
 }
 // Emails already approved for the whitelist stage. Add more as people are accepted.
 const WHITELIST = ['kirikev4d@gmail.com'];
+// Social sign-in hands the TOP window to the OAuth start route. That backend
+// is not built yet, so probe first and say so instead of landing on a 404.
+// Instagram stays visible but inert: Meta offers no sign-in for personal accounts.
+function socialLogin(provider, form) {
+  var note = document.getElementById(form === 'login' ? 'socialNoteLogin' : 'socialNoteSignup');
+  if (provider === 'instagram') { note.textContent = 'Instagram does not offer sign in for personal accounts.'; return; }
+  var name = provider === 'google' ? 'Google' : 'X';
+  var top = window.top || window;
+  var next = '/';
+  try { next = top.location.pathname || '/'; } catch (e) {}
+  var url = '/api/auth/oauth/' + provider + '/start?next=' + encodeURIComponent(next);
+  note.textContent = '';
+  fetch(url, { method: 'HEAD', redirect: 'manual' })
+    .then(function (res) {
+      if (res.status === 404 || res.status === 503) throw new Error('unavailable');
+      top.location.href = url;
+    })
+    .catch(function () { note.textContent = name + ' sign in is not available yet.'; });
+}
 function walletLogin() {
   // Wallet / Turnkey sign-in lives in the app shell — hand off to it.
   try {
