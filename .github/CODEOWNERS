@@ -1,5 +1,7 @@
-# Code owners = required reviewers (GitHub: Settings > Branches > main >
-# "Require review from Code Owners"). Later rules win over earlier ones.
+# Code owners = required reviewers for github.com/EnkiArtAI/frontend
+# (GitHub: Settings > Branches > main > "Require review from Code Owners").
+# Later rules win over earlier ones. Handles below must be members of the
+# EnkiArtAI org (renamed from the personal namespace on 2026-09-24).
 #
 # ROSTER (edit here only; CONTRIBUTING.md refers to these roles)
 #   Backend owner ....... TODO GitHub handle (Kev decides: Pavel proposed)

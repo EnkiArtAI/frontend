@@ -95,9 +95,11 @@ When the team changes, change that file, nothing else.
 ## 8. Local setup
 
 ```bash
+git clone https://github.com/EnkiArtAI/frontend.git   # org renamed to EnkiArtAI on 2026-09-24
+cd frontend
 npm ci
 cp .env.example .env.local   # ask Kev for the values, never paste them into chat or tickets
-npm run dev                  # http://localhost:3008
+npm run dev -- -p 3008       # http://localhost:3008 (the dev script sets no port; the app's defaults assume 3008)
 npm run check                # typecheck
 npm test                     # vitest, lib/** suites
 npm run lint
