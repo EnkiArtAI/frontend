@@ -9,7 +9,7 @@ copying one big file.
 
 | Tier | Who | Contains |
 | --- | --- | --- |
-| core | every developer | dev Supabase project, the environment's pepper and encryption key (shared through the vault), localhost URLs, devnet chain, optional mail and blob |
+| core | every developer | the `enki-dev` Supabase project (a re-keyed copy of the live database), the environment's pepper and encryption key (shared through the vault), localhost URLs, devnet chain, optional mail and blob |
 | generation | only who works on image generation | Gemini, OpenAI, WaveSpeed, xAI: one key per developer with a hard spend cap, revoked when the task ends |
 | payments | only backend developers on wallet, payments or login | devnet fee payer, wallet JWT key, CDP dev project, Google and X dev OAuth clients |
 
@@ -18,11 +18,126 @@ provider key. Every route that needs a missing key must answer with a clear
 sentence ("Google sign in is not configured") instead of a stack trace; where
 it does not yet, that is a bug (ClickUp ENV-01).
 
+## A copy of the live database in a second Supabase project
+
+The dev database is not an empty schema and not a local Postgres: it is a
+**second Supabase project, `enki-dev`, filled programmatically with an exact
+copy of the live schema and data, then re-keyed and sanitised.** No Docker, no
+local Supabase, nothing to install: `scripts/db-copy.mjs` talks to the Supabase
+Management API and moves the data with `pg_dump` and `psql`, which it
+downloads once when they are not on the machine.
+
+### What Kev runs
+
+Everything below runs on Kev's machine only, because it needs the live
+database password and the live encryption key.
+
+1. Once, add two lines to `.env.local` (names in `.env.example`, block "kev only"):
+   `SUPABASE_ACCESS_TOKEN` (a personal access token from
+   https://supabase.com/dashboard/account/tokens) and `SUPABASE_DB_PASSWORD`
+   (live project > Settings > Database).
+2. Once per environment, generate the developer file with fresh environment
+   secrets. `--new-environment` creates a NEW pepper and a NEW encryption key
+   that have nothing to do with production:
+
+   ```bash
+   node scripts/make-dev-env.mjs --tier core --new-environment --out .env.dev.local
+   ```
+
+3. Copy the database:
+
+   ```bash
+   npm run db:copy -- --dev-env .env.dev.local --dry-run   # prints the plan and what is still missing, touches nothing
+   npm run db:copy -- --dev-env .env.dev.local             # the real run
+   ```
+
+   Flags: `--name <project>` (default `enki-dev`), `--reset` (truncate the copy
+   and reload the data), `--skip-data` (schema only), `--dry-run`.
+
+The run, each step idempotent, each line of output a name or a count and
+never a value:
+
+1. Finds or creates the project `enki-dev` in the live project's organization
+   and region with a generated database password, waits until it is healthy,
+   fetches its anon and service role keys. Free plan: two active projects per
+   organization, so the live project plus `enki-dev` fill the quota.
+2. Creates the live project's extensions on the copy (`citext` lives in
+   `public`, the rest in `extensions`).
+3. `pg_dump --schema-only --schema=public --no-owner --no-privileges` over
+   the session pooler, `psql` into the copy. Tables created by `postgres` get
+   the project's default grants, so PostgREST sees them without a GRANT list.
+4. `pg_dump --data-only`, loaded with `SET session_replication_role =
+   replica` (the method Supabase documents for restores): triggers and
+   foreign key checks stay out of the way, so load order does not matter.
+   Structure only, no rows: `auth_sessions`, `auth_nonces`, `otp_sessions`,
+   `password_reset_tokens`, `delete_confirm_tokens`, `deletion_approvals`,
+   `user_sessions`.
+5. Re-keys and sanitises **on the copy, never on the source**, reading rows
+   over the copy's PostgREST and patching them back by primary key:
+   - every encryption envelope (`X_ct/X_iv/X_tag/X_kid`, `prompts.encrypted_content`)
+     is decrypted with the live key ring and re-encrypted with the dev key;
+     an envelope no key opens becomes null and is counted
+   - every email becomes `user-<first 8 chars of the id>@example.test`, the
+     same pseudonym for the same user in every table, lookup hashes follow
+   - every password becomes `enki-dev-password` (Argon2id under the dev pepper,
+     the app's own function)
+   - token columns, ip hashes and the `last_seen_ip` envelope become null
+   - everything else stays as it is
+6. Writes the copy's `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
+   `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_DB_PASSWORD_DEV` into the
+   `--dev-env` file, replacing the `PASTE_FROM_DASHBOARD` markers.
+
+The final report lists the project ref, the tables and their row counts, the
+envelopes re-keyed, decrypt failures, rows pseudonymised, tables left
+structure only, patch failures and the elapsed time.
+
+The dump files are written to the OS temp directory and deleted at the end of
+the step that used them. `pg_dump` and `psql` are taken from `PG_BIN`, then the
+PATH, then a cache in the OS temp directory; on Windows, when none exists, the
+official PostgreSQL 18 binaries zip from EDB is downloaded once (about 340 MB)
+and only `pg_dump.exe`, `psql.exe` and their DLLs are extracted.
+
+### What a developer gets
+
+The `.env.dev.local` file from the vault, complete. It points at `enki-dev`,
+carries the dev pepper and the dev encryption key, and nothing in it opens
+anything in production. Every copied user logs in with the password
+`enki-dev-password`; the email is the pseudonym shown in the copy
+(`user-xxxxxxxx@example.test`). Sessions, nonces and tokens are empty, so the
+developer signs in fresh.
+
+### Refresh
+
+Re-run with `--reset`: the copy is truncated and reloaded from the live
+database, then re-keyed again. The project, its keys and its password stay,
+so no developer file changes. The schema is not rebuilt on a refresh; after a
+live migration, delete `enki-dev` in the dashboard and run once without
+`--reset`, then put the new `SUPABASE_URL` and keys into the vault.
+
+### Key rotation semantics
+
+The copy has its own encryption key, its own pepper and its own API keys, and
+its database password is one the script generated. Production's
+`FIELD_ENCRYPTION_KEY_B64`, `AUTH_PEPPER`, database password and access token
+are read on Kev's machine, used to open and dump, and never written anywhere:
+not into the dev file, not into a log line, not onto a command line
+(`pg_dump` and `psql` receive the password as `PGPASSWORD` in the child
+environment). Rotating a dev secret means re-running the copy with a new
+`--new-environment` file, which is acceptable there; production keys are not
+touched by any of this.
+
+### Free plan limits
+
+- Two active projects per organization; paused projects do not count.
+- A free project is paused after one week without activity. Unpause it in the
+  dashboard (https://supabase.com/dashboard/project/<ref>, button "Restore
+  project"); the script detects a paused copy and says so instead of failing
+  half way. A paused project can be restored for one year.
+- 500 MB database, plenty for the current data.
+
 ## One time setup by Kev
 
-1. Supabase: create the project `enki-dev`, run every file in `migrations/`
-   against it (same order as production), seed nothing. Its URL, anon key and
-   service role key are the only dashboard values a core developer needs.
+1. Supabase: the copy above; `enki-dev` is created by the script.
 2. Coinbase CDP: create the project `enki-dev`, register the JWKS URL of the
    developer's tunnel or leave the wallet off for developers who do not touch
    payments.
@@ -57,7 +172,8 @@ rest. Three values are ENVIRONMENT secrets, not per developer: `AUTH_PEPPER`,
 `FIELD_ENCRYPTION_KEY_B64` and `CONTENT_ACCESS_TOKEN_SECRET`. Every developer on
 the same database must use the same three, otherwise a prompt encrypted by one
 developer cannot be read by the next. Kev generates them once per environment
-with `--new-environment` and puts them into the vault next to the Supabase keys. It prints which variables it set
+with `--new-environment`; `db-copy` fills the Supabase values of that file, and
+the whole file goes into the vault. The generator prints which variables it set
 and the devnet fee payer's public key for the faucet, never a value.
 
 ## Rotation and offboarding
@@ -68,8 +184,9 @@ and the devnet fee payer's public key for the faucet, never a value.
   Infisical access. If they had the `enki-dev` service role key, regenerate it
   in the Supabase dashboard and update the others.
 - The environment secrets of `enki-dev` (pepper, encryption key) are dev only;
-  rotating them means re-creating the dev data, which is acceptable there.
-  Production has its own, held by Kev and Vercel only.
+  rotating them means re-creating the dev data with a fresh `--new-environment`
+  file and a `db-copy` run, which is acceptable there. Production has its own,
+  held by Kev and Vercel only.
 
 ## Why not simply share the current database
 
@@ -77,10 +194,8 @@ Sharing one database also means sharing its `FIELD_ENCRYPTION_KEY_B64` and
 `AUTH_PEPPER`, because every encrypted prompt and every password hash depends
 on them. Whoever works against the production database therefore holds two
 production secrets, and one careless migration or a test that deletes rows hits
-real users. Today the live database holds only test data, so sharing it with a
-first developer is tolerable for a few days; the moment a backend developer
-writes a migration, or the first real user signs up, `enki-dev` must exist.
-It is a second free Supabase project and takes ten minutes.
+real users. The copy gives every developer the same data without either secret,
+and the copy can be reloaded in minutes when something breaks it.
 
 ## What must never happen
 
