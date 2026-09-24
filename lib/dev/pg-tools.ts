@@ -11,6 +11,15 @@
  */
 
 export const PG_ZIP_URL = "https://get.enterprisedb.com/postgresql/postgresql-18.6-1-windows-x64-binaries.zip";
+/**
+ * SHA-256 of that archive, 343808005 bytes, computed on 2026-09-24 from a
+ * download over TLS from get.enterprisedb.com whose pg_dump.exe and psql.exe
+ * report 18.6. EDB publishes no checksum and does not sign the binaries in
+ * the zip (only its installer), so this pin catches a swapped, truncated or
+ * proxied archive later, not a wrong first download. Re-verify with
+ * `certutil -hashfile <zip> SHA256` and update it when PG_ZIP_URL changes.
+ */
+export const PG_ZIP_SHA256 = "fbe23da234ee31547bf8a36d29dfd81e82b849df2d2b78d2eecb43d360252f8c";
 export const PG_ZIP_MEMBERS = ["pgsql/bin/pg_dump.exe", "pgsql/bin/psql.exe", "pgsql/bin/*.dll"];
 export const CACHE_DIR = "enki-pg-bin";
 

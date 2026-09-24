@@ -63,9 +63,10 @@ never a value:
    organization, so the live project plus `enki-dev` fill the quota.
 2. Creates the live project's extensions on the copy (`citext` lives in
    `public`, the rest in `extensions`).
-3. `pg_dump --schema-only --schema=public --no-owner --no-privileges` over
-   the session pooler, `psql` into the copy. Tables created by `postgres` get
-   the project's default grants, so PostgREST sees them without a GRANT list.
+3. `pg_dump --schema-only --schema=public --no-owner` over the session
+   pooler, `psql` into the copy. Grants and revokes travel with the schema
+   (the `anon`, `authenticated` and `service_role` roles exist on every
+   project), so a function live revokes from `anon` stays revoked on the copy.
 4. `pg_dump --data-only`, loaded with `SET session_replication_role =
    replica` (the method Supabase documents for restores): triggers and
    foreign key checks stay out of the way, so load order does not matter.
@@ -91,11 +92,23 @@ The final report lists the project ref, the tables and their row counts, the
 envelopes re-keyed, decrypt failures, rows pseudonymised, tables left
 structure only, patch failures and the elapsed time.
 
-The dump files are written to the OS temp directory and deleted at the end of
-the step that used them. `pg_dump` and `psql` are taken from `PG_BIN`, then the
-PATH, then a cache in the OS temp directory; on Windows, when none exists, the
-official PostgreSQL 18 binaries zip from EDB is downloaded once (about 340 MB)
-and only `pg_dump.exe`, `psql.exe` and their DLLs are extracted.
+The dump files are written to a work directory under the OS temp directory,
+deleted at the end of the step that used them, and the work directory is
+removed when the run ends, whether it succeeded or failed. When `pg_dump` or
+`psql` fails, only the first error message reaches the terminal, cut before
+its first colon; the CONTEXT and DETAIL lines that quote row values are
+dropped. A failure during the data load or the sanitiser truncates the copy
+again before the error is reported, so it never holds unsanitised rows for
+longer than the run; if even the truncation fails, the copy's keys in the dev
+file are replaced with `UNSANITISED_DO_NOT_SHARE` and the message says to
+delete the project.
+
+`pg_dump` and `psql` are taken from `PG_BIN`, then the PATH, then a cache in
+the OS temp directory; on Windows, when none exists, the official PostgreSQL
+18 binaries zip from EDB is downloaded once (about 340 MB), compared against
+the SHA-256 pinned in `lib/dev/pg-tools.ts` (EDB publishes no checksum), and
+only then are `pg_dump.exe`, `psql.exe` and their DLLs extracted. A mismatch
+deletes the archive and stops the run.
 
 ### What a developer gets
 

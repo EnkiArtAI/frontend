@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { randomBytes } from "node:crypto";
-import { parseArgs, rowCountsSql, runDbCopy, type Deps } from "@/lib/dev/db-copy";
+import { parseArgs, rowCountsSql, runDbCopy, safeStderr, UNSANITISED, type Deps } from "@/lib/dev/db-copy";
 import { parseEnv } from "@/lib/dev/env";
+import { cacheBinDir, PG_ZIP_MEMBERS, PG_ZIP_SHA256, PG_ZIP_URL } from "@/lib/dev/pg-tools";
 import { openEnvelope, sealEnvelope, emailLookupHash } from "@/lib/dev/snapshot-sanitise";
 
 /**
@@ -32,6 +33,7 @@ function makeDeps(files: Record<string, string>, over: Partial<Deps> = {}): Reco
     readFile: (p) => deps.files[p] ?? null,
     writeFile: (p, text) => { deps.files[p] = text; },
     remove: (p) => { deps.removed.push(p); },
+    sha256File: async () => { throw new Error("hash touched"); },
     exists: () => false,
     mkdir: () => {},
     which: () => null,
@@ -107,13 +109,22 @@ describe("dry run and guards never touch the network", () => {
   it("quotes table names in the row count query", () => {
     expect(rowCountsSql(["users", `odd"name`])).toBe(`select 'users' as table_name, count(*)::int as n from public."users"\nunion all select 'odd"name' as table_name, count(*)::int as n from public."odd""name"`);
   });
+
+  it("forwards one error message from pg_dump or psql stderr and never a row value", () => {
+    const copyFailure = `psql:C:/Temp/enki-db-copy-x/data.sql:12: ERROR:  extra data after last expected column\nCONTEXT:  COPY password_credentials, line 1: "${UUID}\tleak@real.tld\t$argon2id$hash"\n`;
+    expect(safeStderr(copyFailure)).toBe("extra data after last expected column");
+    expect(safeStderr(`psql:x.sql:3: ERROR:  invalid input syntax for type uuid: "leak@real.tld"\nDETAIL:  Key (id)=(leak@real.tld)`)).toBe("invalid input syntax for type uuid");
+    expect(safeStderr(`pg_dump: error: connection to server at "aws-1-eu-central-1.pooler.supabase.com" (3.1.2.3), port 5432 failed: FATAL:  password authentication failed for user "postgres.x"`)).toBe(`connection to server at "aws-1-eu-central-1.pooler.supabase.com" (3.1.2.3), port 5432 failed`);
+    expect(safeStderr("")).toBe("no error line in the output");
+    expect(safeStderr("ERROR:")).toBe("no error line in the output");
+  });
 });
 
 // ---------------------------------------------------------------- a routed Supabase for the full run
 
 type Call = { method: string; url: string; body: unknown; headers: Record<string, string> };
 
-function routedFetch(opts: { existing: boolean; tableCount: number; initialRows: number; healthy?: boolean }) {
+function routedFetch(opts: { existing: boolean; tableCount: number; initialRows: number; healthy?: boolean; selectStatus?: number; truncateFails?: boolean }) {
   const calls: Call[] = [];
   const liveKey = { kid: "field-v1", key: Buffer.from(LIVE.FIELD_ENCRYPTION_KEY_B64, "base64") };
   const email = sealEnvelope("kev@real.example", liveKey.key);
@@ -146,7 +157,11 @@ function routedFetch(opts: { existing: boolean; tableCount: number; initialRows:
       const n = countCalls++ === 0 ? opts.initialRows : loaded ? 1 : 0;
       return [{ table_name: "auth_sessions", n: 0 }, { table_name: "prompts", n }, { table_name: "users", n }];
     }
-    if (q.startsWith("truncate table")) { state.truncated = true; return []; }
+    if (q.startsWith("truncate table")) {
+      if (opts.truncateFails) throw new Error("pooler gone");
+      state.truncated = true;
+      return [];
+    }
     throw new Error(`unexpected target query: ${q.slice(0, 60)}`);
   };
 
@@ -171,7 +186,7 @@ function routedFetch(opts: { existing: boolean; tableCount: number; initialRows:
       throw new Error(`unexpected live query: ${q.slice(0, 60)}`);
     }
     if (url === `https://api.supabase.com/v1/projects/${TGT}/database/query`) return json(targetQuery(String((body as { query: string }).query)), 201);
-    if (url.startsWith(`https://${TGT}.supabase.co/rest/v1/users?select=*&order=id`)) return json([userRow]);
+    if (url.startsWith(`https://${TGT}.supabase.co/rest/v1/users?select=*&order=id`)) return opts.selectStatus ? new Response("", { status: opts.selectStatus }) : json([userRow]);
     if (url.startsWith(`https://${TGT}.supabase.co/rest/v1/prompts?select=*&order=id`)) return json([promptRow]);
     if (url.startsWith(`https://${TGT}.supabase.co/rest/v1/`) && method === "PATCH") { state.patches.push({ url, body: body as Record<string, unknown> }); return new Response(null, { status: 204 }); }
     throw new Error(`unexpected ${method} ${url}`);
@@ -179,7 +194,7 @@ function routedFetch(opts: { existing: boolean; tableCount: number; initialRows:
 
   const runImpl: Deps["run"] = async (command, args) => {
     if (args[0] === "--version") return { code: 0, stdout: "pg_dump (PostgreSQL) 18.6", stderr: "" };
-    if (command.endsWith("psql") && args.some((a) => a.endsWith("data.sql"))) loaded = true;
+    if (/psql(\.exe)?$/.test(command) && args.some((a) => a.endsWith("data.sql"))) loaded = true;
     return { code: 0, stdout: "", stderr: "" };
   };
   return { fetchImpl, runImpl, calls, state, userRow, promptRow };
@@ -208,7 +223,7 @@ describe("the full run against a routed Supabase", () => {
     // pg_dump and psql: passwords through PGPASSWORD, URLs without them, the right flags
     const dev = parseEnv(deps.files[DEV_FILE]);
     const [schemaDump, schemaLoad, dataDump, dataLoad] = deps.runs.filter((r) => r.args[0] !== "--version");
-    expect(schemaDump.args).toEqual(["--schema-only", "--schema=public", "--no-owner", "--no-privileges", "--file", `C:/Temp/enki-db-copy-${TGT}/schema.sql`, "--dbname", `postgresql://postgres.${SRC}@aws-1-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require`]);
+    expect(schemaDump.args).toEqual(["--schema-only", "--schema=public", "--no-owner", "--file", `C:/Temp/enki-db-copy-${TGT}/schema.sql`, "--dbname", `postgresql://postgres.${SRC}@aws-1-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require`]);
     expect(schemaDump.extraEnv).toEqual({ PGPASSWORD: LIVE.SUPABASE_DB_PASSWORD });
     expect(schemaLoad.args).toEqual(["--variable", "ON_ERROR_STOP=1", "--quiet", "--file", `C:/Temp/enki-db-copy-${TGT}/schema.sql`, "--dbname", `postgresql://postgres.${TGT}@aws-0-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require`]);
     expect(schemaLoad.extraEnv).toEqual({ PGPASSWORD: dev.SUPABASE_DB_PASSWORD_DEV });
@@ -217,7 +232,7 @@ describe("the full run against a routed Supabase", () => {
     expect(dataDump.args.filter((a) => a.startsWith("--exclude-table-data"))).toHaveLength(1);
     expect(dataLoad.args.slice(3, 5)).toEqual(["--command", "SET session_replication_role = replica"]);
     expect(deps.runs.flatMap((r) => r.args).join(" ")).not.toMatch(new RegExp(`${LIVE.SUPABASE_DB_PASSWORD}|${dev.SUPABASE_DB_PASSWORD_DEV}`));
-    expect(deps.removed).toEqual([`C:/Temp/enki-db-copy-${TGT}/schema.sql`, `C:/Temp/enki-db-copy-${TGT}/data.sql`]);
+    expect(deps.removed).toEqual([`C:/Temp/enki-db-copy-${TGT}/schema.sql`, `C:/Temp/enki-db-copy-${TGT}/data.sql`, `C:/Temp/enki-db-copy-${TGT}`]);
 
     // the dev env file received the copy's coordinates, nothing else changed
     expect(dev).toMatchObject({ ...DEV, SUPABASE_URL: `https://${TGT}.supabase.co`, SUPABASE_ANON_KEY: "eyJ-anon-key", SUPABASE_SERVICE_ROLE_KEY: "eyJ-service-key" });
@@ -278,6 +293,78 @@ describe("the full run against a routed Supabase", () => {
     await expect(runDbCopy(["--dev-env", DEV_FILE, "--name", "enki-live"], deps)).rejects.toThrow(`"enki-live" is the live project itself; pick another --name.`);
     expect(deps.runs).toHaveLength(0);
     expect(same.calls.filter((c) => c.method !== "GET")).toHaveLength(0);
+  });
+
+  it("a failed data load truncates the copy, removes the work directory and forwards no row value from stderr", async () => {
+    const live = routedFetch({ existing: false, tableCount: 0, initialRows: 0 });
+    const deps = makeDeps({ ".env.local": envText(LIVE), [DEV_FILE]: envText(DEV) }, {
+      fetch: live.fetchImpl,
+      which: (c) => c,
+      run: async (command, args, extraEnv) => {
+        if (command === "psql" && args.some((a) => a.endsWith("data.sql"))) {
+          return { code: 3, stdout: "", stderr: `psql:C:/Temp/enki-db-copy-${TGT}/data.sql:12: ERROR:  extra data after last expected column\nCONTEXT:  COPY users, line 1: "${UUID}\tleak@real.tld"\n` };
+        }
+        return live.runImpl(command, args, extraEnv);
+      },
+    });
+    const error = await runDbCopy(["--dev-env", DEV_FILE], deps).catch((e: Error) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe("psql loading the data failed (exit 3): extra data after last expected column\nThe copy was truncated, so it holds no unsanitised row; run again.");
+    expect(`${(error as Error).message}\n${deps.logs.join("\n")}`).not.toContain("leak@real.tld");
+    expect(live.state.truncated).toBe(true);
+    expect(live.state.patches).toHaveLength(0);
+    expect(deps.removed).toEqual([`C:/Temp/enki-db-copy-${TGT}/schema.sql`, `C:/Temp/enki-db-copy-${TGT}`]);
+  });
+
+  it("a sanitiser failure truncates the copy; when even that fails the dev file's keys are replaced", async () => {
+    const files = { ".env.local": envText(LIVE), [DEV_FILE]: envText(DEV) };
+    const failing = routedFetch({ existing: false, tableCount: 0, initialRows: 0, selectStatus: 503 });
+    const truncated = makeDeps(files, { fetch: failing.fetchImpl, run: failing.runImpl, which: (c) => c });
+    await expect(runDbCopy(["--dev-env", DEV_FILE], truncated)).rejects.toThrow("Reading users from the copy answered 503.\nThe copy was truncated, so it holds no unsanitised row; run again.");
+    expect(failing.state.truncated).toBe(true);
+    expect(truncated.logs.some((l) => l.startsWith("report:"))).toBe(false);
+    expect(parseEnv(truncated.files[DEV_FILE]).SUPABASE_SERVICE_ROLE_KEY).toBe("eyJ-service-key");
+    expect(truncated.removed).toContain(`C:/Temp/enki-db-copy-${TGT}`);
+
+    const stuck = routedFetch({ existing: false, tableCount: 0, initialRows: 0, selectStatus: 503, truncateFails: true });
+    const marked = makeDeps(files, { fetch: stuck.fetchImpl, run: stuck.runImpl, which: (c) => c });
+    await expect(runDbCopy(["--dev-env", DEV_FILE], marked)).rejects.toThrow(`Reading users from the copy answered 503.\nThe copy still holds unsanitised production data and could not be truncated; its keys in ${DEV_FILE} were replaced with ${UNSANITISED}. Delete the project "enki-dev" in the dashboard before sharing anything.`);
+    const dev = parseEnv(marked.files[DEV_FILE]);
+    expect(dev).toMatchObject({ SUPABASE_URL: `https://${TGT}.supabase.co`, SUPABASE_ANON_KEY: UNSANITISED, SUPABASE_SERVICE_ROLE_KEY: UNSANITISED });
+    expect(dev.SUPABASE_DB_PASSWORD_DEV).toMatch(/^[A-HJ-NP-Za-km-z2-9]{32}$/);
+  });
+
+  it("checks the downloaded archive against the pinned digest before extracting anything", async () => {
+    const files = { ".env.local": envText(LIVE), [DEV_FILE]: envText(DEV) };
+    const zip = "C:/Temp/enki-pg-bin/postgresql-windows-x64-binaries.zip";
+    expect(PG_ZIP_SHA256).toMatch(/^[0-9a-f]{64}$/);
+
+    const swapped = routedFetch({ existing: false, tableCount: 0, initialRows: 0 });
+    const tampered = makeDeps(files, {
+      fetch: swapped.fetchImpl,
+      run: async (command, args, extraEnv) => { tampered.runs.push({ command, args, extraEnv }); return swapped.runImpl(command, args, extraEnv); },
+      download: async (url, dest) => { tampered.files[dest] = url; },
+      sha256File: async () => "0".repeat(64),
+    });
+    await expect(runDbCopy(["--dev-env", DEV_FILE], tampered)).rejects.toThrow(`The archive at ${PG_ZIP_URL} does not match the SHA-256 pinned in lib/dev/pg-tools.ts and was deleted; run again, or install PostgreSQL and set PG_BIN to its bin directory.`);
+    expect(tampered.files[zip]).toBe(PG_ZIP_URL);
+    expect(tampered.removed).toEqual([zip]);
+    expect(tampered.runs).toHaveLength(0);
+
+    const genuine = routedFetch({ existing: false, tableCount: 0, initialRows: 0 });
+    let extracted = false;
+    const ok = makeDeps(files, {
+      fetch: genuine.fetchImpl,
+      run: async (command, args, extraEnv) => { ok.runs.push({ command, args, extraEnv }); if (command === "tar") extracted = true; return genuine.runImpl(command, args, extraEnv); },
+      exists: (p) => (p === zip ? p in ok.files : extracted && /\/(pg_dump|psql)\.exe$/.test(p)),
+      download: async (url, dest) => { ok.files[dest] = url; },
+      sha256File: async (p) => (p === zip ? PG_ZIP_SHA256 : "not the zip"),
+    });
+    const out = await runDbCopy(["--dev-env", DEV_FILE], ok);
+    expect(ok.runs[0]).toMatchObject({ command: "tar", args: ["-xf", zip, "-C", "C:/Temp/enki-pg-bin", ...PG_ZIP_MEMBERS], extraEnv: {} });
+    expect(ok.runs[1].command).toBe(`${cacheBinDir("C:/Temp")}/pg_dump.exe`);
+    expect(ok.removed[0]).toBe(zip);
+    expect(out).toMatchObject({ targetRef: TGT, rekeyed: 1 });
   });
 
   it("schema only with --skip-data loads no data and reads no rows", async () => {

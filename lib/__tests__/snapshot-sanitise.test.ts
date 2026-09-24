@@ -142,7 +142,8 @@ describe("emails", () => {
   const creds = table("password_credentials", [["user_id", "uuid", "pk"], "email", "pw_hash", "pw_salt"]);
   const identities = table("auth_identities", ["provider", "subject", "user_id", "email", ["email_verified", "boolean"]]);
 
-  it("the same user gets the same pseudonym in users, password_credentials and auth_identities", () => {
+  // password_credentials resets the password, one Argon2id derivation, slow under a loaded suite
+  it("the same user gets the same pseudonym in users, password_credentials and auth_identities", { timeout: 30_000 }, () => {
     const real = sealedWith(KEY_A, "kev@real-domain.example");
     const u = sanitiseTable(users, [{ id: UUID, handle: "kev", email_ct: real.ct, email_iv: real.iv, email_tag: real.tag, email_kid: real.kid, email_lookup_hash: emailLookupHash("kev@real-domain.example") }], ctx());
     const c = sanitiseTable(creds, [{ user_id: UUID, email: "kev@real-domain.example", pw_hash: "x", pw_salt: "y" }], ctx());

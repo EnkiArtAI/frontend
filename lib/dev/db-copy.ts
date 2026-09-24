@@ -8,7 +8,7 @@
  * are table names, counts, project refs, statuses and the names of variables.
  */
 import { generateDbPassword, missingInputs, parseEnv, projectRef, upsertEnv, type Env } from "./env.ts";
-import { cacheBinDir, majorVersion, PG_ZIP_MEMBERS, PG_ZIP_URL, planPgTools, type PgTools } from "./pg-tools.ts";
+import { cacheBinDir, majorVersion, PG_ZIP_MEMBERS, PG_ZIP_SHA256, PG_ZIP_URL, planPgTools, type PgTools } from "./pg-tools.ts";
 import { poolerHostFromConfig, poolerUrl } from "./pooler.ts";
 import {
   EMPTIED_TABLES,
@@ -32,7 +32,9 @@ export type Deps = {
   run: (command: string, args: string[], extraEnv: Record<string, string>) => Promise<{ code: number; stdout: string; stderr: string }>;
   readFile: (path: string) => string | null;
   writeFile: (path: string, text: string) => void;
+  /** Removes a file or a whole directory; a missing path is not an error. */
   remove: (path: string) => void;
+  sha256File: (path: string) => Promise<string>;
   exists: (path: string) => boolean;
   mkdir: (path: string) => void;
   which: (command: string) => string | null;
@@ -92,6 +94,23 @@ const quoteText = (s: string) => `'${s.replace(/'/g, "''")}'`;
 
 export const rowCountsSql = (tables: string[]): string =>
   tables.map((t) => `select ${quoteText(t)} as table_name, count(*)::int as n from public.${quoteIdent(t)}`).join("\nunion all ");
+
+export const truncateSql = (tables: string[]): string => `truncate table ${tables.map((t) => `public.${quoteIdent(t)}`).join(", ")} cascade`;
+
+/**
+ * The one line of pg_dump or psql stderr that may reach the terminal: the
+ * first ERROR or FATAL message, cut before its first colon. Everything else
+ * quotes row values, the CONTEXT line of a failed COPY carries the whole row,
+ * DETAIL carries the key, "invalid input syntax for type uuid: <value>"
+ * carries the value after the colon.
+ */
+export function safeStderr(stderr: string): string {
+  const line = stderr.split(/\r?\n/).find((l) => /\b(?:ERROR|FATAL|error|fatal):/.test(l));
+  const message = line ? /\b(?:ERROR|FATAL|error|fatal):\s*([^:]*)/.exec(line)?.[1]?.trim() : "";
+  return message || "no error line in the output";
+}
+
+export const UNSANITISED = "UNSANITISED_DO_NOT_SHARE";
 
 // ---------------------------------------------------------------- PostgREST on the copy
 
@@ -222,73 +241,87 @@ export async function runDbCopy(argv: string[], deps: Deps): Promise<Summary> {
   deps.mkdir(workDir);
   const sh = async (command: string, args: string[], password: string, what: string) => {
     const r = await deps.run(command, args, { PGPASSWORD: password });
-    if (r.code !== 0) throw new Error(`${what} failed (exit ${r.code}): ${r.stderr.trim().split("\n").slice(-3).join(" ").slice(0, 400)}`);
+    if (r.code !== 0) throw new Error(`${what} failed (exit ${r.code}): ${safeStderr(r.stderr)}`);
   };
   const psqlArgs = (file: string, before?: string) => ["--variable", "ON_ERROR_STOP=1", "--quiet", ...(before ? ["--command", before] : []), "--file", file, "--dbname", targetUrl];
 
-  // 3. schema
-  const tablesBefore = (await mgmt.query<{ n: number }>(target.ref, "select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE'"))[0]?.n ?? 0;
-  if (tablesBefore > 0) {
-    log(`schema: ${tablesBefore} tables already present, skipped (delete the project to rebuild the schema)`);
-  } else {
-    const schemaFile = `${workDir}/schema.sql`;
-    await sh(pg.pgDump, ["--schema-only", "--schema=public", "--no-owner", "--no-privileges", "--file", schemaFile, "--dbname", sourceUrl], env.SUPABASE_DB_PASSWORD, "pg_dump of the schema");
-    await sh(pg.psql, psqlArgs(schemaFile), targetPassword, "psql loading the schema");
-    deps.remove(schemaFile);
-    await mgmt.query(target.ref, "notify pgrst, 'reload schema'");
-    const objects = await mgmt.query<{ kind: string; n: number }>(target.ref, OBJECTS_SQL);
-    log(`schema: ${objects.map((o) => `${o.kind} ${o.n}`).join(", ")}`);
-  }
-
-  const summary: Summary = { dryRun: false, targetRef: target.ref, emptied, elapsedMs: 0 };
-  if (opts.skipData) {
-    summary.elapsedMs = deps.now() - started;
-    log(`done in ${Math.round(summary.elapsedMs / 1000)} s (schema only)`);
-    return summary;
-  }
-
-  // 4. data
-  const tables = tablesFromColumns(await mgmt.query<{ table_name: string; column_name: string; udt_name: string; pk: boolean }>(target.ref, COLUMNS_SQL));
-  const names = tables.map((t) => t.name);
-  const counts = async () => Object.fromEntries((await mgmt.query<{ table_name: string; n: number }>(target.ref, rowCountsSql(names))).map((r) => [r.table_name, r.n]));
-  const before = await counts();
-  const populated = Object.values(before).filter((n) => n > 0).length;
-  if (populated > 0 && !opts.reset) throw new Error(`The copy already holds data in ${populated} tables; pass --reset to reload it.`);
-  if (populated > 0) {
-    await mgmt.query(target.ref, `truncate table ${names.map((n) => `public.${quoteIdent(n)}`).join(", ")} cascade`);
-    log(`reset: ${populated} tables truncated`);
-  }
-  const dataFile = `${workDir}/data.sql`;
-  const exclude = emptied.filter((t) => names.includes(t)).map((t) => `--exclude-table-data=public.${t}`);
-  await sh(pg.pgDump, ["--data-only", "--schema=public", ...exclude, "--file", dataFile, "--dbname", sourceUrl], env.SUPABASE_DB_PASSWORD, "pg_dump of the data");
-  await sh(pg.psql, psqlArgs(dataFile, "SET session_replication_role = replica"), targetPassword, "psql loading the data");
-  deps.remove(dataFile);
-  summary.rows = await counts();
-  summary.tables = names.length;
-  log(`data: ${names.length} tables, ${Object.values(summary.rows).reduce((a, b) => a + b, 0)} rows`);
-  for (const t of names) log(`  ${t} ${summary.rows[t]}${emptied.includes(t) ? " (structure only)" : ""}`);
-
-  // 5. re-key and sanitise on the copy
-  const ctx: SanitiseContext = { prodKeys, devKey, devPepperB64: dev.AUTH_PEPPER };
-  const rest = createRest(`https://${target.ref}.supabase.co`, keys.serviceRole, deps.fetch);
-  let rekeyed = 0, decryptFailures = 0, pseudonyms = 0, patchFailures = 0;
-  for (const table of tables) {
-    if (!tableNeedsSanitising(table) || summary.rows[table.name] === 0) continue;
-    const rows = await paginate((from, to) => rest.select(table, from, to));
-    const { rows: after, stats } = sanitiseTable(table, rows, ctx);
-    const patches = rows.map((r, i) => rowPatch(table, r, after[i])).filter((p) => p !== null);
-    const failures = new Map<string, number>();
-    for (let i = 0; i < patches.length; i += 8) {
-      const results = await Promise.all(patches.slice(i, i + 8).map((p) => rest.patch(table, p.filter, p.body)));
-      for (const r of results) if (r) failures.set(r, (failures.get(r) ?? 0) + 1);
+  try {
+    // 3. schema
+    const tablesBefore = (await mgmt.query<{ n: number }>(target.ref, "select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE'"))[0]?.n ?? 0;
+    if (tablesBefore > 0) {
+      log(`schema: ${tablesBefore} tables already present, skipped (delete the project to rebuild the schema)`);
+    } else {
+      const schemaFile = `${workDir}/schema.sql`;
+      await sh(pg.pgDump, ["--schema-only", "--schema=public", "--no-owner", "--file", schemaFile, "--dbname", sourceUrl], env.SUPABASE_DB_PASSWORD, "pg_dump of the schema");
+      await sh(pg.psql, psqlArgs(schemaFile), targetPassword, "psql loading the schema");
+      deps.remove(schemaFile);
+      await mgmt.query(target.ref, "notify pgrst, 'reload schema'");
+      const objects = await mgmt.query<{ kind: string; n: number }>(target.ref, OBJECTS_SQL);
+      log(`schema: ${objects.map((o) => `${o.kind} ${o.n}`).join(", ")}`);
     }
-    const failed = [...failures.values()].reduce((a, b) => a + b, 0);
-    rekeyed += stats.rekeyed; decryptFailures += stats.decryptFailures; pseudonyms += stats.pseudonyms; patchFailures += failed;
-    log(`  ${table.name}: ${rows.length} rows, ${stats.rekeyed} envelopes re-keyed, ${stats.decryptFailures} undecryptable, ${stats.pseudonyms} pseudonymised, ${patches.length} patched${failed ? `, ${failed} failed (${[...failures.keys()].join("; ")})` : ""}`);
+
+    const summary: Summary = { dryRun: false, targetRef: target.ref, emptied, elapsedMs: 0 };
+    if (opts.skipData) {
+      summary.elapsedMs = deps.now() - started;
+      log(`done in ${Math.round(summary.elapsedMs / 1000)} s (schema only)`);
+      return summary;
+    }
+
+    // 4. data
+    const tables = tablesFromColumns(await mgmt.query<{ table_name: string; column_name: string; udt_name: string; pk: boolean }>(target.ref, COLUMNS_SQL));
+    const names = tables.map((t) => t.name);
+    const counts = async () => Object.fromEntries((await mgmt.query<{ table_name: string; n: number }>(target.ref, rowCountsSql(names))).map((r) => [r.table_name, r.n]));
+    const truncateAll = () => mgmt.query(target.ref, truncateSql(names));
+    const before = await counts();
+    const populated = Object.values(before).filter((n) => n > 0).length;
+    if (populated > 0 && !opts.reset) throw new Error(`The copy already holds data in ${populated} tables; pass --reset to reload it.`);
+    if (populated > 0) {
+      await truncateAll();
+      log(`reset: ${populated} tables truncated`);
+    }
+    // From here on the copy may hold unsanitised production rows; a failure truncates it again.
+    try {
+      const dataFile = `${workDir}/data.sql`;
+      const exclude = emptied.filter((t) => names.includes(t)).map((t) => `--exclude-table-data=public.${t}`);
+      await sh(pg.pgDump, ["--data-only", "--schema=public", ...exclude, "--file", dataFile, "--dbname", sourceUrl], env.SUPABASE_DB_PASSWORD, "pg_dump of the data");
+      await sh(pg.psql, psqlArgs(dataFile, "SET session_replication_role = replica"), targetPassword, "psql loading the data");
+      deps.remove(dataFile);
+      summary.rows = await counts();
+      summary.tables = names.length;
+      log(`data: ${names.length} tables, ${Object.values(summary.rows).reduce((a, b) => a + b, 0)} rows`);
+      for (const t of names) log(`  ${t} ${summary.rows[t]}${emptied.includes(t) ? " (structure only)" : ""}`);
+
+      // 5. re-key and sanitise on the copy
+      const ctx: SanitiseContext = { prodKeys, devKey, devPepperB64: dev.AUTH_PEPPER };
+      const rest = createRest(`https://${target.ref}.supabase.co`, keys.serviceRole, deps.fetch);
+      let rekeyed = 0, decryptFailures = 0, pseudonyms = 0, patchFailures = 0;
+      for (const table of tables) {
+        if (!tableNeedsSanitising(table) || summary.rows[table.name] === 0) continue;
+        const rows = await paginate((from, to) => rest.select(table, from, to));
+        const { rows: after, stats } = sanitiseTable(table, rows, ctx);
+        const patches = rows.map((r, i) => rowPatch(table, r, after[i])).filter((p) => p !== null);
+        const failures = new Map<string, number>();
+        for (let i = 0; i < patches.length; i += 8) {
+          const results = await Promise.all(patches.slice(i, i + 8).map((p) => rest.patch(table, p.filter, p.body)));
+          for (const r of results) if (r) failures.set(r, (failures.get(r) ?? 0) + 1);
+        }
+        const failed = [...failures.values()].reduce((a, b) => a + b, 0);
+        rekeyed += stats.rekeyed; decryptFailures += stats.decryptFailures; pseudonyms += stats.pseudonyms; patchFailures += failed;
+        log(`  ${table.name}: ${rows.length} rows, ${stats.rekeyed} envelopes re-keyed, ${stats.decryptFailures} undecryptable, ${stats.pseudonyms} pseudonymised, ${patches.length} patched${failed ? `, ${failed} failed (${[...failures.keys()].join("; ")})` : ""}`);
+      }
+      const elapsedMs = deps.now() - started;
+      log(`report: project ${target.ref}, ${names.length} tables, ${rekeyed} envelopes re-keyed, ${decryptFailures} decrypt failures, ${pseudonyms} rows pseudonymised, ${emptied.length} tables structure only, ${patchFailures} patch failures, ${Math.round(elapsedMs / 1000)} s`);
+      return { ...summary, rekeyed, decryptFailures, pseudonyms, patchFailures, elapsedMs };
+    } catch (e) {
+      const cause = e instanceof Error ? e.message : String(e);
+      const truncated = await truncateAll().then(() => true, () => false);
+      if (truncated) throw new Error(`${cause}\nThe copy was truncated, so it holds no unsanitised row; run again.`);
+      writeDevEnv({ SUPABASE_ANON_KEY: UNSANITISED, SUPABASE_SERVICE_ROLE_KEY: UNSANITISED });
+      throw new Error(`${cause}\nThe copy still holds unsanitised production data and could not be truncated; its keys in ${devEnvPath} were replaced with ${UNSANITISED}. Delete the project "${opts.name}" in the dashboard before sharing anything.`);
+    }
+  } finally {
+    deps.remove(workDir);
   }
-  const elapsedMs = deps.now() - started;
-  log(`report: project ${target.ref}, ${names.length} tables, ${rekeyed} envelopes re-keyed, ${decryptFailures} decrypt failures, ${pseudonyms} rows pseudonymised, ${emptied.length} tables structure only, ${patchFailures} patch failures, ${Math.round(elapsedMs / 1000)} s`);
-  return { ...summary, rekeyed, decryptFailures, pseudonyms, patchFailures, elapsedMs };
 }
 
 async function copyExtensions(mgmt: ManagementClient, sourceRef: string, targetRef: string, log: (s: string) => void): Promise<void> {
@@ -317,6 +350,10 @@ async function ensurePgTools(tools: PgTools, deps: Deps): Promise<PgTools> {
   if (!deps.exists(zip)) {
     deps.log(`pg tools: downloading ${PG_ZIP_URL} (about 340 MB, once)`);
     await deps.download(PG_ZIP_URL, zip);
+  }
+  if ((await deps.sha256File(zip)) !== PG_ZIP_SHA256) {
+    deps.remove(zip);
+    throw new Error(`The archive at ${PG_ZIP_URL} does not match the SHA-256 pinned in lib/dev/pg-tools.ts and was deleted; run again, or install PostgreSQL and set PG_BIN to its bin directory.`);
   }
   const r = await deps.run("tar", ["-xf", zip, "-C", cacheRoot, ...PG_ZIP_MEMBERS], {});
   if (r.code !== 0 || !deps.exists(tools.pgDump) || !deps.exists(tools.psql)) {

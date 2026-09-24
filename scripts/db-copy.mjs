@@ -8,8 +8,8 @@
 // file system, child processes and network. Secrets travel in memory and in the
 // child environment (PGPASSWORD), never on a command line or in a log line.
 import { spawn, spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -37,6 +37,12 @@ const download = async (url, dest) => {
   await pipeline(Readable.fromWeb(res.body), createWriteStream(dest));
 };
 
+const sha256File = async (path) => {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  return hash.digest("hex");
+};
+
 runDbCopy(process.argv.slice(2), {
   fetch,
   run,
@@ -44,7 +50,8 @@ runDbCopy(process.argv.slice(2), {
   download,
   readFile: (p) => (existsSync(p) ? readFileSync(p, "utf8") : null),
   writeFile: (p, text) => writeFileSync(p, text, { mode: 0o600 }),
-  remove: (p) => rmSync(p, { force: true }),
+  remove: (p) => rmSync(p, { recursive: true, force: true }),
+  sha256File,
   exists: existsSync,
   mkdir: (p) => mkdirSync(p, { recursive: true }),
   tmpdir: tmpdir().replace(/\\/g, "/"),
