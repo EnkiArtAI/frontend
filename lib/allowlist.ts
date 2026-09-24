@@ -44,6 +44,18 @@ export async function isEmailAllowed(supabase: Supabase, email: string): Promise
   return !!data;
 }
 
+/** X usernames are case-insensitive; the list stores them lowercased, no @. */
+export async function isXHandleAllowed(supabase: Supabase, handle: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("access_allowlist")
+    .select("id")
+    .eq("kind", "x")
+    .eq("value", handle.trim().replace(/^@/, "").toLowerCase())
+    .maybeSingle();
+  if (isDbUnreachable(error)) throw new DbUnreachableError();
+  return !!data;
+}
+
 // Grants app access after a whitelisted login by setting the gate cookie the
 // proxy checks. No-op when the whitelist stage is off. httpOnly so page JS
 // can't read it (same as /api/gate).
