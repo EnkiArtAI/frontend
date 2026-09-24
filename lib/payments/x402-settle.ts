@@ -215,28 +215,39 @@ export function cosignAsFeePayer(tx: VersionedTransaction, feePayer: Keypair): s
  * recent-blockhash transaction, and preflight simulation is what rejects a
  * forged client signature or an empty payer balance before anything lands.
  */
+export type SubmitOutcome =
+  | { ok: true; signature: string }
+  /** `kind` is a class name, safe to persist; `error` may quote the RPC. */
+  | { ok: false; kind: string; error: string; signature?: string };
+
 export async function submitAndConfirm(
   connection: Connection,
-  tx: VersionedTransaction,
+  tx: { serialize(): Uint8Array },
   timeoutMs = 45_000,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<SubmitOutcome> {
   let signature: string;
   try {
     signature = await connection.sendRawTransaction(Buffer.from(tx.serialize()), { maxRetries: 3 });
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Transaction submission failed" };
+    return {
+      ok: false,
+      kind: e instanceof Error ? e.name : "Error",
+      error: e instanceof Error ? e.message : "Transaction submission failed",
+    };
   }
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const st = await connection.getSignatureStatuses([signature]);
     const s = st.value[0];
-    if (s?.err) return { ok: false, error: `Transaction failed on-chain: ${JSON.stringify(s.err)}` };
+    if (s?.err) {
+      return { ok: false, kind: "TransactionError", error: `Transaction failed on-chain: ${JSON.stringify(s.err)}`, signature };
+    }
     if (s && (s.confirmationStatus === "confirmed" || s.confirmationStatus === "finalized")) {
-      return { ok: true };
+      return { ok: true, signature };
     }
     await new Promise((r) => setTimeout(r, 1_500));
   }
-  return { ok: false, error: "Timed out waiting for confirmation" };
+  return { ok: false, kind: "ConfirmTimeout", error: "Timed out waiting for confirmation", signature };
 }
 
 /** The X-PAYMENT-RESPONSE header body the spec asks for on success. */
