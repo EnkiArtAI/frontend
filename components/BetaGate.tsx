@@ -16,7 +16,7 @@ import { usePathname } from "next/navigation";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import AccessGate from "@/components/enki-shell/AccessGate";
 
-const PUBLIC_PATHS = new Set(["/", "/landing", "/gate", "/guardian", "/reset-password"]);
+const PUBLIC_PATHS = new Set(["/", "/landing", "/gate", "/guardian", "/reset-password", "/auth/complete"]);
 const BETA_ROLES = new Set(["beta", "mod", "admin"]);
 
 /** Profile bits the gate check already fetches — pages (profile) reuse them

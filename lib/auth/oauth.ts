@@ -4,6 +4,9 @@ import { SignJWT, createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jo
 import { isEmailAllowed, isXHandleAllowed, whitelistStageActive } from "@/lib/allowlist";
 import { encryptString } from "@/lib/crypto";
 import { activeBanFor } from "@/lib/session-user";
+import { sanitizeNext, type OAuthErrorCode } from "@/lib/auth/oauth-shared";
+
+export { DEFAULT_NEXT, ERROR_SENTENCES, sanitizeNext, type OAuthErrorCode } from "@/lib/auth/oauth-shared";
 
 /**
  * Sign in with Google and X on our own session model (Kev, 2026-09-23/24).
@@ -25,7 +28,6 @@ export const isProvider = (p: string): p is Provider => (PROVIDERS as readonly s
 
 export type Intent = { kind: "login" } | { kind: "link"; userId: string };
 
-export type OAuthErrorCode = "not_whitelisted" | "provider_error" | "state_mismatch" | "already_linked" | "not_configured";
 export class OAuthError extends Error {
   constructor(public readonly code: OAuthErrorCode, detail?: string) {
     super(detail ?? code);
@@ -61,17 +63,6 @@ function providerConfig(provider: Provider): { clientId: string; clientSecret: s
 
 export const appUrl = (): string => (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3008").replace(/\/$/, "");
 export const redirectUri = (provider: Provider): string => `${appUrl()}/api/auth/oauth/${provider}/callback`;
-
-/**
- * The only shape a return path may take: one leading slash, then anything but
- * a second slash or backslash (a scheme relative //evil.example is a redirect
- * off site) and no whitespace. Everything else goes to /home.
- */
-export const DEFAULT_NEXT = "/home";
-export function sanitizeNext(raw: unknown): string {
-  if (typeof raw !== "string" || raw.length > 512) return DEFAULT_NEXT;
-  return /^\/(?![/\\])\S*$/.test(raw) ? raw : DEFAULT_NEXT;
-}
 
 // ── state cookie ───────────────────────────────────────────────────────────
 export const STATE_COOKIE = "enki_oauth";
@@ -406,13 +397,3 @@ export async function resolveIdentity(supabase: SupabaseClient, id: ProviderIden
   const banned = !!(await activeBanFor(supabase, userId));
   return { userId, banned, allowlisted: allowlisted && !banned };
 }
-
-/** What /auth/complete shows for each refusal. */
-export const ERROR_SENTENCES: Record<OAuthErrorCode | "network_blocked", string> = {
-  not_whitelisted: "This account is not on the access list yet. Request access to join.",
-  provider_error: "The sign in with the provider did not complete. Please try again.",
-  state_mismatch: "This sign in link is no longer valid. Please start again.",
-  already_linked: "That account is already connected to another user.",
-  not_configured: "This sign in method is not configured on this server yet.",
-  network_blocked: "Access from this network is blocked.",
-};

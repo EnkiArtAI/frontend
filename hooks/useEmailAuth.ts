@@ -24,6 +24,14 @@ async function post(path: string, body: unknown) {
   return data as { token?: string; expiresAt?: string; email?: string; banned?: boolean };
 }
 
+/** Persist a fresh session the way every login path does (password, provider). */
+export function storeSession(data: { token?: string; email?: string }) {
+  if (data.token) localStorage.setItem(TOKEN_KEY, data.token);
+  if (data.email) localStorage.setItem(EMAIL_KEY, data.email);
+  window.dispatchEvent(new Event(EVENT));
+}
+const store = storeSession;
+
 export function useEmailAuth() {
   const [email, setEmail] = useState<string | null>(null);
 
@@ -37,12 +45,6 @@ export function useEmailAuth() {
       window.removeEventListener("storage", sync);
     };
   }, []);
-
-  const store = (data: { token?: string; email?: string }) => {
-    if (data.token) localStorage.setItem(TOKEN_KEY, data.token);
-    if (data.email) localStorage.setItem(EMAIL_KEY, data.email);
-    window.dispatchEvent(new Event(EVENT));
-  };
 
   const register = useCallback(async (e: string, password: string) => {
     store(await post("/api/auth/password/register", { email: e, password }));

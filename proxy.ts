@@ -62,6 +62,9 @@ function isPublic(pathname: string): boolean {
   ) {
     return true;
   }
+  // Sign in with Google or X: the provider redirects back here with no cookie
+  // yet, and /auth/complete is where the callback hands the session over.
+  if (pathname.startsWith("/api/auth/oauth/") || pathname === "/auth/complete") return true;
   // Framework internals + asset folders
   if (
     pathname.startsWith("/_next/") ||
