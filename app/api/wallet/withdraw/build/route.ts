@@ -1,7 +1,7 @@
 /**
  * POST /api/wallet/withdraw/build — { to, amountMicro? | all? }
  * → { requestId, transaction (base64, fee payer signed), amountMicro, to,
- *    from, expiresInSec }. The client signs `transaction` in the wallet and
+ *    from, chain, expiresInSec }. The client signs `transaction` in the wallet and
  * posts it to /submit. Nothing moves here.
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -10,7 +10,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { getClientIp, hashIp } from "@/lib/ip-hash";
 import { getUsdcBalance } from "@/lib/usdc-balance";
-import { feePayerKeypair, solanaConnection, usdcMint } from "@/lib/payments/solana";
+import { feePayerKeypair, solanaChainKey, solanaConnection, usdcMint } from "@/lib/payments/solana";
 import {
   WITHDRAW_TTL_MS,
   TABLE_MISSING,
@@ -80,6 +80,7 @@ export async function POST(req: NextRequest) {
       amountMicro,
       to: to!.toBase58(),
       from: who.from,
+      chain: solanaChainKey(),
       expiresInSec: WITHDRAW_TTL_MS / 1000,
     });
   } catch (e) {
