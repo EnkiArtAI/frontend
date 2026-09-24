@@ -4,6 +4,7 @@ import { encryptString, decryptString } from "@/lib/crypto";
 import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
 import { extractTags, mergeTags } from "@/lib/search/tags";
+import { isFreePrompt } from "@/lib/prompt-visibility";
 
 type VariableType =
   | "text"
@@ -288,14 +289,17 @@ export async function POST(req: Request) {
     // (re-saving used to null it), and inserts get the session-resolved
     // creator below — body.userId is ignored entirely.
     const clientPromptType = body.promptType ?? "create-now";
+    const dbPromptType = PROMPT_TYPE_TO_DB[clientPromptType] ?? clientPromptType;
+    const isFreeShowcase = Boolean(body.isFreeShowcase ?? false);
 
     /* Search tags (Kev, 2026-09-24: zero cost search). The vocabulary matcher
        runs HERE, on the plaintext the client sent, before it is encrypted:
        only canonical vocabulary tags reach prompts.tags, never a word of the
        body itself. Title, variable names and option values are matched in
-       full; the body is matched with the paid rules when the prompt is
-       sold, so a buyer's product keeps its colours, framing and technique
-       to itself. The creator's own tags stay first. */
+       full; the body is matched with the paid rules whenever the viewer
+       would not see it in the clear (the same rule GET /api/prompts/[id]
+       decrypts by), so a buyer's product keeps its colours, framing and
+       technique to itself. The creator's own tags stay first. */
     const variableText = (Array.isArray(body.variables) ? body.variables : [])
       .flatMap((v) => [
         v.name,
@@ -308,7 +312,7 @@ export async function POST(req: Request) {
     const searchTags = mergeTags(tags, [
       ...extractTags(`${body.title}\n${variableText}`),
       ...extractTags(body.content, {
-        paid: (PROMPT_TYPE_TO_DB[clientPromptType] ?? clientPromptType) === "paid",
+        paid: !isFreePrompt({ prompt_type: dbPromptType, is_free_showcase: isFreeShowcase }),
       }),
     ]);
 
@@ -326,10 +330,10 @@ export async function POST(req: Request) {
         typeof body.price === "number" ? Math.round(body.price * 100) : 100,
       aspect_ratio: body.aspectRatio ?? null,
       photo_count: typeof body.photoCount === "number" ? body.photoCount : 1,
-      prompt_type: PROMPT_TYPE_TO_DB[clientPromptType] ?? clientPromptType,
+      prompt_type: dbPromptType,
       showcase_images: uploadedPhotos,
       resolution: body.resolution ?? null,
-      is_free_showcase: Boolean(body.isFreeShowcase ?? false),
+      is_free_showcase: isFreeShowcase,
       public_prompt_text: body.content.slice(0, 220),
       updated_at: nowIso,
       /* Lineage (Kev, 2026-08-24): a prompt built via "put prompt to

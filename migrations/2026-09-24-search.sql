@@ -8,7 +8,12 @@
 --            encrypted_content / _iv / _tag / _kid text.
 --            12 rows, 2 listed + active + undeleted. tags is [] on every row.
 --   users:   id uuid, handle public.citext, display_name text, avatar_url text,
---            account_status text ('active' on all 28), deleted_at timestamptz.
+--            account_status text ('active' on all 28), deleted_at timestamptz,
+--            is_creator boolean (1 true against 2 users with listed prompts,
+--            so it is NOT maintained and NOT used below).
+--   bans:    user_id uuid, expires_at timestamptz, lifted_at timestamptz
+--            (0 rows). A ban never delists prompts, so every function below
+--            excludes a banned creator itself.
 --   prompts.search_tsv: absent (42703). search_prompts(): absent (PGRST202).
 --   Extension availability is not visible through PostgREST; pg_trgm ships
 --   with Supabase. unaccent is deliberately NOT used: unaccent() is STABLE,
@@ -56,6 +61,10 @@ AS $$
   WHERE p.is_listed = true
     AND p.deleted_at IS NULL
     AND p.listing_status = 'active'
+    AND NOT EXISTS (SELECT 1 FROM bans b
+                    WHERE b.user_id = p.creator_id
+                      AND b.lifted_at IS NULL
+                      AND (b.expires_at IS NULL OR b.expires_at > now()))
     AND (p.search_tsv @@ websearch_to_tsquery('english', q)
          OR similarity(lower(p.title), lower(q)) > 0.3)
   ORDER BY 2 DESC, coalesce(p.opens, 0) DESC, p.id
@@ -73,6 +82,10 @@ AS $$
   WHERE p.is_listed = true
     AND p.deleted_at IS NULL
     AND p.listing_status = 'active'
+    AND NOT EXISTS (SELECT 1 FROM bans b
+                    WHERE b.user_id = p.creator_id
+                      AND b.lifted_at IS NULL
+                      AND (b.expires_at IS NULL OR b.expires_at > now()))
     AND (lower(p.title) LIKE lower(replace(replace(replace(q, '\', '\\'), '%', '\%'), '_', '\_')) || '%'
          OR similarity(lower(p.title), lower(q)) > 0.3)
   ORDER BY (lower(p.title) LIKE lower(replace(replace(replace(q, '\', '\\'), '%', '\%'), '_', '\_')) || '%') DESC,
@@ -82,8 +95,9 @@ AS $$
   LIMIT lim
 $$;
 
--- Active creators by handle or display name. Returns only the public
--- profile fields a result card shows.
+-- Active creators by handle or display name: only users with a listed
+-- prompt, so a buyer who never published is not enumerable by prefix.
+-- Returns only the public profile fields a result card shows.
 CREATE OR REPLACE FUNCTION search_creators(q text, lim int)
 RETURNS TABLE (id uuid, handle text, display_name text, avatar_url text)
 LANGUAGE sql STABLE SECURITY INVOKER
@@ -92,6 +106,15 @@ AS $$
   FROM users u
   WHERE u.account_status = 'active'
     AND u.deleted_at IS NULL
+    AND EXISTS (SELECT 1 FROM prompts p
+                WHERE p.creator_id = u.id
+                  AND p.is_listed = true
+                  AND p.deleted_at IS NULL
+                  AND p.listing_status = 'active')
+    AND NOT EXISTS (SELECT 1 FROM bans b
+                    WHERE b.user_id = u.id
+                      AND b.lifted_at IS NULL
+                      AND (b.expires_at IS NULL OR b.expires_at > now()))
     AND (lower(u.handle::text) LIKE lower(replace(replace(replace(q, '\', '\\'), '%', '\%'), '_', '\_')) || '%'
          OR similarity(lower(u.handle::text), lower(q)) > 0.3
          OR similarity(lower(coalesce(u.display_name, '')), lower(q)) > 0.3)

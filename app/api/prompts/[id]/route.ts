@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { decryptString } from "@/lib/crypto";
 import { requireAuth } from "@/lib/auth";
+import { isFreePrompt } from "@/lib/prompt-visibility";
 
 type PatchBody = {
   title?: string;
@@ -111,10 +112,7 @@ export async function GET(
     });
 
     const dbPromptType = String(prompt.prompt_type ?? "");
-    const isFree =
-      dbPromptType === "showcase" ||
-      dbPromptType === "free" ||
-      prompt.is_free_showcase === true;
+    const isFree = isFreePrompt({ prompt_type: dbPromptType, is_free_showcase: prompt.is_free_showcase === true });
 
     // Free/showcase prompts show their full text; decryption goes through
     // lib/crypto's keyring (the kid names the key that wrote the row). Paid

@@ -93,6 +93,18 @@ describe("shell search wiring", () => {
     expect(filters).not.toMatch(/placeholder="[^"]*tags/i);
     expect(filters).not.toMatch(/item\.tags|\.tags\b/);
   });
+  it("picking a title leaves the list hidden and a ?q= page load shows none", () => {
+    // push() sets dismissed=false; in one event the last set wins, so the
+    // dismissal must follow the push or the pick reopens the list.
+    const m = filters.match(/const choose = \(item: SuggestItem\) => \{([\s\S]*?)\n  \};/);
+    expect(m, "choose not found").not.toBeNull();
+    const body = m![1];
+    const pushAt = body.indexOf("push(item.label)");
+    const dismissAt = body.indexOf("setDismissed(true)");
+    expect(pushAt).toBeGreaterThan(-1);
+    expect(dismissAt).toBeGreaterThan(pushAt);
+    expect(filters).toMatch(/const \[dismissed, setDismissed\] = useState\(true\);/);
+  });
   it("the typeahead is keyboard driven", () => {
     for (const key of ["ArrowDown", "ArrowUp", "Enter", "Escape"]) expect(filters).toContain(`"${key}"`);
     expect(filters).toMatch(/stepActive\(active,/);

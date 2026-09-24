@@ -204,10 +204,11 @@ function SearchChip({ open, setOpen }: { open: boolean; setOpen: (v: boolean | (
   /* Typeahead: titles and creators from /api/search/suggest, a debounce
      after each keystroke, the stale request aborted. Titles only, tags stay
      invisible (Kev). `dismissed` hides the list after Enter, Escape, a pick
-     or blur until the next keystroke. */
+     or blur until the next keystroke or focus; it starts hidden so a page
+     loaded with ?q= shows no list until the user touches the field. */
   const [items, setItems] = useState<SuggestItem[]>([]);
   const [active, setActive] = useState(-1);
-  const [dismissed, setDismissed] = useState(false);
+  const [dismissed, setDismissed] = useState(true);
   useEffect(() => {
     const q = query.trim();
     const ctrl = new AbortController();
@@ -255,10 +256,12 @@ function SearchChip({ open, setOpen }: { open: boolean; setOpen: (v: boolean | (
     };
   }, []);
 
+  /* push() shows the list again; the dismissal must come AFTER it, the
+     last set in one event wins, or picking a title reopens the list. */
   const choose = (item: SuggestItem) => {
-    setDismissed(true);
     if (item.kind === "title") push(item.label);
     else openCreator(item.handle, router);
+    setDismissed(true);
   };
 
   return (

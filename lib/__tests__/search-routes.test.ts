@@ -137,6 +137,32 @@ describe("no encrypted column reaches search", () => {
   });
 });
 
+describe("the SQL functions hide banned creators and users who never published", () => {
+  const sql = read("migrations", "2026-09-24-search.sql").replace(/--[^\n]*/g, "");
+  const fn = (name: string) => {
+    const m = sql.match(new RegExp("CREATE OR REPLACE FUNCTION " + name + "\\([\\s\\S]*?\\n\\$\\$;"));
+    expect(m, name).not.toBeNull();
+    return m![0];
+  };
+  const BAN = /AND NOT EXISTS \(SELECT 1 FROM bans b\s+WHERE b\.user_id = (p\.creator_id|u\.id)\s+AND b\.lifted_at IS NULL\s+AND \(b\.expires_at IS NULL OR b\.expires_at > now\(\)\)\)/;
+
+  it.each([
+    ["search_prompts", "p.creator_id"],
+    ["suggest_titles", "p.creator_id"],
+    ["search_creators", "u.id"],
+  ])("%s excludes a creator with an unlifted, unexpired ban", (name, owner) => {
+    const m = fn(name).match(BAN);
+    expect(m, name).not.toBeNull();
+    expect(m![1]).toBe(owner);
+  });
+
+  it("search_creators lists only users with a listed, active, undeleted prompt", () => {
+    expect(fn("search_creators")).toMatch(
+      /AND EXISTS \(SELECT 1 FROM prompts p\s+WHERE p\.creator_id = u\.id\s+AND p\.is_listed = true\s+AND p\.deleted_at IS NULL\s+AND p\.listing_status = 'active'\)/,
+    );
+  });
+});
+
 describe("GET /api/search", () => {
   beforeEach(() => { holder.client = null; });
 
