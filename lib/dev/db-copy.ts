@@ -273,7 +273,7 @@ export async function runDbCopy(argv: string[], deps: Deps): Promise<Summary> {
   const rest = createRest(`https://${target.ref}.supabase.co`, keys.serviceRole, deps.fetch);
   let rekeyed = 0, decryptFailures = 0, pseudonyms = 0, patchFailures = 0;
   for (const table of tables) {
-    if (emptied.includes(table.name) || !tableNeedsSanitising(table) || summary.rows[table.name] === 0) continue;
+    if (!tableNeedsSanitising(table) || summary.rows[table.name] === 0) continue;
     const rows = await paginate((from, to) => rest.select(table, from, to));
     const { rows: after, stats } = sanitiseTable(table, rows, ctx);
     const patches = rows.map((r, i) => rowPatch(table, r, after[i])).filter((p) => p !== null);
