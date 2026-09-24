@@ -6,6 +6,7 @@ import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { PROMPT_CARD_SELECT, mapPromptRow, enrichPromptCards, type PromptListing } from "@/lib/marketplace/card";
 import { z } from "zod";
 
 const marketplaceFiltersSchema = z.object({
@@ -171,7 +172,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Execute search query
-    let prompts: any[] = [];
+    let prompts: PromptListing[] = [];
     try {
       const supabase = getSupabaseServerClient();
 
@@ -181,12 +182,10 @@ export async function GET(request: NextRequest) {
        * uploaded_photos — do not exist (PostgREST 400 kills the whole select).
        * Live: price_usd_cents (integer cents — the same unit minPrice/maxPrice
        * are documented in), creator_id, showcase_images (jsonb URL strings).
+       * The column list and the card shape live in lib/marketplace/card.ts,
+       * shared with /api/search.
        */
-      let dbQuery = supabase
-        .from("prompts")
-        .select(
-          "id,title,public_prompt_text,price_usd_cents,category,tags,ai_model,created_at,creator_id,showcase_images,aspect_ratio,resolution,is_free_showcase,prompt_type"
-        );
+      let dbQuery = supabase.from("prompts").select(PROMPT_CARD_SELECT);
 
       // Released prompts only. Without this a draft was on the marketplace the
       // moment it was saved — see app/api/prompts/route.ts for the same fix.
@@ -271,37 +270,7 @@ export async function GET(request: NextRequest) {
       }
 
       if (Array.isArray(dbPrompts) && dbPrompts.length > 0) {
-        prompts = dbPrompts.map((p) => ({
-          id: p.id,
-          title: p.title,
-          description: p.public_prompt_text || "",
-          promptTemplate: p.public_prompt_text || "",
-          // Integer cents straight through — the field name carries the unit
-          // and the feed adapter (enkiPromptAdapter.dollars) divides by 100.
-          priceUsdCents:
-            typeof p.price_usd_cents === "number" ? p.price_usd_cents : 0,
-          category: p.category || "",
-          tags: Array.isArray(p.tags) ? p.tags : [],
-          // No sales/rating columns exist live; 0 is the shape's default.
-          totalSales: 0,
-          avgRating: 0,
-          createdAt: p.created_at,
-          listedAt: p.created_at,
-          userId: p.creator_id,
-          previewImages: Array.isArray(p.showcase_images)
-            ? p.showcase_images.map((url: string) => ({ url }))
-            : [],
-          showcaseImages: Array.isArray(p.showcase_images)
-            ? p.showcase_images.map((url: string) => ({ url }))
-            : [],
-          aiModel: p.ai_model,
-          model: p.ai_model,
-          aspectRatio: p.aspect_ratio,
-          resolution: p.resolution,
-          isFreeShowcase: Boolean(p.is_free_showcase),
-          promptType: p.prompt_type,
-          isVideo: false,
-        }));
+        prompts = dbPrompts.map(mapPromptRow);
       }
 
     } catch (searchError) {
@@ -310,123 +279,8 @@ export async function GET(request: NextRequest) {
       console.error('Search query failed:', searchError);
     }
 
-    // Enrich with creator data and variables
-    const supabase = getSupabaseServerClient();
-
-    // Batch-fetch variables for all returned prompts. They live in
-    // prompt_variables (the bare `variables` table is a PostgREST 404);
-    // data_type is the DB enum, mapped back to the client vocabulary.
-    const VAR_TYPE_FROM_DB: Record<string, string> = {
-      reference_image: "image",
-      multi_select: "multi-select",
-      single_select: "single-select",
-    };
-    const promptIds = prompts.map((p: any) => p.id).filter(Boolean);
-    let variablesMap: Record<string, any[]> = {};
-    if (promptIds.length > 0) {
-      try {
-        const { data: varsData } = await supabase
-          .from("prompt_variables")
-          .select("prompt_id,name,label,description,data_type,default_value,is_required,position")
-          .in("prompt_id", promptIds)
-          .is("deleted_at", null)
-          .order("position", { ascending: true });
-        if (Array.isArray(varsData)) {
-          varsData.forEach((v) => {
-            const pid = String(v.prompt_id);
-            const dbType = String(v.data_type ?? "text");
-            if (!variablesMap[pid]) variablesMap[pid] = [];
-            variablesMap[pid].push({
-              name: String(v.name ?? ""),
-              label: String(v.label ?? v.name ?? ""),
-              description: String(v.description ?? ""),
-              type: VAR_TYPE_FROM_DB[dbType] ?? dbType,
-              defaultValue: v.default_value ?? null,
-              required: Boolean(v.is_required ?? false),
-              position: typeof v.position === "number" ? v.position : 0,
-            });
-          });
-        }
-      } catch (e) {
-        console.error("Variable fetch error:", e);
-      }
-    }
-
-    const enrichedPrompts = await Promise.all(
-      prompts.map(async (prompt: any) => {
-        try {
-          // Live schema: users.handle — `username` never existed, so this
-          // select 400'd and EVERY feed card shipped creator: null, which
-          // made the adapter fabricate dot-handles out of display names.
-          const { data: creatorData } = await supabase
-            .from('users')
-            .select('id, handle, display_name, avatar_url')
-            .eq('id', prompt.userId || prompt.artistId)
-            .single();
-
-          return {
-            id: prompt.id || prompt._id?.toString(),
-            title: prompt.title,
-            description: prompt.description,
-            promptTemplate: prompt.promptTemplate || prompt.description,
-            priceUsdCents: prompt.priceUsdCents,
-            licenseType: prompt.licenseType || 'personal',
-            category: prompt.category,
-            tags: prompt.tags || [],
-            totalSales: prompt.totalSales || 0,
-            totalRevenue: prompt.totalRevenue || 0,
-            avgRating: prompt.avgRating || 0,
-            ratingCount: prompt.ratingCount || 0,
-            createdAt: prompt.createdAt,
-            listedAt: prompt.listedAt,
-            creator: creatorData ? {
-              id: creatorData.id,
-              displayName: creatorData.display_name || creatorData.handle,
-              handle: creatorData.handle,
-              // Kept for older readers that still say `username`.
-              username: creatorData.handle,
-              avatarUrl: creatorData.avatar_url,
-            } : null,
-            previewImages: prompt.previewImages || prompt.showcaseImages || [],
-            showcaseImages: prompt.showcaseImages || prompt.previewImages || [],
-            model: prompt.model || prompt.aiModel,
-            aspectRatio: prompt.aspectRatio,
-            resolution: prompt.resolution,
-            isFreeShowcase: prompt.isFreeShowcase,
-            promptType: prompt.promptType,
-            isVideo: prompt.isVideo,
-            variables: variablesMap[prompt.id] || [],
-            relevanceScore: prompt.score || 0,
-          };
-        } catch (error) {
-          console.error(`Error enriching prompt ${prompt.id}:`, error);
-          return {
-            id: prompt.id || prompt._id?.toString(),
-            title: prompt.title,
-            description: prompt.description,
-            promptTemplate: prompt.promptTemplate || prompt.description,
-            priceUsdCents: prompt.priceUsdCents,
-            licenseType: prompt.licenseType || 'personal',
-            category: prompt.category,
-            tags: prompt.tags || [],
-            totalSales: prompt.totalSales || 0,
-            avgRating: prompt.avgRating || 0,
-            createdAt: prompt.createdAt,
-            listedAt: prompt.listedAt,
-            creator: null,
-            previewImages: prompt.previewImages || prompt.showcaseImages || [],
-            showcaseImages: prompt.showcaseImages || prompt.previewImages || [],
-            model: prompt.model || prompt.aiModel,
-            aspectRatio: prompt.aspectRatio,
-            resolution: prompt.resolution,
-            isFreeShowcase: prompt.isFreeShowcase,
-            promptType: prompt.promptType,
-            isVideo: prompt.isVideo,
-            variables: variablesMap[prompt.id] || [],
-          };
-        }
-      })
-    );
+    // Enrich with creator data and variables (lib/marketplace/card.ts).
+    const enrichedPrompts = await enrichPromptCards(getSupabaseServerClient(), prompts);
 
     // Calculate pagination
     const hasMore = enrichedPrompts.length === limit;

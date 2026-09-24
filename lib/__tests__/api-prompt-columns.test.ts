@@ -143,15 +143,20 @@ describe("/api/prompt writes only live prompt_variables columns", () => {
 const READ_ROUTES = {
   "app/api/prompts/route.ts": readFileSync(
     join(ROOT, "app", "api", "prompts", "route.ts"), "utf8"),
+  // The marketplace select list and card mapping moved to
+  // lib/marketplace/card.ts (shared with /api/search, 2026-09-24); the
+  // boundary is scanned across both files.
   "app/api/marketplace/prompts/route.ts": readFileSync(
-    join(ROOT, "app", "api", "marketplace", "prompts", "route.ts"), "utf8"),
+    join(ROOT, "app", "api", "marketplace", "prompts", "route.ts"), "utf8")
+    + readFileSync(join(ROOT, "lib", "marketplace", "card.ts"), "utf8"),
   "app/api/prompts/[id]/route.ts": readFileSync(
     join(ROOT, "app", "api", "prompts", "[id]", "route.ts"), "utf8"),
 } as const;
 
-/** The column list a route selects from prompts. */
+/** The column list a route selects from prompts (inline, or the shared card constant). */
 function promptsSelectOf(routeSrc: string): string {
-  const m = routeSrc.match(/\.from\("prompts"\)\s*\.select\(\s*"([^"]+)"/);
+  const m = routeSrc.match(/\.from\("prompts"\)\s*\.select\(\s*"([^"]+)"/)
+    ?? routeSrc.match(/PROMPT_CARD_SELECT =\s*"([^"]+)"/);
   expect(m, "prompts select list not found — the scan has nothing to check").not.toBeNull();
   return m![1];
 }
