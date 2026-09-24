@@ -366,6 +366,9 @@
   position: relative;
   height: 100%;
   touch-action: pan-y;
+  /* One paint unit: the badges, buttons and hover overlay that follow it in
+     the card keep stacking above both image layers. */
+  isolation: isolate;
 }
 
 .enki-curtain-before {
@@ -403,8 +406,8 @@
   vector-effect: non-scaling-stroke;
 }
 
-/* Same chip as .enki-card-badge. Input sits where the type badge is and
-   covers it while the curtain is open; Output sits in the free corner and
+/* Same chip as .enki-card-badge. Input takes the type badge's spot while the
+   curtain is open (the badge fades out); Output sits in the free corner and
    moves left when the bookmark button holds the top right. */
 .enki-curtain-tag {
   position: absolute;
@@ -434,6 +437,10 @@
 
 .enki-curtain.is-open .enki-curtain-tag-out {
   opacity: 1;
+}
+
+.enki-curtain.is-open ~ .enki-card-badge {
+  opacity: 0;
 }
 
 .enki-card-img:has(.enki-heart) .enki-curtain-tag-out {
@@ -468,6 +475,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  transition: opacity 160ms ease;
 }
 
 .enki-card-tl-hover {
