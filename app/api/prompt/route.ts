@@ -3,6 +3,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { encryptString, decryptString } from "@/lib/crypto";
 import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
+import { extractTags, mergeTags } from "@/lib/search/tags";
 
 type VariableType =
   | "text"
@@ -287,6 +288,30 @@ export async function POST(req: Request) {
     // (re-saving used to null it), and inserts get the session-resolved
     // creator below — body.userId is ignored entirely.
     const clientPromptType = body.promptType ?? "create-now";
+
+    /* Search tags (Kev, 2026-09-24: zero cost search). The vocabulary matcher
+       runs HERE, on the plaintext the client sent, before it is encrypted:
+       only canonical vocabulary tags reach prompts.tags, never a word of the
+       body itself. Title, variable names and option values are matched in
+       full; the body is matched with the paid rules when the prompt is
+       sold, so a buyer's product keeps its colours, framing and technique
+       to itself. The creator's own tags stay first. */
+    const variableText = (Array.isArray(body.variables) ? body.variables : [])
+      .flatMap((v) => [
+        v.name,
+        v.label,
+        v.defaultValue,
+        ...(v.options ?? []).flatMap((o) => [o.visibleName, o.label, o.promptValue]),
+      ])
+      .filter((s): s is string => typeof s === "string")
+      .join("\n");
+    const searchTags = mergeTags(tags, [
+      ...extractTags(`${body.title}\n${variableText}`),
+      ...extractTags(body.content, {
+        paid: (PROMPT_TYPE_TO_DB[clientPromptType] ?? clientPromptType) === "paid",
+      }),
+    ]);
+
     const promptRow = {
       title: body.title,
       encrypted_content: enc.encrypted,
@@ -294,7 +319,7 @@ export async function POST(req: Request) {
       encrypted_content_tag: enc.authTag,
       encrypted_content_kid: enc.kid,
       category: body.category ?? "",
-      tags,
+      tags: searchTags,
       ai_model: body.aiModel ?? "gemini",
       // The body sends dollars (float); the column is integer cents.
       price_usd_cents:
