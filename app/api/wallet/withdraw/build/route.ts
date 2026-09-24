@@ -1,5 +1,5 @@
 /**
- * POST /api/wallet/withdraw/build — { to, amountMicro? | all? }
+ * POST /api/wallet/withdraw/build — { from, to, amountMicro? | all? }
  * → { requestId, transaction (base64, fee payer signed), amountMicro, to,
  *    from, chain, expiresInSec }. The client signs `transaction` in the wallet and
  * posts it to /submit. Nothing moves here.
@@ -13,10 +13,11 @@ import { getUsdcBalance } from "@/lib/usdc-balance";
 import { feePayerKeypair, solanaChainKey, solanaConnection, usdcMint } from "@/lib/payments/solana";
 import {
   WITHDRAW_TTL_MS,
-  TABLE_MISSING,
+  NOT_MIGRATED,
   buildWithdrawTx,
   checkWithdrawRequest,
-  isTableMissing,
+  insertWithdrawal,
+  isNotMigrated,
   parseAmountMicro,
   parsePubkey,
   recentWithdrawalCount,
@@ -30,7 +31,7 @@ const refuse = (r: { status: number; error: string; code?: string }) =>
   NextResponse.json({ error: r.error, ...(r.code && { code: r.code }) }, { status: r.status });
 
 export async function POST(req: NextRequest) {
-  let body: { to?: unknown; amountMicro?: unknown; all?: unknown };
+  let body: { from?: unknown; to?: unknown; amountMicro?: unknown; all?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -49,7 +50,9 @@ export async function POST(req: NextRequest) {
     const balanceMicro = Math.round((await getUsdcBalance(who.from)) * 1_000_000);
     const amountMicro = body.all === true ? balanceMicro : parseAmountMicro(body.amountMicro);
     const to = parsePubkey(body.to);
-    const refusal = checkWithdrawRequest({ to, from, feePayer: feePayer.publicKey, amountMicro, balanceMicro });
+    const refusal = checkWithdrawRequest({
+      to, from, fromClaimed: body.from, feePayer: feePayer.publicKey, amountMicro, balanceMicro,
+    });
     if (refusal) return refuse(refusal);
 
     const limited = withdrawLimited(await recentWithdrawalCount(supabase, who.userId));
@@ -59,23 +62,21 @@ export async function POST(req: NextRequest) {
     const built = await buildWithdrawTx(solanaConnection(), {
       feePayer, from, to: to!, mint, amountMicro: amountMicro!,
     });
-    const { data, error } = await supabase
-      .from("withdrawals")
-      .insert({
-        user_id: who.userId,
-        from_address: who.from,
-        to_address: to!.toBase58(),
-        amount_micro: amountMicro,
-        mint: mint.toBase58(),
-        message_hash: built.messageHash,
-        ip_hash: hashIp(getClientIp(req)),
-      })
-      .select("id")
-      .single();
-    if (error) throw error;
+    if ("status" in built) return refuse(built);
+
+    const inserted = await insertWithdrawal(supabase, {
+      userId: who.userId,
+      from: who.from,
+      to: to!.toBase58(),
+      amountMicro: amountMicro!,
+      mint: mint.toBase58(),
+      messageHash: built.messageHash,
+      ipHash: hashIp(getClientIp(req)),
+    });
+    if ("status" in inserted) return refuse(inserted);
 
     return NextResponse.json({
-      requestId: data.id,
+      requestId: inserted.id,
       transaction: built.transaction,
       amountMicro,
       to: to!.toBase58(),
@@ -84,7 +85,7 @@ export async function POST(req: NextRequest) {
       expiresInSec: WITHDRAW_TTL_MS / 1000,
     });
   } catch (e) {
-    if (isTableMissing(e)) return refuse(TABLE_MISSING);
+    if (isNotMigrated(e)) return refuse(NOT_MIGRATED);
     if (isDbUnreachable(e)) return dbUnavailableResponse();
     console.error("[wallet/withdraw/build]", e instanceof Error ? e.message : e);
     return NextResponse.json({ error: "Could not prepare the withdrawal" }, { status: 500 });

@@ -12,10 +12,11 @@ import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { feePayerKeypair, solanaConnection } from "@/lib/payments/solana";
 import { submitAndConfirm } from "@/lib/payments/x402-settle";
 import {
-  TABLE_MISSING,
+  NOT_MIGRATED,
   isExpired,
-  isTableMissing,
+  isNotMigrated,
   resolveWithdrawer,
+  transactionDead,
   verifySignedWithdrawal,
 } from "@/lib/payments/withdraw";
 
@@ -72,16 +73,26 @@ export async function POST(req: NextRequest) {
       .select("id");
     if (!claimed?.length) return NextResponse.json({ error: "Withdrawal is already submitted" }, { status: 409 });
 
-    const outcome = await submitAndConfirm(solanaConnection(), verified.tx);
+    const connection = solanaConnection();
+    const outcome = await submitAndConfirm(connection, verified.tx);
     if (!outcome.ok) {
+      // Safe to redo when nothing moved: a refused send, an on-chain failure
+      // (rolled back), or a timeout whose blockhash has since expired. A
+      // timeout on a live blockhash, or a status read that failed, may still land.
+      const dead = outcome.kind === "ConfirmTimeout" && (await transactionDead(connection, verified.tx));
+      const retryable = !outcome.signature || outcome.kind === "TransactionError" || dead;
       await supabase
         .from("withdrawals")
-        .update({ status: "failed", error: outcome.kind, tx_signature: outcome.signature ?? null })
+        .update({ status: "failed", error: dead ? "Dropped" : outcome.kind, tx_signature: outcome.signature ?? null })
         .eq("id", row.id);
-      // A confirmation timeout may still land; only a refused send is safe to redo.
-      const retryable = !outcome.signature;
       return NextResponse.json(
-        { error: retryable ? "The network refused the transfer, nothing moved" : "The transfer could not be confirmed", retryable, signature: outcome.signature },
+        {
+          error: retryable
+            ? `The network ${dead ? "dropped" : "refused"} the transfer, nothing moved`
+            : "The transfer could not be confirmed",
+          retryable,
+          signature: outcome.signature,
+        },
         { status: 502 },
       );
     }
@@ -92,7 +103,7 @@ export async function POST(req: NextRequest) {
       .eq("id", row.id);
     return NextResponse.json({ signature: outcome.signature });
   } catch (e) {
-    if (isTableMissing(e)) return NextResponse.json({ error: TABLE_MISSING.error, code: TABLE_MISSING.code }, { status: TABLE_MISSING.status });
+    if (isNotMigrated(e)) return NextResponse.json({ error: NOT_MIGRATED.error, code: NOT_MIGRATED.code }, { status: NOT_MIGRATED.status });
     if (isDbUnreachable(e)) return dbUnavailableResponse();
     console.error("[wallet/withdraw/submit]", e instanceof Error ? e.message : e);
     return NextResponse.json({ error: "Could not submit the withdrawal" }, { status: 500 });

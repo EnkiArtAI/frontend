@@ -7,7 +7,8 @@ import {
   TOKEN_PROGRAM_ID, createTransferCheckedInstruction, getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import { ComputeBudgetProgram } from "@solana/web3.js";
-import { parseXPayment, verifyAgentPayment, cosignAsFeePayer } from "@/lib/payments/x402-settle";
+import type { Connection } from "@solana/web3.js";
+import { parseXPayment, verifyAgentPayment, cosignAsFeePayer, submitAndConfirm } from "@/lib/payments/x402-settle";
 
 /**
  * Every reject rule in verifyAgentPayment guards the fee payer's key or the
@@ -251,5 +252,31 @@ describe("cosignAsFeePayer", () => {
       return cosignAsFeePayer(tx, feePayer);
     };
     expect(mk()).toBe(mk());
+  });
+});
+
+describe("submitAndConfirm", () => {
+  const SIG = "5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW";
+  const tx = { serialize: () => new Uint8Array([1, 2, 3]) };
+  const conn = (statuses: () => Promise<unknown>) =>
+    ({ sendRawTransaction: async () => SIG, getSignatureStatuses: statuses }) as unknown as Connection;
+
+  it("confirms once the status says so", async () => {
+    const c = conn(async () => ({ value: [{ confirmationStatus: "confirmed", err: null }] }));
+    expect(await submitAndConfirm(c, tx, 5_000)).toEqual({ ok: true, signature: SIG });
+  });
+
+  it("keeps the signature when the status read fails after the broadcast", async () => {
+    const c = conn(async () => { throw new Error("429 Too Many Requests"); });
+    const outcome = await submitAndConfirm(c, tx, 5_000);
+    expect(outcome.ok).toBe(false);
+    expect(outcome).toMatchObject({ signature: SIG, error: expect.stringMatching(/429/) });
+  });
+
+  it("has no signature when the send itself is refused", async () => {
+    const c = { sendRawTransaction: async () => { throw new Error("Blockhash not found"); } } as unknown as Connection;
+    const outcome = await submitAndConfirm(c, tx, 5_000);
+    expect(outcome).toMatchObject({ ok: false, error: expect.stringMatching(/Blockhash/) });
+    expect("signature" in outcome && outcome.signature).toBeFalsy();
   });
 });

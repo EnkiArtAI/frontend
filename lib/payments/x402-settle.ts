@@ -235,17 +235,29 @@ export async function submitAndConfirm(
       error: e instanceof Error ? e.message : "Transaction submission failed",
     };
   }
+  // The signature travels with every failure past this point: the broadcast
+  // happened, so a status read that fails must not lose the one handle the
+  // caller has on the transaction.
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const st = await connection.getSignatureStatuses([signature]);
-    const s = st.value[0];
-    if (s?.err) {
-      return { ok: false, kind: "TransactionError", error: `Transaction failed on-chain: ${JSON.stringify(s.err)}`, signature };
+  try {
+    while (Date.now() < deadline) {
+      const st = await connection.getSignatureStatuses([signature]);
+      const s = st.value[0];
+      if (s?.err) {
+        return { ok: false, kind: "TransactionError", error: `Transaction failed on-chain: ${JSON.stringify(s.err)}`, signature };
+      }
+      if (s && (s.confirmationStatus === "confirmed" || s.confirmationStatus === "finalized")) {
+        return { ok: true, signature };
+      }
+      await new Promise((r) => setTimeout(r, 1_500));
     }
-    if (s && (s.confirmationStatus === "confirmed" || s.confirmationStatus === "finalized")) {
-      return { ok: true, signature };
-    }
-    await new Promise((r) => setTimeout(r, 1_500));
+  } catch (e) {
+    return {
+      ok: false,
+      kind: e instanceof Error ? e.name : "StatusUnavailable",
+      error: e instanceof Error ? e.message : "Confirmation status unavailable",
+      signature,
+    };
   }
   return { ok: false, kind: "ConfirmTimeout", error: "Timed out waiting for confirmation", signature };
 }
