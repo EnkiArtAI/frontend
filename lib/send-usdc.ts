@@ -59,6 +59,8 @@ export function withdrawErrorMessage(f: WithdrawFailure, fallback: string): stri
   const serverText = typeof f.body?.error === "string" ? f.body.error : null;
   if (code === "INSUFFICIENT_FUNDS") return "This wallet does not hold that much USDC.";
   if (code === "RATE_LIMITED") return "You have reached the hourly limit for sends, try again later.";
+  if (code === "NO_RECIPIENT_ACCOUNT") return "That wallet has never held USDC. It needs to receive USDC from an exchange or another wallet first.";
+  if (code === "FROM_MISMATCH") return "The signed in wallet is not the one shown here, reload and try again.";
   if (code === "EXPIRED") return "Signing took too long, start again.";
   if (code === "WITHDRAWALS_NOT_MIGRATED") return serverText ?? fallback;
   if (f.status === 401) return "Your session has ended, sign in again to send.";

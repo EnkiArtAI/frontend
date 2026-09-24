@@ -61,7 +61,9 @@ export default function SendUsdcPanel({ fromAddress, onSent }: { fromAddress: st
   const [amount, setAmount] = useState("");
   const [all, setAll] = useState(false);
   const [step, setStep] = useState<Step>({ kind: "form" });
-  const [error, setError] = useState<string | null>(null);
+  // `explorer` is set when the server answered with a signature: the transfer
+  // may have landed, and the user must be able to check.
+  const [error, setError] = useState<{ text: string; explorer: string | null } | null>(null);
 
   const toTrimmed = to.trim();
   const toValid = toTrimmed.length > 0 && isSolanaAddress(toTrimmed) && toTrimmed !== fromAddress;
@@ -90,16 +92,22 @@ export default function SendUsdcPanel({ fromAddress, onSent }: { fromAddress: st
 
   const send = async () => {
     setError(null);
+    // The signer is settled BEFORE /build: every build costs an hourly slot
+    // and a fee payer signature, so a wallet that cannot sign must not get one.
+    const sign = signerFor(fromAddress);
+    if (!sign) {
+      setError({ text: "Connect the wallet that holds this balance, or sign in with your Enki wallet, to sign the transfer.", explorer: null });
+      return;
+    }
     setStep({ kind: "busy", label: "Preparing the transfer" });
+    let explorer: string | null = null;
     try {
-      const build = await post("/api/wallet/withdraw/build", all ? { to: toTrimmed, all: true } : { to: toTrimmed, amountMicro });
+      const request = { from: fromAddress, to: toTrimmed, ...(all ? { all: true } : { amountMicro }) };
+      const build = await post("/api/wallet/withdraw/build", request);
       if (!build.res.ok || !build.json?.transaction) {
         throw new Error(withdrawErrorMessage({ status: build.res.status, body: build.json }, "Could not prepare the transfer, nothing moved."));
       }
       const built = build.json as unknown as Built;
-      if (built.from !== fromAddress) throw new Error("The signed in wallet is not the one shown here, reload and try again.");
-      const sign = signerFor(built.from);
-      if (!sign) throw new Error("Connect the wallet that holds this balance, or sign in with your Enki wallet, to sign the transfer.");
 
       setStep({ kind: "busy", label: "Waiting for your wallet to sign" });
       let signed: string;
@@ -112,6 +120,8 @@ export default function SendUsdcPanel({ fromAddress, onSent }: { fromAddress: st
       setStep({ kind: "busy", label: "Sending on the network" });
       const submit = await post("/api/wallet/withdraw/submit", { requestId: built.requestId, signedTransaction: signed });
       if (!submit.res.ok || typeof submit.json?.signature !== "string") {
+        // A failed submit that still names a signature is one that may have landed.
+        if (typeof submit.json?.signature === "string" && submit.json.retryable !== true) explorer = explorerTxUrl(built.chain, submit.json.signature);
         throw new Error(withdrawErrorMessage({ status: submit.res.status, body: submit.json }, "The transfer could not be sent."));
       }
       const signature = submit.json.signature;
@@ -119,7 +129,7 @@ export default function SendUsdcPanel({ fromAddress, onSent }: { fromAddress: st
       onSent?.(signature);
       setStep({ kind: "sent", signature, amountMicro: built.amountMicro, to: built.to, explorer: explorerTxUrl(built.chain, signature) });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong, nothing moved.");
+      setError({ text: e instanceof Error ? e.message : "Something went wrong, nothing moved.", explorer });
       setStep({ kind: "review" });
     }
   };
@@ -172,7 +182,16 @@ export default function SendUsdcPanel({ fromAddress, onSent }: { fromAddress: st
           <dt>Network fee</dt>
           <dd>Enki pays the network fee</dd>
         </dl>
-        {error && <div className="set-fiat-error">{error}</div>}
+        {error && (
+          <div className="set-fiat-error">
+            {error.text}
+            {error.explorer && (
+              <a href={error.explorer} target="_blank" rel="noopener noreferrer" className="set-send-check">
+                Check on the explorer <ExternalLink size={11} />
+              </a>
+            )}
+          </div>
+        )}
         <button className="set-btn set-btn-dark set-send-cta" onClick={send} disabled={busy}>
           {busy ? <><Loader2 size={14} className="set-spin" /> {step.label}</> : "Send now"}
         </button>

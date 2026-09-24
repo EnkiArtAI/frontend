@@ -86,6 +86,8 @@ describe("withdrawErrorMessage", () => {
     expect(withdrawErrorMessage({ status: 400, body: { code: "INSUFFICIENT_FUNDS", error: "x" } }, fb)).toMatch(/does not hold/);
     expect(withdrawErrorMessage({ status: 429, body: { code: "RATE_LIMITED", error: "x" } }, fb)).toMatch(/hourly limit/);
     expect(withdrawErrorMessage({ status: 409, body: { code: "EXPIRED", error: "x" } }, fb)).toMatch(/took too long, start again/);
+    expect(withdrawErrorMessage({ status: 400, body: { code: "NO_RECIPIENT_ACCOUNT", error: "x" } }, fb)).toMatch(/never held USDC/);
+    expect(withdrawErrorMessage({ status: 400, body: { code: "FROM_MISMATCH", error: "x" } }, fb)).toMatch(/reload/);
     expect(withdrawErrorMessage({ status: 401, body: { error: "Not signed in" } }, fb)).toMatch(/sign in again/);
   });
 

@@ -1029,7 +1029,8 @@ html:has(.set-page) { scrollbar-gutter: stable; }
 .set-send-review dt { color: var(--enki-ink-3); }
 .set-send-review dd { margin: 0; color: var(--enki-ink); }
 .set-send-cta { align-self: flex-start; min-width: 140px; }
-.set-send .set-fiat-error { justify-content: flex-start; text-align: left; }
+.set-send .set-fiat-error { justify-content: flex-start; text-align: left; flex-wrap: wrap; }
+.set-send-check { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; color: inherit; text-decoration: underline; }
 
 .dark .set-send-input { background: var(--enki-paper-3); border-color: var(--enki-rule); color: var(--enki-ink); }
 .dark .set-send-input:focus { border-color: var(--enki-ink); box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.08); }
