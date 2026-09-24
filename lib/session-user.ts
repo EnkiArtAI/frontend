@@ -65,3 +65,52 @@ export async function resolveSessionUserId(supabase: SupabaseClient, token: stri
   const { userId, ban } = await resolveSessionUserWithBan(supabase, token);
   return ban ? null : userId;
 }
+
+/**
+ * Session token → users.id, creating the user on first contact. Moved here
+ * from /api/prompt (resolveCreatorId), where it has resolved the prompt's
+ * creator from the session, NEVER from the client (a client-supplied userId
+ * could claim any creator, and the payment quote pays the artist share to that
+ * creator's wallet). An unknown wallet address gets a bare users row plus its
+ * user_wallets mapping, the same idiom as /api/auth/session.
+ */
+export async function resolveOrCreateSessionUserId(
+  supabase: SupabaseClient,
+  token: string | null,
+): Promise<string | null> {
+  if (!token) return null;
+
+  const { data: session } = await supabase
+    .from("auth_sessions")
+    .select("wallet_address, wallet_type")
+    .eq("token", token)
+    .gt("expires_at", new Date().toISOString())
+    .maybeSingle();
+  if (!session) return null;
+
+  const { data: walletRow } = await supabase
+    .from("user_wallets")
+    .select("user_id")
+    .eq("address", session.wallet_address)
+    .is("removed_at", null)
+    .maybeSingle();
+  if (walletRow?.user_id) return walletRow.user_id;
+
+  const { data: created, error: createError } = await supabase
+    .from("users")
+    .insert({})
+    .select("id")
+    .single();
+  if (createError || !created?.id) {
+    console.error("[session-user] creator user insert failed:", createError?.message);
+    return null;
+  }
+  await supabase.from("user_wallets").insert({
+    user_id: created.id,
+    address: session.wallet_address,
+    chain_family: session.wallet_type === "evm" ? "evm" : "solana",
+    wallet_type: "external_eoa",
+    is_primary: true,
+  });
+  return created.id;
+}

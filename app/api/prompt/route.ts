@@ -1,5 +1,6 @@
 import { NextResponse, after } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { resolveOrCreateSessionUserId } from "@/lib/session-user";
 import { encryptString, decryptString } from "@/lib/crypto";
 import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
@@ -167,57 +168,6 @@ function toDbVarName(name: unknown, position: number, taken: Set<string>): strin
   while (taken.has(candidate)) candidate = `${slug}_${i++}`;
   taken.add(candidate);
   return candidate;
-}
-
-// Resolve the prompt's creator from the session — NEVER from the client
-// (a client-supplied userId could claim any creator, and the payment quote
-// pays the artist share to that creator's wallet). prompts.creator_id is
-// NOT NULL on the live table, so anonymous saves are impossible: no session
-// means 401, not a NULL-creator row. First save from a wallet creates the
-// users row, same idiom as /api/auth/session.
-async function resolveCreatorId(
-  supabase: ReturnType<typeof getSupabaseServerClient>,
-  req: Request,
-): Promise<string | null> {
-  const token = req.headers.get("X-Session-Token");
-  if (!token) return null;
-
-  const { data: session } = await supabase
-    .from("auth_sessions")
-    .select("wallet_address, wallet_type")
-    .eq("token", token)
-    .gt("expires_at", new Date().toISOString())
-    .maybeSingle();
-  if (!session) return null;
-
-  const { data: walletRow } = await supabase
-    .from("user_wallets")
-    .select("user_id")
-    .eq("address", session.wallet_address)
-    .is("removed_at", null)
-    .maybeSingle();
-  if (walletRow?.user_id) return walletRow.user_id;
-
-  // Previously looked the address up in turnkey_users to carry its casing over.
-  // Turnkey is gone, and the lookup above already covers every wallet we know
-  // about, so an unknown address just gets a bare user row.
-  const { data: created, error: createError } = await supabase
-    .from("users")
-    .insert({})
-    .select("id")
-    .single();
-  if (createError || !created?.id) {
-    console.error("[prompt] creator user insert failed:", createError?.message);
-    return null;
-  }
-  await supabase.from("user_wallets").insert({
-    user_id: created.id,
-    address: session.wallet_address,
-    chain_family: session.wallet_type === "evm" ? "evm" : "solana",
-    wallet_type: "external_eoa",
-    is_primary: true,
-  });
-  return created.id;
 }
 
 // Ownership scope for updates: the users.id mapped via user_wallets.
@@ -417,7 +367,7 @@ export async function POST(req: Request) {
         throw deleteError;
       }
     } else {
-      const creatorId = await resolveCreatorId(supabase, req);
+      const creatorId = await resolveOrCreateSessionUserId(supabase, req.headers.get("X-Session-Token"));
       if (!creatorId) {
         return NextResponse.json(
           { error: "Authentication required" },
