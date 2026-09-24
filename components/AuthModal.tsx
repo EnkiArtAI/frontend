@@ -45,7 +45,10 @@ export function AuthModal({
     setSocialNote(null);
     try {
       const res = await fetch(url, { method: "HEAD", redirect: "manual" });
-      if (res.status === 404 || res.status === 503) throw new Error("unavailable");
+      // A live start route answers 302, which redirect: "manual" surfaces as
+      // opaqueredirect. Anything else (404, 503, the 401 of the beta gate) is not it.
+      const live = res.type === "opaqueredirect" || res.ok;
+      if (!live) throw new Error("unavailable");
       window.location.href = url;
     } catch {
       setSocialNote(`${provider === "google" ? "Google" : "X"} sign in is not available yet.`);

@@ -4619,7 +4619,10 @@ function socialLogin(provider, form) {
   note.textContent = '';
   fetch(url, { method: 'HEAD', redirect: 'manual' })
     .then(function (res) {
-      if (res.status === 404 || res.status === 503) throw new Error('unavailable');
+      // A live start route answers 302, which redirect: 'manual' surfaces as
+      // opaqueredirect. Anything else (404, 503, the 401 of the beta gate) is not it.
+      var live = res.type === 'opaqueredirect' || res.ok;
+      if (!live) throw new Error('unavailable');
       top.location.href = url;
     })
     .catch(function () { note.textContent = name + ' sign in is not available yet.'; });
