@@ -46,16 +46,24 @@ export default function EnkiCard({ prompt, onOpen, onEdit }: EnkiCardProps) {
       onMouseEnter={warm}
       onFocus={warm}
       /* A card with an input image is the curtain's interaction surface: it
-         takes focus so the arrow keys can move the edge. */
+         takes focus so the arrow keys can move the edge, and since focus can
+         land on it, Enter and Space open it like the click does. */
       data-curtain-host={prompt.before ? "" : undefined}
       tabIndex={prompt.before ? 0 : undefined}
+      role={prompt.before ? "button" : undefined}
+      aria-label={prompt.before ? `${prompt.title}, press left or right to compare input and output` : undefined}
+      onKeyDown={prompt.before ? (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onOpen?.(prompt);
+      } : undefined}
     >
       <div className="enki-card-img">
         {prompt.before ? (
           <CurtainImage after={prompt.art.url} before={prompt.before} alt={prompt.title} />
         ) : (
           /* eslint-disable-next-line @next/next/no-img-element */
-          <img src={prompt.art.url} alt={prompt.title} />
+          <img src={prompt.art.url} alt={prompt.title} loading="lazy" decoding="async" />
         )}
         <span className={`enki-card-badge${prompt.isVideo ? " video" : " image"}`}>
           {prompt.isVideo ? <Film size={12} style={{ color: "var(--enki-ember)" }} /> : <ImageIcon size={12} style={{ color: "var(--enki-ink-3)" }} />}

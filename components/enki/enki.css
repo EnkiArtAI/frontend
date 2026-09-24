@@ -336,6 +336,11 @@
   box-shadow: 0 16px 32px rgba(0,0,0,0.08);
 }
 
+.enki-card:focus-visible {
+  outline: 2px solid var(--enki-ember);
+  outline-offset: 2px;
+}
+
 .dark .enki-card:hover {
   box-shadow: 0 12px 40px rgba(0,0,0,0.5);
   border-color: rgba(255,255,255,0.1);

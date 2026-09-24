@@ -18,6 +18,18 @@ const STEP = 0.15;
 const clamp = (value: number) => Math.max(REST, Math.min(1.25, value));
 
 /**
+ * The cut an arrow key asks for, or null when the key is not ours or was
+ * typed into a control nested in the host (the bookmark picker's input
+ * needs its caret keys). ArrowRight from rest starts at the left edge.
+ */
+export function keyStep(event: KeyboardEvent, host: EventTarget, cut: number): number | null {
+  if (event.target !== host) return null;
+  if (event.key === "ArrowRight") return Math.max(cut, 0) + STEP;
+  if (event.key === "ArrowLeft") return cut - STEP;
+  return null;
+}
+
+/**
  * The output image with the input image behind a diagonal curtain. The
  * pointer drives the edge on hover, touch drags it sideways (vertical
  * scrolling stays free), the arrow keys step it when the host is focused,
@@ -81,13 +93,10 @@ export default function CurtainImage({ after, before, alt, className }: CurtainI
       if (event.pointerType !== "mouse") reset();
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "ArrowRight") {
-        event.preventDefault();
-        set(Math.max(cut, 0) + STEP, false);
-      } else if (event.key === "ArrowLeft") {
-        event.preventDefault();
-        set(cut - STEP, false);
-      }
+      const next = keyStep(event, host, cut);
+      if (next === null) return;
+      event.preventDefault();
+      set(next, false);
     };
 
     host.addEventListener("pointerenter", onEnter);
@@ -113,12 +122,12 @@ export default function CurtainImage({ after, before, alt, className }: CurtainI
   return (
     <div ref={rootRef} className={curtain}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={after} alt={alt} />
+      <img src={after} alt={alt} loading="lazy" decoding="async" />
       {before && (
         <>
           <div ref={layerRef} className="enki-curtain-before" aria-hidden="true">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={before} alt="" />
+            <img src={before} alt="" loading="lazy" decoding="async" />
             <svg viewBox="0 0 100 100" preserveAspectRatio="none">
               <line ref={lineRef} x1={REST * 100 + 22} y1="0" x2={REST * 100 - 22} y2="100" />
             </svg>
