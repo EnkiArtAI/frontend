@@ -34,9 +34,14 @@ const store = storeSession;
 
 export function useEmailAuth() {
   const [email, setEmail] = useState<string | null>(null);
+  // Signed in means a session token: a Google or X login may carry no email.
+  const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
-    const sync = () => setEmail(localStorage.getItem(EMAIL_KEY));
+    const sync = () => {
+      setToken(localStorage.getItem(TOKEN_KEY));
+      setEmail(localStorage.getItem(EMAIL_KEY));
+    };
     sync();
     window.addEventListener(EVENT, sync);
     window.addEventListener("storage", sync);
@@ -77,5 +82,5 @@ export function useEmailAuth() {
     window.dispatchEvent(new Event(EVENT));
   }, []);
 
-  return { email, isAuthed: !!email, register, login, forgot, reset, logout };
+  return { email, isAuthed: !!token, register, login, forgot, reset, logout };
 }

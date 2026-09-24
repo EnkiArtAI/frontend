@@ -7,6 +7,10 @@
  * identity whether the session is still the fresh-login bridge
  * (wallet_address = users.id) or already carries the real wallet address.
  *
+ * The email, when there is one, comes from password_credentials or from a
+ * provider identity (auth_identities); emailVerified is only what that source
+ * established. A social only account without an email still gets its wallet.
+ *
  * The client feeds this to CDP via CdpProvider's customAuth.getJwt callback.
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -40,16 +44,33 @@ export async function POST(req: NextRequest) {
   }
   if (!userId) return NextResponse.json({ error: "No user for session" }, { status: 404 });
 
-  // Email lives in password_credentials (isolated from the encrypted-email
-  // design); handle (optional public username) on users.
+  let email: string | null = null;
+  let emailVerified = false;
   const { data: cred } = await supabase
     .from("password_credentials")
     .select("email")
     .eq("user_id", userId)
     .maybeSingle();
-  if (!cred?.email) return NextResponse.json({ error: "Account has no email" }, { status: 400 });
+  if (cred?.email) {
+    email = cred.email;
+    emailVerified = true; // the password flow's standing claim to the vendor; unchanged here
+  } else {
+    // A missing auth_identities table (migration not run) reads as no identity.
+    const { data: ids } = await supabase
+      .from("auth_identities")
+      .select("email, email_verified")
+      .eq("user_id", userId)
+      .not("email", "is", null)
+      .order("email_verified", { ascending: false })
+      .limit(1);
+    const id = ids?.[0];
+    if (id?.email) {
+      email = id.email as string;
+      emailVerified = id.email_verified === true;
+    }
+  }
   const { data: user } = await supabase.from("users").select("handle").eq("id", userId).maybeSingle();
 
-  const jwt = await mintWalletJwt({ id: userId, email: cred.email, username: user?.handle ?? null });
+  const jwt = await mintWalletJwt({ id: userId, email, emailVerified, username: user?.handle ?? null });
   return NextResponse.json({ jwt, userId });
 }

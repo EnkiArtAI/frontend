@@ -87,6 +87,9 @@ export async function resolveOrCreateSessionUserId(
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();
   if (!session) return null;
+  // A fresh password or provider login (no wallet attached yet) carries
+  // users.id itself; minting a second users row for it would split the account.
+  if (UUID.test(session.wallet_address)) return session.wallet_address;
 
   const { data: walletRow } = await supabase
     .from("user_wallets")
