@@ -1,24 +1,22 @@
 /**
- * POST /api/auth/password/set (session)  { password, email? } → { email }
+ * POST /api/auth/password/set (session)  { password } → { email }
  *
  * Gives a Google or X account a password login. Only for accounts without
- * one (changing a password stays with the reset flow). The email comes from
- * the provider identity, or from the body when the provider gave none, and
- * is stored exactly as register stores it.
+ * one (changing a password stays with the reset flow). The email is the one a
+ * connected provider VERIFIED; nothing typed into a body is accepted, because
+ * password_credentials.email is the login identifier and an unconfirmed
+ * address there would block its real owner from registering. An X account
+ * without a confirmed email connects Google first.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { hashPassword } from "@/lib/password-auth";
-import { emailColumns } from "@/lib/auth/oauth";
 import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 
-const bodySchema = z.object({
-  password: z.string().min(8).max(200),
-  email: z.string().email().max(320).optional(),
-});
+const bodySchema = z.object({ password: z.string().min(8).max(200) });
 
 export async function POST(req: NextRequest) {
   const limit = checkRequestRateLimit(rateLimitKey(req, "auth:password-set:ip"), 10, 10 * 60 * 1000);
@@ -40,17 +38,16 @@ export async function POST(req: NextRequest) {
     if (existingErr) throw existingErr;
     if (existing) return NextResponse.json({ error: "This account already has a password. Use reset to change it." }, { status: 409 });
 
-    // The provider's email wins: it is the one the account is known by.
-    const { data: ids } = await supabase
+    const { data: ids, error: idsErr } = await supabase
       .from("auth_identities")
-      .select("email, email_verified")
+      .select("email")
       .eq("user_id", userId)
+      .eq("email_verified", true)
       .not("email", "is", null)
-      .order("email_verified", { ascending: false })
       .limit(1);
-    const fromIdentity = ids?.[0];
-    const email = ((fromIdentity?.email as string | undefined) ?? parsed.data.email ?? "").trim().toLowerCase();
-    if (!email) return NextResponse.json({ error: "An email is needed to sign in with a password. Add one." }, { status: 400 });
+    if (idsErr) throw idsErr;
+    const email = ((ids?.[0]?.email as string | undefined) ?? "").trim().toLowerCase();
+    if (!email) return NextResponse.json({ error: "Connect an account with a verified email first." }, { status: 400 });
 
     const { data: taken, error: takenErr } = await supabase
       .from("password_credentials")
@@ -68,10 +65,6 @@ export async function POST(req: NextRequest) {
       if (credErr.code === "23505") return NextResponse.json({ error: "An account with this email already exists" }, { status: 409 });
       throw credErr;
     }
-    // An email the provider never gave lands on the users row too (lookup
-    // hash, ciphertext when the keyring is configured), unverified.
-    if (!fromIdentity) await supabase.from("users").update(emailColumns(email, false)).eq("id", userId);
-
     return NextResponse.json({ email });
   } catch (e) {
     if (isDbUnreachable(e)) return dbUnavailableResponse();

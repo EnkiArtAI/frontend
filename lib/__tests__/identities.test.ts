@@ -79,7 +79,7 @@ describe("POST /api/auth/password/set", () => {
     expect((await setPassword(req("/api/auth/password/set", { method: "POST", body: { password: "longenough" } }))).status).toBe(409);
   });
 
-  it("takes the provider's email over the body and hashes like register", async () => {
+  it("takes the provider's verified email, ignores anything in the body, and hashes like register", async () => {
     state.db = fakeDb({ auth_sessions: [session], auth_identities: [google] });
     const res = await setPassword(req("/api/auth/password/set", { method: "POST", body: { password: "longenough", email: "other@example.com" } }));
     expect(res.status).toBe(200);
@@ -90,16 +90,19 @@ describe("POST /api/auth/password/set", () => {
     expect(state.db.ops).not.toContain("users.update");
   });
 
-  it("needs an email from somewhere, and writes a body email onto the users row unverified", async () => {
-    state.db = fakeDb({ auth_sessions: [session], auth_identities: [x] });
+  it("refuses without a verified identity email: a body address or an unverified provider email never becomes the login", async () => {
+    // X only account claiming a victim's address in the body
+    state.db = fakeDb({ auth_sessions: [session], auth_identities: [x], users: [{ id: UUID }] });
+    const res = await setPassword(req("/api/auth/password/set", { method: "POST", body: { password: "longenough", email: "victim@example.com" } }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/verified email/);
+    expect(state.db.tables.password_credentials ?? []).toEqual([]);
+    expect(state.db.tables.users[0]).not.toHaveProperty("email_lookup_hash");
+
+    // Google identity whose email Google did not verify
+    state.db = fakeDb({ auth_sessions: [session], auth_identities: [{ ...google, email_verified: false }] });
     expect((await setPassword(req("/api/auth/password/set", { method: "POST", body: { password: "longenough" } }))).status).toBe(400);
     expect(state.db.tables.password_credentials ?? []).toEqual([]);
-
-    state.db = fakeDb({ auth_sessions: [session], auth_identities: [x], users: [{ id: UUID }] });
-    const res = await setPassword(req("/api/auth/password/set", { method: "POST", body: { password: "longenough", email: "Kev@Example.com" } }));
-    expect(res.status).toBe(200);
-    expect(state.db.tables.password_credentials[0].email).toBe("kev@example.com");
-    expect(state.db.tables.users[0]).toMatchObject({ email_lookup_hash: expect.stringMatching(/^[0-9a-f]{64}$/), email_verified_at: null });
   });
 
   it("refuses an email another password account owns", async () => {

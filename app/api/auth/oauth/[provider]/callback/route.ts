@@ -3,19 +3,23 @@
  *
  * Verifies the state cookie, exchanges the code, verifies the identity with
  * the provider, resolves it to a user (lib/auth/oauth) and mints the ordinary
- * app session. The token leaves in the URL FRAGMENT of /auth/complete, never
- * in a query string, so it reaches neither server logs nor referrers. Every
- * answer clears the state cookie: it is single use.
+ * app session. The token never enters a URL: it leaves in the short lived
+ * hand over cookie, and /auth/complete collects it with a POST to
+ * /api/auth/oauth/complete. Only the return path and a refusal code ride in
+ * the URL fragment. Every answer clears the state cookie: it is single use.
  */
 import { NextRequest, NextResponse } from "next/server";
 import {
   appUrl,
   completeAuth,
+  HANDOVER_COOKIE,
+  HANDOVER_TTL_S,
   isProvider,
   MissingTableError,
   OAuthError,
   readState,
   resolveIdentity,
+  signHandover,
   STATE_COOKIE,
   STATE_COOKIE_PATH,
   type OAuthErrorCode,
@@ -56,14 +60,18 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     const identity = await completeAuth(claims, code);
     const { userId, banned, allowlisted } = await resolveIdentity(supabase, identity, claims.intent);
     const session = await mintUserSession(userId, ipHash);
-    const res = complete({
-      token: session.token,
-      next: claims.next,
-      ...(identity.email ? { email: identity.email } : {}),
-      ...(banned ? { banned: "1" } : {}),
+    const res = complete({ next: claims.next });
+    res.cookies.set(HANDOVER_COOKIE, await signHandover({ token: session.token, email: identity.email, banned }), {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: STATE_COOKIE_PATH,
+      maxAge: HANDOVER_TTL_S,
     });
-    // Gate cookie only for an allowlisted, unbanned login (link intents keep
-    // whatever the session already had).
+    // Gate cookie for every login the whitelist admitted, banned or not, the
+    // way the password login grants it: /banned, the one door a ban keeps
+    // open, sits behind the gate too. Link intents keep whatever the session
+    // already had.
     return allowlisted ? grantGateCookie(res) : res;
   } catch (e) {
     if (e instanceof OAuthError) return refuse(e.code);

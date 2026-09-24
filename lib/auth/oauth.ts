@@ -13,14 +13,21 @@ export { DEFAULT_NEXT, ERROR_SENTENCES, sanitizeNext, type OAuthErrorCode } from
  *
  * A provider account is one row in auth_identities, keyed (provider, subject),
  * pointing at a users row. Login resolves that row, or links the identity to
- * the password account with the same verified email, or creates a user. The
- * session that comes out is the ordinary auth_sessions row every other login
- * mints (lib/user-session), so nothing downstream knows how the user got in.
+ * a user whose email a provider already verified, or creates a user. A
+ * password account is never auto linked: password_credentials.email is what
+ * the person typed at register, unconfirmed, so anyone could pre register a
+ * victim's address and catch their first Google login. Password users connect
+ * Google or X from settings, session bound (link intent). The session that
+ * comes out is the ordinary auth_sessions row every other login mints
+ * (lib/user-session), so nothing downstream knows how the user got in.
  *
  * Everything the callback has to trust travels in ONE short lived signed
  * cookie: the CSRF state, the OpenID nonce and the PKCE verifier, bound to the
  * provider, the intent and the sanitised return path. Nothing is stored
- * server side between the two legs.
+ * server side between the two legs. The session then travels back to the
+ * browser in a second short lived cookie (the hand over), never in the URL:
+ * a link somebody else crafted carries no cookie, so it cannot log a victim
+ * into the attacker's account.
  */
 export type Provider = "google" | "x";
 export const PROVIDERS: readonly Provider[] = ["google", "x"];
@@ -69,11 +76,13 @@ export const STATE_COOKIE = "enki_oauth";
 export const STATE_COOKIE_PATH = "/api/auth/oauth";
 export const STATE_TTL_S = 5 * 60;
 
-function stateKey(): Uint8Array {
+/** One key per purpose, so a state cookie can never pass as a hand over or the reverse. */
+function derivedKey(purpose: "enki-oauth-v1" | "enki-oauth-handover-v1"): Uint8Array {
   const p = process.env.AUTH_PEPPER;
   if (!p) throw new Error("AUTH_PEPPER not configured");
-  return new Uint8Array(hkdfSync("sha256", Buffer.from(p, "base64"), new Uint8Array(0), Buffer.from("enki-oauth-v1"), 32));
+  return new Uint8Array(hkdfSync("sha256", Buffer.from(p, "base64"), new Uint8Array(0), Buffer.from(purpose), 32));
 }
+const stateKey = () => derivedKey("enki-oauth-v1");
 
 export type StateClaims = {
   provider: Provider;
@@ -102,6 +111,38 @@ export async function readState(cookie: string | undefined, provider: Provider):
     if (typeof c.state !== "string" || typeof c.nonce !== "string" || typeof c.verifier !== "string") return null;
     if (c.intent?.kind !== "login" && !(c.intent?.kind === "link" && typeof c.intent.userId === "string")) return null;
     return { provider, intent: c.intent, next: sanitizeNext(c.next), state: c.state, nonce: c.nonce, verifier: c.verifier };
+  } catch {
+    return null;
+  }
+}
+
+// ── hand over cookie ───────────────────────────────────────────────────────
+/**
+ * The callback puts the fresh session in this cookie and sends the browser to
+ * /auth/complete, which POSTs /api/auth/oauth/complete to collect it. Only
+ * the browser that finished the provider round trip holds the cookie, and the
+ * POST clears it, so the hand over is bound to that browser and single use.
+ */
+export const HANDOVER_COOKIE = "enki_oauth_done";
+export const HANDOVER_TTL_S = 60;
+
+export type Handover = { token: string; email: string | null; banned: boolean };
+
+export async function signHandover(h: Handover): Promise<string> {
+  return new SignJWT({ ...h })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime(`${HANDOVER_TTL_S}s`)
+    .sign(derivedKey("enki-oauth-handover-v1"));
+}
+
+/** The session, or null when the cookie is missing, tampered, expired or a state cookie. */
+export async function readHandover(cookie: string | undefined): Promise<Handover | null> {
+  if (!cookie) return null;
+  try {
+    const { payload } = await jwtVerify(cookie, derivedKey("enki-oauth-handover-v1"));
+    if (typeof payload.token !== "string" || !payload.token) return null;
+    return { token: payload.token, email: typeof payload.email === "string" ? payload.email : null, banned: payload.banned === true };
   } catch {
     return null;
   }
@@ -160,7 +201,10 @@ export async function beginAuth(provider: Provider, intent: Intent, next: unknow
     params.set("nonce", claims.nonce);
   } else {
     base = X_AUTHORIZE;
-    params.set("scope", "users.read tweet.read offline.access");
+    // users.email is what makes confirmed_email come back (docs/SPRINT-1-FINDINGS.md,
+    // section 5); the X app needs the email permission switched on. No
+    // offline.access: the refresh token is never stored.
+    params.set("scope", "users.read users.email tweet.read");
   }
   return { url: `${base}?${params}`, cookie: await signState(claims) };
 }
@@ -285,10 +329,36 @@ export function emailColumns(email: string, verified: boolean): Record<string, s
   return cols;
 }
 
+/** The whitelist by what the provider vouches for: a verified email, or an X handle. */
 export async function identityAllowed(supabase: SupabaseClient, id: ProviderIdentity): Promise<boolean> {
   if (!whitelistStageActive()) return true;
-  if (id.email && (await isEmailAllowed(supabase, id.email))) return true;
+  if (id.email && id.emailVerified && (await isEmailAllowed(supabase, id.email))) return true;
   return id.provider === "x" && !!id.handle && (await isXHandleAllowed(supabase, id.handle));
+}
+
+/**
+ * The whitelist by the account an identity already belongs to: an X account
+ * connected from settings carries no listed email or handle of its own, but
+ * the password email or another provider identity of the same user may be
+ * listed. Checked the way the password login checks its email, every login.
+ */
+export async function accountAllowed(supabase: SupabaseClient, userId: string): Promise<boolean> {
+  const { data: cred, error } = await supabase.from("password_credentials").select("email").eq("user_id", userId).maybeSingle();
+  if (error) throw error;
+  if (cred?.email && (await isEmailAllowed(supabase, cred.email as string))) return true;
+  const { data: ids, error: idsErr } = await supabase
+    .from("auth_identities")
+    .select("provider, email, email_verified, handle")
+    .eq("user_id", userId);
+  if (idsErr) throw idsErr;
+  for (const row of ids ?? []) {
+    const id: ProviderIdentity = {
+      provider: row.provider as Provider, subject: "", email: (row.email as string | null) ?? null,
+      emailVerified: row.email_verified === true, handle: (row.handle as string | null) ?? null, displayName: null, avatarUrl: null,
+    };
+    if (await identityAllowed(supabase, id)) return true;
+  }
+  return false;
 }
 
 const identityRow = (id: ProviderIdentity) => ({
@@ -310,15 +380,12 @@ async function insertIdentity(supabase: SupabaseClient, userId: string, id: Prov
   throw error;
 }
 
-/** The password account, or an already verified user, that owns this email. */
+/**
+ * The user whose VERIFIED email this is. Only users.email_verified_at counts,
+ * which a provider verified createUser writes; password_credentials.email is
+ * unconfirmed and deliberately not consulted (see the module comment).
+ */
 async function userByVerifiedEmail(supabase: SupabaseClient, email: string): Promise<string | null> {
-  const { data: cred, error } = await supabase
-    .from("password_credentials")
-    .select("user_id")
-    .eq("email", email)
-    .maybeSingle();
-  if (error) throw error;
-  if (cred?.user_id) return cred.user_id as string;
   const { data: user, error: userErr } = await supabase
     .from("users")
     .select("id")
@@ -346,10 +413,12 @@ async function createUser(supabase: SupabaseClient, id: ProviderIdentity): Promi
 }
 
 /**
- * (a) known identity → its user; (b) login with a verified email that a
- * password account owns → link there; (c) login, nobody → whitelist check,
- * then a fresh user; (d) link → attach to the session user, already_linked
- * when the identity belongs to someone else. Then the ban flag.
+ * (a) known identity → its user, admitted by the identity or by the account
+ * it belongs to; (b) login with a verified email a verified user owns → link
+ * there; (c) login, nobody → whitelist check, then a fresh user; (d) link →
+ * attach to the session user, already_linked when the identity belongs to
+ * someone else. Then the ban flag, kept apart from allowlisted so a banned
+ * login still gets the gate cookie and can reach /banned.
  */
 export async function resolveIdentity(supabase: SupabaseClient, id: ProviderIdentity, intent: Intent): Promise<Resolved> {
   const { data: existing, error: lookupErr } = await supabase
@@ -373,7 +442,7 @@ export async function resolveIdentity(supabase: SupabaseClient, id: ProviderIden
     if (existing) await touch();
     else await insertIdentity(supabase, userId, id);
   } else {
-    allowlisted = await identityAllowed(supabase, id);
+    allowlisted = (await identityAllowed(supabase, id)) || (!!existing && (await accountAllowed(supabase, existing.user_id as string)));
     if (!allowlisted) throw new OAuthError("not_whitelisted");
     if (existing) {
       userId = existing.user_id as string;
@@ -395,5 +464,5 @@ export async function resolveIdentity(supabase: SupabaseClient, id: ProviderIden
     }
   }
   const banned = !!(await activeBanFor(supabase, userId));
-  return { userId, banned, allowlisted: allowlisted && !banned };
+  return { userId, banned, allowlisted };
 }

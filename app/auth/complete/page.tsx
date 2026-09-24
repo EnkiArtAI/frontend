@@ -1,15 +1,18 @@
 "use client";
 
 /**
- * /auth/complete#token=…&next=/path[&email=…][&banned=1]  or  #error=code
+ * /auth/complete#next=/path  or  #error=code
  *
- * The OAuth callback lands here with the session in the URL fragment (never a
- * query string, so it reaches no log or referrer). The token is stored exactly
- * like a password login, the fragment is wiped from history, and the browser
- * moves on to `next`, or to /banned for a banned account.
+ * The OAuth callback lands here with the session in a short lived httpOnly
+ * cookie, never in the URL. The page collects it with one POST to
+ * /api/auth/oauth/complete (which clears the cookie), stores it exactly like
+ * a password login, wipes the fragment from history and moves on to `next`,
+ * or to /banned for a banned account. Without the cookie, which only the
+ * browser that finished the provider round trip holds, the POST answers 401
+ * and nothing is stored: a link somebody else crafted cannot sign anyone in.
  */
 import Link from "next/link";
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { storeSession } from "@/hooks/useEmailAuth";
 import { ERROR_SENTENCES, sanitizeNext } from "@/lib/auth/oauth-shared";
 
@@ -17,24 +20,35 @@ import { ERROR_SENTENCES, sanitizeNext } from "@/lib/auth/oauth-shared";
 // server snapshot (empty) hydrates cleanly and the client re-renders with it.
 const never = () => () => {};
 const useHash = () => useSyncExternalStore(never, () => window.location.hash, () => "");
+const sentence = (code: string | null) =>
+  code ? ERROR_SENTENCES[code as keyof typeof ERROR_SENTENCES] ?? ERROR_SENTENCES.provider_error : null;
 
 export default function AuthCompletePage() {
-  const hash = useHash();
-  const params = new URLSearchParams(hash.replace(/^#/, ""));
-  const token = params.get("token");
-  const email = params.get("email");
-  const next = params.get("banned") === "1" ? "/banned" : sanitizeNext(params.get("next"));
-  const error = hash && !token
-    ? ERROR_SENTENCES[params.get("error") as keyof typeof ERROR_SENTENCES] ?? ERROR_SENTENCES.provider_error
-    : null;
+  const fragmentError = sentence(new URLSearchParams(useHash().replace(/^#/, "")).get("error"));
+  const [collectError, setCollectError] = useState<string | null>(null);
+  const started = useRef(false);
 
   useEffect(() => {
-    if (!token) return;
+    // The live fragment, not the render snapshot: the hydration pass renders with an empty one.
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    if (params.get("error") || started.current) return;
+    started.current = true; // the cookie is single use: one POST, even under strict mode
+    const next = sanitizeNext(params.get("next"));
     window.history.replaceState(null, "", window.location.pathname);
-    storeSession({ token, email: email ?? undefined });
-    window.location.replace(next);
-  }, [token, email, next]);
+    fetch("/api/auth/oauth/complete", { method: "POST" })
+      .then(async (res) => {
+        if (!res.ok) {
+          setCollectError(ERROR_SENTENCES.state_mismatch);
+          return;
+        }
+        const data = (await res.json()) as { token: string; email: string | null; banned: boolean };
+        storeSession({ token: data.token, email: data.email ?? undefined });
+        window.location.replace(data.banned ? "/banned" : next);
+      })
+      .catch(() => setCollectError(ERROR_SENTENCES.provider_error));
+  }, []);
 
+  const error = fragmentError ?? collectError;
   return (
     <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24, textAlign: "center" }}>
       {error ? (

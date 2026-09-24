@@ -5,6 +5,7 @@ import { fakeDb } from "./_fake-supabase";
 import {
   beginAuth,
   completeAuth,
+  emailLookupHash,
   MissingTableError,
   OAuthError,
   readState,
@@ -120,11 +121,13 @@ describe("google id_token", () => {
 });
 
 describe("x", () => {
-  it("asks for the free scopes and PKCE S256", async () => {
+  it("asks for the free scopes including users.email, no refresh token, and PKCE S256", async () => {
     const { url, cookie } = await beginAuth("x", { kind: "login" }, "/profile");
     const u = new URL(url);
     expect(u.origin + u.pathname).toBe("https://x.com/i/oauth2/authorize");
-    expect(u.searchParams.get("scope")).toBe("users.read tweet.read offline.access");
+    const scopes = u.searchParams.get("scope")!.split(" ");
+    expect(scopes).toEqual(expect.arrayContaining(["users.read", "users.email", "tweet.read"]));
+    expect(scopes).not.toContain("offline.access");
     expect(u.searchParams.get("code_challenge_method")).toBe("S256");
     expect(u.searchParams.get("redirect_uri")).toBe("https://enki.test/api/auth/oauth/x/callback");
     const st = await readState(cookie, "x");
@@ -169,16 +172,32 @@ describe("resolveIdentity", () => {
     expect(db.tables.auth_identities[0].last_login_at).toBeTruthy();
   });
 
-  it("(b) links to the password account with the same verified email, and only then", async () => {
-    const db = fakeDb({ password_credentials: [{ user_id: UUID, email: "kev@example.com" }] });
-    await expect(resolveIdentity(db.client, google(), { kind: "login" })).resolves.toMatchObject({ userId: UUID });
-    expect(db.ops).not.toContain("users.insert");
-    expect(db.tables.auth_identities).toEqual([expect.objectContaining({ provider: "google", subject: "g1", user_id: UUID })]);
+  it("(b) never links to a password account by its unconfirmed email: a pre registered address does not capture the login", async () => {
+    const ATTACKER = OTHER;
+    const db = fakeDb({ password_credentials: [{ user_id: ATTACKER, email: "kev@example.com" }] });
+    const r = await resolveIdentity(db.client, google(), { kind: "login" });
+    expect(r.userId).not.toBe(ATTACKER);
+    expect(db.ops).toContain("users.insert");
+    expect(db.tables.auth_identities).toEqual([expect.objectContaining({ provider: "google", subject: "g1", user_id: r.userId })]);
+    expect(db.tables.auth_identities[0].user_id).not.toBe(ATTACKER);
+  });
 
-    const unverified = fakeDb({ password_credentials: [{ user_id: UUID, email: "kev@example.com" }] });
-    const r = await resolveIdentity(unverified.client, google({ emailVerified: false }), { kind: "login" });
-    expect(r.userId).not.toBe(UUID);
-    expect(unverified.ops).toContain("users.insert");
+  it("(b) links to a user whose email a provider verified, and only when both sides are verified", async () => {
+    const verifiedUser = { id: UUID, email_lookup_hash: emailLookupHash("kev@example.com"), email_verified_at: "2026-09-24T00:00:00.000Z" };
+    const db = fakeDb({ users: [verifiedUser] });
+    await expect(resolveIdentity(db.client, x({ email: "kev@example.com", emailVerified: true }), { kind: "login" })).resolves.toMatchObject({ userId: UUID });
+    expect(db.ops).not.toContain("users.insert");
+    expect(db.tables.auth_identities).toEqual([expect.objectContaining({ provider: "x", subject: "x1", user_id: UUID })]);
+
+    // the users row carries the email unverified (password/set wrote it) → stranger
+    const unverifiedUser = fakeDb({ users: [{ ...verifiedUser, email_verified_at: null }] });
+    expect((await resolveIdentity(unverifiedUser.client, google(), { kind: "login" })).userId).not.toBe(UUID);
+    expect(unverifiedUser.ops).toContain("users.insert");
+
+    // the identity's own email is unverified → stranger
+    const unverifiedIdentity = fakeDb({ users: [verifiedUser] });
+    expect((await resolveIdentity(unverifiedIdentity.client, google({ emailVerified: false }), { kind: "login" })).userId).not.toBe(UUID);
+    expect(unverifiedIdentity.ops).toContain("users.insert");
   });
 
   it("(c) creates a user for a stranger, email columns only when there is an email", async () => {
@@ -208,6 +227,11 @@ describe("resolveIdentity", () => {
     const listedMail = fakeDb({ access_allowlist: [{ kind: "email", value: "kev@example.com" }] });
     await expect(resolveIdentity(listedMail.client, google(), { kind: "login" })).resolves.toMatchObject({ allowlisted: true });
 
+    // a listed address the provider has NOT verified opens nothing
+    const unverifiedListed = fakeDb({ access_allowlist: [{ kind: "email", value: "kev@example.com" }] });
+    await expect(resolveIdentity(unverifiedListed.client, google({ emailVerified: false }), { kind: "login" })).rejects.toMatchObject({ code: "not_whitelisted" });
+    expect(unverifiedListed.ops).not.toContain("users.insert");
+
     const noHandle = fakeDb({ access_allowlist: [{ kind: "x", value: "someoneelse" }] });
     await expect(resolveIdentity(noHandle.client, x(), { kind: "login" })).rejects.toMatchObject({ code: "not_whitelisted" });
 
@@ -219,12 +243,33 @@ describe("resolveIdentity", () => {
     await expect(resolveIdentity(googleHandle.client, google({ email: null, emailVerified: false, handle: "kirikev" }), { kind: "login" })).rejects.toMatchObject({ code: "not_whitelisted" });
   });
 
-  it("a banned user still resolves, flagged, and never counts as allowlisted", async () => {
+  it("whitelist stage: an identity connected from settings logs in by its account's listing", async () => {
+    process.env.TEAM_ACCESS_CODE = "code";
+    const linkedX = { provider: "x", subject: "x1", user_id: UUID, email: null, email_verified: false, handle: "kirikev" };
+    const listed = [{ kind: "email", value: "kev@example.com" }];
+
+    // the account's password email is listed, the X handle is not
+    const viaPassword = fakeDb({ access_allowlist: listed, auth_identities: [linkedX], password_credentials: [{ user_id: UUID, email: "kev@example.com" }] });
+    await expect(resolveIdentity(viaPassword.client, x(), { kind: "login" })).resolves.toMatchObject({ userId: UUID, allowlisted: true });
+
+    // or another provider identity of the account carries a listed, verified email
+    const google1 = { provider: "google", subject: "g1", user_id: UUID, email: "kev@example.com", email_verified: true, handle: null };
+    const viaGoogle = fakeDb({ access_allowlist: listed, auth_identities: [linkedX, google1] });
+    await expect(resolveIdentity(viaGoogle.client, x(), { kind: "login" })).resolves.toMatchObject({ userId: UUID, allowlisted: true });
+
+    // an unverified identity email does not count, nor does an account with nothing listed
+    const unverified = fakeDb({ access_allowlist: listed, auth_identities: [linkedX, { ...google1, email_verified: false }] });
+    await expect(resolveIdentity(unverified.client, x(), { kind: "login" })).rejects.toMatchObject({ code: "not_whitelisted" });
+    const nothing = fakeDb({ access_allowlist: [{ kind: "email", value: "someone@else.com" }], auth_identities: [linkedX], password_credentials: [{ user_id: UUID, email: "kev@example.com" }] });
+    await expect(resolveIdentity(nothing.client, x(), { kind: "login" })).rejects.toMatchObject({ code: "not_whitelisted" });
+  });
+
+  it("a banned user still resolves, flagged, and stays allowlisted so the gate opens /banned", async () => {
     const db = fakeDb({
       auth_identities: [{ provider: "x", subject: "x1", user_id: UUID }],
       bans: [{ id: "b1", user_id: UUID, reason: "spam", lifted_at: null, expires_at: null }],
     });
-    await expect(resolveIdentity(db.client, x(), { kind: "login" })).resolves.toEqual({ userId: UUID, banned: true, allowlisted: false });
+    await expect(resolveIdentity(db.client, x(), { kind: "login" })).resolves.toEqual({ userId: UUID, banned: true, allowlisted: true });
   });
 
   it("(d) link attaches to the session user and refuses an identity owned by someone else", async () => {

@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 import { randomBytes } from "node:crypto";
 import { fakeDb, type FakeDb } from "./_fake-supabase";
-import { signState, STATE_COOKIE, type ProviderIdentity } from "@/lib/auth/oauth";
+import { HANDOVER_COOKIE, signHandover, signState, STATE_COOKIE, type ProviderIdentity } from "@/lib/auth/oauth";
 
 const state = vi.hoisted(() => ({ db: null as unknown as FakeDb, identity: null as unknown as ProviderIdentity }));
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => state.db.client }));
@@ -13,6 +13,8 @@ vi.mock("@/lib/auth/oauth", async (importActual) => {
 
 import { GET as callback } from "../../app/api/auth/oauth/[provider]/callback/route";
 import { GET as start, POST as startLink } from "../../app/api/auth/oauth/[provider]/start/route";
+import { POST as collect } from "../../app/api/auth/oauth/complete/route";
+import { proxy } from "../../proxy";
 
 const UUID = "6f1a2b3c-4d5e-4f60-8a9b-0c1d2e3f4a5b";
 const ctx = (provider: string) => ({ params: Promise.resolve({ provider }) });
@@ -28,6 +30,7 @@ beforeEach(() => {
   state.db = fakeDb({ access_allowlist: [{ kind: "x", value: "kirikev" }] });
   state.identity = { provider: "x", subject: "x1", email: null, emailVerified: false, handle: "kirikev", displayName: "Kev", avatarUrl: null };
 });
+afterEach(() => vi.useRealTimers());
 
 async function callbackWith(cookie: string | null, query: Record<string, string>) {
   const url = new URL("https://enki.test/api/auth/oauth/x/callback");
@@ -37,6 +40,11 @@ async function callbackWith(cookie: string | null, query: Record<string, string>
 }
 const fragment = (res: Response) => new URLSearchParams(new URL(res.headers.get("location")!).hash.slice(1));
 const cookies = (res: Response) => res.headers.getSetCookie();
+const setCookie = (res: Response, name: string) => cookies(res).find((c) => c.startsWith(`${name}=`));
+/** The `name=value` pair a browser would send back from that Set-Cookie. */
+const pair = (res: Response, name: string) => setCookie(res, name)!.split(";")[0];
+const collectWith = (cookie: string | null) =>
+  collect(new NextRequest("https://enki.test/api/auth/oauth/complete", { method: "POST", headers: cookie ? { cookie } : {} }));
 
 describe("start", () => {
   it("302s to X with the state cookie set, httpOnly and scoped to the oauth routes", async () => {
@@ -86,31 +94,69 @@ describe("callback", () => {
     }
   });
 
-  it("mints a session and hands the token over in the fragment, never the query, with the gate cookie", async () => {
+  it("mints a session and hands it over in a short lived httpOnly cookie, never the URL, with the gate cookie", async () => {
     const res = await callbackWith(await good(), { state: "s1", code: "c" });
     expect(res.status).toBe(302);
     const loc = new URL(res.headers.get("location")!);
     expect(loc.origin + loc.pathname).toBe("https://enki.test/auth/complete");
     expect(loc.search).toBe("");
+    expect(res.headers.get("location")).not.toContain(state.db.tables.auth_sessions[0].token);
     const f = fragment(res);
-    expect(f.get("token")).toBe(state.db.tables.auth_sessions[0].token);
     expect(f.get("next")).toBe("/profile");
-    expect(f.get("banned")).toBeNull();
+    expect(f.get("token")).toBeNull();
     expect(state.db.tables.auth_sessions[0]).toMatchObject({ wallet_type: "password", wallet_address: state.db.tables.users[0].id });
-    expect(cookies(res).find((c) => c.startsWith("enki_team="))).toMatch(/enki_team=team-code/);
+    expect(setCookie(res, "enki_team")).toMatch(/enki_team=team-code/);
+    const handover = setCookie(res, HANDOVER_COOKIE)!;
+    expect(handover).toMatch(/HttpOnly/i);
+    expect(handover).toMatch(/SameSite=lax/i);
+    expect(handover).toMatch(/Path=\/api\/auth\/oauth/);
+    expect(handover).toMatch(/Max-Age=60(;|$)/);
+
+    // the browser that holds the cookie collects the session once
+    const got = await collectWith(pair(res, HANDOVER_COOKIE));
+    expect(got.status).toBe(200);
+    expect(await got.json()).toEqual({ token: state.db.tables.auth_sessions[0].token, email: null, banned: false });
+    expect(setCookie(got, HANDOVER_COOKIE)).toMatch(/Max-Age=0/);
   });
 
-  it("a banned user gets a session and banned=1 but no gate cookie", async () => {
+  it("the hand over needs the callback's cookie: none, tampered, a state cookie or an expired one gives 401 and no token", async () => {
+    const valid = await signHandover({ token: "secret-session", email: null, banned: false });
+    for (const c of [
+      null,
+      `${HANDOVER_COOKIE}=${valid.slice(0, -2)}xx`,
+      `${HANDOVER_COOKIE}=${await good()}`,
+      `${STATE_COOKIE}=${valid}`,
+    ]) {
+      const res = await collectWith(c);
+      expect(res.status).toBe(401);
+      expect(JSON.stringify(await res.json())).not.toContain("secret-session");
+      expect(setCookie(res, HANDOVER_COOKIE)).toMatch(/Max-Age=0/);
+    }
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-24T10:00:00Z"));
+    const stale = await signHandover({ token: "secret-session", email: null, banned: false });
+    vi.setSystemTime(new Date("2026-09-24T10:01:01Z"));
+    expect((await collectWith(`${HANDOVER_COOKIE}=${stale}`)).status).toBe(401);
+  });
+
+  it("a banned user gets a session, banned in the hand over, and the gate cookie so /banned is reachable", async () => {
     state.db = fakeDb({
       access_allowlist: [{ kind: "x", value: "kirikev" }],
       auth_identities: [{ provider: "x", subject: "x1", user_id: UUID }],
       bans: [{ id: "b1", user_id: UUID, reason: "spam", lifted_at: null, expires_at: null }],
     });
     const res = await callbackWith(await good(), { state: "s1", code: "c" });
-    const f = fragment(res);
-    expect(f.get("banned")).toBe("1");
-    expect(f.get("token")).toBeTruthy();
-    expect(cookies(res).find((c) => c.startsWith("enki_team="))).toBeUndefined();
+    expect(fragment(res).get("next")).toBe("/profile");
+    const got = await collectWith(pair(res, HANDOVER_COOKIE));
+    expect(await got.json()).toMatchObject({ token: state.db.tables.auth_sessions[0].token, banned: true });
+    expect(setCookie(res, "enki_team")).toMatch(/enki_team=team-code/);
+
+    // the proxy lets that browser through to /banned, and turns away one without the cookie
+    const banned = proxy(new NextRequest("https://enki.test/banned", { headers: { cookie: pair(res, "enki_team") } }));
+    expect(banned.headers.get("x-middleware-next")).toBe("1");
+    expect(banned.headers.get("location")).toBeNull();
+    const stranger = proxy(new NextRequest("https://enki.test/banned"));
+    expect(new URL(stranger.headers.get("location")!).pathname).toBe("/gate");
   });
 
   it("a stranger off the whitelist is refused before any session exists", async () => {
