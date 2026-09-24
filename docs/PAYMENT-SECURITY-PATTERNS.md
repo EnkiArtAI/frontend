@@ -7,12 +7,15 @@ reviewed against this list. Each rule names the file that enforces it today;
 a rule marked "not built" is a requirement for code that does not exist yet.
 
 ## 1. Server priced, server built, client signed
-The client sends only identifiers (`promptId`, `modelFamily`, `resolution`,
-`intentId`). Amounts, destinations and the artist, model cost and Enki fee
-split are computed on the server from the database and `lib/pricing.ts`,
-in integer micro USDC, and the server builds the transaction from the stored
-intent row. Nothing the client sent is ever used as an amount or a
-destination.
+The client sends only identifiers and option selectors (`promptId`,
+`modelFamily`, `resolution`, `boost`, `quality`, `intentId`; schema in
+`app/api/payments/generation/intent/route.ts`). `boost` picks the vendor
+direct route and `quality` the gpt quality tier; each changes which server
+side price applies, never the price itself. Amounts, destinations and the
+artist, model cost and Enki fee split are computed on the server from the
+database and `lib/pricing.ts`, in integer micro USDC, and the server builds
+the transaction from the stored intent row. Nothing the client sent is ever
+used as an amount or a destination.
 
 The buyer signs in their own wallet. The server holds no key that can move a
 user's funds: the only server keypair is the fee payer
@@ -56,7 +59,9 @@ and the authorised model is refused, not resolved).
   `lib/payments/authorize-flow.ts`).
 - **Signature ledger.** Every settled signature is recorded once in
   `payment_verifications` through `checkAndRecordSolanaSignature`
-  (`backend/solana-x402-verifier.ts`); a repeat is refused with 402. The
+  (`backend/solana-x402-verifier.ts`); a repeat is refused with 402 on the
+  signed in generate route and with 409 on the agent route
+  (`app/api/x402/generate/route.ts`). The
   header flow additionally rejects any signature already stored as
   `generation_payment_intents.tx_signature`, so a payment from the intent
   flow cannot be replayed as an `X-PAYMENT` header
@@ -133,9 +138,13 @@ instruction by instruction. For the agent flow (`lib/payments/x402-settle.ts`):
 
 For the signed in flow the same guarantee comes from `/submit` rebuilding the
 transaction (rule 3). Confirmation level is `confirmed` on every rail
-(`solanaConnection()` in `lib/payments/solana.ts`); the code samples no
-priority fee and sets none on the buyer's transaction. Any change to that must
-keep the cap above.
+(`solanaConnection()` in `lib/payments/solana.ts`). The buyer's transaction
+carries no ComputeBudget price today. A sampler exists but is not wired:
+`priorityFeeMicroLamports()` in `lib/payments/generation-pay.ts` takes the
+p75 of recent prioritization fees and caps it at
+`MAX_PRIORITY_FEE_MICROLAMPORTS = 1_000_000` (1 lamport per unit); it has no
+caller outside tests. That cap is not the 5 lamports per unit cap in rule 7.
+Wiring the sampler must keep the buyer's price at or below the rule 7 cap.
 
 ## 8. Resolve before you settle
 On the agent route, model, route, prompt text and moderation are resolved

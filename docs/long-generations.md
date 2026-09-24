@@ -13,9 +13,13 @@ prompted the change. Status checked against the tree on 2026-09-24.
 > route, `SLOT_TTL_MS = 330_000` in `lib/generation/concurrency.ts`,
 > `STALE_CLAIM_MS = 360_000` in `lib/payments/generation-redemption.ts`.
 >
-> **Not applied.** The in-process cap still applies only when `paidUpfront`
-> (Solana header or a consumed intent, route line `const paidUpfront =`);
-> the EVM x402 `paymentEngine.settle` branch still generates with no cap.
+> **Cap coverage.** The in-process cap applies only when `paidUpfront`
+> (Solana header or a consumed intent, route line `const paidUpfront =`).
+> The EVM x402 `paymentEngine.settle` branch has no cap, but it cannot run:
+> every non Solana `X-PAYMENT` request without an intent is answered 501
+> before any settle or provider call (the route's guard
+> `if (!intentId && !isSolanaPayment)`; Kev: no EVM billing, the code
+> exists but is not enabled). Present, unreachable, not an open hole.
 >
 > **Superseded since this note was written.**
 > - Authorise then capture is wired: the generate route imports
@@ -36,8 +40,9 @@ prompted the change. Status checked against the tree on 2026-09-24.
 > ordering this document warns about: the slot TTL (150s) and the stale-claim
 > release (180s) both sat *below* the new platform budget, so a generation
 > still running would lose its concurrency slot and have its payment claim
-> released. Fixed in the same commit that recorded the first version of
-> this note.
+> released. Fixed in `35d5abb` (fix(generation): restore the budget ladder
+> broken by raising maxDuration), the commit directly before `eacc044`, which
+> recorded the first version of this note.
 
 We were not near Vercel's limit. We were near a number we chose ourselves.
 

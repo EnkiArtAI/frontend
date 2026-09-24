@@ -95,7 +95,7 @@ When the team changes, change that file, nothing else.
 ## 8. Local setup
 
 ```bash
-git clone https://github.com/EnkiArtAI/frontend.git   # org renamed to EnkiArtAI on 2026-09-24
+git clone https://github.com/EnkiArtAI/frontend.git
 cd frontend
 npm ci
 cp .env.example .env.local   # ask Kev for the values, never paste them into chat or tickets

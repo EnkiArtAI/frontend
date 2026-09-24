@@ -68,7 +68,7 @@ a commit or a chat message):
 
 | Purpose | Names |
 | --- | --- |
-| Supabase | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` |
+| Supabase | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY` |
 | Image storage | `BLOB_READ_WRITE_TOKEN` |
 | Providers | `GEMINI_API_KEY` or `GOOGLE_GEMINI_API_KEY`, `OPENAI_API_KEY`, `WAVESPEED_API_KEY`, `XAI_API_KEY` |
 | Solana payments | `SOLANA_PAYMENT_CHAIN`, `SOLANA_RPC_URL`, `SOLANA_PLATFORM_WALLET`, `NEXT_PUBLIC_SOLANA_PLATFORM_WALLET`, `SOLANA_FEE_PAYER_SECRET_KEY` |
@@ -76,8 +76,10 @@ a commit or a chat message):
 | Auth and encryption | `AUTH_PEPPER`, `WEBAUTHN_ORIGIN`, `WEBAUTHN_RP_ID`, `FIELD_ENCRYPTION_KEY_B64`, `PROMPT_ENCRYPTION_KEY` |
 | Beta gate | `TEAM_ACCESS_CODE` (unset disables the gate) |
 
-`.env.example` still lists Privy and MongoDB variables; nothing in `app/` or
-`lib/` reads them.
+`.env.example` still lists Privy and MongoDB variables and
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` (also a dummy in `.github/workflows/ci.yml`);
+nothing in `app/` or `lib/` reads them. The server reads `SUPABASE_ANON_KEY`
+(`lib/supabaseServer.ts`).
 
 ## Where things are
 
@@ -87,7 +89,10 @@ a commit or a chat message):
 - `lib/generation/**` model resolution, routing, concurrency, recording
 - `lib/webauthn.ts`, `lib/auth.ts`, `lib/allowlist.ts`, `proxy.ts` auth and
   the beta gate
-- `hooks/useGenerationCore.ts` the single generate path every surface uses
+- `hooks/useGenerationCore.ts` the single source of generation settings
+  (option lists, prices, visibility) for every surface; it sends no request.
+  The generate requests go out from `components/enki-shell/generation.ts`
+  and `components/PromptGeneratorView.tsx`
 - `components/**`, `hooks/**`, `providers/**` client code
 - `migrations/**` SQL, applied by hand against the live database
 - `shared/**` payment chain config imported by both sides
@@ -115,10 +120,10 @@ These exist in the tree, are not deployed, and are being deleted:
   `backend/token-registry.ts`, `backend/token-risk-engine.ts`,
   `backend/payment-system.ts`
 
-The live parts of `backend/` are the four image adapters and their types
-under `backend/services/`, `backend/encryption.ts`, `backend/facilitator.ts`,
-`backend/solana-x402-verifier.ts` and `backend/x402-engine.ts`; each is
-imported from `app/` or `lib/`.
+The live parts of `backend/` are the four image adapters, their types and
+`variable-substitution.ts` under `backend/services/`, `backend/encryption.ts`,
+`backend/facilitator.ts`, `backend/solana-x402-verifier.ts` and
+`backend/x402-engine.ts`; each is imported from `app/` or `lib/`.
 
 ## License
 
