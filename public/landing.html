@@ -776,6 +776,30 @@
   }
   /* the source image glides between crops as the active square rotates */
   .kv-source img { transition: object-position 0.9s cubic-bezier(.4,0,.2,1); }
+  /* Before/after curtain (Kev, 2026-09-23): every variation card hides the base
+     photo under a diagonal edge. --kv-cut runs from -0.25 (base hidden) to 1.25
+     (base fully shown); the pointer drives it, keyboard arrows step it, touch
+     drags it horizontally while vertical scrolling stays free (pan-y). */
+  .kv-cards > div { touch-action: pan-y; }
+  .kv-before {
+    position: absolute; inset: 0; --kv-cut: -0.25; pointer-events: none;
+    clip-path: polygon(0 0, calc(var(--kv-cut) * 100% + 22%) 0, calc(var(--kv-cut) * 100% - 22%) 100%, 0 100%);
+    transition: clip-path 0.45s cubic-bezier(.4,0,.2,1);
+    background: rgba(var(--lp-shade-rgb), 0.92);
+  }
+  .kv-before.is-live { transition: none; }
+  .kv-before img { width: 100%; height: 100%; object-fit: cover; display: block; position: absolute; inset: 0; }
+  .kv-before .kv-before-edge { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .kv-before .kv-before-edge line { stroke: rgba(255,255,255,0.75); stroke-width: 2; vector-effect: non-scaling-stroke; }
+  .kv-before-tag {
+    position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,0.55); backdrop-filter: blur(6px);
+    border: 1px solid rgba(var(--lp-text-rgb), 0.35); border-radius: 100px; padding: 2px 9px;
+    font-size: 0.58rem; font-weight: 700; color: #fff; letter-spacing: 0.04em;
+  }
+  .kv-cards > div:focus-visible { outline: 2px solid rgba(var(--lp-accent-rgb), 0.9); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    .kv-before { transition: none; --kv-cut: 0.5; }
+  }
 
   /* Fullscreen lightbox for showcase images */
   .kv-lightbox {
@@ -4779,7 +4803,8 @@ function applyShowcase(i) {
     if (n >= set.vars.length) { card.style.display = 'none'; return; }
     card.style.display = '';
     var v = set.vars[n];
-    var im = card.querySelector('img'); if (im) { im.loading = 'lazy'; im.decoding = 'async'; if (kvImagesEnabled) im.src = v.src; im.alt = v.t; im.style.objectPosition = v.pos || 'center'; }
+    var im = card.querySelector(':scope > img'); if (im) { im.loading = 'lazy'; im.decoding = 'async'; if (kvImagesEnabled) im.src = v.src; im.alt = v.t; im.style.objectPosition = v.pos || 'center'; }
+    var bi = card.querySelector('.kv-before img'); if (bi) { if (kvImagesEnabled) bi.src = set.src; bi.alt = 'Before: ' + set.title; bi.style.objectFit = set.srcFit || 'cover'; bi.style.objectPosition = set.srcPos || 'center'; }
     var cap = card.querySelector('div[style*="bottom:0"]');
     if (cap) { var ds = cap.querySelectorAll('div'); if (ds[0]) ds[0].textContent = v.t; if (ds[1]) ds[1].textContent = v.s; }
   });
@@ -4809,6 +4834,39 @@ function enableBelowFold() {
 setTimeout(enableBelowFold, 12000);
 function revealCollage() { var hc = document.querySelector('.hero-collage'); if (hc) hc.classList.add('ready'); }
 setTimeout(revealCollage, 10000); // safety: never leave the hero permanently blank
+function kvCurtainInit() {
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var cards = [].slice.call(document.querySelectorAll('.kv-cards > div'));
+  cards.forEach(function (card) {
+    if (card.querySelector('.kv-before')) return;
+    var layer = document.createElement('div'); layer.className = 'kv-before'; layer.setAttribute('aria-hidden', 'true');
+    var img = document.createElement('img'); img.loading = 'lazy'; img.decoding = 'async'; img.alt = '';
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('class', 'kv-before-edge'); svg.setAttribute('viewBox', '0 0 100 100'); svg.setAttribute('preserveAspectRatio', 'none');
+    var line = document.createElementNS('http://www.w3.org/2000/svg', 'line'); line.setAttribute('y1', '0'); line.setAttribute('y2', '100'); svg.appendChild(line);
+    var tag = document.createElement('span'); tag.className = 'kv-before-tag'; tag.textContent = 'Source';
+    layer.appendChild(img); layer.appendChild(svg); layer.appendChild(tag);
+    var after = card.querySelector(':scope > img'); if (after && after.parentNode === card) card.insertBefore(layer, after.nextSibling); else card.appendChild(layer);
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('aria-label', 'Variation, press left or right to compare with the source photo, Enter to open');
+    var cut = reduce ? 0.5 : -0.25, raf = 0;
+    function paint() { raf = 0; layer.style.setProperty('--kv-cut', cut); line.setAttribute('x1', cut * 100 + 22); line.setAttribute('x2', cut * 100 - 22); }
+    function set(v, live) { cut = Math.max(-0.25, Math.min(1.25, v)); layer.classList.toggle('is-live', !!live); cancelAnimationFrame(raf); raf = requestAnimationFrame(paint); }
+    paint();
+    if (reduce) return; // static half split, no tracking
+    function fromEvent(e) { var r = card.getBoundingClientRect(); return r.width ? (e.clientX - r.left) / r.width * 1.5 - 0.25 : cut; }
+    card.addEventListener('pointerenter', function (e) { if (e.pointerType === 'mouse') set(fromEvent(e), true); });
+    card.addEventListener('pointermove', function (e) { if (e.pointerType === 'mouse' || e.buttons) set(fromEvent(e), true); });
+    card.addEventListener('pointerleave', function () { set(-0.25, false); });
+    card.addEventListener('pointerup', function (e) { if (e.pointerType !== 'mouse') set(-0.25, false); });
+    card.addEventListener('pointercancel', function () { set(-0.25, false); });
+    card.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowRight') { e.preventDefault(); set((cut < 0 ? 0 : cut) + 0.15, false); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); set(cut - 0.15, false); }
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); card.click(); }
+    });
+    card.addEventListener('blur', function () { set(-0.25, false); });
+  });
+}
 function kvPick(i, manual) {
   kvIdx = i;
   document.querySelectorAll('#kvTabs .kv-tab').forEach(function (tab, n) { tab.classList.toggle('active', n === i); });
@@ -4833,6 +4891,7 @@ function kvStart() {
     el.style.backgroundRepeat = 'no-repeat';
   });
 })();
+kvCurtainInit();
 kvPick(0);
 // Start the auto-rotation only once the showcase is scrolled into view (and the
 // user hasn't already picked a square manually).
