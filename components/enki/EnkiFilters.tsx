@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { LayoutGrid, Search, X, Cpu } from "lucide-react";
 import GeneratorLogo from "@/components/generation/GeneratorLogo";
 import "@/components/generation/ratio-select.css";
+import { openCreator } from "@/lib/openCreator";
+import { SUGGEST_DEBOUNCE_MS, flattenSuggestions, stepActive, type SuggestItem } from "@/lib/search/client";
 
 /**
  * Canonical category list — shared between the feed filter bar and the
@@ -199,8 +201,30 @@ function SearchChip({ open, setOpen }: { open: boolean; setOpen: (v: boolean | (
   }, []);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  /* Typeahead: titles and creators from /api/search/suggest, a debounce
+     after each keystroke, the stale request aborted. Titles only, tags stay
+     invisible (Kev). `dismissed` hides the list after Enter, Escape, a pick
+     or blur until the next keystroke. */
+  const [items, setItems] = useState<SuggestItem[]>([]);
+  const [active, setActive] = useState(-1);
+  const [dismissed, setDismissed] = useState(false);
+  useEffect(() => {
+    const q = query.trim();
+    const ctrl = new AbortController();
+    const t = setTimeout(() => {
+      if (!q) { setItems([]); setActive(-1); return; }
+      fetch(`/api/search/suggest?q=${encodeURIComponent(q)}`, { credentials: "include", signal: ctrl.signal })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body) => { setItems(body ? flattenSuggestions(body) : []); setActive(-1); })
+        .catch(() => {});
+    }, SUGGEST_DEBOUNCE_MS);
+    return () => { clearTimeout(t); ctrl.abort(); };
+  }, [query]);
+  const listShown = open && !dismissed && query.trim() !== "" && items.length > 0;
+
   const push = (value: string) => {
     setQuery(value);
+    setDismissed(false);
     const next = new URLSearchParams(Array.from(params.entries()));
     if (value) next.set("q", value);
     else next.delete("q");
@@ -231,6 +255,12 @@ function SearchChip({ open, setOpen }: { open: boolean; setOpen: (v: boolean | (
     };
   }, []);
 
+  const choose = (item: SuggestItem) => {
+    setDismissed(true);
+    if (item.kind === "title") push(item.label);
+    else openCreator(item.handle, router);
+  };
+
   return (
     <div className={`enki-catbar-search${open ? " open" : ""}`}>
       <button
@@ -251,18 +281,58 @@ function SearchChip({ open, setOpen }: { open: boolean; setOpen: (v: boolean | (
         ref={inputRef}
         value={query}
         onChange={(e) => push(e.target.value)}
-        placeholder="Search prompts, artists, tags…"
+        placeholder="Search prompts and artists"
         aria-label="Search prompts"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={listShown}
+        aria-controls="enki-search-suggest"
+        aria-activedescendant={listShown && active >= 0 ? `enki-suggest-${active}` : undefined}
+        onFocus={() => setDismissed(false)}
+        onBlur={() => setDismissed(true)}
         /* Hidden from tab order while closed: a field nobody can see must not
            be reachable by keyboard either, or focus vanishes off screen. */
         tabIndex={open ? 0 : -1}
         onKeyDown={(e) => {
+          if (listShown && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+            e.preventDefault();
+            setActive(stepActive(active, e.key === "ArrowDown" ? 1 : -1, items.length));
+            return;
+          }
+          if (e.key === "Enter") {
+            e.preventDefault();
+            if (listShown && active >= 0) choose(items[active]);
+            else setDismissed(true);
+            return;
+          }
           if (e.key === "Escape") {
+            if (listShown) { setDismissed(true); return; }
             if (query) push("");
             setOpen(false);
           }
         }}
       />
+      {listShown && (
+        <ul className="enki-search-suggest" id="enki-search-suggest" role="listbox">
+          {items.map((item, i) => (
+            <li
+              key={`${item.kind}-${item.id}`}
+              id={`enki-suggest-${i}`}
+              role="option"
+              aria-selected={i === active}
+              className={`enki-search-suggest-item${i === active ? " active" : ""}`}
+              /* mousedown, not click: the input's blur would hide the list
+                 before a click could land. */
+              onMouseDown={(e) => { e.preventDefault(); choose(item); }}
+              onMouseEnter={() => setActive(i)}
+            >
+              {item.kind === "creator" && <span className="enki-search-suggest-kind">Creator</span>}
+              <span className="enki-search-suggest-label">{item.label}</span>
+              {item.kind === "creator" && <small>@{item.handle}</small>}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

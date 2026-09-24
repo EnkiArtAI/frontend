@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useTheme } from "../../providers/ThemeProvider";
@@ -251,11 +251,6 @@ export default function EnkiHome() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const searchParams = useSearchParams();
-  const [query, setQuery] = useState(searchParams.get("q") || "");
-  const searchRef = useRef<HTMLInputElement>(null);
-  const debRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-
   // The node creator no longer forces the rail — the collapse toggle stays a
   // pure menu open/close even while Create Prompt 2 is open.
   // The collapse toggle is the single source of truth, so the ">" arrow always
@@ -274,17 +269,8 @@ export default function EnkiHome() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [narrow]);
 
-  /* Ctrl/Cmd+K now lives with the field, in SearchChip. Two listeners on the
-     same chord would both fire and the second would undo the first. */
-
-  // Live search → drives the feed via the ?q= param EnkiFeedPage already reads.
-  const pushQuery = (q: string) => {
-    setQuery(q);
-    if (debRef.current) clearTimeout(debRef.current);
-    debRef.current = setTimeout(() => {
-      router.replace(q ? `/home?q=${encodeURIComponent(q)}` : "/home", { scroll: false });
-    }, 250);
-  };
+  /* Ctrl/Cmd+K and the query itself live with the field, in SearchChip: it
+     writes ?q=, EnkiFeedPage reads it and asks the server. */
 
   const showToast = (msg: string) => { setToast(msg); window.setTimeout(() => setToast(null), 2400); };
 
