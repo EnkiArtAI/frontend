@@ -69,7 +69,12 @@ html:has(.set-page) { scrollbar-gutter: stable; }
   border: none;
   padding: 0;
   position: relative;
+  white-space: nowrap;
+  flex-shrink: 0;
   transition: color 0.2s;
+}
+@media (max-width: 540px) {
+  .set-nav { gap: 16px; }
 }
 .set-nav-item:hover:not(.disabled) {
   color: var(--enki-ink);

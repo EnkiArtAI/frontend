@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import "./settings.css";
 
 export interface TabItem {
@@ -16,8 +16,15 @@ interface SettingsNavProps {
 }
 
 export default function SettingsNav({ tabs, activeTab, onChange }: SettingsNavProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  // The strip scrolls horizontally on phones and hides its scrollbar, so a
+  // deep link or tab change must bring the active tab into view itself.
+  useEffect(() => {
+    ref.current?.querySelector(".set-nav-item.active")?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [activeTab]);
+
   return (
-    <div className="set-nav">
+    <div className="set-nav" ref={ref}>
       {tabs.map(tab => {
         let classes = "set-nav-item";
         if (tab.id === activeTab) classes += " active";
