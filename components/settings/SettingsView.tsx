@@ -11,6 +11,7 @@ import SettingsSection from "@/components/settings/SettingsSection";
 import SettingsToggle from "@/components/settings/SettingsToggle";
 import PaymentPanel from "@/components/settings/PaymentPanel";
 import RecoveryPanel from "@/components/settings/RecoveryPanel";
+import DocsPanel from "@/components/settings/DocsPanel";
 import { listReferrals, type Referral } from "@/lib/referrals";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import { useRecoveryStatus } from "@/hooks/useRecoveryStatus";
@@ -22,6 +23,7 @@ const TABS: TabItem[] = [
   { id: "payment", label: "Payment" },
   { id: "referrals", label: "Referrals" },
   { id: "recovery", label: "Recovery & 2FA" },
+  { id: "docs", label: "How Enki works" },
 ];
 
 // The X (formerly Twitter) logo — lucide ships no brand X icon, so inline it.
@@ -199,6 +201,7 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
     payment: "Payment.",
     referrals: "Referrals.",
     recovery: <>Recovery <span>&</span> 2FA.</>,
+    docs: "How Enki works.",
   };
 
   const descMap: Record<string, string> = {
@@ -206,6 +209,7 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
     payment: "Your balance, your earnings, and the ways money moves in and out — always into your own wallet.",
     referrals: "Found great art on social media? Suggest it. If we turn it into a prompt, you earn on every sale it makes.",
     recovery: "Keep more than one way back in — a passkey on another device, plus guardians you trust.",
+    docs: "Everything Enki does today, explained in plain words, with the questions people ask most.",
   };
 
   // Real role lookup (users.role via session) — Admin section only for
@@ -421,6 +425,9 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
 
           {/* === RECOVERY & 2FA TAB === */}
           {activeTab === "recovery" && <RecoveryPanel focus={focusGuardians} />}
+
+          {/* === HOW ENKI WORKS TAB === */}
+          {activeTab === "docs" && <DocsPanel onGoToTab={changeTab} />}
 
           </div>
         </SettingsLayout>
