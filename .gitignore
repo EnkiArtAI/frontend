@@ -49,6 +49,21 @@ pnpm-lock.yaml
 # Tracked documentation is allowed (exception to the global *.md ignore)
 !docs/*.md
 
+# Spec-driven workflow (AGENT_INSTRUCTIONS.md): docs/specs/<CODE>.md and the
+# batch reports under docs/specs/batches/ are tracked too. `!docs/*.md` above
+# does not reach into subdirectories (gitignore globs don't cross `/`), so
+# without this, every spec and batch report is silently dropped from git.
+!docs/specs/
+!docs/specs/*.md
+!docs/specs/batches/
+!docs/specs/batches/*.md
+
+# bun's own lockfile — this repo standardized on npm for the root project;
+# backend/ was bun-installed locally purely for install speed, not as a
+# package-manager switch. Keep backend/package-lock.json authoritative and
+# don't let a second lockfile format drift in unnoticed (see ENG-09).
+bun.lock
+
 # Throwaway probes and benchmarks — never committed. They may call paid
 # provider APIs, so a stray file here costs real money on every test run.
 __bench-*
