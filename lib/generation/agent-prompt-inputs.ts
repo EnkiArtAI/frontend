@@ -30,11 +30,19 @@ export type AgentInputs =
   | { ok: true; paid: boolean; variables: Declared[]; values: Map<string, string> }
   | { ok: false; status: 400 | 404 | 500; error: string };
 
-/** The name app/api/prompt stores a slot as (toDbVarName, before its tie-breaks). */
-function storedName(slot: string): string {
+/**
+ * The name app/api/prompt stores a slot as (toDbVarName, before its
+ * tie-breaks). Null for a slot with no ASCII letter or digit ("[名前]"): that
+ * one is stored as var_<position>, which its text cannot be traced back to.
+ */
+function storedName(slot: string): string | null {
   const s = slot.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+  if (!s) return null;
   return /^[a-z]/.test(s) ? s : `v_${s}`;
 }
+
+/** A variable stored as var_<position>: no [slot] resolves to it. */
+const unreachable = (v: Declared) => /^var_\d+$/.test(v.name);
 
 /**
  * The declared variable a key or a [slot] names: its stored name exactly,
@@ -44,7 +52,8 @@ function storedName(slot: string): string {
  */
 function variableFor(variables: Declared[], key: string): Declared | undefined {
   const k = key.trim();
-  return variables.find((v) => k === v.name) ?? variables.find((v) => storedName(k) === v.name);
+  const stored = storedName(k);
+  return variables.find((v) => k === v.name) ?? (stored ? variables.find((v) => stored === v.name) : undefined);
 }
 
 function optionValues(options: unknown): string[] {
@@ -108,6 +117,8 @@ export async function checkAgentPromptInputs(
   for (const [key, raw] of Object.entries(values ?? {})) {
     const v = variableFor(variables, key);
     if (!v) return { ok: false, status: 400, error: `This prompt has no variable "${key}"` };
+    // Refused rather than paid for and dropped: its slot cannot be found.
+    if (unreachable(v)) return { ok: false, status: 400, error: `${v.name} cannot be filled through the API` };
     const r = fit(v, raw, paid);
     if ("error" in r) return { ok: false, status: 400, error: r.error };
     fitted.set(v.name, r.value);

@@ -123,6 +123,19 @@ describe("a paid prompt takes only values that fit its variables", () => {
     expect(composeAgentPrompt("with [2nd subject]", inputs)).toBe("with a wolf");
   });
 
+  it("refuses before the quote a variable no slot can reach", async () => {
+    // "[名前]" has no ASCII letter or digit, so the save stored it as var_<position>.
+    variables = [{ name: "var_0", label: "Yuki", data_type: "text", options: null, min_value: null, max_value: null }];
+    expect(await check({ var_0: "x" })).toMatchObject({ ok: false, status: 400 });
+  });
+
+  it("never matches a slot without ASCII letters to some other variable", async () => {
+    variables = [{ name: "v_", label: "x", data_type: "text", options: null, min_value: null, max_value: null }];
+    const inputs = await check({ v_: "fox" });
+    if (!inputs.ok) throw new Error("expected inputs");
+    expect(composeAgentPrompt("a [名前]", inputs)).toBe("a [名前]");
+  });
+
   it("never lets a label hand one variable's value to another", async () => {
     // The label is the text the creator selected: hero was made from "Knight".
     variables = [
