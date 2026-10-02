@@ -98,6 +98,7 @@ export function hasBoost(model: ResolvedModel): boolean {
   );
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
 /**
@@ -153,14 +154,21 @@ const BY_SLUG: Record<string, Pick<ResolvedModel, "normal" | "boost" | "supports
   },
 };
 
-/** What we fall back to when nothing is selected or the lookup fails. */
-export const DEFAULT_MODEL: ResolvedModel = {
+/* There is no fallback model (Kev, 2026-10-02): a selection that cannot be
+   resolved is refused, never replaced. These are only column defaults for
+   rows that predate allowed_ratios and max_reference_images. */
+const DEFAULT_RATIOS = ["1:1", "16:9", "9:16"];
+const DEFAULT_MAX_REFS = 3;
+
+/** What the free route runs, always: Pollinations Flux. Used to record a free
+    generation when the catalogue row cannot be read; it is what actually ran. */
+export const FLUX_FREE_MODEL: ResolvedModel = {
   id: null,
-  name: "Nano Banana Pro",
-  ...BY_SLUG["nano-banana-pro"],
-  maxResolution: maxTier("wavespeed", "google/nano-banana-pro/text-to-image"),
-  allowedRatios: ["1:1", "16:9", "9:16"],
-  maxRefs: 3,
+  name: "Flux (free)",
+  ...BY_SLUG["flux-free"],
+  maxResolution: maxTier("pollinations", "flux"),
+  allowedRatios: DEFAULT_RATIOS,
+  maxRefs: 0,
 };
 
 /** A row of model_providers with its provider embedded. */
@@ -237,15 +245,15 @@ function fromRow(row: ModelRow, audience: Audience): ResolvedModel {
 
   return {
     id: row.id ?? null,
-    name: row.name ?? DEFAULT_MODEL.name,
+    name: row.name ?? "",
     normal,
     boost,
     // The raw rows travel with the model because the ORDERED choice cannot be
     // made here: which route is cheapest depends on the quality and resolution
     // of the request, which fromRow never sees.
     links,
-    allowedRatios: row.allowed_ratios?.length ? row.allowed_ratios : DEFAULT_MODEL.allowedRatios,
-    maxRefs: typeof row.max_reference_images === "number" ? row.max_reference_images : DEFAULT_MODEL.maxRefs,
+    allowedRatios: row.allowed_ratios?.length ? row.allowed_ratios : DEFAULT_RATIOS,
+    maxRefs: typeof row.max_reference_images === "number" ? row.max_reference_images : DEFAULT_MAX_REFS,
     /* Derived from the ROUTE, never from a column and no longer from the
        display-name bridge. Whether a model honours a resolution is a fact
        about the provider and the provider model, and the bridge answered it
@@ -268,8 +276,8 @@ export async function resolveModelByName(
   supabase: SupabaseClient | null,
   name: string,
   audience: Audience = "public",
-): Promise<ResolvedModel> {
-  if (!supabase) return DEFAULT_MODEL;
+): Promise<ResolvedModel | null> {
+  if (!supabase) return null;
   try {
     const { data, error } = await supabase
       .from("models")
@@ -280,10 +288,10 @@ export async function resolveModelByName(
       .ilike("name", name)
       .eq("active", true)
       .limit(1);
-    if (error || !data?.length) return DEFAULT_MODEL;
+    if (error || !data?.length) return null;
     return fromRow(data[0] as unknown as ModelRow, audience);
   } catch {
-    return DEFAULT_MODEL;
+    return null;
   }
 }
 
@@ -340,9 +348,9 @@ export function withCapabilities(rows: ModelRow[], audience: Audience = "public"
  *
  * The paid caller sends { intentId, prompt, aspectRatio } and NO modelIds — it
  * already told the server which model it was buying when it took the quote.
- * resolveModel() with no ids falls back to DEFAULT_MODEL, so comparing that
- * fallback against the paid family refused every purchase of anything except
- * the default. The intent is the source of truth; this reads it.
+ * resolveModel() with no ids used to fall back to a default model, so comparing
+ * that fallback against the paid family refused every purchase of anything
+ * except the default. The intent is the source of truth; this reads it.
  *
  * Returns null rather than a default when the family names nothing active.
  * Quietly generating on some other model is precisely the failure the family
@@ -384,11 +392,14 @@ export async function resolveModel(
   supabase: SupabaseClient | null,
   modelIds: string[] | undefined,
   audience: Audience = "public",
-): Promise<ResolvedModel> {
-  if (!supabase || !modelIds?.length) return DEFAULT_MODEL;
+): Promise<ResolvedModel | null> {
+  // Exact row ids only. A name or slug is not an id, and a failed lookup is
+  // refused by the caller, never replaced by another model (Kev, 2026-10-02).
+  const ids = (modelIds ?? []).filter((id) => UUID.test(id));
+  if (!supabase || !ids.length) return null;
   try {
     const pick = (cols: string) =>
-      supabase.from("models").select(cols).in("id", modelIds).eq("active", true);
+      supabase.from("models").select(cols).in("id", ids).eq("active", true);
 
     // Embed the provider links. Asking for a relation that does not exist
     // fails the whole query, so the fallback is a plain select — that is the
@@ -406,13 +417,13 @@ export async function resolveModel(
       rows = (joined.data ?? []) as unknown as ModelRow[];
     }
     // Preserve the user's order rather than the database's.
-    for (const wanted of modelIds) {
+    for (const wanted of ids) {
       const row = rows.find((r) => r.id === wanted);
       if (row) return fromRow(row, audience);
     }
-    return rows.length ? fromRow(rows[0], audience) : DEFAULT_MODEL;
+    return null;
   } catch {
-    return DEFAULT_MODEL;
+    return null;
   }
 }
 

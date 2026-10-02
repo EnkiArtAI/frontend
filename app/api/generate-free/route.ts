@@ -5,7 +5,7 @@ import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
 import { getSupabaseServerClientSafe } from "@/lib/supabaseServer";
 import { recordGeneration, resolveRecordingUserId } from "@/lib/generation/record";
-import { resolveModelByName } from "@/lib/generation/models";
+import { resolveModelByName, FLUX_FREE_MODEL } from "@/lib/generation/models";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
 import { storeReferenceImages } from "@/lib/generation/reference-images";
 import { readImageDimensions } from "@/backend/services/gemini-image-generation";
@@ -160,7 +160,8 @@ export async function POST(request: NextRequest) {
       const recUserId = quotaUserId;
       if (supabase && recUserId) {
         const stripped = stripWorkflowImages(body?.workflow ?? {});
-        const model = await resolveModelByName(supabase, "Flux (free)");
+        // The free route always runs Flux; if its row cannot be read, record what ran.
+        const model = (await resolveModelByName(supabase, "Flux (free)")) ?? FLUX_FREE_MODEL;
         // Measured once, above, for the media type. Measuring the same
         // buffer a second time here could only ever agree with itself.
         const dims = measured;

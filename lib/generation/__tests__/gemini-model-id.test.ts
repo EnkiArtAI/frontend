@@ -3,7 +3,6 @@ import {
   estimateGeminiCost,
   isGemini3ProImage,
 } from "@/backend/services/gemini-image-generation";
-import { DEFAULT_MODEL } from "@/lib/generation/models";
 
 /*
  * Google shut down gemini-3-pro-image-preview on 2026-06-25 ("The
@@ -56,15 +55,5 @@ describe("a Pro generation is never costed at zero", () => {
     expect(estimateGeminiCost("gemini-3-pro-image", "4K", 1)).toBeGreaterThan(
       estimateGeminiCost("gemini-3-pro-image", "1K", 1),
     );
-  });
-});
-
-describe("the code's own fallback model id is one that still exists", () => {
-  it("does not name a model Google has switched off", () => {
-    /* DEFAULT_MODEL is what a request falls back to when the lookup fails, so
-       a dead id here is a dead id on exactly the paths that were already
-       having a bad day. */
-    expect(DEFAULT_MODEL.boost.providerModel).toBe("gemini-3-pro-image");
-    expect(DEFAULT_MODEL.boost.providerModel).not.toMatch(/-preview$/);
   });
 });

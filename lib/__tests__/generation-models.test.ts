@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { __testing__, routeFor, DEFAULT_MODEL } from "@/lib/generation/models";
+import { __testing__, routeFor } from "@/lib/generation/models";
 
 const { fromRow } = __testing__;
 
@@ -90,7 +90,7 @@ describe("model → route resolution", () => {
   it("keeps per-model limits from the row, not the defaults", () => {
     const m = fromRow(NANO, "public");
     expect(m.maxRefs).toBe(18);
-    expect(m.maxRefs).not.toBe(DEFAULT_MODEL.maxRefs);
+    expect(m.maxRefs).not.toBe(3); // the column default for rows that predate it
     expect(m.allowedRatios).toEqual(["1:1"]);
   });
 });

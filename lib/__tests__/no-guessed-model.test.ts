@@ -85,3 +85,46 @@ describe("no live code names a Gemini model Google has shut down", () => {
     });
   }
 });
+
+describe("there is no fallback model: a pick that cannot be resolved is refused", () => {
+  const MODELS = readSource(join(ROOT, "lib", "generation", "models.ts"));
+  const HUMAN = readSource(join(ROOT, "app", "api", "generate-image", "route.ts"));
+  const NBP = { id: "11111111-1111-4111-8111-111111111111", name: "Nano Banana Pro", model_providers: [] };
+  const GPT = { id: "22222222-2222-4222-8222-222222222222", name: "GPT-Image-2", model_providers: [] };
+
+  // The query chain resolveModel uses: from().select().in("id", ids).eq("active", true)
+  function db(rows: object[], fail?: "error" | "throw") {
+    const result = (ids: string[]) =>
+      fail === "throw" ? Promise.reject(new Error("db down"))
+      : fail === "error" ? Promise.resolve({ data: null, error: { message: "boom" } })
+      : Promise.resolve({ data: rows.filter((r) => ids.includes((r as { id: string }).id)), error: null });
+    return { from: () => ({ select: () => ({ in: (_c: string, ids: string[]) => ({ eq: () => result(ids) }) }) }) } as never;
+  }
+
+  it("the models module has no default model any more", () => {
+    expect(MODELS).not.toMatch(/DEFAULT_MODEL/);
+  });
+
+  it("a GPT-Image-2 pick resolves to GPT-Image-2 and a Nano Banana Pro pick to Nano Banana Pro", async () => {
+    const { resolveModel } = await import("@/lib/generation/models");
+    expect((await resolveModel(db([NBP, GPT]), [GPT.id]))?.name).toBe("GPT-Image-2");
+    expect((await resolveModel(db([NBP, GPT]), [NBP.id]))?.name).toBe("Nano Banana Pro");
+  });
+
+  it("never returns Nano Banana Pro for a pick that cannot be resolved", async () => {
+    const { resolveModel } = await import("@/lib/generation/models");
+    expect(await resolveModel(db([NBP, GPT]), ["gpt-image-2"])).toBeNull(); // a slug is not an id
+    expect(await resolveModel(db([NBP]), [GPT.id])).toBeNull(); // inactive or missing row
+    expect(await resolveModel(db([NBP, GPT]), [])).toBeNull(); // nothing chosen
+    expect(await resolveModel(null, [GPT.id])).toBeNull(); // no database
+    expect(await resolveModel(db([NBP, GPT], "error"), [GPT.id])).toBeNull();
+    expect(await resolveModel(db([NBP, GPT], "throw"), [GPT.id])).toBeNull();
+  });
+
+  it("the human route refuses an unresolved pick before any payment step", () => {
+    const refuse = HUMAN.search(/if \(!chosen\) \{/);
+    const slot = HUMAN.search(/const slot = await acquireSlot\(/);
+    expect(refuse).toBeGreaterThan(-1);
+    expect(slot).toBeGreaterThan(refuse);
+  });
+});

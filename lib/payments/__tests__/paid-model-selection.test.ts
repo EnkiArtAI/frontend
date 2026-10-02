@@ -112,9 +112,11 @@ describe("the route lets the purchase choose the model", () => {
     expect(branch).not.toMatch(/preflightModel = await resolveModel\(/);
   });
 
-  it("falls back to the request's own selection only when nothing was paid", () => {
+  it("uses the request's own selection only when nothing was paid, and refuses it when it cannot be resolved", () => {
     const start = ROUTE.indexOf("} else {", ROUTE.indexOf("if (paidFamily) {"));
-    const unpaid = ROUTE.slice(start, start + 400);
-    expect(unpaid).toMatch(/preflightModel = await resolveModel\(getSupabaseServerClientSafe\(\), body\.modelIds\)/);
+    const unpaid = ROUTE.slice(start, start + 600);
+    expect(unpaid).toMatch(/const chosen = await resolveModel\(getSupabaseServerClientSafe\(\), body\.modelIds\)/);
+    expect(unpaid).toMatch(/if \(!chosen\) \{/);
+    expect(unpaid).toMatch(/preflightModel = chosen;/);
   });
 });

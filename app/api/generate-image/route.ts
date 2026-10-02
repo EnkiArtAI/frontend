@@ -316,10 +316,10 @@ export async function POST(request: NextRequest) {
          family, ask for the dear one. */
       if (body.modelIds?.length) {
         const asked = await resolveModel(getSupabaseServerClientSafe(), body.modelIds);
-        if (toModelFamily(asked.name) !== paidFamily) {
+        if (!asked || toModelFamily(asked.name) !== paidFamily) {
           return NextResponse.json(
             {
-              error: `This payment is for ${paidFamily}, but the request asks for ${toModelFamily(asked.name)}.`,
+              error: `This payment is for ${paidFamily}, but the request asks for ${asked ? toModelFamily(asked.name) : "a model that does not exist"}.`,
             },
             { status: 400 },
           );
@@ -327,7 +327,16 @@ export async function POST(request: NextRequest) {
       }
       preflightModel = paidModel;
     } else {
-      preflightModel = await resolveModel(getSupabaseServerClientSafe(), body.modelIds);
+      // No fallback model (Kev, 2026-10-02): a pick that cannot be resolved
+      // is refused here, before any payment step, never swapped for another.
+      const chosen = await resolveModel(getSupabaseServerClientSafe(), body.modelIds);
+      if (!chosen) {
+        return NextResponse.json(
+          { error: "The chosen model is unknown or not available right now. Nothing was generated and nothing was charged." },
+          { status: 422 },
+        );
+      }
+      preflightModel = chosen;
     }
     // Chosen HERE and nowhere else, because the quote below carries the price
     // of a specific host: quoting AceData and then generating on WaveSpeed
