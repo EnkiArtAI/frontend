@@ -15,6 +15,7 @@ import { useCdpAddress } from "@/hooks/useCdpAddress";
 import { useCdpSolanaSigner } from "@/hooks/useCdpSolanaSigner";
 import { useModelLimits, useModelCatalogue, FALLBACK_RATIOS, resolveCatalogueEntry } from "@/hooks/useModelLimits";
 import { runGeneration } from "@/lib/generation/run-generation";
+import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
 import { tiersUpTo } from "@/lib/generation/resolution";
 import BoostToggle from "@/components/generation/BoostToggle";
 import QualitySelect, { type Quality } from "@/components/generation/QualitySelect";
@@ -462,6 +463,9 @@ function EmptyVarIcon() {
 }
 
 /* ─── Component ─── */
+/** A local id for a stored creation. Called from the generate handler, never during render. */
+const creationId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
 export default function EnkiPromptEditor() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -1630,6 +1634,29 @@ export default function EnkiPromptEditor() {
     ? genTiers[genTiers.length - 1]
     : chosenResolution;
 
+  /* Every price shown is a server quote (Kev, 2026-10-02: "ich brauche safe
+     überall den server-quote"): each paid model at the current settings, one
+     request. The per-slot price was the catalogue price with a $0.10
+     fallback, without the fee and without quality. */
+  const pricedEntries = catalogue.filter((m) => !m.free);
+  const entryQuotes = useServerQuotes(
+    pricedEntries.map((m) => ({
+      modelId: m.id,
+      resolution: genResolution,
+      quality: m.supportsQuality ? quality : undefined,
+      boost: boost && !!m.boostAvailable,
+    })),
+  );
+  const modelPriceLabel = (id: string): string | undefined => {
+    const m = catalogue.find((c) => c.id === id);
+    if (!m) return undefined;
+    if (m.free) return "Free";
+    return quoteLabel(entryQuotes[pricedEntries.indexOf(m)]) ?? undefined;
+  };
+  /** The selected model's server quote for n images, "Free", or "…". */
+  const slotPrice = (n: number): string =>
+    !picked ? "" : picked.free ? "Free" : quoteLabel(entryQuotes[pricedEntries.indexOf(picked)], n) ?? "…";
+
   /* ─── Ratio Sync ─── */
   useEffect(() => {
     if (models.selected.length > 0 && models.available.length > 0) {
@@ -2558,7 +2585,7 @@ export default function EnkiPromptEditor() {
         } catch { /* ignore */ }
         try {
           addCreation(userKey, {
-            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            id: creationId(),
             imageUrl: data.imageUrl, prompt: previewText, createdAt: new Date().toISOString(),
           });
         } catch (storageError) {
@@ -2722,23 +2749,6 @@ export default function EnkiPromptEditor() {
     );
   };
 
-  /* ─── Pricing helpers ─── */
-  const getPricePerSlot = (): number => {
-    if (models.selected.length > 0 && models.available.length > 0) {
-      const m = models.available.find(x => models.selected.includes(x.id));
-      if (m?.price) return parseFloat(String(m.price));
-    }
-    return 0.10; // fallback $0.10 per image
-  };
-
-  const formatCost = (n: number): string => `$${n.toFixed(2)} USDC`;
-
-  const getBatchCost = (slotCount: number): string =>
-    formatCost(getPricePerSlot() * slotCount);
-
-  const getRefillCost = (slotCount: number): string =>
-    formatCost(getPricePerSlot() * slotCount * 0.8);
-
   /* ─── Pay & Generate — UX shows total cost, fires one paid generation per slot ─── */
   const handlePayAndGenerate = () => {
     if (!picked) {
@@ -2755,7 +2765,7 @@ export default function EnkiPromptEditor() {
       toast({ title: "No slots ready", description: "Stack variables first." });
       return;
     }
-    const cost = getBatchCost(processableCards.length);
+    const cost = slotPrice(processableCards.length);
     const total = processableCards.length;
     // Mark all as queued immediately
     setVersions(prev => prev.map(v => {
@@ -2787,7 +2797,7 @@ export default function EnkiPromptEditor() {
       return;
     }
     const refillCount = ui.selectedCards.length;
-    const cost = getRefillCost(refillCount);
+    const cost = slotPrice(refillCount);
     // Delete selected cards
     setVersions(prev => prev.filter(v => !ui.selectedCards.includes(v.id)));
     setUi(prev => ({ ...prev, selectedCards: [] }));
@@ -2808,7 +2818,7 @@ export default function EnkiPromptEditor() {
     setUi(prev => ({ ...prev, queueTotal: refillCount }));
     toast({
       title: `Refill pack · ${cost}`,
-      description: `${refillCount} slot${refillCount > 1 ? "s" : ""} queued at 20% refill discount.`,
+      description: `${refillCount} slot${refillCount > 1 ? "s" : ""} queued.`,
     });
     refillCards.forEach((card, i) => {
       setTimeout(() => {
@@ -3607,7 +3617,7 @@ export default function EnkiPromptEditor() {
                     <span className="enk-model-card__name">
                       {model.name}
                     </span>
-                    <span className="enk-model-card__price">${model.price.toFixed(2)}</span>
+                    <span className="enk-model-card__price">{modelPriceLabel(model.id) ?? "—"}</span>
                   </div>
                 );
               })
@@ -4817,7 +4827,7 @@ export default function EnkiPromptEditor() {
                     onClick={handleRefillAndGenerate}
                   >
                     Refill
-                    <span className="enk-refill-bar__cost">{getRefillCost(ui.selectedCards.length)}</span>
+                    <span className="enk-refill-bar__cost">{slotPrice(ui.selectedCards.length)}</span>
                   </button>
                   <button
                     className="enk-refill-bar__cancel"
@@ -4943,7 +4953,7 @@ export default function EnkiPromptEditor() {
                   <span style={{ fontFamily: "var(--font-jetbrains-mono), monospace", fontSize: "clamp(9px, 0.6vw + 6px, 12px)", color: "var(--enk-muted)", letterSpacing: 1, textTransform: "uppercase" }}>Batch cost</span>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
                     <span style={{ fontFamily: "var(--font-jetbrains-mono), monospace", fontSize: "clamp(12px, 0.8vw + 8px, 16px)", fontWeight: 700, color: "var(--enk-dark)" }}>
-                      {getBatchCost(Math.max(versions.filter(v => v.status === "idle" || v.status === "failed").length, variables.filter(v => v.type === "text").length > 0 ? Math.max(...variables.filter(v => v.type === "text").map(v => v.values.length || 1)) : 1))}
+                      {slotPrice(Math.max(versions.filter(v => v.status === "idle" || v.status === "failed").length, variables.filter(v => v.type === "text").length > 0 ? Math.max(...variables.filter(v => v.type === "text").map(v => v.values.length || 1)) : 1))}
                     </span>
                     <span style={{ fontFamily: "var(--font-jetbrains-mono), monospace", fontSize: "clamp(9px, 0.5vw + 6px, 11px)", color: "var(--enk-hint)" }}>
                       via {currentNetworkName}
@@ -5065,10 +5075,12 @@ export default function EnkiPromptEditor() {
         resolutionOptions={genTiers.map((t) => ({ value: t, label: t }))}
         ratios={ratios}
         setRatio={(r) => setRatios(prev => ({ ...prev, selected: r }))}
-        pricePerSlot={getPricePerSlot()}
+        priceFor={slotPrice}
+        modelPriceLabel={modelPriceLabel}
+        requiredVariations={promptData.type === "free-prompt" ? 1 : 4}
         onAutoFill={handleGrokFill}
         isAutoFilling={ui.isGrokFilling}
-        onGenerate={() => {
+        onGenerate={(count) => {
           if (!picked) {
             toast({ title: "Pick a model", description: "Choose the model to generate with.", variant: "destructive" });
             return;
@@ -5080,10 +5092,12 @@ export default function EnkiPromptEditor() {
           }
           const snapshot: Record<string, string> = {};
           variables.forEach(v => { snapshot[v.name] = (v.defaultValue as string) || v.name; });
-          const newId = versions.length > 0 ? Math.max(...versions.map(v => v.id)) + 1 : 1;
-          setVersions(prev => [...prev, { id: newId, variableSnapshot: snapshot, imageUrl: null, status: "idle" }]);
-          toast({ title: `Paying ${formatCost(getPricePerSlot())}`, description: "Processing micro-payment for generation..." });
-          setTimeout(() => { handleGenerateVersion(newId); }, 100);
+          // As many images as the sheet shows and prices, one payment each.
+          const base = versions.length > 0 ? Math.max(...versions.map(v => v.id)) + 1 : 1;
+          const ids = Array.from({ length: count }, (_, i) => base + i);
+          setVersions(prev => [...prev, ...ids.map((id) => ({ id, variableSnapshot: snapshot, imageUrl: null, status: "idle" as const }))]);
+          toast({ title: `Paying ${slotPrice(count)}`, description: count > 1 ? "Each image is paid separately from your wallet." : "Processing the payment for this generation..." });
+          ids.forEach((id, i) => setTimeout(() => { handleGenerateVersion(id); }, 100 + i * 400));
         }}
       />
 

@@ -14,6 +14,7 @@ import EnkiMobileGenerateModal from "@/components/EnkiMobileGenerateModal";
 import type { EnkiPrompt } from "@/lib/enkiPromptAdapter";
 import { runGeneration } from "@/lib/generation/run-generation";
 import { usePaymentSigner } from "@/hooks/usePaymentSigner";
+import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
 import { useGenerationCore } from "@/hooks/useGenerationCore";
 import NftPickerModal from "@/components/enki/NftPickerModal";
 
@@ -76,6 +77,24 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
   useEffect(() => { if (!core.loading && core.clampTier(resolution) !== resolution) setResolution(core.clampTier(resolution)); }, [core, resolution]);
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const [nftImages, setNftImages] = useState<string[]>([]);
+
+  /* Every price shown is a server quote (Kev, 2026-10-02: "ich brauche safe
+     überall den server-quote"): the current settings first, then each tier
+     for the resolution options. */
+  const asTier = (t: string) => (t === "1K" || t === "2K" || t === "4K" ? t : null);
+  const refCount = referenceImages.length + nftImages.length;
+  const paidEntry = core.entry && !core.entry.free ? core.entry : null;
+  const quoteTiers = core.tiers.map((t) => t.tier);
+  const quotes = useServerQuotes(
+    paidEntry
+      ? [resolution, ...quoteTiers].flatMap((t) => {
+          const tier = asTier(t);
+          return tier ? [{ modelId: paidEntry.id, resolution: tier, boost: core.boostAvailable && boost, referenceImageCount: refCount }] : [];
+        })
+      : [],
+  );
+  const priceFor = (n: number) => (core.entry?.free ? "Free" : !core.entry ? "" : quoteLabel(quotes[0], n) ?? "…");
+  const tierLabel = (i: number) => (core.entry?.free ? "Free" : quoteLabel(quotes[i + 1]));
   const [results, setResults] = useState<string[]>([]);
   // When opened from a clicked feed prompt: lock the body for paid prompts and
   // carry the creator's exposed variables (which may be checkbox/image types
@@ -152,7 +171,7 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
     return out;
   }, [prompt, valueByToken]);
 
-  const generate = async () => {
+  const generate = async (count: number) => {
     if (generating) return;
     const final = prompt.replace(/\[[^\]]+\]/g, (tok) => valueByToken[tok] || tok);
     if (!final.trim()) {
@@ -172,34 +191,38 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
       const variableValues = Object.fromEntries(
         Object.entries(valueByToken).map(([tok, v]) => [tok.replace(/^\[|\]$/g, ""), v]),
       );
-      const outcome = await runGeneration(
-        {
-          model: core.entry,
-          resolution: tier,
-          boost: core.boostAvailable && boost,
-          prompt: final.trim(),
-          promptId: seedPrompt?.id || undefined,
-          variableValues: seedPrompt ? variableValues : undefined,
-          aspectRatio: ratio,
-          referenceImages: refs.length ? refs : undefined,
-        },
-        signPayment,
-      );
-      if (!outcome.ok) throw new Error(outcome.error);
-      const data = { imageUrl: outcome.imageUrl };
+      // The count the sheet shows and prices is the count generated, one
+      // payment each.
+      for (let n = 0; n < count; n++) {
+        const outcome = await runGeneration(
+          {
+            model: core.entry,
+            resolution: tier,
+            boost: core.boostAvailable && boost,
+            prompt: final.trim(),
+            promptId: seedPrompt?.id || undefined,
+            variableValues: seedPrompt ? variableValues : undefined,
+            aspectRatio: ratio,
+            referenceImages: refs.length ? refs : undefined,
+          },
+          signPayment,
+        );
+        if (!outcome.ok) throw new Error(outcome.error);
+        const data = { imageUrl: outcome.imageUrl };
 
-      // Surface the new image ABOVE the modal (newest first); keep the modal open.
-      setResults((prev) => [data.imageUrl as string, ...prev]);
-      if (userKey) {
-        addCreation(userKey, {
-          id: `gl-${Date.now()}`,
-          imageUrl: data.imageUrl,
-          prompt: final,
-          createdAt: new Date().toISOString(),
-        });
-        window.dispatchEvent(new Event("gallery-refresh"));
+        // Surface the new image ABOVE the modal (newest first); keep the modal open.
+        setResults((prev) => [data.imageUrl as string, ...prev]);
+        if (userKey) {
+          addCreation(userKey, {
+            id: `gl-${Date.now()}`,
+            imageUrl: data.imageUrl,
+            prompt: final,
+            createdAt: new Date().toISOString(),
+          });
+          window.dispatchEvent(new Event("gallery-refresh"));
+        }
       }
-      toast({ title: "Generated & saved to gallery", description: `Your ${core.entry.name} image is ready.` });
+      toast({ title: "Generated & saved to gallery", description: `Your ${core.entry.name} image${count > 1 ? "s are" : " is"} ready.` });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       toast({ title: "Generation failed", description: msg, variant: "destructive" });
@@ -287,10 +310,10 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
         setModel={setModel}
         ratios={{ available: core.ratios, selected: ratio }}
         setRatio={setRatio}
-        pricePerSlot={core.entry?.price ?? 0}
+        priceFor={priceFor}
         resolution={resolution}
         setResolution={setResolution}
-        resolutionOptions={core.tiers.map((t) => ({ value: t.tier, label: t.price != null ? `${t.tier} · $${t.price.toFixed(2)}` : t.tier, short: t.tier }))}
+        resolutionOptions={core.tiers.map((t, i) => ({ value: t.tier, label: tierLabel(i) ? `${t.tier} · ${tierLabel(i)}` : t.tier, short: t.tier }))}
         referenceImages={referenceImages}
         onAddReferenceImages={addReferenceImages}
         onRemoveReferenceImage={(i) =>
@@ -307,7 +330,6 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
         boost={boost}
         onBoostChange={core.boostAvailable ? setBoost : undefined}
         hideReleaseTab
-        balance={null}
         resultImages={results}
         isGenerating={generating}
         onGenerate={generate}
