@@ -1,7 +1,9 @@
 "use client";
 
 import { sessionAuthHeaders } from "@/lib/session-headers";
-import { fetchGenerationQuote, authorizePaidGeneration, toModelFamily } from "@/lib/generation-checkout";
+import { fetchGenerationQuote, toModelFamily } from "@/lib/generation-checkout";
+import { runGeneration } from "@/lib/generation/run-generation";
+import { useModelCatalogue, resolveCatalogueEntry } from "@/hooks/useModelLimits";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveAccount } from "thirdweb/react";
@@ -132,7 +134,9 @@ export default function PromptGeneratorView({
   const [vars, setVars] = useState<Record<string, string>>({});
   const [aspect, setAspect] = useState("4:5");
   const [resolution, setResolution] = useState("2K");
-  const [generator, setGenerator] = useState("Nano Banana Pro");
+  /* The buyer's own pick. Empty until they pick, or until the prompt's own
+     model is known (below); nothing else is ever preselected. */
+  const [generatorPick, setGenerator] = useState("");
   /* The gpt-image quality lever — the image UI simply had none, so a
      GPT-Image-2 buyer could never choose it here (Kev, 2026-08-22). Hidden
      for models without the parameter (QualitySelect available). */
@@ -261,16 +265,11 @@ export default function PromptGeneratorView({
     const fromDb = (modelsData ?? [])
       .map((m) => (typeof m.name === "string" ? m.name : ""))
       .filter(Boolean);
-    return fromDb.length > 0
-      ? fromDb
-      : ["Nano Banana Pro", "Seedream 5.0 lite (coming soon)", "GPT-Image-2 (coming soon)"];
+    // Only rows that exist. The invented fallback names and the effect that
+    // reset any pick missing from this list to its FIRST entry (the cheapest
+    // row, Flux) are gone (Kev, 2026-10-02: "IMMER DAS AUSGEWÄHLTE").
+    return fromDb;
   }, [modelsData]);
-
-  useEffect(() => {
-    if (GENERATORS.length > 0 && !GENERATORS.includes(generator)) {
-      setGenerator(GENERATORS[0]);
-    }
-  }, [GENERATORS, generator]);
 
   /* Fetch prompt */
   const { data: promptData, isLoading: loading } = useQuery<{
@@ -280,6 +279,7 @@ export default function PromptGeneratorView({
       is_free_showcase?: boolean; price?: number; tags?: string[];
       content?: string; created_at?: string; creator?: string;
       publicPromptText?: string; showcaseImages?: ShowcaseImage[];
+      ai_model?: string;
       promptData?: { variables?: PromptVariable[] };
     };
   }>({
@@ -288,6 +288,16 @@ export default function PromptGeneratorView({
   });
 
   const prompt = promptData?.prompt;
+  /* The prompt's own model preselects, when the catalogue knows it. Derived,
+     not written into state, so a buyer's pick always wins and nothing ever
+     resets it. */
+  const catalogue = useModelCatalogue();
+  const promptModelName = useMemo(() => {
+    const m = prompt?.ai_model;
+    if (!m) return "";
+    return (catalogue.find((c) => c.name === m) ?? resolveCatalogueEntry(catalogue, m))?.name ?? "";
+  }, [prompt?.ai_model, catalogue]);
+  const generator = generatorPick || promptModelName;
   const variables = useMemo(() => prompt?.promptData?.variables || [], [prompt]);
   const title = prompt?.title || propTitle || "Untitled Prompt";
   const artistName = propArtistName || "Unknown Artist";
@@ -383,7 +393,7 @@ export default function PromptGeneratorView({
      free route cannot deliver it clamps server-side, and resultSize reports
      what was actually measured. */
   const core = useGenerationCore(generator);
-  const freeModel = core.entry?.price === 0;
+  const freeModel = core.free;
 
   /* Free of charge ONLY when the chosen model costs nothing to run. A free
      PROMPT with a paid model still bills its model cost + fee (Kev,
@@ -881,54 +891,38 @@ export default function PromptGeneratorView({
          no branch of this function can end with money gone and no picture.
          This surface previously displayed a price and then called the FREE
          route: the marketplace showed prices and never charged anyone. */
-      let res: Response;
-      if (!noCharge && promptId) {
-        if (!core.entry) throw new Error("Pick a model first. Nothing was charged.");
-        const { intentId } = await authorizePaidGeneration({
-          promptId,
-          modelId: core.entry.id,
+      const outcome = await runGeneration(
+        {
+          model: core.entry,
           resolution: quoteResolution,
-          boost,
           quality,
-        }, signPayment);
-        res = await fetch("/api/generate-image", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
-          /* variableValues let the server fill a paid prompt's own text, which
-             this client never sees; prompt is used only for free prompts. */
-          body: JSON.stringify({ intentId, prompt: final.trim(), variableValues: resolvedVars, aspectRatio: aspect, quality }),
-        });
-      } else {
-        res = await fetch("/api/generate-free", {
-          method: "POST",
-          /* The session travels with a FREE generation too. Without it
-             resolveRecordingUserId returns null and the route skips its whole
-             recorder block, so a signed-in user's free images belonged to
-             nobody and never reached their history. */
-          headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
-          /* promptId travels even when the wording was edited: the image is
-             still that prompt's descendant, and without it the record said the
-             generation came from nowhere. */
-          body: JSON.stringify({ prompt: final.trim(), aspectRatio: aspect, resolution, promptId, quality }),
-        });
-      }
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
+          boost: core.boostAvailable && boost,
+          prompt: final.trim(),
+          promptId: promptId || undefined,
+          // Fills a paid prompt's own text on the server, which this client never sees.
+          variableValues: resolvedVars,
+          aspectRatio: aspect,
+          // The deck was shown and never sent.
+          referenceImages: refs.length ? refs : undefined,
+        },
+        signPayment,
+      );
+      if (!outcome.ok) {
+        const d = (outcome.data ?? {}) as { signInRequired?: boolean; freeQuotaExhausted?: boolean; used?: number; limit?: number };
         /* The free allowance is a state, not a failure. A red "Generation
            Failed" toast that vanishes would leave the reader pressing the
            button again, so it is kept on screen next to the button instead. */
-        if (res.status === 401 && d?.signInRequired) {
+        if (outcome.status === 401 && d.signInRequired) {
           setFreeQuota({ used: 0, limit: 0, signIn: true });
           return;
         }
-        if (res.status === 402 && d?.freeQuotaExhausted) {
+        if (outcome.status === 402 && d.freeQuotaExhausted) {
           setFreeQuota({ used: Number(d.used) || 0, limit: Number(d.limit) || 0, signIn: false });
           return;
         }
-        throw new Error(d.error || "Generation failed");
+        throw new Error(outcome.error);
       }
-      const data = await res.json();
-      if (!data.imageUrl) throw new Error("No image returned");
+      const data = outcome.data as { imageUrl: string; width?: number; height?: number; requestedResolution?: string; provider?: string };
       setResultUrl(data.imageUrl);
       setResultSize(
         typeof data.width === "number" && typeof data.height === "number"
@@ -998,7 +992,7 @@ export default function PromptGeneratorView({
        so a prompt whose variables arrived after it would have generated from
        an empty set. Same class of bug as the edited-prompt one this component
        already carried. */
-  }, [isFree, noCharge, modelFamily, quoteResolution, promptText, editedPrompt, vars, variables, promptSegments, title, aspect, resolution, userKey, promptId, refs.length, toast, queryClient, genQueryKey, signPayment]);
+  }, [isFree, core, boost, quality, quoteResolution, promptText, editedPrompt, vars, variables, promptSegments, title, aspect, resolution, userKey, promptId, refs, toast, queryClient, genQueryKey, signPayment]);
 
   const download = useCallback(() => {
     if (!resultUrl) return;
@@ -1652,6 +1646,7 @@ export default function PromptGeneratorView({
           <div className="pgv-block">
             <span className="pgv-section-label">Generator</span>
             <select className="pgv-generator-select" value={generator} onChange={e => setGenerator(e.target.value)}>
+              {!generator && <option value="" disabled>Pick a model</option>}
               {GENERATORS.map(g => <option key={g}>{g}</option>)}
             </select>
           </div>
