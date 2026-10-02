@@ -409,3 +409,56 @@ describe("a beat that lands mid-sweep saves the row", () => {
     expect(row.void_reason).toBe("abandoned");
   });
 });
+
+describe("a checkout cancelled before signing gives its nonce rent back", () => {
+  const building = (over: Row = {}) => quotedRow({ status: "building", nonce_account: "NonceAcc222", updated_at: ago(1000), ...over });
+
+  it("voids an intent prepared and never signed once it is stale, and names the nonce to close", async () => {
+    const { sweepUnsubmitted, ABANDONED_AFTER_MS } = await mod();
+    const rows = [building({ updated_at: ago(ABANDONED_AFTER_MS + 1000) })];
+    expect(await sweepUnsubmitted(fakeClient(rows))).toEqual([{ intentId: INTENT, nonceAccount: "NonceAcc222" }]);
+    expect(rows[0].void_reason).toBe("abandoned");
+    expect(rows[0].status).toBe("voided");
+  });
+
+  it("leaves a buyer who is still in the wallet popup alone", async () => {
+    const { sweepUnsubmitted } = await mod();
+    expect(await sweepUnsubmitted(fakeClient([building()]))).toEqual([]);
+  });
+
+  it("finds a stale one behind a page of fresh ones", async () => {
+    const { sweepUnsubmitted, ABANDONED_AFTER_MS } = await mod();
+    const fresh = Array.from({ length: 20 }, (_, i) => building({ id: `fresh-${i}` }));
+    const rows = [...fresh, building({ updated_at: ago(ABANDONED_AFTER_MS + 1000) })];
+    expect(await sweepUnsubmitted(fakeClient(rows))).toEqual([{ intentId: INTENT, nonceAccount: "NonceAcc222" }]);
+  });
+
+  it("lets a /submit that lands between its SELECT and its write win", async () => {
+    const { sweepUnsubmitted, ABANDONED_AFTER_MS } = await mod();
+    const rows = [building({ updated_at: ago(ABANDONED_AFTER_MS + 1000) })];
+    let n = 0;
+    const racing = {
+      from: () => {
+        const b = new Builder(rows);
+        const original = b.then.bind(b);
+        (b as unknown as { then: unknown }).then = (
+          ok?: ((v: { data: unknown; error: unknown }) => unknown) | null,
+          ko?: ((reason: unknown) => unknown) | null,
+        ) => original((res: { data: unknown; error: unknown }) => {
+          if (n++ === 0) rows[0].authorized_at = new Date().toISOString(); // the buyer's signature arrives
+          return ok ? ok(res) : res;
+        }, ko);
+        return b;
+      },
+    } as unknown as SupabaseClient;
+    expect(await sweepUnsubmitted(racing)).toEqual([]);
+    expect(rows[0].voided_at).toBeNull();
+  });
+
+  it("never voids one that was signed, however old", async () => {
+    const { sweepUnsubmitted, ABANDONED_AFTER_MS } = await mod();
+    const rows = [building({ updated_at: ago(ABANDONED_AFTER_MS + 1000), authorized_at: ago(ABANDONED_AFTER_MS + 500) })];
+    expect(await sweepUnsubmitted(fakeClient(rows))).toEqual([]);
+    expect(rows[0].voided_at).toBeNull();
+  });
+});
