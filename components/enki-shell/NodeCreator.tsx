@@ -24,6 +24,7 @@ import DiceButton from "@/components/DiceButton";
 import WorkflowPicker, { type WorkflowPick } from "./WorkflowPicker";
 import { wfToken, resolveWorkflowTokens } from "@/lib/editor/workflow-tokens";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { usePaymentSigner } from "@/hooks/usePaymentSigner";
 import type { DiceValue } from "@/lib/generation/variable-dice";
 
 /* ── constants ── */
@@ -401,6 +402,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const [priceEdit, setPriceEdit] = useState(false);
   // Refs, because finalizeOutput is a useCallback: reading these from the
   // render scope would pin it to whatever the catalogue was on first paint.
+  const signPayment = usePaymentSigner();
   const catalogueRef = useRef(catalogue);
   catalogueRef.current = catalogue;
   const [mockMode, setMockMode] = useState(false);
@@ -1377,6 +1379,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       boost: boostRef.current,
       quality: qualityRef.current,
       workflow: buildExportJSON(),
+      sign: signPayment,
     });
 
     let url = "url" in outcome ? outcome.url : null;
@@ -1393,7 +1396,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     }
     const finalUrl = url;
     setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === oid ? { ...n, img: finalUrl, status: "ready" } : n)) }));
-  }, [onToast, userKey]);
+  }, [onToast, userKey, signPayment]);
 
   /* ▶ generate → new output in the current constellation row.
      Never reassigns/removes an empty slot that belongs to a DIFFERENT prompt

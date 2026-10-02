@@ -47,6 +47,7 @@ describe("the generate call resolves the model the same way the pickers do", () 
   });
 
   it("quality only travels on the PAID branch, so a downgrade drops it too", () => {
-    expect(GEN).toMatch(/isFree \? \{\} : \{ modelIds: \[model!\.id\], boost: !!boost, quality \}/);
+    expect(GEN).toMatch(/body: JSON\.stringify\(\{ prompt, aspectRatio, resolution, workflow \}\)/);
+    expect(GEN).toMatch(/body: JSON\.stringify\(\{ intentId, prompt, aspectRatio, workflow, modelIds: \[model\.id\], boost: !!boost, quality \}\)/);
   });
 });

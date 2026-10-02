@@ -13,6 +13,7 @@
 
 import { addCreation } from "@/lib/creations";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { authorizePaidGeneration, toModelFamily, type PaymentSigner } from "@/lib/generation-checkout";
 
 /**
  * ── What this file used to claim, and what it did ───────────────────────
@@ -37,10 +38,11 @@ export interface CatalogueModel {
 /**
  * Generate with the model the user chose.
  *
- * A free model goes to /api/generate-free; anything else goes to the paid
- * route with its id, so the server resolves the provider from the catalogue
- * like every other surface. The editor no longer decides which model runs by
- * accident.
+ * A free model goes to /api/generate-free. A paid one holds a payment first
+ * (intent → authorize → sign → submit, lib/generation-checkout) and generates
+ * with the intentId; the server captures only after the image is stored and
+ * voids on any failure. The model id travels too, so the server refuses a
+ * request whose model disagrees with what was paid for.
  *
  * Returns the image URL, or an { error } the caller can show — a paid
  * generation without a settled payment must say so rather than quietly
@@ -54,27 +56,33 @@ export async function generateWithModel(opts: {
   boost?: boolean;
   quality?: "low" | "medium" | "high";
   workflow?: unknown;
+  /** Signs the payment with the buyer's wallet (hooks/usePaymentSigner). */
+  sign: PaymentSigner;
 }): Promise<{ url: string } | { error: string }> {
-  const { prompt, aspectRatio = "1:1", resolution = "2K", model, boost, quality, workflow } = opts;
+  const { prompt, aspectRatio = "1:1", resolution = "2K", model, boost, quality, workflow, sign } = opts;
   const isFree = !model || model.price <= 0;
-  const endpoint = isFree ? "/api/generate-free" : "/api/generate-image";
 
   try {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt,
-        aspectRatio,
-        resolution,
-        workflow,
-        ...(isFree ? {} : { modelIds: [model!.id], boost: !!boost, quality }),
-      }),
-    });
-
-    if (res.status === 402) {
-      return { error: "This model needs a paid generation — top up your balance first." };
+    let res: Response;
+    if (isFree) {
+      res = await fetch("/api/generate-free", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, aspectRatio, resolution, workflow }),
+      });
+    } else {
+      const tier = (["1K", "2K", "4K"] as const).find((t) => t === resolution);
+      const { intentId } = await authorizePaidGeneration(
+        { modelFamily: toModelFamily(model.name), resolution: tier, boost: !!boost, quality },
+        sign,
+      );
+      res = await fetch("/api/generate-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
+        body: JSON.stringify({ intentId, prompt, aspectRatio, workflow, modelIds: [model.id], boost: !!boost, quality }),
+      });
     }
+
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       return { error: body.error || `Generation failed (${res.status})` };
