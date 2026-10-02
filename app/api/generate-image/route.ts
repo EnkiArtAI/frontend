@@ -17,6 +17,8 @@ import { toModelFamily } from "@/lib/generation/model-family";
 import { claimForGeneration, type ClaimMode } from "@/lib/payments/generation-claim";
 import { settingMismatch, type StoredSettings } from "@/lib/payments/generation-settings";
 import { loadPromptText, fillVariables, inputsUnmatched } from "@/lib/generation/prompt-text";
+import { checkExtraction, textValues } from "@/lib/moderation/extraction-check";
+import { recordExtractionHit, SILENT_FAILURE } from "@/lib/moderation/extraction-hits";
 import { captureAndBroadcast, voidAndFlush, sweepAndFlush } from "@/lib/payments/settle";
 import { solanaChainKey } from "@/lib/payments/solana";
 import type { VoidReason } from "@/lib/payments/authorization";
@@ -242,6 +244,17 @@ export async function POST(request: NextRequest) {
         );
       }
       prompt = filled.text;
+
+      // The buyer's values may try to get the artist's words shown. Judged on
+      // the values alone, before anything is charged. A hit and an outage of
+      // the check both answer like any failed generation.
+      const values = textValues(body.variableValues);
+      const check = await checkExtraction(values, request.signal);
+      if (check.verdict === "extraction") {
+        after(recordExtractionHit(getSupabaseServerClient(), { surface: "generate-image", request, values, confidence: check.confidence }));
+      }
+      if (check.verdict === "unavailable") console.warn("[extraction] check unavailable:", check.reason);
+      if (check.verdict !== "clear") return NextResponse.json(SILENT_FAILURE, { status: 500 });
     }
     if (!prompt) {
       return NextResponse.json({ error: "prompt is required" }, { status: 400 });

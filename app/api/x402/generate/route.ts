@@ -46,6 +46,8 @@ import {
 import { checkAndRecordSolanaSignature } from "@/backend/solana-x402-verifier";
 import { isSolanaChain } from "@/shared/payment-config";
 import { loadPromptText, fillVariables, inputsUnmatched } from "@/lib/generation/prompt-text";
+import { checkExtraction, textValues } from "@/lib/moderation/extraction-check";
+import { agentBlocked, recordExtractionHit, SILENT_FAILURE } from "@/lib/moderation/extraction-hits";
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 import { TransactionMessage, VersionedTransaction } from "@solana/web3.js";
@@ -185,7 +187,7 @@ function rejectPayment(reqs: Priced, error: string) {
   return NextResponse.json({ ...reqs.body, error }, { status: 402 });
 }
 
-async function settleAndGenerate(input: Input, paymentHeader: string): Promise<NextResponse> {
+async function settleAndGenerate(input: Input, paymentHeader: string, request: NextRequest): Promise<NextResponse> {
   // ── Everything refusable is refused BEFORE money moves ──────────────────
   let feePayer;
   try {
@@ -216,6 +218,20 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
       return NextResponse.json({ error: "This prompt's inputs could not be matched to its text — nothing was charged" }, { status: 422 });
     }
     promptText = filled.text;
+
+    // An artist's prompt: the agent's values may try to get its words shown.
+    // Judged on the values alone, before any payment. An address with enough
+    // hits gets no more generations, and every refusal reads like any failure.
+    if (reqs.legs.length > 1) {
+      if (await agentBlocked(supabase, request)) return NextResponse.json(SILENT_FAILURE, { status: 500 });
+      const values = textValues(input.variableValues);
+      const check = await checkExtraction(values);
+      if (check.verdict === "extraction") {
+        after(recordExtractionHit(supabase, { surface: "x402-generate", request, values, confidence: check.confidence }));
+      }
+      if (check.verdict === "unavailable") console.warn("[extraction] check unavailable:", check.reason);
+      if (check.verdict !== "clear") return NextResponse.json(SILENT_FAILURE, { status: 500 });
+    }
   }
 
   const verdict = await moderate({ prompt: promptText, surface: "x402-generate" });
@@ -403,7 +419,7 @@ export async function POST(req: NextRequest) {
   }
 
   const payment = req.headers.get("X-PAYMENT");
-  if (payment) return settleAndGenerate(parsed.data, payment);
+  if (payment) return settleAndGenerate(parsed.data, payment, req);
 
   const r = await requirementsFor(parsed.data);
   return NextResponse.json(r.body, { status: r.status });
