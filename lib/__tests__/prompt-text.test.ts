@@ -87,3 +87,10 @@ describe("/api/generate-image builds a paid prompt from the artist's text", () =
     expect(AGENT).not.toMatch(/decryptPrompt/);
   });
 });
+
+describe("no adapter writes prompt text to the shared logs", () => {
+  it.each(["gemini-image-generation.ts", "pollinations-image-generation.ts", "wavespeed-image-generation.ts", "openai-image-generation.ts"])("%s", (f) => {
+    const src = readSource(join(ROOT, "backend", "services", f));
+    expect(src).not.toMatch(/console\.\w+\([^)]*prompt\.(substring|slice)\(/i);
+  });
+});

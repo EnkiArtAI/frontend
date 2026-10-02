@@ -100,7 +100,9 @@ export async function generateImagesWithGemini(
     }
 
     console.log(`[Gemini] Generating image with model: ${model}`);
-    console.log(`[Gemini] Prompt: ${request.prompt.substring(0, 100)}...`);
+    // Length only: a paid marketplace prompt reaches here as the artist's own text,
+    // and these logs are shared output.
+    console.log(`[Gemini] Prompt: ${request.prompt.length} chars`);
 
     // 5. Build the parts: the text prompt, then any reference images as
     // inlineData. `data` must be BARE base64 — leaving the "data:...;base64,"

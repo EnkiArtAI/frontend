@@ -147,7 +147,7 @@ export async function generateImageWithPollinations(
     const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?${params.toString()}`;
 
     console.log(`[Pollinations] Generating image: ${width}x${height}${token ? ' (token)' : ' (anonymous)'}`);
-    console.log(`[Pollinations] Prompt: ${prompt.substring(0, 100)}...`);
+    console.log(`[Pollinations] Prompt: ${prompt.length} chars`);
 
     // Fetch the image to get the buffer (Pollinations returns the image directly)
     const response = await fetch(imageUrl, {
