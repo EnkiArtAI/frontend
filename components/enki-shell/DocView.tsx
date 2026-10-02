@@ -599,7 +599,7 @@ export default function DocView({ api }: { api: DocViewApi }) {
                   (Kev, 2026-08-19: "viel zu kleingedruckt ... model nach
                   links und any und resolution UND QUALITY nebeneinander"). */}
               <div className="ncd-genopts ncd-genopts--row">
-                <NcSelect value={docModel?.id ?? st.models[0]} width={150} title="Model used for this prompt"
+                <NcSelect value={docModel?.id ?? "Pick a model"} width={150} title="Model used for this prompt"
                   options={catalogue.map((mm) => ({ value: mm.id, label: mm.name, sub: "$" + mm.price.toFixed(2) }))}
                   onChange={api.setModel} />
                 <NcSelect icon={<span style={{ color: "var(--enki-ink-3)", display: "flex" }}><RatioRect ratio={st.ratio} size={13} /></span>} value={st.ratio} width={80} grow={false} title="Aspect ratio"

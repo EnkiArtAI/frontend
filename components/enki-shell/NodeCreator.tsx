@@ -17,7 +17,8 @@ import { useState, useRef, useEffect, useMemo, useCallback, type ReactNode } fro
 import { createPortal } from "react-dom";
 import { Maximize2, Gem } from "lucide-react";
 import { Icon } from "./icons";
-import { generateWithModel, persistCreation, placeholderArt } from "./generation";
+import { persistCreation, placeholderArt } from "./generation";
+import { runGeneration } from "@/lib/generation/run-generation";
 import { useModelLimits } from "@/hooks/useModelLimits";
 import DocView from "./DocView";
 import DiceButton from "@/components/DiceButton";
@@ -28,14 +29,6 @@ import { usePaymentSigner } from "@/hooks/usePaymentSigner";
 import type { DiceValue } from "@/lib/generation/variable-dice";
 
 /* ── constants ── */
-/**
- * Fallback only — the real list comes from /api/models, so a generator is a
- * row and not a deploy. This constant used to BE the catalogue, with invented
- * prices and a "Seedance 2" that exists nowhere in the database.
- */
-export const NC_MODELS = [
-  { id: "nano-banana-pro", name: "Nano Banana Pro", price: 0.04 },
-];
 /* Ratio options come from the SELECTED MODEL's catalogue entry (DB column
    allowed_ratios) — a literal here was why five of Nano Banana Pro's ten
    ratios never showed (Kev, 2026-08-22). "Any" stays first: it means "let
@@ -319,7 +312,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       });
       return {
         title: String(ep.title || ""), mode: (ep.price ?? 0) > 0 ? "premium" : "free",
-        models: ["nano-banana-pro"], cat: "", ratio: "Any", quality: "2K",
+        models: [], cat: "", ratio: "Any", quality: "2K",
         price: typeof ep.price === "number" ? ep.price : 0.1,
         body: String(ep.promptTemplate || ""),
         cons: [], conSeq: 0, genCount: 4, nodes,
@@ -327,7 +320,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     }
 
     return {
-      title: "", mode: "premium", models: ["nano-banana-pro"], cat: "", ratio: "Any", quality: "2K",
+      title: "", mode: "premium", models: [], cat: "", ratio: "Any", quality: "2K",
       price: 0.1, body: "", cons: [], conSeq: 0, genCount: 4, nodes,
     };
   };
@@ -390,8 +383,8 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const refUploadRef = useRef<HTMLInputElement>(null); // hidden picker for multi reference upload
   // mock-up mode: Generate fills outputs with instant placeholder art (no API)
   // so the whole flow — groups, lightbox, release — can be demoed offline.
-  // The real generator list, from the database. NC_MODELS is only the window
-  // before /api/models answers.
+  // The generator list, from the database. Nothing is preselected: the user
+  // picks (Kev, 2026-10-02: "IMMER DAS AUSGEWÄHLTE").
   const catalogue = useModelCatalogue();
   /* Which way the price is rolling, for the step animation; cleared by
      onAnimationEnd so a held click can re-trigger. */
@@ -461,7 +454,6 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const canvasRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const ovRef = useRef<HTMLDivElement>(null);
-  const failedOnce = useRef(false);
 
   const pushHist = () => { hist.current.past.push(stRef.current); if (hist.current.past.length > 60) hist.current.past.shift(); hist.current.future = []; };
   const commit = (updater: (p: St) => St) => { pushHist(); setSt(updater); };
@@ -554,7 +546,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       ...p,
       title: typeof data.title === "string" ? data.title : "",
       mode: s.mode === "free" ? "free" : "premium",
-      models: Array.isArray(s.models) && s.models.length ? (s.models as string[]) : ["nano-banana-pro"],
+      models: Array.isArray(s.models) ? (s.models as string[]) : [],
       cat: typeof s.category === "string" ? s.category : "",
       ratio: typeof s.ratio === "string" ? s.ratio : "Any",
       quality: typeof s.quality === "string" ? s.quality : "2K",
@@ -875,7 +867,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const outs = st.nodes.filter((n) => n.type === "output");
   // Can only generate once there's an actual prompt and every text var has a value.
   // Only a prompt is required to generate — unfilled variables just resolve to empty.
-  const canGenerate = st.body.trim().length > 0;
+  const canGenerate = st.body.trim().length > 0 && !!selectedModel;
 
   const curSig = sigOf(st.body, texts);
   const layout = useMemo(() => {
@@ -1363,39 +1355,33 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     // buildExportJSON() reads from refs, so calling it here needs no extra
     // dependency. The server pulls the image bytes and the authored text out
     // of it before storing.
-    /* resolveCatalogueEntry, not an exact-id find. Drafts carry the model as
-       a slug while the catalogue keys by UUID, and a miss here does not throw
-       — generateWithModel reads `isFree = !model || model.price <= 0`, so a
-       null model silently routes the whole generation to /api/generate-free
-       and drops `quality` with it. The user picks GPT-Image-2, sees its price,
-       and gets a free Flux image: exactly the failure the comment at the top
-       of generation.ts describes. */
-    const picked = resolveCatalogueEntry(catalogueRef.current, stRef.current.models[0]) ?? null;
-    const outcome = await generateWithModel({
-      prompt: promptText,
-      aspectRatio: ratio,
-      resolution: stRef.current.quality || "2K",
-      model: picked,
-      boost: boostRef.current,
-      quality: qualityRef.current,
-      workflow: buildExportJSON(),
-      sign: signPayment,
-    });
+    const picked = resolveCatalogueEntry(catalogueRef.current, stRef.current.models[0]);
+    const tier = (["1K", "2K", "4K"] as const).find((t) => t === stRef.current.quality);
+    const outcome = tier
+      ? await runGeneration(
+          {
+            model: picked,
+            resolution: tier,
+            quality: qualityRef.current,
+            boost: boostRef.current,
+            prompt: promptText,
+            aspectRatio: ratio,
+            workflow: buildExportJSON(),
+          },
+          signPayment,
+        )
+      : ({ ok: false, error: "Pick a resolution first. Nothing was generated and nothing was charged." } as const);
 
-    let url = "url" in outcome ? outcome.url : null;
-    if (!url) {
-      url = placeholderArt("fallback" + oid, "4:5");
-      // The real reason, not a generic one: "top up your balance" and "the dev
-      // server is unreachable" need different actions from the user.
-      if (!failedOnce.current) {
-        failedOnce.current = true;
-        onToast("error" in outcome ? outcome.error : "Generation failed — showing a placeholder.");
-      }
-    } else {
-      persistCreation({ prompt: promptText, imageUrl: url, model: stRef.current.models[0], title: stRef.current.title, userKey });
+    if (!outcome.ok) {
+      // The slot stays empty and says why. A placeholder used to stand in as a
+      // finished "ready" image, which could be picked and released as if a
+      // model had made it.
+      onToast(outcome.error);
+      setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === oid ? { ...n, img: null, status: "empty" } : n)) }));
+      return;
     }
-    const finalUrl = url;
-    setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === oid ? { ...n, img: finalUrl, status: "ready" } : n)) }));
+    persistCreation({ prompt: promptText, imageUrl: outcome.imageUrl, model: picked?.id ?? "", title: stRef.current.title, userKey });
+    setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === oid ? { ...n, img: outcome.imageUrl, status: "ready" } : n)) }));
   }, [onToast, userKey, signPayment]);
 
   /* ▶ generate → new output in the current constellation row.
@@ -1403,6 +1389,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
      composition — those are left alone and offered via a co-generate dialog. */
   const spawnOutput = (autofill?: boolean) => {
     if (!stRef.current.body.trim()) return;
+    if (!resolveCatalogueEntry(catalogueRef.current, stRef.current.models[0])) { onToast("Pick a model first"); return; }
     // strict check: node-view buttons pass the click event as the first arg
     const wantsAutofill = autofill === true;
     const baseTx = stRef.current.nodes.filter((n) => n.type === "text") as TextNode[];
@@ -1627,6 +1614,8 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   /* dock batch generate */
   const runGenerate = (autofill: boolean) => {
     if (!stRef.current.body.trim()) { onToast("Write a prompt first"); return; }
+    const picked = resolveCatalogueEntry(catalogueRef.current, stRef.current.models[0]);
+    if (!picked) { onToast("Pick a model first"); return; }
     pushHist();
     const n = st.genCount;
     const baseTx = stRef.current.nodes.filter((nn) => nn.type === "text") as TextNode[];
@@ -1648,7 +1637,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       return { ...p, cons, conSeq, nodes };
     });
     created.forEach((c) => finalizeOutput(c.oid, c.prompt));
-    onToast((autofill ? "Auto-filled & generating " : "Generating ") + n + " image" + (n > 1 ? "s" : "") + " · Nano Banana Pro");
+    onToast((autofill ? "Auto-filled & generating " : "Generating ") + n + " image" + (n > 1 ? "s" : "") + " · " + picked.name);
   };
 
   /* Lineage: when this editor was opened from another prompt ("put prompt
@@ -1935,8 +1924,8 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
               <div className={"nc-pm" + (modelFlipUp ? " nc-pm--up" : "")} onPointerDown={(e) => e.stopPropagation()}>
                 <button ref={modelTrigRef} className={"nc-pm-trigger" + (modelOpen ? " open" : "")} title="Model used for this prompt — price shown is the production cost"
                   onClick={(e) => { e.stopPropagation(); if (!modelOpen) { const r = modelTrigRef.current?.getBoundingClientRect(); const ph = catalogue.length * 38 + 16; if (r) setModelFlipUp(window.innerHeight - r.bottom < ph + 14 && r.top > ph + 14); } setModelOpen((o) => !o); }}>
-                  <span className="nc-pm-name">{(resolveCatalogueEntry(catalogue, st.models[0]) || catalogue[0])?.name ?? "—"}</span>
-                  <span className="nc-pm-price">${((resolveCatalogueEntry(catalogue, st.models[0]) || catalogue[0])?.price ?? 0).toFixed(2)}</span>
+                  <span className="nc-pm-name">{selectedModel?.name ?? "Pick a model"}</span>
+                  <span className="nc-pm-price">${(selectedModel?.price ?? 0).toFixed(2)}</span>
                   <Icon name="chevronDown" size={13} stroke={2.4} className="nc-pm-chev" />
                 </button>
                 {modelOpen && (
@@ -2146,7 +2135,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                     headers={sessionAuthHeaders()}
                     onValues={applyDiceValues}
                   />
-                  <button className={"nc-prompt-genbtn nc-prompt-genbtn--stack" + (canGenerate ? "" : " disabled")} title={canGenerate ? "Generate one image at " + st.quality : "Write a prompt first"} onClick={() => spawnOutput()}>
+                  <button className={"nc-prompt-genbtn nc-prompt-genbtn--stack" + (canGenerate ? "" : " disabled")} title={canGenerate ? "Generate one image at " + st.quality : !selectedModel ? "Pick a model first" : "Write a prompt first"} onClick={() => spawnOutput()}>
                     {/* zap, like every Generate — sparkles is Release's icon.
                         The icon sits BESIDE the Generate/price block, so the
                         flex row centers it against both lines, not just the
@@ -2414,7 +2403,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
           <span className="nc-gp-cost">${shownCost.toFixed(2)}</span>
         </div>
         <div className="nc-gp-gen" style={{ marginBottom: 6 }}>
-          <BoostToggle boost={boost} onChange={setBoost} />
+          <BoostToggle boost={boost} onChange={setBoost} available={!!selectedModel?.boostAvailable} />
         </div>
         <div className="nc-gp-gen">
           <button className="nc-gp-btn" onClick={() => runGenerate(true)} title="Autofill variables & generate"><Icon name="wand" size={12} stroke={2} /> Autofill</button>
