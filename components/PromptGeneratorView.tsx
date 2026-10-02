@@ -894,7 +894,9 @@ export default function PromptGeneratorView({
         res = await fetch("/api/generate-image", {
           method: "POST",
           headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
-          body: JSON.stringify({ intentId, prompt: final.trim(), aspectRatio: aspect, quality }),
+          /* variableValues let the server fill a paid prompt's own text, which
+             this client never sees; prompt is used only for free prompts. */
+          body: JSON.stringify({ intentId, prompt: final.trim(), variableValues: resolvedVars, aspectRatio: aspect, quality }),
         });
       } else {
         res = await fetch("/api/generate-free", {

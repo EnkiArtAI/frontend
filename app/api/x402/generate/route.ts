@@ -45,7 +45,7 @@ import {
 } from "@/lib/payments/x402-settle";
 import { checkAndRecordSolanaSignature } from "@/backend/solana-x402-verifier";
 import { isSolanaChain } from "@/shared/payment-config";
-import { decryptPrompt } from "@/backend/encryption";
+import { loadPromptText, fillVariables } from "@/lib/generation/prompt-text";
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 import { TransactionMessage, VersionedTransaction } from "@solana/web3.js";
@@ -208,33 +208,9 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
   // artists prompts"). Free/showcase prompts read their public text.
   let promptText = input.prompt ?? "";
   if (input.promptId) {
-    const { data: row, error } = await supabase
-      .from("prompts")
-      .select("public_prompt_text, encrypted_content, encrypted_content_iv, encrypted_content_tag, encrypted_content_kid")
-      .eq("id", input.promptId)
-      .maybeSingle();
-    if (error || !row) return NextResponse.json({ error: "Failed to load prompt" }, { status: 500 });
-    if (row.encrypted_content) {
-      try {
-        promptText = decryptPrompt({
-          encryptedContent: String(row.encrypted_content),
-          iv: String(row.encrypted_content_iv ?? ""),
-          authTag: String(row.encrypted_content_tag ?? ""),
-          kid: row.encrypted_content_kid ? String(row.encrypted_content_kid) : undefined,
-        });
-      } catch {
-        promptText = "";
-      }
-    }
-    if (!promptText.trim()) promptText = row.public_prompt_text ?? "";
-    if (!promptText.trim()) {
-      return NextResponse.json({ error: "This prompt has no readable text to generate from" }, { status: 422 });
-    }
-    if (input.variableValues) {
-      // Same [name] slots the human UI fills.
-      promptText = promptText.replace(/\[([^\]\n]+)\]/g, (m, name: string) =>
-        input.variableValues?.[name] ?? m);
-    }
+    const text = await loadPromptText(supabase, input.promptId);
+    if (!text.ok) return NextResponse.json({ error: text.error }, { status: text.status });
+    promptText = fillVariables(text.text, input.variableValues);
   }
 
   const verdict = await moderate({ prompt: promptText, surface: "x402-generate" });

@@ -16,6 +16,7 @@ import { reportPriceDrift } from "@/lib/generation/price-drift";
 import { toModelFamily } from "@/lib/generation/model-family";
 import { claimForGeneration, type ClaimMode } from "@/lib/payments/generation-claim";
 import { settingMismatch, type StoredSettings } from "@/lib/payments/generation-settings";
+import { loadPromptText, fillVariables } from "@/lib/generation/prompt-text";
 import { captureAndBroadcast, voidAndFlush, sweepAndFlush } from "@/lib/payments/settle";
 import { solanaChainKey } from "@/lib/payments/solana";
 import type { VoidReason } from "@/lib/payments/authorization";
@@ -78,6 +79,8 @@ type GenerateImageBody = {
   /** The editor node graph. Image bytes inside it are extracted server-side. */
   workflow?: unknown;
   ratio?: string;
+  /** Values for a marketplace prompt's [name] slots, filled on the server. */
+  variableValues?: Record<string, string>;
   /** An authorised generation_payment_intents row. Every generation here needs one. */
   intentId?: string;
 };
@@ -150,11 +153,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = (await request.json()) as GenerateImageBody;
-    const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
-
-    if (!prompt) {
-      return NextResponse.json({ error: "prompt is required" }, { status: 400 });
-    }
+    const typedPrompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
 
     /* The resolution is validated ONCE, here, and every read below uses the
        result. It used to travel as the raw client string and get cast to the
@@ -173,15 +172,82 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    /* A PAID request is told which model it bought; it does not get to pick
+     * one here.
+     *
+     * The buyer surface sends { intentId, prompt, aspectRatio } and no
+     * modelIds — it already named the model when it took the quote, and
+     * model_family was written onto the intent and PRICED from it. Resolving
+     * from body.modelIds anyway meant falling back to DEFAULT_MODEL
+     * ("Nano Banana Pro"), so the later family comparison refused every
+     * GPT-Image-2 purchase and voided its authorisation.
+     *
+     * Read before the preflight on purpose: this same object decides the
+     * routing, the reference-image eligibility and the quote below, so
+     * learning the family after those were settled would only have let us
+     * complain about them rather than get them right. The read is by intent id
+     * alone — it selects which model to OFFER, and claimForGeneration binds to
+     * the buyer's wallet before anything is consumed, so a stolen id buys a
+     * wasted preflight and nothing else. */
+    const intentId = typeof body.intentId === "string" ? body.intentId.trim() : "";
+    // Intents only (REC-4): the legacy X-PAYMENT rail paid first and generated
+    // second, so a failed generation kept the money. Free models have their
+    // own route, /api/generate-free.
+    if (!intentId) {
+      return NextResponse.json(
+        { error: "A paid generation needs a payment intent. Nothing was generated and nothing was charged." },
+        { status: 402 },
+      );
+    }
+    if (!UUID_RE.test(intentId)) {
+      return NextResponse.json({ error: "intentId must be a UUID" }, { status: 400 });
+    }
+
+    /* The intent is the sum of settings the buyer paid for (REC-4): the exact
+       model row, the resolution, the quality that runs, boost and how many
+       reference images. Everything below runs those and nothing the request
+       body says instead. */
+    const { data: intentRow } = await (getSupabaseServerClientSafe()
+      ?.from("generation_payment_intents")
+      .select("model_id, model_family, resolution, quality, boost, reference_image_count, prompt_id, artist_amount_micro")
+      .eq("id", intentId)
+      .maybeSingle() ?? Promise.resolve({ data: null }));
+    const paid = intentRow as
+      | (StoredSettings & { model_family: string; prompt_id: string | null; artist_amount_micro: number })
+      | null;
+    if (!paid) {
+      return NextResponse.json(
+        { error: "Payment intent not found. Nothing was generated and nothing was charged." },
+        { status: 404 },
+      );
+    }
+
+    /* A marketplace prompt with an artist share is generated from the
+       ARTIST's text, filled with the buyer's variables, never from what the
+       client sends: the client only ever sees a paid prompt's excerpt, so it
+       sent the title and the variables, and the buyer paid the artist for an
+       image the artist's prompt never made. Free and own prompts take the
+       buyer's own text. The artist's text is never returned to the buyer. */
+    const fromArtist = Boolean(paid.prompt_id) && Number(paid.artist_amount_micro) > 0;
+    let prompt = typedPrompt;
+    if (fromArtist) {
+      const text = await loadPromptText(getSupabaseServerClient(), paid.prompt_id as string);
+      if (!text.ok) return NextResponse.json({ error: text.error }, { status: text.status });
+      prompt = fillVariables(text.text, body.variableValues);
+    }
+    if (!prompt) {
+      return NextResponse.json({ error: "prompt is required" }, { status: 400 });
+    }
+
     // --- SECURITY GUARDS ---
-    // 1. Prompt length cap
-    if (prompt.length > 4000) {
+    // 1. Prompt length cap (client text; an artist's prompt is not the buyer's to size)
+    if (!fromArtist && prompt.length > 4000) {
       return NextResponse.json({ error: "Prompt too long" }, { status: 400 });
     }
 
     // 2. Variable injection guard
     const bracketCount = (prompt.match(/\[/g) || []).length;
-    if (bracketCount > 20) {
+    if (!fromArtist && bracketCount > 20) {
       return NextResponse.json({ error: "Too many variables" }, { status: 400 });
     }
 
@@ -222,60 +288,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 3b. Refuse a provider we cannot actually call — BEFORE any payment step.
-    //
-    // The generation branch below picks WaveSpeed or Gemini. A model routed to
-    // any other provider used to fall through to Gemini carrying that
-    // provider's model id, which Gemini rejects with an opaque error after the
-    // money has moved. GPT-Image-2 is exactly that case today: its row is
-    // honest about pointing at OpenAI, and there is no OpenAI path yet.
-    /* A PAID request is told which model it bought; it does not get to pick
-     * one here.
-     *
-     * The buyer surface sends { intentId, prompt, aspectRatio } and no
-     * modelIds — it already named the model when it took the quote, and
-     * model_family was written onto the intent and PRICED from it. Resolving
-     * from body.modelIds anyway meant falling back to DEFAULT_MODEL
-     * ("Nano Banana Pro"), so the later family comparison refused every
-     * GPT-Image-2 purchase and voided its authorisation.
-     *
-     * Read before the preflight on purpose: this same object decides the
-     * routing, the reference-image eligibility and the quote below, so
-     * learning the family after those were settled would only have let us
-     * complain about them rather than get them right. The read is by intent id
-     * alone — it selects which model to OFFER, and claimForGeneration binds to
-     * the buyer's wallet before anything is consumed, so a stolen id buys a
-     * wasted preflight and nothing else. */
-    const intentId = typeof body.intentId === "string" ? body.intentId.trim() : "";
-    // Intents only (REC-4): the legacy X-PAYMENT rail paid first and generated
-    // second, so a failed generation kept the money. Free models have their
-    // own route, /api/generate-free.
-    if (!intentId) {
-      return NextResponse.json(
-        { error: "A paid generation needs a payment intent. Nothing was generated and nothing was charged." },
-        { status: 402 },
-      );
-    }
-    if (!UUID_RE.test(intentId)) {
-      return NextResponse.json({ error: "intentId must be a UUID" }, { status: 400 });
-    }
-
-    /* The intent is the sum of settings the buyer paid for (REC-4): the exact
-       model row, the resolution, the quality that runs, boost and how many
-       reference images. Everything below runs those and nothing the request
-       body says instead. */
-    const { data: intentRow } = await (getSupabaseServerClientSafe()
-      ?.from("generation_payment_intents")
-      .select("model_id, model_family, resolution, quality, boost, reference_image_count")
-      .eq("id", intentId)
-      .maybeSingle() ?? Promise.resolve({ data: null }));
-    const paid = intentRow as (StoredSettings & { model_family: string }) | null;
-    if (!paid) {
-      return NextResponse.json(
-        { error: "Payment intent not found. Nothing was generated and nothing was charged." },
-        { status: 404 },
-      );
-    }
     const paidTier = normalizeTier(paid.resolution);
     const paidModel = paid.model_id ? await resolveModel(getSupabaseServerClientSafe(), [paid.model_id]) : null;
     if (!paidTier || !paidModel || toModelFamily(paidModel.name) !== paid.model_family) {
@@ -679,13 +691,13 @@ export async function POST(request: NextRequest) {
         after(
           recordGeneration(recSupabase, {
             userId: recUserId,
-            promptId: null,
+            promptId: paid.prompt_id ?? null,
             finalPrompt: prompt,
             // What actually reached the model, not what the user typed: the
             // rewrite runs at temperature 0.7, so replaying the original
             // produces a different request every time.
             effectivePrompt: enhancedPrompt,
-            variableValues: {},
+            variableValues: body.variableValues ?? {},
             model: preflightModel,
             route: preflightRoute,
             boost: paid.boost,
@@ -725,7 +737,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         imageUrl,
-        prompt: enhancedPrompt,
+        prompt: fromArtist ? undefined : enhancedPrompt,
         provider: preflightRoute.provider,
         model: geminiResult.metadata?.model || preflightRoute.providerModel,
         generationTime: geminiResult.generationTime,
