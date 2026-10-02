@@ -7,7 +7,7 @@ import { PAYMENT_CHAINS, isSolanaChain, type ChainKey } from "@/shared/payment-c
  * Enki settles on Solana, and only on Solana (Kev, 2026-08-19).
  *
  * The EVM half of the payment code is real and was reachable —
- * useX402PaymentProduction is mounted in four components and defaults to
+ * useX402PaymentProduction was mounted in four components and defaulted to
  * base-sepolia — so leaving it merely unused is not the same as switching it
  * off. The decision belongs where the money is, not only in the UI.
  */

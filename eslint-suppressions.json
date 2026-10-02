@@ -90,11 +90,6 @@
       "count": 1
     }
   },
-  "app/generate/page.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
   "app/generator/[id]/GeneratorClient.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 3
@@ -152,11 +147,6 @@
     },
     "react-hooks/set-state-in-effect": {
       "count": 2
-    }
-  },
-  "app/test/TestPageClient.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
     }
   },
   "backend/scripts/migrate.ts": {
@@ -234,17 +224,6 @@
       "count": 1
     }
   },
-  "components/CompactPromptCreator.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "react-hooks/refs": {
-      "count": 2
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
   "components/EnkiMobileGenerateModal.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
@@ -285,14 +264,6 @@
       "count": 3
     }
   },
-  "components/GeneratorInterface.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 3
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 2
-    }
-  },
   "components/HuntPromptPopover.tsx": {
     "react/no-unescaped-entities": {
       "count": 3
@@ -329,11 +300,6 @@
   "components/PromptDetailModal.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
-    }
-  },
-  "components/PromptEditor.tsx": {
-    "react-hooks/purity": {
-      "count": 4
     }
   },
   "components/PromptEngagement.tsx": {
@@ -496,20 +462,10 @@
       "count": 1
     }
   },
-  "hooks/useSolanaX402Payment.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
   "hooks/useWalletInfo.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
     },
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "hooks/useX402PaymentProduction.ts": {
     "react-hooks/set-state-in-effect": {
       "count": 1
     }
