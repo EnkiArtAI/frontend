@@ -6,9 +6,10 @@
 #    terminal can disagree, the gate is theatre.
 #  - npm ci, never npm install: install resolves fresh versions and would test
 #    a dependency tree nobody has on their machine.
-#  - Backend suites (backend/vitest.config.ts) join as a second step when
-#    PR #54 lands them; the broken @jest/globals legacy files stay excluded
-#    until the backend team rewrites them.
+#  - npm test runs both suites: lib/** (root vitest.config.ts) and
+#    backend/__tests__ (vitest run --root backend, using the root
+#    node_modules). The broken @jest/globals legacy files were deleted in
+#    ENG-11.
 #  - A test that fails then passes with no code change is flaky: skip it via
 #    .skip + open a fix ticket. Never "just rerun" as a routine.
 #  - Tests must not hit real network/time — mock everything. vitest.setup.ts
