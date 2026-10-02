@@ -19,12 +19,21 @@ describe("the classic editor", () => {
     expect(EDITOR).not.toMatch(/useSolanaX402Payment|useX402PaymentProduction/);
   });
 
-  it("holds a payment with the buyer's wallet and generates with the intent", () => {
-    expect(EDITOR).toMatch(/await authorizePaidGeneration\(\s*\{ modelId: picked\.id,/);
-    expect(EDITOR).toMatch(/signPayment,\s*\);/);
-    expect(EDITOR).toMatch(/intentId,\s*prompt: previewText,/);
-    // The id of the model it priced, so the server refuses a mismatch.
-    expect(EDITOR).toMatch(/modelIds: \[picked\.id\],/);
+  it("generates through runGeneration with the selected entry, never by prompt type", () => {
+    expect(EDITOR).toMatch(/const picked = resolveCatalogueEntry\(catalogue, models\.selected\[0\]\);/);
+    expect(EDITOR).toMatch(/const outcome = await runGeneration\(\n\s+\{\n\s+model: picked,/);
+    // Display Mode stays a marketplace setting; it no longer picks the route.
+    expect(EDITOR).not.toMatch(/isFreePrompt|\/api\/generate-free/);
+  });
+
+  it("selects nothing on its own and runs one model", () => {
+    expect(EDITOR).not.toMatch(/fetchedModels\[0\]\.id/);
+    expect(EDITOR).not.toMatch(/"nano-banana-pro"/);
+    expect(EDITOR).toMatch(/setModels\(prev => \(\{ \.\.\.prev, selected: \[modelId\] \}\)\);/);
+  });
+
+  it("refuses without a model at every entry point, before anything is queued or paid", () => {
+    expect(EDITOR.match(/if \(!picked\) \{\n\s+toast\(\{ title: "Pick a model"/g)?.length).toBe(5);
   });
 });
 

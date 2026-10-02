@@ -11,10 +11,11 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { PAYMENT_CHAINS } from "@/shared/payment-config";
 import { addCreation, getUserKeyFromAccount } from "@/lib/creations";
 import { usePaymentSigner } from "@/hooks/usePaymentSigner";
-import { authorizePaidGeneration } from "@/lib/generation-checkout";
 import { useCdpAddress } from "@/hooks/useCdpAddress";
 import { useCdpSolanaSigner } from "@/hooks/useCdpSolanaSigner";
-import { useModelLimits, FALLBACK_RATIOS, resolveCatalogueEntry } from "@/hooks/useModelLimits";
+import { useModelLimits, useModelCatalogue, FALLBACK_RATIOS, resolveCatalogueEntry } from "@/hooks/useModelLimits";
+import { runGeneration } from "@/lib/generation/run-generation";
+import { tiersUpTo } from "@/lib/generation/resolution";
 import BoostToggle from "@/components/generation/BoostToggle";
 import QualitySelect, { type Quality } from "@/components/generation/QualitySelect";
 import EnkiMobileGenerateModal from "./EnkiMobileGenerateModal";
@@ -727,7 +728,7 @@ export default function EnkiPromptEditor() {
 
   // Per-model reference-image cap from the models table: the user-adjustable
   // maxImages can never exceed what the selected generator supports.
-  const modelLimits = useModelLimits(models.selected[0] || "nano-banana-pro");
+  const modelLimits = useModelLimits(models.selected[0]);
   useEffect(() => {
     setUi((p) => (p.maxImages > modelLimits.maxRefs ? { ...p, maxImages: modelLimits.maxRefs } : p));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1607,16 +1608,27 @@ export default function EnkiPromptEditor() {
     };
   }, [refPreviewIndex, referenceImages.length]);
 
-  /* ─── Model Sync ─── */
+  /* ─── Model Sync ───
+     Nothing is auto-selected. fetchedModels[0] is the cheapest row (Flux),
+     so the auto-pick quietly made the free model "the selection" (Kev,
+     2026-10-02: "IMMER DAS AUSGEWÄHLTE"). */
   useEffect(() => {
     if (fetchedModels.length > 0) {
-      setModels(prev => ({
-        ...prev,
-        available: fetchedModels,
-        selected: prev.selected.length === 0 ? [fetchedModels[0].id] : prev.selected
-      }));
+      setModels(prev => ({ ...prev, available: fetchedModels }));
     }
   }, [fetchedModels]);
+
+  /* The ONE model a generation runs: the selected chip, resolved against the
+     catalogue (which knows whether it is free and what it supports). */
+  const catalogue = useModelCatalogue();
+  const picked = resolveCatalogueEntry(catalogue, models.selected[0]);
+  const genTiers = useMemo(() => (picked ? tiersUpTo(picked.maxResolution) : []), [picked]);
+  const [chosenResolution, setGenResolution] = useState<"1K" | "2K" | "4K">("2K");
+  // A tier the model cannot render runs at its ceiling, derived rather than
+  // written back, so the pick returns when a bigger model is chosen again.
+  const genResolution = genTiers.length && !genTiers.includes(chosenResolution)
+    ? genTiers[genTiers.length - 1]
+    : chosenResolution;
 
   /* ─── Ratio Sync ─── */
   useEffect(() => {
@@ -1656,15 +1668,9 @@ export default function EnkiPromptEditor() {
   // own default instead.
   const ratioForApi = ratios.selected === "Any ratio" ? undefined : ratios.selected;
 
+  // One model. Several chips used to light up while only the first ran.
   const toggleModel = (modelId: string) => {
-    setModels(prev => {
-      const isSelected = prev.selected.includes(modelId);
-      if (isSelected && prev.selected.length === 1) return prev; // min 1 selected
-      return {
-        ...prev,
-        selected: isSelected ? prev.selected.filter(id => id !== modelId) : [...prev.selected, modelId]
-      };
-    });
+    setModels(prev => ({ ...prev, selected: [modelId] }));
   };
 
   /* ─── Real-time Variable Sync — detects [] brackets only ─── */
@@ -2495,66 +2501,34 @@ export default function EnkiPromptEditor() {
       toast({ title: "Error", description: "Please enter a prompt.", variant: "destructive" });
       return;
     }
-    const isFreePrompt = promptData.type === "free-prompt";
-    if (!isFreePrompt && !walletConnected) {
+    /* Routed by the selected model, never by the prompt type: "free prompt"
+       is a marketplace setting, and routing on it rendered Flux for every
+       chip the user picked. */
+    if (!picked) {
+      toast({ title: "Pick a model", description: "Choose the model to generate with. Nothing was generated.", variant: "destructive" });
+      return;
+    }
+    if (!picked.free && !walletConnected) {
       setShowWalletPicker(true);
       toast({ title: "Wallet required", description: "Connect a wallet to pay for this generation.", variant: "destructive" });
       return;
     }
     setVersions(prev => prev.map(v => v.id === versionId ? { ...v, status: "generating" } : v));
     try {
-      let data: { imageUrl: string; provider?: string; usedGemini?: boolean };
-      if (isFreePrompt) {
-        const res = await fetch("/api/generate-free", {
-          method: "POST",
-          /* The session travels with a FREE generation too. Without it
-             resolveRecordingUserId returns null and the route skips its whole
-             recorder block, so a signed-in user's free images belonged to
-             nobody and never reached their history. */
-          headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
-          body: JSON.stringify({
-            prompt: previewText,
-            resolution: "2K",
-            aspectRatio: ratioForApi,
-            boost,
-            quality,
-            referenceImages: cardRefs.length ? cardRefs : undefined,
-          }),
-        });
-        if (!res.ok) {
-          const err = (await res.json().catch(() => ({}))) as { error?: string };
-          throw new Error(err.error || "Free generation failed");
-        }
-        data = await res.json() as { imageUrl: string; provider?: string; usedGemini?: boolean };
-      } else {
-        // Hold a payment for the buyer's own prompt (intent → authorize → sign
-        // with the buyer's wallet → submit), then generate with the intentId.
-        // The server captures after the image is stored and voids on failure.
-        const picked = resolveCatalogueEntry(models.available, models.selected[0]);
-        if (!picked) throw new Error("Pick a model first. Nothing was charged.");
-        const { intentId } = await authorizePaidGeneration(
-          { modelId: picked.id, resolution: "2K", boost, quality, referenceImageCount: cardRefs.length },
-          signPayment,
-        );
-        const res = await fetch("/api/generate-image", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
-          body: JSON.stringify({
-            intentId,
-            prompt: previewText,
-            aspectRatio: ratioForApi,
-            modelIds: [picked.id],
-            boost,
-            quality,
-            referenceImages: cardRefs.length ? cardRefs : undefined,
-          }),
-        });
-        if (!res.ok) {
-          const err = (await res.json().catch(() => ({}))) as { error?: string };
-          throw new Error(err.error || "Generation failed");
-        }
-        data = await res.json() as { imageUrl: string; provider?: string; usedGemini?: boolean };
-      }
+      const outcome = await runGeneration(
+        {
+          model: picked,
+          resolution: genResolution,
+          quality,
+          boost,
+          prompt: previewText,
+          aspectRatio: ratioForApi ?? "1:1",
+          referenceImages: cardRefs.length ? cardRefs : undefined,
+        },
+        signPayment,
+      );
+      if (!outcome.ok) throw new Error(outcome.error);
+      const data = outcome.data as { imageUrl: string; provider?: string; usedGemini?: boolean };
       if (!data?.imageUrl) {
         throw new Error("Image generated, but no image URL was returned.");
       }
@@ -2664,6 +2638,10 @@ export default function EnkiPromptEditor() {
 
   /* ─── Batch Generate — assigns queue positions, fires sequentially ─── */
   const handleBatchGenerate = () => {
+    if (!picked) {
+      toast({ title: "Pick a model", description: "Choose the model to generate with.", variant: "destructive" });
+      return;
+    }
     const idleCards = versions.filter(v => v.status === "idle");
     if (idleCards.length === 0) {
       toast({ title: "No idle slots", description: "Stack variables first, then generate." });
@@ -2763,7 +2741,11 @@ export default function EnkiPromptEditor() {
 
   /* ─── Pay & Generate — UX shows total cost, fires one paid generation per slot ─── */
   const handlePayAndGenerate = () => {
-    if (!walletConnected) {
+    if (!picked) {
+      toast({ title: "Pick a model", description: "Choose the model to generate with.", variant: "destructive" });
+      return;
+    }
+    if (!picked.free && !walletConnected) {
       setShowWalletPicker(true);
       toast({ title: "Wallet required", description: "Connect a wallet to pay for this generation.", variant: "destructive" });
       return;
@@ -2800,6 +2782,10 @@ export default function EnkiPromptEditor() {
   /* ─── Refill & Generate — delete selected + pay 80% price for those slots ─── */
   const handleRefillAndGenerate = () => {
     if (ui.selectedCards.length === 0) return;
+    if (!picked) {
+      toast({ title: "Pick a model", description: "Choose the model to generate with.", variant: "destructive" });
+      return;
+    }
     const refillCount = ui.selectedCards.length;
     const cost = getRefillCost(refillCount);
     // Delete selected cards
@@ -3604,8 +3590,7 @@ export default function EnkiPromptEditor() {
 
             <div ref={setSettingsSectionRef("models")} className={settingsSectionClass("models", settingsMissing.models)}>
             <div className="enk-label">
-              <span>PREFERRED MODELS</span>
-              <span style={{ fontSize: 10, color: "var(--enk-hint)", textTransform: 'lowercase', letterSpacing: 0, fontWeight: 500 }}>multi-select</span>
+              <span>MODEL</span>
             </div>
             <div className={fieldError("models") ? "enk-field--missing-block" : undefined}>
             {models.available.length === 0 ? (
@@ -3656,11 +3641,11 @@ export default function EnkiPromptEditor() {
                 changes what the generation IS, not just when it starts. */}
             <div className="enk-label">SPEED</div>
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <BoostToggle boost={boost} onChange={setBoost} />
+              <BoostToggle boost={boost} onChange={setBoost} available={!!picked?.boostAvailable} />
               <QualitySelect
                 value={quality}
                 onChange={setQuality}
-                available={/gpt.?image/i.test(models.selected[0] ?? "")}
+                available={!!picked?.supportsQuality}
               />
               <p className="enk-hint-text" style={{ margin: 0 }}>
                 {boost
@@ -5075,13 +5060,20 @@ export default function EnkiPromptEditor() {
         }}
         models={models}
         setModel={(id) => setModels(prev => ({ ...prev, selected: [id] }))}
+        resolution={genResolution}
+        setResolution={(v) => { if (v === "1K" || v === "2K" || v === "4K") setGenResolution(v); }}
+        resolutionOptions={genTiers.map((t) => ({ value: t, label: t }))}
         ratios={ratios}
         setRatio={(r) => setRatios(prev => ({ ...prev, selected: r }))}
         pricePerSlot={getPricePerSlot()}
         onAutoFill={handleGrokFill}
         isAutoFilling={ui.isGrokFilling}
         onGenerate={() => {
-          if (!walletConnected) {
+          if (!picked) {
+            toast({ title: "Pick a model", description: "Choose the model to generate with.", variant: "destructive" });
+            return;
+          }
+          if (!picked.free && !walletConnected) {
             setShowWalletPicker(true);
             toast({ title: "Wallet required", description: "Connect a wallet to pay for this generation.", variant: "destructive" });
             return;
