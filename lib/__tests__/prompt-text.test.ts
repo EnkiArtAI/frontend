@@ -56,6 +56,30 @@ describe("fillVariables", () => {
     expect(inputsUnmatched(fillVariables("a [animal] [mood]", { animal: "fox" }, [{ name: "animal" }, { name: "mood" }]))).toBe(false);
   });
 
+  it("treats one slot written with and without inner spaces as one variable", () => {
+    // The save route trims slots before matching them to names.
+    const f = fillVariables("[subject] and [ subject ]", { subject: "fox" }, [{ name: "subject" }]);
+    expect(f.text).toBe("fox and fox");
+    expect(inputsUnmatched(f)).toBe(false);
+  });
+
+  it("tells a typed name from a tie-break", () => {
+    // A longer name that merely starts the same is no tie-break.
+    expect(inputsUnmatched(fillVariables("[hero] and [hero name]", { hero: "a", hero_name: "b" }, [{ name: "hero" }, { name: "hero_name" }]))).toBe(false);
+    expect(inputsUnmatched(fillVariables("[hero]", { hero: "a" }, [{ name: "hero" }, { name: "hero_name" }]))).toBe(false);
+    // "hero 2" typed by the artist is its own variable, saved as hero_2.
+    expect(inputsUnmatched(fillVariables("[hero] and [hero 2]", { hero: "a", hero_2: "b" }, [{ name: "hero" }, { name: "hero_2" }]))).toBe(false);
+    // "subject" and " subject " saved as subject and subject_2: both slots trim alike, so which is which is a guess.
+    expect(inputsUnmatched(fillVariables("[subject] [ subject ]", { subject: "a", subject_2: "b" }, [{ name: "subject" }, { name: "subject_2" }]))).toBe(true);
+    // "Hero", "hero!" and a typed "hero 2" (saved hero, hero_2, hero_2_2): hero_2 is named by a slot,
+    // yet two different slots still answer to hero.
+    expect(inputsUnmatched(fillVariables("[Hero] [hero!] [hero 2]", { hero: "a", hero_2: "b", hero_2_2: "c" },
+      [{ name: "hero" }, { name: "hero_2" }, { name: "hero_2_2" }]))).toBe(true);
+    // Saved in the order "hero 2", "Hero", "hero!": hero_2 is typed, the collision went to hero_3.
+    expect(inputsUnmatched(fillVariables("[hero 2] [Hero] [hero!]", { hero_2: "a", hero: "b", hero_3: "c" },
+      [{ name: "hero_2" }, { name: "hero" }, { name: "hero_3" }]))).toBe(true);
+  });
+
   it("takes only text values of a sane length", () => {
     expect(fillVariables("[a] [b]", { a: 5, b: "x".repeat(2001) }).text).toBe("[a] [b]");
     expect(fillVariables("[a]", null).text).toBe("[a]");

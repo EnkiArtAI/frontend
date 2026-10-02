@@ -109,8 +109,20 @@ export function fillVariables(text: string, values: unknown, variables: StoredVa
   const names = new Set(variables.map((v) => v.name));
   const used = new Set<string>();
   const unfilled: string[] = [];
-  const slotBySn = new Map<string, string>();
-  let ambiguous = false;
+  /* Ambiguity, decided before filling. When two different slots slug alike
+     ("[Hero]", "[hero!]"), toDbVarName saved the second as a tie-break
+     (hero_2, hero_3, …) that no slot's own name produces. A tie-break name
+     that no slot names itself therefore means the text cannot say which
+     value belongs where. One slot written twice ("[subject]", "[ subject ]")
+     is one variable and has no tie-break; a typed "hero 2" names hero_2
+     itself and is not one. */
+  const slotted = new Set<string>();
+  for (const m of text.matchAll(/\[([^\]\n]+)\]/g)) {
+    const sn = storedName(m[1]);
+    if (sn && names.has(sn)) slotted.add(sn);
+  }
+  const tieBreakOf = (n: string, sn: string) => n.startsWith(`${sn}_`) && /^\d+$/.test(n.slice(sn.length + 1));
+  const ambiguous = [...slotted].some((sn) => [...names].some((n) => tieBreakOf(n, sn) && !slotted.has(n)));
 
   const take = (key: string | null | undefined) => {
     const v = key ? vals[key] : undefined;
@@ -121,11 +133,6 @@ export function fillVariables(text: string, values: unknown, variables: StoredVa
 
   const out = text.replace(/\[([^\]\n]+)\]/g, (slot, name: string) => {
     const sn = storedName(name);
-    if (sn && names.has(sn)) {
-      const seen = slotBySn.get(sn);
-      if (seen !== undefined && seen !== name) ambiguous = true;
-      slotBySn.set(sn, name);
-    }
     const v = take(name) ?? (sn && names.has(sn) ? take(sn) : undefined) ?? take(slug(name));
     if (v === undefined) {
       unfilled.push(name);
