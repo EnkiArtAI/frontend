@@ -34,6 +34,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { computeQuote } from "@/lib/payments/generation-quote";
+import { checkAgentPromptInputs, composeAgentPrompt } from "@/lib/generation/agent-prompt-inputs";
 import {
   getModelCostMicro, computeGenerationSplit, UnknownModelError,
 } from "@/lib/payments/generation-pricing";
@@ -109,6 +110,10 @@ async function requirementsFor(input: Input): Promise<Requirements> {
   let description: string;
   if (input.promptId) {
     const supabase = getSupabaseServerClient();
+    // Refused here, so the 402 probe already says no, and no payment is ever
+    // asked for a draft or for inputs a paid prompt does not take.
+    const inputs = await checkAgentPromptInputs(supabase, input.promptId, input.variableValues);
+    if (!inputs.ok) return { status: inputs.status, body: { error: inputs.error } };
     const quote = await computeQuote(supabase, {
       promptId: input.promptId,
       modelFamily: input.modelFamily,
@@ -229,8 +234,12 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
     if (!promptText.trim()) {
       return NextResponse.json({ error: "This prompt has no readable text to generate from" }, { status: 422 });
     }
-    if (input.variableValues) {
-      // Same [name] slots the human UI fills.
+    const inputs = await checkAgentPromptInputs(supabase, input.promptId, input.variableValues);
+    if (!inputs.ok) return NextResponse.json({ error: inputs.error }, { status: inputs.status });
+    if (inputs.paid) {
+      promptText = composeAgentPrompt(promptText, inputs);
+    } else if (input.variableValues) {
+      // A free prompt's text is public: the same [name] slots the human UI fills.
       promptText = promptText.replace(/\[([^\]\n]+)\]/g, (m, name: string) =>
         input.variableValues?.[name] ?? m);
     }
