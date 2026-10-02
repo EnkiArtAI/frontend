@@ -16,7 +16,7 @@ import { reportPriceDrift } from "@/lib/generation/price-drift";
 import { toModelFamily } from "@/lib/generation/model-family";
 import { claimForGeneration, type ClaimMode } from "@/lib/payments/generation-claim";
 import { settingMismatch, type StoredSettings } from "@/lib/payments/generation-settings";
-import { loadPromptText, fillVariables } from "@/lib/generation/prompt-text";
+import { loadPromptText, fillVariables, inputsUnmatched } from "@/lib/generation/prompt-text";
 import { captureAndBroadcast, voidAndFlush, sweepAndFlush } from "@/lib/payments/settle";
 import { solanaChainKey } from "@/lib/payments/solana";
 import type { VoidReason } from "@/lib/payments/authorization";
@@ -233,7 +233,15 @@ export async function POST(request: NextRequest) {
     if (fromArtist) {
       const text = await loadPromptText(getSupabaseServerClient(), paid.prompt_id as string);
       if (!text.ok) return NextResponse.json({ error: text.error }, { status: text.status });
-      prompt = fillVariables(text.text, body.variableValues, text.variables);
+      const filled = fillVariables(text.text, body.variableValues, text.variables);
+      // A buyer must never pay for an image a value of theirs did not reach.
+      if (inputsUnmatched(filled)) {
+        return NextResponse.json(
+          { error: "This prompt's inputs could not be matched to its text. Nothing was generated and nothing was charged." },
+          { status: 422 },
+        );
+      }
+      prompt = filled.text;
     }
     if (!prompt) {
       return NextResponse.json({ error: "prompt is required" }, { status: 400 });

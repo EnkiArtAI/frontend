@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { join } from "node:path";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { readSource } from "@/lib/__tests__/_read-source";
-import { loadPromptText, fillVariables } from "@/lib/generation/prompt-text";
+import { loadPromptText, fillVariables, inputsUnmatched } from "@/lib/generation/prompt-text";
 
 /**
  * A paid marketplace prompt is generated from the ARTIST's text on the
@@ -20,7 +20,7 @@ function prompts(row: Record<string, unknown> | null, vars: Array<Record<string,
       maybeSingle: async () => ({ data: row, error: null }),
       then: (ok: (v: unknown) => unknown) => Promise.resolve({ data: table === "prompt_variables" ? vars : null, error: null }).then(ok),
     };
-    for (const m of ["select", "eq", "is"]) chain[m] = () => chain;
+    for (const m of ["select", "eq", "is", "order"]) chain[m] = () => chain;
     return chain;
   };
   return { from } as unknown as SupabaseClient;
@@ -28,28 +28,44 @@ function prompts(row: Record<string, unknown> | null, vars: Array<Record<string,
 
 describe("fillVariables", () => {
   it("fills the [name] slots with the buyer's values and leaves unknown ones as written", () => {
-    expect(fillVariables("a [animal] on a [place]", { animal: "fox" })).toBe("a fox on a [place]");
+    expect(fillVariables("a [animal] on a [place]", { animal: "fox" }).text).toBe("a fox on a [place]");
   });
 
-  it("fills a slot the artist typed with spaces and capitals from the slugged name the values arrive under", () => {
-    // app/api/prompt stores "[Character Design]" as character_design and keeps the text verbatim.
-    const vars = [{ name: "character_design", label: "Character Design" }, { name: "v_2nd_subject", label: "2nd subject" }];
-    expect(fillVariables("a [Character Design] with a [2nd subject]", { character_design: "knight", v_2nd_subject: "dog" }, vars))
-      .toBe("a knight with a dog");
+  it("fills a slot from the name app/api/prompt stored it under, as the editor saves it", () => {
+    // Editor-shaped rows: the label is the text the artist SELECTED, never the slot.
+    const vars = [{ name: "character_design" }, { name: "v_1st_animal" }];
+    const f = fillVariables("a [Character Design] and a [1st animal] at dusk", { character_design: "knight", v_1st_animal: "wolf" }, vars);
+    expect(f.text).toBe("a knight and a wolf at dusk");
+    expect(inputsUnmatched(f)).toBe(false);
     // Without the stored list (an agent), the plain slug still finds it.
-    expect(fillVariables("a [Character Design]", { character_design: "knight" })).toBe("a knight");
+    expect(fillVariables("a [Character Design]", { character_design: "knight" }).text).toBe("a knight");
+  });
+
+  it("never hands one variable's value to another", () => {
+    // Hero (selected "knight") and Knight (selected "templar"): labels would have crossed them.
+    const f = fillVariables("[Hero] faces the [Knight]", { hero: "elf", knight: "paladin" }, [{ name: "hero" }, { name: "knight" }]);
+    expect(f.text).toBe("elf faces the paladin");
+  });
+
+  it("refuses inputs it cannot place with certainty", () => {
+    // Two slots that slug alike: saved as hero and hero_2, the text cannot say which is which.
+    expect(inputsUnmatched(fillVariables("[Hero] and [hero!]", { hero: "a", hero_2: "b" }, [{ name: "hero" }, { name: "hero_2" }]))).toBe(true);
+    // A name with no ASCII letters is saved as var_N: its value arrives, its slot stays unfilled.
+    expect(inputsUnmatched(fillVariables("a [竜]", { var_1: "dragon" }, [{ name: "var_1" }]))).toBe(true);
+    // An optional slot left without a value is not a mismatch.
+    expect(inputsUnmatched(fillVariables("a [animal] [mood]", { animal: "fox" }, [{ name: "animal" }, { name: "mood" }]))).toBe(false);
   });
 
   it("takes only text values of a sane length", () => {
-    expect(fillVariables("[a] [b]", { a: 5, b: "x".repeat(2001) })).toBe("[a] [b]");
-    expect(fillVariables("[a]", null)).toBe("[a]");
+    expect(fillVariables("[a] [b]", { a: 5, b: "x".repeat(2001) }).text).toBe("[a] [b]");
+    expect(fillVariables("[a]", null).text).toBe("[a]");
   });
 });
 
 describe("loadPromptText", () => {
   it("reads a prompt's public text when it has no encrypted body", async () => {
-    expect(await loadPromptText(prompts({ public_prompt_text: "a [animal]" }, [{ name: "animal", label: "Animal" }]), "p")).toEqual({
-      ok: true, text: "a [animal]", variables: [{ name: "animal", label: "Animal" }],
+    expect(await loadPromptText(prompts({ public_prompt_text: "a [animal]" }, [{ name: "animal" }]), "p")).toEqual({
+      ok: true, text: "a [animal]", variables: [{ name: "animal" }],
     });
   });
 
@@ -70,11 +86,21 @@ describe("loadPromptText", () => {
 
 describe("/api/generate-image builds a paid prompt from the artist's text", () => {
   it("composes when the intent carries an artist share, before moderation", () => {
-    const compose = ROUTE.indexOf("prompt = fillVariables(text.text, body.variableValues, text.variables);");
+    const compose = ROUTE.indexOf("const filled = fillVariables(text.text, body.variableValues, text.variables);");
     const moderate = ROUTE.indexOf("const verdict = await moderate({ prompt,");
     expect(ROUTE).toMatch(/const fromArtist = Boolean\(paid\.prompt_id\) && Number\(paid\.artist_amount_micro\) > 0;/);
     expect(compose).toBeGreaterThan(-1);
     expect(moderate).toBeGreaterThan(compose);
+  });
+
+  it("refuses unmatched inputs before moderation and before the claim, on both rails", () => {
+    const refuse = ROUTE.search(/if \(inputsUnmatched\(filled\)\) \{\n\s+return NextResponse\.json\(/);
+    expect(refuse).toBeGreaterThan(-1);
+    expect(ROUTE.indexOf("const verdict = await moderate({ prompt,")).toBeGreaterThan(refuse);
+    expect(ROUTE.indexOf("await claimForGeneration(")).toBeGreaterThan(refuse);
+    const agent = AGENT.search(/if \(inputsUnmatched\(filled\)\) \{\n\s+return NextResponse\.json\(/);
+    expect(agent).toBeGreaterThan(-1);
+    expect(AGENT.indexOf("parseXPayment(paymentHeader)")).toBeGreaterThan(agent);
   });
 
   it("never returns the artist's text to the buyer, and records which prompt was used", () => {

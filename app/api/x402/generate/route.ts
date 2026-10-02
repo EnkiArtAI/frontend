@@ -45,7 +45,7 @@ import {
 } from "@/lib/payments/x402-settle";
 import { checkAndRecordSolanaSignature } from "@/backend/solana-x402-verifier";
 import { isSolanaChain } from "@/shared/payment-config";
-import { loadPromptText, fillVariables } from "@/lib/generation/prompt-text";
+import { loadPromptText, fillVariables, inputsUnmatched } from "@/lib/generation/prompt-text";
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 import { TransactionMessage, VersionedTransaction } from "@solana/web3.js";
@@ -211,7 +211,11 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
   if (input.promptId) {
     const text = await loadPromptText(supabase, input.promptId);
     if (!text.ok) return NextResponse.json({ error: text.error }, { status: text.status });
-    promptText = fillVariables(text.text, input.variableValues, text.variables);
+    const filled = fillVariables(text.text, input.variableValues, text.variables);
+    if (inputsUnmatched(filled)) {
+      return NextResponse.json({ error: "This prompt's inputs could not be matched to its text — nothing was charged" }, { status: 422 });
+    }
+    promptText = filled.text;
   }
 
   const verdict = await moderate({ prompt: promptText, surface: "x402-generate" });
