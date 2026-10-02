@@ -3,7 +3,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { encryptString, decryptString } from "@/lib/crypto";
 import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
-import { resolveSessionUserId } from "@/lib/session-user";
+import { resolveOwnerIds, resolveSessionUserId } from "@/lib/session-user";
 import { isPublicText } from "@/lib/prompt-visibility";
 
 type VariableType =
@@ -222,37 +222,6 @@ async function resolveCreatorId(
   return created.id;
 }
 
-// Ownership scope for updates: the users.id mapped via user_wallets.
-// creator_id is a uuid column, so the raw wallet address (which the dead
-// user_id column historically also held) can never belong in the filter —
-// a non-uuid value in .in() is a Postgres type error, not a miss. Unlike
-// resolveCreatorId this never creates rows: an update on a prompt you don't
-// own must fail, not mint a user. null = no valid session; [] = a session
-// with no user row, which owns nothing.
-async function resolveOwnerIds(
-  supabase: ReturnType<typeof getSupabaseServerClient>,
-  req: Request,
-): Promise<string[] | null> {
-  const token = req.headers.get("X-Session-Token");
-  if (!token) return null;
-
-  const { data: session } = await supabase
-    .from("auth_sessions")
-    .select("wallet_address")
-    .eq("token", token)
-    .gt("expires_at", new Date().toISOString())
-    .maybeSingle();
-  if (!session) return null;
-
-  const { data: walletRow } = await supabase
-    .from("user_wallets")
-    .select("user_id")
-    .eq("address", session.wallet_address)
-    .is("removed_at", null)
-    .maybeSingle();
-  return walletRow?.user_id ? [String(walletRow.user_id)] : [];
-}
-
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as SaveBody;
@@ -383,7 +352,7 @@ export async function POST(req: Request) {
       // any prompt by uuid (same IDOR as the PATCH route, PR #59).
       // count:"exact" makes the 0-rows branch real; "not found" covers both
       // a missing prompt and someone else's prompt (no ownership oracle).
-      const ownerIds = await resolveOwnerIds(supabase, req);
+      const ownerIds = await resolveOwnerIds(supabase, req.headers.get("X-Session-Token"));
       if (!ownerIds) {
         return NextResponse.json(
           { error: "Authentication required" },
@@ -543,7 +512,7 @@ export async function GET(req: Request) {
     // save checks it (resolveOwnerIds): a prompt an email session saved before
     // its wallet was attached is owned through that session's own mapping.
     const owners =
-      prompt && prompt.creator_id !== userId ? ((await resolveOwnerIds(supabase, req)) ?? []) : [];
+      prompt && prompt.creator_id !== userId ? ((await resolveOwnerIds(supabase, req.headers.get("X-Session-Token"))) ?? []) : [];
     if (!prompt || (prompt.creator_id !== userId && !owners.includes(String(prompt.creator_id)))) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }

@@ -26,7 +26,8 @@ function chain(table: string) {
 
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => ({ from: chain }) }));
 vi.mock("@/lib/crypto", () => ({ decryptString: () => "the full free text" }));
-vi.mock("@/lib/session-user", () => ({
+vi.mock("@/lib/session-user", async (orig) => ({
+  ...(await orig<typeof import("@/lib/session-user")>()),
   resolveSessionUserId: async (_s: unknown, token: string | null) => (token === "owner-token" ? "owner-1" : null),
 }));
 

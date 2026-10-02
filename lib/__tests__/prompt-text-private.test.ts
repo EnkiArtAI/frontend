@@ -73,7 +73,8 @@ vi.mock("@/lib/crypto", () => ({
 }));
 vi.mock("@/lib/moderation", () => ({ moderate: async () => ({ allowed: true }), CLIENT_BLOCK_MESSAGE: "blocked" }));
 vi.mock("@/lib/moderation-enforcement", () => ({ recordModerationEvent: async () => {} }));
-vi.mock("@/lib/session-user", () => ({
+vi.mock("@/lib/session-user", async (orig) => ({
+  ...(await orig<typeof import("@/lib/session-user")>()),
   resolveSessionUserId: async (_s: unknown, token: string | null) =>
     ({ "artist-token": ARTIST, "buyer-token": BUYER, "email-token": EMAIL_USER } as Record<string, string>)[token ?? ""] ?? null,
 }));

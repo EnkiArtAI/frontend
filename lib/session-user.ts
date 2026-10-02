@@ -58,3 +58,33 @@ export async function resolveSessionUserId(supabase: SupabaseClient, token: stri
   const { userId, ban } = await resolveSessionUserWithBan(supabase, token);
   return ban ? null : userId;
 }
+
+// Ownership scope for updates: the users.id mapped via user_wallets.
+// creator_id is a uuid column, so the raw wallet address (which the dead
+// user_id column historically also held) can never belong in the filter —
+// a non-uuid value in .in() is a Postgres type error, not a miss. Unlike
+// resolveCreatorId this never creates rows: an update on a prompt you don't
+// own must fail, not mint a user. null = no valid session; [] = a session
+// with no user row, which owns nothing.
+export async function resolveOwnerIds(
+  supabase: SupabaseClient,
+  token: string | null,
+): Promise<string[] | null> {
+  if (!token) return null;
+
+  const { data: session } = await supabase
+    .from("auth_sessions")
+    .select("wallet_address")
+    .eq("token", token)
+    .gt("expires_at", new Date().toISOString())
+    .maybeSingle();
+  if (!session) return null;
+
+  const { data: walletRow } = await supabase
+    .from("user_wallets")
+    .select("user_id")
+    .eq("address", session.wallet_address)
+    .is("removed_at", null)
+    .maybeSingle();
+  return walletRow?.user_id ? [String(walletRow.user_id)] : [];
+}
