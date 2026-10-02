@@ -3,6 +3,8 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { encryptString, decryptString } from "@/lib/crypto";
 import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
+import { resolveSessionUserId } from "@/lib/session-user";
+import { isPublicText } from "@/lib/prompt-visibility";
 
 type VariableType =
   | "text"
@@ -287,6 +289,8 @@ export async function POST(req: Request) {
     // (re-saving used to null it), and inserts get the session-resolved
     // creator below — body.userId is ignored entirely.
     const clientPromptType = body.promptType ?? "create-now";
+    const dbPromptType = PROMPT_TYPE_TO_DB[clientPromptType] ?? clientPromptType;
+    const isFreeShowcase = Boolean(body.isFreeShowcase ?? false);
     const promptRow = {
       title: body.title,
       encrypted_content: enc.encrypted,
@@ -301,18 +305,23 @@ export async function POST(req: Request) {
         typeof body.price === "number" ? Math.round(body.price * 100) : 100,
       aspect_ratio: body.aspectRatio ?? null,
       photo_count: typeof body.photoCount === "number" ? body.photoCount : 1,
-      prompt_type: PROMPT_TYPE_TO_DB[clientPromptType] ?? clientPromptType,
+      prompt_type: dbPromptType,
       showcase_images: uploadedPhotos,
       resolution: body.resolution ?? null,
-      is_free_showcase: Boolean(body.isFreeShowcase ?? false),
-      public_prompt_text: body.content.slice(0, 220),
+      is_free_showcase: isFreeShowcase,
+      // The first 220 characters, verbatim: only a free prompt may carry its
+      // text in the clear. A paid prompt's body is the artist's secret, and a
+      // draft's is nobody else's business.
+      public_prompt_text: isPublicText({ prompt_type: dbPromptType, is_free_showcase: isFreeShowcase })
+        ? body.content.slice(0, 220)
+        : null,
       updated_at: nowIso,
     };
 
     // Moderation. This route had none: a listed prompt is the one piece of
-    // user text we hand to a model on someone else's behalf AND show publicly
-    // (public_prompt_text is the first 220 characters, verbatim), so it is the
-    // most consequential thing on the platform to leave unfiltered.
+    // user text we hand to a model on someone else's behalf AND, when free,
+    // show publicly, so it is the most consequential thing on the platform to
+    // leave unfiltered.
     //
     // Before BOTH branches. Gating only the insert would leave editing an
     // existing listing as the way round it — create something harmless, then
@@ -509,6 +518,14 @@ export async function GET(req: Request) {
 
     const supabase = getSupabaseServerClient();
 
+    // Owner only: this returns the decrypted body, which is the creator's
+    // secret (a paid prompt's buyers see its variables, never its text). It
+    // answered anyone who knew an id, and listed ids are public.
+    const userId = await resolveSessionUserId(supabase, req.headers.get("X-Session-Token"));
+    if (!userId) {
+      return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+    }
+
     const { data: prompt, error: promptError } = await supabase
       .from("prompts")
       .select(
@@ -521,7 +538,9 @@ export async function GET(req: Request) {
       throw promptError;
     }
 
-    if (!prompt) {
+    // Someone else's prompt answers like a missing one: no decrypt, and no
+    // confirmation that the id exists.
+    if (!prompt || prompt.creator_id !== userId) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
 
