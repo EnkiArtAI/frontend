@@ -5,7 +5,8 @@ import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
 import { getSupabaseServerClientSafe } from "@/lib/supabaseServer";
 import { recordGeneration, resolveRecordingUserId } from "@/lib/generation/record";
-import { resolveModelByName, FLUX_FREE_MODEL } from "@/lib/generation/models";
+import { resolveModel } from "@/lib/generation/models";
+import { normalizeTier, RESOLUTION_TIERS } from "@/lib/generation/resolution";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
 import { storeReferenceImages } from "@/lib/generation/reference-images";
 import { readImageDimensions } from "@/backend/services/gemini-image-generation";
@@ -64,6 +65,38 @@ export async function POST(request: NextRequest) {
     const limit = checkRequestRateLimit(rateLimitKey(request, "generate-free"), 10, 60_000);
     if (!limit.allowed) return rateLimitResponse(limit.retryAfterSeconds);
 
+    /* The selected model, and only if it is the free one. This route used to
+       read no model at all and render Flux for whatever the caller picked, so
+       every client that guessed "free" from a price or a prompt type handed a
+       Nano Banana Pro pick a Flux picture (Kev, 2026-10-02: "es darf NIEMALS
+       IRGENDEIN standardmodell durchgeschickt werden sondern IMMER DAS
+       AUSGEWÄHLTE"). */
+    const model = UUID_RE.test(String(body?.modelId ?? ""))
+      ? await resolveModel(getSupabaseServerClientSafe(), [String(body.modelId)])
+      : null;
+    if (!model) {
+      return NextResponse.json(
+        { error: "The chosen model is unknown or not available right now. Nothing was generated." },
+        { status: 422 },
+      );
+    }
+    if (model.normal.provider !== "pollinations") {
+      return NextResponse.json(
+        { error: `${model.name} is a paid model and needs a payment. Nothing was generated and nothing was charged.` },
+        { status: 402 },
+      );
+    }
+    const resolution = body.resolution == null ? model.maxResolution : normalizeTier(body.resolution);
+    if (!resolution || RESOLUTION_TIERS.indexOf(resolution) > RESOLUTION_TIERS.indexOf(model.maxResolution)) {
+      return NextResponse.json(
+        { error: `${model.name} renders up to ${model.maxResolution}. Nothing was generated.` },
+        { status: 422 },
+      );
+    }
+    if (body.boost === true) {
+      return NextResponse.json({ error: `${model.name} has no boost. Nothing was generated.` }, { status: 422 });
+    }
+
     const verdict = await moderate({ prompt, surface: "generate-free", signal: request.signal });
     after(recordModerationEvent(verdict, { surface: "generate-free", request, prompt }));
     if (!verdict.allowed) {
@@ -116,14 +149,14 @@ export async function POST(request: NextRequest) {
     console.log('🎨 Free generation request:', {
       chars: prompt.length,
       aspectRatio: body.aspectRatio || '1:1',
-      resolution: body.resolution || '2K',
+      resolution,
     });
 
-    // Generate image using Pollinations.ai (free)
     const result = await generateImageWithPollinations(
       prompt,
       body.aspectRatio || '1:1',
-      body.resolution || '2K',
+      resolution,
+      model.normal.providerModel,
     );
 
     if (!result.success || !result.imageBuffers || result.imageBuffers.length === 0) {
@@ -160,8 +193,6 @@ export async function POST(request: NextRequest) {
       const recUserId = quotaUserId;
       if (supabase && recUserId) {
         const stripped = stripWorkflowImages(body?.workflow ?? {});
-        // The free route always runs Flux; if its row cannot be read, record what ran.
-        const model = (await resolveModelByName(supabase, "Flux (free)")) ?? FLUX_FREE_MODEL;
         // Measured once, above, for the media type. Measuring the same
         // buffer a second time here could only ever agree with itself.
         const dims = measured;
@@ -189,7 +220,7 @@ export async function POST(request: NextRequest) {
             route: model.normal,
             boost: false,
             aspectRatio: body.aspectRatio || "1:1",
-            resolution: body.resolution || "2K",
+            resolution,
             // The service generates one and throws it away — the only seed in
             // the whole stack, and it never reaches us.
             seed: null,
@@ -214,7 +245,7 @@ export async function POST(request: NextRequest) {
       imageUrl,
       prompt,
       provider: "pollinations",
-      model: "flux",
+      model: model.normal.providerModel,
       generationTime: result.generationTime,
       free: true,
       /* The size that actually came back, measured from the bytes.
@@ -231,7 +262,7 @@ export async function POST(request: NextRequest) {
       height: measured?.height ?? null,
       bytes: buffer.length,
       format: measured?.format ?? null,
-      requestedResolution: body.resolution || "2K",
+      requestedResolution: resolution,
     });
 
   } catch (e: unknown) {

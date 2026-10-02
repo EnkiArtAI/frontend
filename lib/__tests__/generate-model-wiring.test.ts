@@ -19,8 +19,8 @@ const NODE = readSource(join(ROOT, "components", "enki-shell", "NodeCreator.tsx"
 const GEN = readSource(join(ROOT, "components", "enki-shell", "generation.ts"));
 
 const CAT: CatalogueEntry[] = [
-  { id: "db00c518-uuid", name: "Nano Banana Pro", price: 0.14, mediaType: "image" as const, supportsQuality: false, maxResolution: "4K", ratios: ["1:1"] },
-  { id: "14b3db65-uuid", name: "GPT-Image-2", price: 0.17, mediaType: "image" as const, supportsQuality: true, maxResolution: "4K", ratios: ["1:1"] },
+  { id: "db00c518-uuid", name: "Nano Banana Pro", price: 0.14, mediaType: "image" as const, supportsQuality: false, maxResolution: "4K", ratios: ["1:1"], free: false },
+  { id: "14b3db65-uuid", name: "GPT-Image-2", price: 0.17, mediaType: "image" as const, supportsQuality: true, maxResolution: "4K", ratios: ["1:1"], free: false },
 ];
 
 describe("the generate call resolves the model the same way the pickers do", () => {

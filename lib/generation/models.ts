@@ -160,16 +160,6 @@ const BY_SLUG: Record<string, Pick<ResolvedModel, "normal" | "boost" | "supports
 const DEFAULT_RATIOS = ["1:1", "16:9", "9:16"];
 const DEFAULT_MAX_REFS = 3;
 
-/** What the free route runs, always: Pollinations Flux. Used to record a free
-    generation when the catalogue row cannot be read; it is what actually ran. */
-export const FLUX_FREE_MODEL: ResolvedModel = {
-  id: null,
-  name: "Flux (free)",
-  ...BY_SLUG["flux-free"],
-  maxResolution: maxTier("pollinations", "flux"),
-  allowedRatios: DEFAULT_RATIOS,
-  maxRefs: 0,
-};
 
 /** A row of model_providers with its provider embedded. */
 interface LinkRow {
@@ -267,33 +257,6 @@ function fromRow(row: ModelRow, audience: Audience): ResolvedModel {
   };
 }
 
-/**
- * Look a model up by display name. For routes that know WHICH model they run
- * but never receive an id — the free path is hard-wired to Flux and has no
- * model picker, yet its generations still belong in the same catalogue.
- */
-export async function resolveModelByName(
-  supabase: SupabaseClient | null,
-  name: string,
-  audience: Audience = "public",
-): Promise<ResolvedModel | null> {
-  if (!supabase) return null;
-  try {
-    const { data, error } = await supabase
-      .from("models")
-      .select(
-        "id, name, allowed_ratios, max_reference_images, " +
-        "model_providers(id, role, provider_model, active, priority, applies_when, provider_id, providers(id, key, audience, active))",
-      )
-      .ilike("name", name)
-      .eq("active", true)
-      .limit(1);
-    if (error || !data?.length) return null;
-    return fromRow(data[0] as unknown as ModelRow, audience);
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Catalogue rows for /api/models: the raw fields the UI already reads, plus
@@ -338,6 +301,9 @@ export function withCapabilities(rows: ModelRow[], audience: Audience = "public"
       // Derived from the provider rows (hasBoost), never stored: a boost
       // toggle may only show where a faster host actually exists.
       boostAvailable: hasBoost(m),
+      // The one fact that sends a generation to /api/generate-free: the model
+      // renders on the free host. Never inferred from a price.
+      free: m.normal.provider === "pollinations",
       tierScale: { "1K": 1, "2K": 1, "4K": ladder["4K"] / ladder["2K"] },
     };
   });

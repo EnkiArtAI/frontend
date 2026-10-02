@@ -52,6 +52,7 @@ interface ModelRow {
   supportsQuality?: boolean;
   tierScale?: Record<string, number>;
   boostAvailable?: boolean;
+  free?: boolean;
 }
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -163,6 +164,8 @@ export interface CatalogueEntry {
   boostAvailable?: boolean;
   /** How many reference images the model takes (models.max_reference_images). */
   maxRefs?: number;
+  /** Renders on the free host (server-derived). The only thing that makes a generation free. */
+  free: boolean;
 }
 
 /**
@@ -272,6 +275,7 @@ function toCatalogue(rows: ModelRow[]): CatalogueEntry[] {
       tierScale: r.tierScale && typeof r.tierScale === "object" ? (r.tierScale as Record<string, number>) : undefined,
       boostAvailable: typeof r.boostAvailable === "boolean" ? r.boostAvailable : undefined,
       maxRefs: typeof r.max_reference_images === "number" ? r.max_reference_images : undefined,
+      free: r.free === true,
     }));
   return out;
 }
