@@ -49,9 +49,47 @@ describe("which prompts an agent may generate from", () => {
     expect(await check()).toMatchObject({ ok: false, status: 404 });
   });
 
-  it("leaves a free prompt's values alone", async () => {
+  it("takes a free prompt's long text value as written", async () => {
     prompt = { ...prompt, prompt_type: "free" };
-    expect(await check({ anything: "x".repeat(500) })).toEqual({ ok: true, paid: false });
+    const inputs = await check({ character_design: "x".repeat(500) });
+    if (!inputs.ok) throw new Error("expected inputs");
+    expect(composeAgentPrompt("[Character Design]", inputs)).toBe("x".repeat(500));
+  });
+
+  it("refuses a key a free prompt does not have, so nobody pays for an ignored input", async () => {
+    prompt = { ...prompt, prompt_type: "free" };
+    expect(await check({ anything: "x" })).toMatchObject({ ok: false, status: 400 });
+  });
+
+  it("fills a free prompt's slot by the variable's stored name", async () => {
+    prompt = { ...prompt, prompt_type: "free" };
+    const inputs = await check({ character_design: "knight" });
+    if (!inputs.ok) throw new Error("expected inputs");
+    expect(composeAgentPrompt("a [Character Design]", inputs)).toBe("a knight");
+  });
+});
+
+describe("a checkbox works as it does in the generator", () => {
+  beforeEach(() => {
+    variables = [{ name: "with_glasses", label: "with glasses", data_type: "checkbox", options: null, min_value: null, max_value: null }];
+  });
+
+  async function composed(value: string) {
+    const inputs = await check({ with_glasses: value });
+    if (!inputs.ok) throw new Error("expected inputs");
+    return composeAgentPrompt("a cat [with glasses]", inputs);
+  }
+
+  it("writes its phrase when ticked", async () => {
+    expect(await composed("true")).toBe("a cat with glasses");
+  });
+
+  it("writes nothing when unticked", async () => {
+    expect(await composed("false")).toBe("a cat ");
+  });
+
+  it("refuses anything but true or false", async () => {
+    expect(await check({ with_glasses: "with glasses" })).toMatchObject({ ok: false, status: 400 });
   });
 });
 
@@ -112,7 +150,8 @@ describe("the agent route checks the inputs before any payment", () => {
     expect(requirements.indexOf("await computeQuote(")).toBeGreaterThan(check);
   });
 
-  it("composes a paid prompt only through the checked values", () => {
-    expect(src).toMatch(/if \(inputs\.paid\) \{\s*promptText = composeAgentPrompt\(promptText, inputs\);/);
+  it("composes a prompt only through the checked values", () => {
+    expect(src).toMatch(/promptText = composeAgentPrompt\(promptText, inputs\);/);
+    expect(src).not.toMatch(/input\.variableValues\?\.\[name\]/);
   });
 });

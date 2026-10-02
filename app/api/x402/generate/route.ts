@@ -236,13 +236,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
     }
     const inputs = await checkAgentPromptInputs(supabase, input.promptId, input.variableValues);
     if (!inputs.ok) return NextResponse.json({ error: inputs.error }, { status: inputs.status });
-    if (inputs.paid) {
-      promptText = composeAgentPrompt(promptText, inputs);
-    } else if (input.variableValues) {
-      // A free prompt's text is public: the same [name] slots the human UI fills.
-      promptText = promptText.replace(/\[([^\]\n]+)\]/g, (m, name: string) =>
-        input.variableValues?.[name] ?? m);
-    }
+    promptText = composeAgentPrompt(promptText, inputs);
   }
 
   const verdict = await moderate({ prompt: promptText, surface: "x402-generate" });

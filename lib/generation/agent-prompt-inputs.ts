@@ -3,12 +3,13 @@
  * quoted or paid.
  *
  * Only a live prompt can be generated from: drafts, unlisted and deleted ones
- * are not for sale. For a paid prompt the composed text contains the artist's
- * secret, and a free value is an instruction to the image model, which can be
- * told to typeset the words around it. So every value must belong to a
- * declared variable and fit it, and text values are short single lines
- * without brackets. That narrows the hole; a short text value is still an
- * instruction, a residual risk the product accepts or closes deliberately.
+ * are not for sale. Every value must belong to a declared variable and fit it,
+ * so an agent never pays for an input that would be ignored. For a paid
+ * prompt the composed text contains the artist's secret, and a free value is
+ * an instruction to the image model, which can be told to typeset the words
+ * around it: there, text values are also short single lines without brackets.
+ * That narrows the hole; a short text value is still an instruction, a
+ * residual risk the product accepts or closes deliberately.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isListed, isPublicText } from "@/lib/prompt-visibility";
@@ -26,8 +27,7 @@ type Declared = {
 };
 
 export type AgentInputs =
-  | { ok: true; paid: false }
-  | { ok: true; paid: true; variables: Declared[]; values: Map<string, string> }
+  | { ok: true; paid: boolean; variables: Declared[]; values: Map<string, string> }
   | { ok: false; status: 400 | 404 | 500; error: string };
 
 /** The slug app/api/prompt stores a variable name as. */
@@ -52,8 +52,8 @@ function optionValues(options: unknown): string[] {
     : [];
 }
 
-/** The value as it may enter the prompt, or why it may not. */
-function fit(v: Declared, raw: string): { value: string } | { error: string } {
+/** The value as it enters the prompt, or why it may not. */
+function fit(v: Declared, raw: string, paid: boolean): { value: string } | { error: string } {
   const bad = { error: `"${raw}" is not a valid value for ${v.name}` };
   switch (v.data_type) {
     case "single_select":
@@ -69,8 +69,10 @@ function fit(v: Declared, raw: string): { value: string } | { error: string } {
       return raw.trim() !== "" && inRange ? { value: String(n) } : bad;
     }
     case "checkbox":
-      return raw === "true" || raw === "false" ? { value: raw } : bad;
+      // As the generator does it: a ticked box writes its phrase, an unticked one nothing.
+      return raw === "true" || raw === "false" ? { value: raw === "true" ? v.label || v.name : "" } : bad;
     default: {
+      if (!paid) return { value: raw };
       const value = raw.replace(/[[\]\r\n]+/g, " ").replace(/\s+/g, " ").trim();
       return value.length <= AGENT_TEXT_MAX ? { value } : { error: `${v.name} takes at most ${AGENT_TEXT_MAX} characters` };
     }
@@ -89,7 +91,7 @@ export async function checkAgentPromptInputs(
     .maybeSingle();
   if (error) return { ok: false, status: 500, error: "Failed to load prompt" };
   if (!row || !isListed(row)) return { ok: false, status: 404, error: "Prompt not found" };
-  if (isPublicText(row)) return { ok: true, paid: false };
+  const paid = !isPublicText(row);
 
   const { data: rows, error: varsError } = await supabase
     .from("prompt_variables")
@@ -103,15 +105,15 @@ export async function checkAgentPromptInputs(
   for (const [key, raw] of Object.entries(values ?? {})) {
     const v = variableFor(variables, key);
     if (!v) return { ok: false, status: 400, error: `This prompt has no variable "${key}"` };
-    const r = fit(v, raw);
+    const r = fit(v, raw, paid);
     if ("error" in r) return { ok: false, status: 400, error: r.error };
     fitted.set(v.name, r.value);
   }
-  return { ok: true, paid: true, variables, values: fitted };
+  return { ok: true, paid, variables, values: fitted };
 }
 
-/** Fill a paid prompt's [slots] with the checked values; other slots stay as written. */
-export function composeAgentPrompt(text: string, inputs: Extract<AgentInputs, { paid: true }>): string {
+/** Fill the [slots] with the checked values; other slots stay as written. */
+export function composeAgentPrompt(text: string, inputs: Extract<AgentInputs, { ok: true }>): string {
   return text.replace(/\[([^\]\n]+)\]/g, (slot, name: string) => {
     const v = variableFor(inputs.variables, name);
     return (v && inputs.values.get(v.name)) ?? slot;
