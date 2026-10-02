@@ -776,7 +776,8 @@ export default function EnkiPromptEditor() {
             currentPromptId: draft.currentPromptId ?? null,
           }));
           if (draft.modelsSelected?.length) {
-            setModels((prev) => ({ ...prev, selected: draft.modelsSelected }));
+            // One model runs and is saved; older drafts may still hold several.
+            setModels((prev) => ({ ...prev, selected: draft.modelsSelected.slice(0, 1) }));
           }
           if (draft.ratioSelected) {
             setRatios((prev) => ({ ...prev, selected: draft.ratioSelected }));
@@ -1030,7 +1031,7 @@ export default function EnkiPromptEditor() {
     isApplyingHistoryRef.current = true;
     setPromptData(snap.promptData);
     setVariables(snap.variables);
-    setModels((prev) => ({ ...prev, selected: snap.modelsSelected }));
+    setModels((prev) => ({ ...prev, selected: snap.modelsSelected.slice(0, 1) }));
     setRatios((prev) => ({ ...prev, selected: snap.ratiosSelected }));
     setReferenceImages(snap.referenceImages);
   }, []);
@@ -2524,8 +2525,12 @@ export default function EnkiPromptEditor() {
       previewText = previewText.split(placeholder).join(val);
     });
 
+    // Callers queue the card before this runs, so a refusal must mark it,
+    // or it spins on "generating" forever.
+    const refuse = () => setVersions(prev => prev.map(v => v.id === versionId ? { ...v, status: "failed" } : v));
     if (!previewText.trim()) {
       toast({ title: "Error", description: "Please enter a prompt.", variant: "destructive" });
+      refuse();
       return;
     }
     /* Routed by the selected model, never by the prompt type: "free prompt"
@@ -2533,11 +2538,13 @@ export default function EnkiPromptEditor() {
        chip the user picked. */
     if (!picked) {
       toast({ title: "Pick a model", description: "Choose the model to generate with. Nothing was generated.", variant: "destructive" });
+      refuse();
       return;
     }
     if (!picked.free && !walletConnected) {
       setShowWalletPicker(true);
       toast({ title: "Wallet required", description: "Connect a wallet to pay for this generation.", variant: "destructive" });
+      refuse();
       return;
     }
     setVersions(prev => prev.map(v => v.id === versionId ? { ...v, status: "generating" } : v));
@@ -2794,6 +2801,11 @@ export default function EnkiPromptEditor() {
     if (ui.selectedCards.length === 0) return;
     if (!picked) {
       toast({ title: "Pick a model", description: "Choose the model to generate with.", variant: "destructive" });
+      return;
+    }
+    if (!picked.free && !walletConnected) {
+      setShowWalletPicker(true);
+      toast({ title: "Wallet required", description: "Connect a wallet to pay for this generation.", variant: "destructive" });
       return;
     }
     const refillCount = ui.selectedCards.length;

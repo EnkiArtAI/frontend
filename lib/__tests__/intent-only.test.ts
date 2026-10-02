@@ -32,6 +32,15 @@ describe("the classic editor", () => {
     expect(EDITOR).toMatch(/setModels\(prev => \(\{ \.\.\.prev, selected: \[modelId\] \}\)\);/);
   });
 
+  it("restores one model from drafts and undo snapshots", () => {
+    expect(EDITOR).toMatch(/selected: draft\.modelsSelected\.slice\(0, 1\)/);
+    expect(EDITOR).toMatch(/selected: snap\.modelsSelected\.slice\(0, 1\)/);
+  });
+
+  it("marks a refused card failed instead of leaving it generating", () => {
+    expect(EDITOR.match(/\n\s+refuse\(\);\n\s+return;/g)?.length).toBe(3);
+  });
+
   it("refuses without a model at every entry point, before anything is queued or paid", () => {
     expect(EDITOR.match(/if \(!picked\) \{\n\s+toast\(\{ title: "Pick a model"/g)?.length).toBe(5);
   });
