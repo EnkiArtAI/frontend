@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { join } from "node:path";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { readSource } from "@/lib/__tests__/_read-source";
-import { loadPromptText, fillVariables, inputsUnmatched } from "@/lib/generation/prompt-text";
+import { loadPromptText, fillVariables, inputsUnmatched, overLong, VALUE_MAX } from "@/lib/generation/prompt-text";
 
 /**
  * A paid marketplace prompt is generated from the ARTIST's text on the
@@ -80,8 +80,19 @@ describe("fillVariables", () => {
       [{ name: "hero_2" }, { name: "hero" }, { name: "hero_3" }]))).toBe(true);
   });
 
+  it("pins the decided limit of 300 characters", () => {
+    // Kev, 2026-10-02: "lass sie bei 300 zeichen bitte".
+    expect(VALUE_MAX).toBe(300);
+  });
+
+  it("names the first value over the limit", () => {
+    expect(overLong({ a: "fox", b: "x".repeat(VALUE_MAX + 1) })).toBe("b");
+    expect(overLong({ a: "x".repeat(VALUE_MAX) })).toBeNull();
+  });
+
   it("takes only text values of a sane length", () => {
-    expect(fillVariables("[a] [b]", { a: 5, b: "x".repeat(2001) }).text).toBe("[a] [b]");
+    expect(fillVariables("[a] [b]", { a: 5, b: "x".repeat(VALUE_MAX + 1) }).text).toBe("[a] [b]");
+    expect(fillVariables("[a]", { a: "x".repeat(VALUE_MAX) }).text).toBe("x".repeat(VALUE_MAX));
     expect(fillVariables("[a]", null).text).toBe("[a]");
   });
 });

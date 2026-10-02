@@ -69,6 +69,20 @@ export async function loadPromptText(supabase: SupabaseClient, promptId: string)
   return { ok: true, text, variables };
 }
 
+/**
+ * The longest value a buyer may put into a slot (Kev, 2026-10-02: 300). A
+ * length cap does not stop an extraction attempt, the checker on the values
+ * does; it keeps the values a slot's worth of text.
+ */
+export const VALUE_MAX = 300;
+
+/** The first buyer value longer than VALUE_MAX, refused before anything is charged. */
+export function overLong(values: unknown): string | null {
+  if (!values || typeof values !== "object") return null;
+  const hit = Object.entries(values as Record<string, unknown>).find(([, v]) => typeof v === "string" && v.length > VALUE_MAX);
+  return hit ? hit[0] : null;
+}
+
 /** The slug app/api/prompt stores a variable name as (chk_var_name_format). */
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
 
@@ -126,7 +140,7 @@ export function fillVariables(text: string, values: unknown, variables: StoredVa
 
   const take = (key: string | null | undefined) => {
     const v = key ? vals[key] : undefined;
-    if (typeof v !== "string" || v.length > 2000) return undefined;
+    if (typeof v !== "string" || v.length > VALUE_MAX) return undefined;
     used.add(key as string);
     return v;
   };

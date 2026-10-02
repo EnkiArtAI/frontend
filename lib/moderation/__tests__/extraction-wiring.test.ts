@@ -49,3 +49,15 @@ describe("the agent rail", () => {
     expect(AGENT).toMatch(/if \(check\.verdict !== "clear"\) return NextResponse\.json\(SILENT_FAILURE, \{ status: 500 \}\);/);
   });
 });
+
+describe("the 300-character limit", () => {
+  it("refuses an over-long value on the human rail before composing", () => {
+    const refuse = HUMAN.indexOf("if (overLong(body.variableValues)) {");
+    expect(refuse).toBeGreaterThan(-1);
+    expect(HUMAN.indexOf("const filled = fillVariables(")).toBeGreaterThan(refuse);
+  });
+
+  it("refuses an over-long value on the agent rail in its schema", () => {
+    expect(AGENT).toMatch(/variableValues: z\.record\(z\.string\(\), z\.string\(\)\.max\(VALUE_MAX\)\)/);
+  });
+});

@@ -45,7 +45,7 @@ import {
 } from "@/lib/payments/x402-settle";
 import { checkAndRecordSolanaSignature } from "@/backend/solana-x402-verifier";
 import { isSolanaChain } from "@/shared/payment-config";
-import { loadPromptText, fillVariables, inputsUnmatched } from "@/lib/generation/prompt-text";
+import { loadPromptText, fillVariables, inputsUnmatched, VALUE_MAX } from "@/lib/generation/prompt-text";
 import { checkExtraction, textValues } from "@/lib/moderation/extraction-check";
 import { agentBlocked, recordExtractionHit, SILENT_FAILURE } from "@/lib/moderation/extraction-hits";
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
@@ -69,7 +69,7 @@ const RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9",
 const bodySchema = z.object({
   prompt: z.string().trim().min(1).max(4000).optional(),
   promptId: z.string().uuid().optional(),
-  variableValues: z.record(z.string(), z.string().max(2000)).optional(),
+  variableValues: z.record(z.string(), z.string().max(VALUE_MAX)).optional(),
   // Required: an agent that names no model gets a refusal, never a default
   // one (Kev, 2026-10-02: "NIEMALS IRGENDEIN standardmodell").
   modelFamily: z.string({ error: "modelFamily is required" }).trim().min(1, "modelFamily is required").max(64),
