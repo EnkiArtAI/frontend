@@ -539,8 +539,12 @@ export async function GET(req: Request) {
     }
 
     // Someone else's prompt answers like a missing one: no decrypt, and no
-    // confirmation that the id exists.
-    if (!prompt || prompt.creator_id !== userId) {
+    // confirmation that the id exists. Ownership is also checked the way a
+    // save checks it (resolveOwnerIds): a prompt an email session saved before
+    // its wallet was attached is owned through that session's own mapping.
+    const owners =
+      prompt && prompt.creator_id !== userId ? ((await resolveOwnerIds(supabase, req)) ?? []) : [];
+    if (!prompt || (prompt.creator_id !== userId && !owners.includes(String(prompt.creator_id)))) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
 

@@ -75,7 +75,7 @@ vi.mock("@/lib/moderation", () => ({ moderate: async () => ({ allowed: true }), 
 vi.mock("@/lib/moderation-enforcement", () => ({ recordModerationEvent: async () => {} }));
 vi.mock("@/lib/session-user", () => ({
   resolveSessionUserId: async (_s: unknown, token: string | null) =>
-    ({ "artist-token": ARTIST, "buyer-token": BUYER } as Record<string, string>)[token ?? ""] ?? null,
+    ({ "artist-token": ARTIST, "buyer-token": BUYER, "email-token": EMAIL_USER } as Record<string, string>)[token ?? ""] ?? null,
 }));
 
 import { GET, POST } from "../../app/api/prompt/route";
@@ -83,6 +83,8 @@ import { GET, POST } from "../../app/api/prompt/route";
 const ARTIST = "aaaaaaaa-0000-4000-8000-000000000001";
 const BUYER = "bbbbbbbb-0000-4000-8000-000000000002";
 const PAID = "cccccccc-0000-4000-8000-000000000003";
+const EMAIL_USER = "dddddddd-0000-4000-8000-000000000004";
+const PHANTOM = "eeeeeeee-0000-4000-8000-000000000005";
 
 beforeEach(() => {
   decrypt.mockClear();
@@ -130,6 +132,16 @@ describe("GET /api/prompt answers only the prompt's creator", () => {
   it("never decrypts for another user", async () => {
     await get("buyer-token");
     expect(decrypt).not.toHaveBeenCalled();
+  });
+
+  it("gives the full text to an email creator whose save made a phantom owner", async () => {
+    // An email session holds users.id as its address; saving before the wallet
+    // was attached mapped that address to a new user, who owns the prompt.
+    db.prompts[0].creator_id = PHANTOM;
+    db.auth_sessions.push({ token: "email-token", wallet_address: EMAIL_USER, wallet_type: "password" });
+    db.user_wallets.push({ user_id: PHANTOM, address: EMAIL_USER });
+    const res = await get("email-token");
+    expect((await res.json()).content).toBe("the artist's secret words around [subject]");
   });
 
   it("gives the creator the full text", async () => {
