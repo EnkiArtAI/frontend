@@ -868,11 +868,11 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   // Can only generate once there's an actual prompt and every text var has a value.
   // Only a prompt is required to generate — unfilled variables just resolve to empty.
   const canGenerate = st.body.trim().length > 0 && !!selectedModel;
+
+  const curSig = sigOf(st.body, texts);
   /* spawnOutput fills every empty slot of the current composition (one
      payment each), so its price and title name that count, not "one". */
   const fillCount = Math.max(1, outs.filter((o) => o.status === "empty" && (!o.sig || o.sig === curSig)).length);
-
-  const curSig = sigOf(st.body, texts);
   const layout = useMemo(() => {
     // First group sits to the RIGHT of the prompt at the same height; every
     // further group stacks below it.

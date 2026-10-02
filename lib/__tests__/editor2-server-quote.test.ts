@@ -42,6 +42,15 @@ describe("Editor 2 shows server quotes only", () => {
   });
 });
 
+describe("Editor 2 renders", () => {
+  it("declares curSig before fillCount reads it (a closure hides the TDZ from tsc)", () => {
+    const sig = NODE.indexOf("const curSig = sigOf(st.body, texts);");
+    const fill = NODE.indexOf("const fillCount = ");
+    expect(sig).toBeGreaterThan(-1);
+    expect(fill).toBeGreaterThan(sig);
+  });
+});
+
 describe("Editor 2 runs the tier it shows", () => {
   it("prices and generates the clamped tier, never a stored one above the model's ceiling", () => {
     expect(NODE).toMatch(/const tierNow = asTier\(effTier\);/);
