@@ -24,7 +24,7 @@ export type PromptTextResult =
 export async function loadPromptText(supabase: SupabaseClient, promptId: string): Promise<PromptTextResult> {
   const { data: row, error } = await supabase
     .from("prompts")
-    .select("public_prompt_text, encrypted_content, encrypted_content_iv, encrypted_content_tag, encrypted_content_kid")
+    .select("public_prompt_text, encrypted_content, encrypted_content_iv, encrypted_content_tag, encrypted_content_kid, price_usd_cents, prompt_type, is_free_showcase")
     .eq("id", promptId)
     .maybeSingle();
   if (error || !row) return { ok: false, status: 500, error: "Failed to load prompt" };
@@ -39,8 +39,21 @@ export async function loadPromptText(supabase: SupabaseClient, promptId: string)
         kid: row.encrypted_content_kid ? String(row.encrypted_content_kid) : undefined,
       });
     } catch {
+      console.error("[prompt-text] could not decrypt prompt", promptId);
       text = "";
     }
+  }
+  /* A priced prompt never falls back to its public excerpt (the first 220
+     characters): the buyer would pay the artist for an image the artist's
+     prompt never made. Refused before anything is charged. Free and showcase
+     prompts are public text anyway. */
+  const priced =
+    Number(row.price_usd_cents) > 0 &&
+    row.prompt_type !== "showcase" &&
+    row.prompt_type !== "free-prompt" &&
+    row.is_free_showcase !== true;
+  if (!text.trim() && priced) {
+    return { ok: false, status: 500, error: "This prompt's text cannot be read right now. Nothing was generated and nothing was charged." };
   }
   if (!text.trim()) text = String(row.public_prompt_text ?? "");
   if (!text.trim()) return { ok: false, status: 422, error: "This prompt has no readable text to generate from" };
