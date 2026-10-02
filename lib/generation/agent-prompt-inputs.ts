@@ -15,7 +15,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { isListed, isPublicText } from "@/lib/prompt-visibility";
 
 /** The longest text value a paid prompt accepts from an agent. */
-export const AGENT_TEXT_MAX = 100;
+export const AGENT_TEXT_MAX = 300;
 
 type Declared = {
   name: string;
