@@ -255,6 +255,11 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
   if (!route) {
     return NextResponse.json({ error: "No healthy route for this model right now — retry shortly" }, { status: 503 });
   }
+  // A paid request never falls back to a guessed model (Kev, 2026-09-22): a
+  // route without its provider model is refused here, before any money moves.
+  if (route.provider !== "pollinations" && !route.providerModel) {
+    return NextResponse.json({ error: "This model has no provider model configured — nothing was charged" }, { status: 503 });
+  }
 
   // ── Verify the agent's transaction offline ──────────────────────────────
   const parsed = parseXPayment(paymentHeader);
@@ -334,6 +339,9 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
   const ratio = (RATIOS as readonly string[]).includes(input.aspectRatio) ? input.aspectRatio : "1:1";
   const genRequest: ImageGenerationRequest = {
     prompt: promptText,
+    // The routed model, exactly as the human route sends it. Without it every
+    // adapter used to fall back to its own default model.
+    modelVersion: route.providerModel,
     aspectRatio: ratio as ImageGenerationRequest["aspectRatio"],
     imageSize: model.supportsResolution
       ? clampTier(input.resolution, route.provider, route.providerModel)
