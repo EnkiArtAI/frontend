@@ -11,6 +11,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  PRICING_POLICY,
   UnknownModelError,
   computeGenerationSplit,
   getModelCostMicro,
@@ -89,6 +90,8 @@ export async function computeQuote(
   let modelCostMicro: number;
   try {
     modelCostMicro = getModelCostMicro(modelFamily, resolution, { boost, quality });
+    // An artist's prompt is checked for extraction attempts; the buyer pays the check.
+    if (artistPriceMicro > 0) modelCostMicro += PRICING_POLICY.extractionCheckMicro;
   } catch (error) {
     if (error instanceof UnknownModelError) {
       return { ok: false, status: 400, error: error.message };
