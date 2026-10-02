@@ -28,7 +28,8 @@ vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => ({ from:
 vi.mock("@/lib/crypto", () => ({ decryptString: () => "the full free text" }));
 vi.mock("@/lib/session-user", async (orig) => ({
   ...(await orig<typeof import("@/lib/session-user")>()),
-  resolveSessionUserId: async (_s: unknown, token: string | null) => (token === "owner-token" ? "owner-1" : null),
+  resolveSessionUserId: async (_s: unknown, token: string | null) =>
+    ({ "owner-token": "owner-1", "email-token": "email-user" } as Record<string, string>)[token ?? ""] ?? null,
 }));
 
 import { GET as feed } from "../../app/api/marketplace/prompts/route";
@@ -82,6 +83,14 @@ describe("the prompt detail route", () => {
   it("lets the creator preview their own unlisted free prompt", async () => {
     const draft = { ...showcase, is_listed: false, listing_status: "draft" };
     expect((await detailOf(draft, "owner-token")).publicPromptText).toBe("the full free text");
+  });
+
+  it("lets an email creator preview a draft owned through their first address mapping", async () => {
+    // The email session holds users.id as its address; the save mapped that address to another user.
+    tables.auth_sessions = [{ wallet_address: "email-user" }];
+    tables.user_wallets = [{ user_id: "phantom-1" }];
+    const draft = { ...showcase, creator_id: "phantom-1", is_listed: false, listing_status: "draft" };
+    expect((await detailOf(draft, "email-token")).publicPromptText).toBe("the full free text");
   });
 
   it("never sends the text of an unlisted free prompt", async () => {

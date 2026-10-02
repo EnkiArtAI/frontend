@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { decryptString } from "@/lib/crypto";
 import { isListed, isPublicText } from "@/lib/prompt-visibility";
-import { resolveSessionUserId } from "@/lib/session-user";
+import { resolveOwnerIds, resolveSessionUserId } from "@/lib/session-user";
 import { requireAuth } from "@/lib/auth";
 
 type PatchBody = {
@@ -117,11 +117,15 @@ export async function GET(
     // Text only for a free prompt, and then in full (decrypted through
     // lib/crypto's keyring). A paid prompt's body is the artist's secret: its
     // buyers see the variables, never the words. An unlisted prompt's text is
-    // nobody's business but its creator's yet, who may preview it.
-    const viewerId = isListed(prompt)
-      ? null
-      : await resolveSessionUserId(supabase, req.headers.get("X-Session-Token"));
-    const isOwner = viewerId !== null && prompt.creator_id === viewerId;
+    // nobody's business but its creator's yet, who may preview it. Ownership
+    // is checked the way a save checks it: an email creator's prompt may sit
+    // with the user their address was first mapped to.
+    const token = req.headers.get("X-Session-Token");
+    const viewerId = isPublicText(prompt) && !isListed(prompt) ? await resolveSessionUserId(supabase, token) : null;
+    const isOwner =
+      viewerId !== null &&
+      (prompt.creator_id === viewerId ||
+        ((await resolveOwnerIds(supabase, token)) ?? []).includes(String(prompt.creator_id)));
     let publicPromptText: string | undefined;
     if (isPublicText(prompt) && (isListed(prompt) || isOwner)) {
       publicPromptText =
