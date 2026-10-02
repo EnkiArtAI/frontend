@@ -340,19 +340,21 @@ export async function resolveModelByFamily(
     /* Matched on the slug, not the display name: "GPT-Image-2 (coming soon)"
        and "GPT-Image-2" are the same purchase, and the quote stored the slug
        precisely so that editing a label is not a pricing event. */
-    const row = (data as unknown as ModelRow[]).find(
+    const rows = (data as unknown as ModelRow[]).filter(
       (r) => toModelFamily(String(r.name ?? "")) === family,
     );
-    return row ? fromRow(row, audience) : null;
+    // Two active rows answering to one family is a choice we may not make for
+    // the caller: whichever came first would run with its own routes.
+    return rows.length === 1 ? fromRow(rows[0], audience) : null;
   } catch {
     return null;
   }
 }
 
 /**
- * Resolve the user's selection. Takes the FIRST id that resolves — multi-select
- * exists in the editor for prompt authoring (which models a prompt is meant
- * for), while a single generation runs on exactly one model.
+ * Resolve the user's selection: exactly the FIRST id. A generation runs on
+ * one model, and when that row is missing or inactive the answer is null,
+ * never the next id in the list (Kev, 2026-10-02: "IMMER DAS AUSGEWÄHLTE").
  */
 export async function resolveModel(
   supabase: SupabaseClient | null,
@@ -361,8 +363,9 @@ export async function resolveModel(
 ): Promise<ResolvedModel | null> {
   // Exact row ids only. A name or slug is not an id, and a failed lookup is
   // refused by the caller, never replaced by another model (Kev, 2026-10-02).
-  const ids = (modelIds ?? []).filter((id) => UUID.test(id));
-  if (!supabase || !ids.length) return null;
+  const first = modelIds?.[0];
+  if (!supabase || !first || !UUID.test(first)) return null;
+  const ids = [first];
   try {
     const pick = (cols: string) =>
       supabase.from("models").select(cols).in("id", ids).eq("active", true);
@@ -382,12 +385,8 @@ export async function resolveModel(
     } else {
       rows = (joined.data ?? []) as unknown as ModelRow[];
     }
-    // Preserve the user's order rather than the database's.
-    for (const wanted of ids) {
-      const row = rows.find((r) => r.id === wanted);
-      if (row) return fromRow(row, audience);
-    }
-    return null;
+    const row = rows.find((r) => r.id === first);
+    return row ? fromRow(row, audience) : null;
   } catch {
     return null;
   }

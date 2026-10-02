@@ -212,12 +212,14 @@ export function resolveCatalogueEntry(
      Found by this function's own test asserting "flux-free" and failing. */
   const plainSlug = (name: string) =>
     name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return (
-    catalogue.find((m) => m.id === idOrSlug) ??
-    catalogue.find(
-      (m) => toModelFamily(m.name) === idOrSlug || plainSlug(m.name) === idOrSlug,
-    )
+  const exact = catalogue.find((m) => m.id === idOrSlug);
+  if (exact) return exact;
+  // A slug resolves only when exactly one row answers to it: with two, the
+  // cheaper one would win by list order, and that is not what was selected.
+  const bySlug = catalogue.filter(
+    (m) => toModelFamily(m.name) === idOrSlug || plainSlug(m.name) === idOrSlug,
   );
+  return bySlug.length === 1 ? bySlug[0] : undefined;
 }
 
 /**
