@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { isPublicText } from "@/lib/prompt-visibility";
 import { z } from "zod";
 
 const marketplaceFiltersSchema = z.object({
@@ -184,7 +185,7 @@ export async function GET(request: NextRequest) {
       let dbQuery = supabase
         .from("prompts")
         .select(
-          "id,title,public_prompt_text,price_usd_cents,category,tags,ai_model,created_at,creator_id,showcase_images,aspect_ratio,resolution,is_free_showcase,prompt_type"
+          "id,title,description,public_prompt_text,price_usd_cents,category,tags,ai_model,created_at,creator_id,showcase_images,aspect_ratio,resolution,is_free_showcase,prompt_type"
         );
 
       // Released prompts only. Without this a draft was on the marketplace the
@@ -260,37 +261,42 @@ export async function GET(request: NextRequest) {
       }
 
       if (Array.isArray(dbPrompts) && dbPrompts.length > 0) {
-        prompts = dbPrompts.map((p) => ({
-          id: p.id,
-          title: p.title,
-          description: p.public_prompt_text || "",
-          promptTemplate: p.public_prompt_text || "",
-          // Integer cents straight through — the field name carries the unit
-          // and the feed adapter (enkiPromptAdapter.dollars) divides by 100.
-          priceUsdCents:
-            typeof p.price_usd_cents === "number" ? p.price_usd_cents : 0,
-          category: p.category || "",
-          tags: Array.isArray(p.tags) ? p.tags : [],
-          // No sales/rating columns exist live; 0 is the shape's default.
-          totalSales: 0,
-          avgRating: 0,
-          createdAt: p.created_at,
-          listedAt: p.created_at,
-          userId: p.creator_id,
-          previewImages: Array.isArray(p.showcase_images)
-            ? p.showcase_images.map((url: string) => ({ url }))
-            : [],
-          showcaseImages: Array.isArray(p.showcase_images)
-            ? p.showcase_images.map((url: string) => ({ url }))
-            : [],
-          aiModel: p.ai_model,
-          model: p.ai_model,
-          aspectRatio: p.aspect_ratio,
-          resolution: p.resolution,
-          isFreeShowcase: Boolean(p.is_free_showcase),
-          promptType: p.prompt_type,
-          isVideo: false,
-        }));
+        prompts = dbPrompts.map((p) => {
+          // A paid prompt's text is the artist's secret: its card carries the
+          // creator's description, never the words of the prompt.
+          const text = isPublicText(p) ? p.public_prompt_text || "" : "";
+          return {
+            id: p.id,
+            title: p.title,
+            description: text || p.description || "",
+            promptTemplate: text,
+            // Integer cents straight through — the field name carries the unit
+            // and the feed adapter (enkiPromptAdapter.dollars) divides by 100.
+            priceUsdCents:
+              typeof p.price_usd_cents === "number" ? p.price_usd_cents : 0,
+            category: p.category || "",
+            tags: Array.isArray(p.tags) ? p.tags : [],
+            // No sales/rating columns exist live; 0 is the shape's default.
+            totalSales: 0,
+            avgRating: 0,
+            createdAt: p.created_at,
+            listedAt: p.created_at,
+            userId: p.creator_id,
+            previewImages: Array.isArray(p.showcase_images)
+              ? p.showcase_images.map((url: string) => ({ url }))
+              : [],
+            showcaseImages: Array.isArray(p.showcase_images)
+              ? p.showcase_images.map((url: string) => ({ url }))
+              : [],
+            aiModel: p.ai_model,
+            model: p.ai_model,
+            aspectRatio: p.aspect_ratio,
+            resolution: p.resolution,
+            isFreeShowcase: Boolean(p.is_free_showcase),
+            promptType: p.prompt_type,
+            isVideo: false,
+          };
+        });
       }
 
     } catch (searchError) {
