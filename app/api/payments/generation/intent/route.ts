@@ -4,7 +4,7 @@
  * Server-built payments (backlog #2), step 2: persist the intent. The client
  * sends ONLY identifiers — never a price, amount, or destination:
  *
- *   Body: { promptId: string, modelFamily: string, resolution?: "1K" | "2K" | "4K" }
+ *   Body: { promptId?: string, modelFamily: string, resolution?: "1K" | "2K" | "4K" }
  *
  * The server recomputes the full split from its own DB and pricing (it never
  * trusts an earlier quote response), stores it as a payment intent with
@@ -29,7 +29,8 @@ import { PRICING_POLICY, splitToBreakdown } from "@/lib/payments/generation-pric
 import { computeQuote } from "@/lib/payments/generation-quote";
 
 const intentSchema = z.object({
-  promptId: z.string().min(1).max(128),
+  /* Absent when buyers generate from their own prompt (the editors). */
+  promptId: z.string().min(1).max(128).optional(),
   modelFamily: z.string().min(1).max(64),
   /* 1K joined 2026-08-22 (Kev: "warum keine 1K generierungen"). It is
      priced as 2K — toResolutionTier maps it, the provider fact being that
@@ -94,7 +95,7 @@ export async function POST(req: NextRequest) {
     .from("generation_payment_intents")
     .insert({
       buyer_wallet: authUser.walletAddress,
-      prompt_id: promptId,
+      prompt_id: promptId ?? null,
       model_family: modelFamily,
       resolution: resolution ?? "2K",
       artist_wallet: artistWallet,
@@ -122,7 +123,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     intent: {
       id: intent.id,
-      promptId,
+      promptId: promptId ?? null,
       modelFamily,
       resolution: resolution ?? "2K",
       buyerWallet: authUser.walletAddress,

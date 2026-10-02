@@ -4,7 +4,7 @@
  * First half of server-built payments (backlog #2). The client sends ONLY
  * identifiers — never a price, amount, or destination:
  *
- *   Body: { promptId: string, modelFamily: string, resolution?: "1K" | "2K" | "4K" }
+ *   Body: { promptId?: string, modelFamily: string, resolution?: "1K" | "2K" | "4K" }
  *
  * The server loads the prompt price and artist wallet from its own DB,
  * takes the model cost from server-side pricing, and returns the full
@@ -31,7 +31,8 @@ import { PRICING_POLICY, splitToBreakdown } from "@/lib/payments/generation-pric
 import { computeQuote } from "@/lib/payments/generation-quote";
 
 const quoteSchema = z.object({
-  promptId: z.string().min(1).max(128),
+  /* Absent when buyers generate from their own prompt (the editors). */
+  promptId: z.string().min(1).max(128).optional(),
   modelFamily: z.string().min(1).max(64),
   /* 1K joined 2026-08-22 (Kev: "warum keine 1K generierungen"). It is
      priced as 2K — toResolutionTier maps it, the provider fact being that
@@ -93,7 +94,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     quote: {
-      promptId,
+      promptId: promptId ?? null,
       modelFamily,
       resolution: resolution ?? "2K",
       buyerWallet: authUser.walletAddress,

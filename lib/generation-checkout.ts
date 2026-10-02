@@ -39,7 +39,8 @@ export interface GenerationQuote {
 }
 
 export interface QuoteRequest {
-  promptId: string;
+  /** Absent for the buyer's own prompt (the editors). */
+  promptId?: string;
   modelFamily: string;
   resolution?: "1K" | "2K" | "4K"; // 1K accepted since 2026-08-22 (priced as 2K server-side)
   /** Boost reprices the model leg at the vendor-direct route's real cost. */
