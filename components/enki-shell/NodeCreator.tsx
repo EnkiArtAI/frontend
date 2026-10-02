@@ -5,10 +5,10 @@
    Nano Banana Pro generation (Puter.js) + best-effort DB persistence. */
 
 import BoostToggle from "@/components/generation/BoostToggle";
-import { apiBoostPricePerImage } from "@/lib/pricing";
-import { toModelFamily } from "@/lib/generation/model-family";
 import { type Quality } from "@/components/generation/QualitySelect";
-import { useModelCatalogue, resolveCatalogueEntry, FALLBACK_RATIOS, tierPrice, tierScale } from "@/hooks/useModelLimits";
+import { useModelCatalogue, resolveCatalogueEntry, FALLBACK_RATIOS, type CatalogueEntry } from "@/hooks/useModelLimits";
+import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
+import type { QuoteRequest } from "@/lib/generation-checkout";
 import { moveToken } from "@/lib/editor/move-token";
 import { TOKEN_SRC, variableRange } from "@/lib/editor/selection-variable";
 import RatioRect from "@/components/generation/RatioRect";
@@ -1593,20 +1593,42 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   /* Per-model tier scale from the server's own price ladder — the flat x2
      for 4K overstated it (nano-banana-pro's real 4K/2K ratio is ~1.79;
      found by review, 2026-08-22). */
-  const qualityMult = tierScale(selectedModel, st.quality);
-  // Priced from the catalogue, so what is shown is what the server will
-  // charge. It used to come from a constant with invented numbers.
-  const perImage = st.models.reduce((sum, id) => sum + (resolveCatalogueEntry(catalogue, id)?.price ?? 0), 0) * qualityMult;
+  /* Every price shown here is a server quote (Kev, 2026-10-02: "ich brauche
+     safe überall den server-quote"): each model at the current settings for
+     the model picker, each tier of the selected model for the resolution
+     picker, in one request. They were catalogue price x tier scale, without
+     the fee and without quality, so the label was not the charge. The free
+     model reads "Free"; an option without a quote shows no price. */
   const imgCount = st.genCount;
-  const cost = perImage * imgCount;
-  /* Boost price = the BOOST ROUTE's real per-image cost (vendor direct),
-     never a multiplier (Kev, 2026-08-23). Uses the same family key the
-     server prices by; the gpt quality lever feeds in where the model has
-     one. */
-  const boostCost = selectedModel
-    ? apiBoostPricePerImage(toModelFamily(selectedModel.name), st.quality, supportsQuality ? quality : undefined) * imgCount
-    : cost;
-  const shownCost = boost ? boostCost : cost;
+  const asTier = (t: string) => (t === "1K" || t === "2K" || t === "4K" ? t : null);
+  const quoteFor = (m: CatalogueEntry, tier: "1K" | "2K" | "4K"): QuoteRequest => ({
+    modelId: m.id,
+    resolution: tier,
+    quality: m.supportsQuality ? quality : undefined,
+    boost: boost && !!m.boostAvailable,
+  });
+  const tierNow = asTier(st.quality);
+  const pricedModels = catalogue.filter((m) => !m.free);
+  const pricedTiers = selectedModel && !selectedModel.free ? qualityTiers.map(asTier).filter((t): t is "1K" | "2K" | "4K" => !!t) : [];
+  const quotes = useServerQuotes([
+    ...(tierNow ? pricedModels.map((m) => quoteFor(m, tierNow)) : []),
+    ...pricedTiers.map((t) => quoteFor(selectedModel!, t)),
+  ]);
+  const modelPriceLabel = (id: string): string | undefined => {
+    const m = catalogue.find((c) => c.id === id);
+    if (!m) return undefined;
+    if (m.free) return "Free";
+    const i = pricedModels.indexOf(m);
+    return (tierNow && i >= 0 ? quoteLabel(quotes[i]) : null) ?? undefined;
+  };
+  const tierPriceLabel = (tier: string): string | undefined => {
+    if (selectedModel?.free) return "Free";
+    const i = pricedTiers.indexOf(asTier(tier) as "1K" | "2K" | "4K");
+    return (i >= 0 ? quoteLabel(quotes[(tierNow ? pricedModels.length : 0) + i]) : null) ?? undefined;
+  };
+  const nowQuote = selectedModel && tierNow && !selectedModel.free ? quotes[pricedModels.indexOf(selectedModel)] : null;
+  /** The current settings for n images: the quote, "Free", or "…" while none is known. */
+  const priceFor = (n: number) => (selectedModel?.free ? "Free" : quoteLabel(nowQuote, n) ?? "…");
   const pickedOuts = outs.filter((o) => o.picked && o.img); // images marked for public release (always one group)
   const releaseMin = st.mode === "free" ? 1 : 4;            // Free needs ≥1, Premium ≥4 selected
   const canRelease = pickedOuts.length >= releaseMin;
@@ -1925,7 +1947,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                 <button ref={modelTrigRef} className={"nc-pm-trigger" + (modelOpen ? " open" : "")} title="Model used for this prompt — price shown is the production cost"
                   onClick={(e) => { e.stopPropagation(); if (!modelOpen) { const r = modelTrigRef.current?.getBoundingClientRect(); const ph = catalogue.length * 38 + 16; if (r) setModelFlipUp(window.innerHeight - r.bottom < ph + 14 && r.top > ph + 14); } setModelOpen((o) => !o); }}>
                   <span className="nc-pm-name">{selectedModel?.name ?? "Pick a model"}</span>
-                  <span className="nc-pm-price">${(selectedModel?.price ?? 0).toFixed(2)}</span>
+                  <span className="nc-pm-price">{selectedModel ? modelPriceLabel(selectedModel.id) : ""}</span>
                   <Icon name="chevronDown" size={13} stroke={2.4} className="nc-pm-chev" />
                 </button>
                 {modelOpen && (
@@ -1935,7 +1957,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                         className={"nc-pm-opt" + (m.id === st.models[0] ? " on" : "")}
                         onClick={() => { setSt((p) => ({ ...p, models: [m.id] })); setModelOpen(false); }}>
                         <span className="nc-pm-opt-name">{m.name}</span>
-                        <span className="nc-pm-opt-cost"><b>${m.price.toFixed(2)}</b> prod. cost</span>
+                        <span className="nc-pm-opt-cost"><b>{modelPriceLabel(m.id) ?? "—"}</b> per image</span>
                       </button>
                     ))}
                   </div>
@@ -2086,7 +2108,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                     options={ncRatios(selectedModel).map((r) => ({ value: r, label: r, icon: <RatioRect ratio={r} size={15} /> }))} onChange={(v) => setSt((p) => ({ ...p, ratio: v }))} />
                   {qualityTiers.length > 0 && (
                     <NcSelect icon={<Maximize2 size={14} style={{ color: "var(--enki-ink-3)" }} />} value={qualityTiers.includes(st.quality) ? st.quality : qualityTiers[qualityTiers.length - 1]} width={72} grow={false} title="Resolution · does not affect grouping"
-                      options={qualityTiers.map((q) => { const p = tierPrice(st.mode === "premium" ? selectedModel : undefined, q); return { value: q, label: q, sub: p != null ? "$" + p.toFixed(2) : undefined }; })} onChange={(v) => setSt((p) => ({ ...p, quality: v }))} />
+                      options={qualityTiers.map((q) => ({ value: q, label: q, sub: tierPriceLabel(q) }))} onChange={(v) => setSt((p) => ({ ...p, quality: v }))} />
                   )}
                   {/* Model-specific settings belong to the PROMPT, so they are
                       set where the prompt is written (Kev, 2026-08-19) — not
@@ -2111,7 +2133,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                       value={quality}
                       width={84}
                       grow={false}
-                      title="Quality — how much detail GPT-Image-2 renders. Your price is the same on every setting."
+                      title="Quality — how much detail GPT-Image-2 renders. Higher quality costs more; the price shown is the server's quote."
                       options={[
                         { value: "low", label: "Low" },
                         { value: "medium", label: "Mid" },
@@ -2143,7 +2165,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                     <Icon name="zap" size={16} stroke={2.2} fill={canGenerate ? "var(--cta-ink)" : "none"} />
                     <span className="nc-genbtn-txt">
                       <span className="nc-genbtn-top">Generate</span>
-                      <span className="nc-genbtn-sub">${perImage.toFixed(2)}</span>
+                      <span className="nc-genbtn-sub">{priceFor(1)}</span>
                     </span>
                   </button>
                 </div>
@@ -2217,7 +2239,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
               </div>
               <div className="nc-workflow-meta">
                 <span>{w.wf?.author ? `by ${w.wf.author}` : "from your library"}</span>
-                <span>{w.wf?.vars.length ?? 0} input{(w.wf?.vars.length ?? 0) === 1 ? "" : "s"} · {w.wf?.price ? `$${w.wf.price.toFixed(2)}/use` : "free"}</span>
+                <span>{w.wf?.vars.length ?? 0} input{(w.wf?.vars.length ?? 0) === 1 ? "" : "s"}</span>
               </div>
               <button type="button" className="nc-workflow-toggle" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); toggleWorkflowOpen(w.id); }} aria-expanded={!!w.open}>
                 <Icon name="expand" size={12} stroke={2.2} /> {w.open ? "Hide inside" : "Show inside"}
@@ -2400,7 +2422,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       {view === "node" && <div className="nc-gp" role="dialog">
         <div className="nc-gp-row">
           <span className="nc-gp-lab">{imgCount} image{imgCount > 1 ? "s" : ""}</span>
-          <span className="nc-gp-cost">${shownCost.toFixed(2)}</span>
+          <span className="nc-gp-cost">{priceFor(imgCount)}</span>
         </div>
         <div className="nc-gp-gen" style={{ marginBottom: 6 }}>
           <BoostToggle boost={boost} onChange={setBoost} available={!!selectedModel?.boostAvailable} />
@@ -2412,7 +2434,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
               model/resolution, boost included), the same number as the
               header row. "Pay & Gen" named the mechanics; the price itself
               says it costs money (Kev, 2026-08-22). */}
-          <button className="nc-gp-btn nc-gp-btn--go" onClick={() => runGenerate(false)} title={"Generate " + imgCount + " image" + (imgCount > 1 ? "s" : "") + " — total for the whole run"}><Icon name="zap" size={12} stroke={2} fill="currentColor" /> Generate<span className="nc-gp-go-price">${shownCost.toFixed(2)}</span></button>
+          <button className="nc-gp-btn nc-gp-btn--go" onClick={() => runGenerate(false)} title={"Generate " + imgCount + " image" + (imgCount > 1 ? "s" : "") + " — total for the whole run"}><Icon name="zap" size={12} stroke={2} fill="currentColor" /> Generate<span className="nc-gp-go-price">{priceFor(imgCount)}</span></button>
         </div>
         <div className="nc-gp-rel">
           <div className="nc-gp-relh"><Icon name="star" size={10} stroke={2} fill="currentColor" /> To release{pickedOuts.length ? " · " + pickedOuts.length : ""}</div>
@@ -2522,7 +2544,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       {view === "doc" && (
         <DocView api={{
           st, texts, refs, outs, cons: st.cons, curSig, liveTokNames, liveRefCount, pubNames,
-          colorForTok, palOf, perImage, canGenerate, pickedOuts, releaseMin, canRelease,
+          colorForTok, palOf, priceLabel: priceFor(1), modelPriceLabel, tierPriceLabel, canGenerate, pickedOuts, releaseMin, canRelease,
           modelAccept: modelLimits.accept,
           onBodyChange, pushHist, addText, patchText, setTextKind, renameText, deleteNodeId,
           addRefsFromFiles, onRefFiles, toggleRefUserInput, setRefMax,
@@ -2619,7 +2641,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
           return { id, fp, vars };
         });
         const allOn = genConfirm.checked.size === items.length && items.length > 0;
-        const total = genConfirm.checked.size * perImage;
+        const total = priceFor(genConfirm.checked.size);
         const toggle = (id: string) => setGenConfirm((g) => { if (!g) return g; const n = new Set(g.checked); if (n.has(id)) n.delete(id); else n.add(id); return { ...g, checked: n }; });
         return (
           <div className="nc-gconf-scrim" onPointerDown={() => setGenConfirm(null)}>
@@ -2640,7 +2662,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                 ); })}
               </div>
               <div className="nc-gconf-foot">
-                <span className="nc-gconf-total">Total to pay: <b>${total.toFixed(2)}</b></span>
+                <span className="nc-gconf-total">Total to pay: <b>{total}</b></span>
                 <div className="nc-gconf-btns">
                   <button className="nc-gconf-cancel" onClick={() => setGenConfirm(null)}>Not now</button>
                   <button className="nc-gconf-go" disabled={!genConfirm.checked.size} onClick={confirmCoGen}><Icon name="zap" size={13} stroke={2} fill="var(--cta-ink)" /> Generate {genConfirm.checked.size}</button>

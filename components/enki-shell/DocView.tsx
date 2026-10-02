@@ -11,7 +11,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from "react-dom";
 import { Icon } from "./icons";
 import { Gem } from "lucide-react";
-import { useModelCatalogue, resolveCatalogueEntry, tierPrice } from "@/hooks/useModelLimits";
+import { useModelCatalogue, resolveCatalogueEntry } from "@/hooks/useModelLimits";
 import RatioRect from "@/components/generation/RatioRect";
 import { variableRange } from "@/lib/editor/selection-variable";
 import { DiceButton } from "@/components/DiceButton";
@@ -35,7 +35,10 @@ export interface DocViewApi {
   pubNames: Set<string>;
   colorForTok: (tok: string) => { bg: string; text: string; border: string; dot: string };
   palOf: (cidx: number) => { bg: string; bar: string; ink: string; soft: string };
-  perImage: number;
+  /** Server quote for one image at the current settings, "Free", or "…". */
+  priceLabel: string;
+  modelPriceLabel: (id: string) => string | undefined;
+  tierPriceLabel: (tier: string) => string | undefined;
   canGenerate: boolean;
   pickedOuts: NodeT[];
   releaseMin: number;
@@ -93,7 +96,7 @@ const FALLBACK_CARD_H = 60;
 export default function DocView({ api }: { api: DocViewApi }) {
   const {
     st, texts, refs, outs, cons, curSig, liveTokNames, liveRefCount, pubNames,
-    colorForTok, palOf, perImage, canGenerate, pickedOuts, releaseMin, canRelease,
+    colorForTok, palOf, priceLabel, canGenerate, pickedOuts, releaseMin, canRelease,
   } = api;
   // Same catalogue the node view uses, from /api/models — never a constant,
   // so the two views cannot drift into offering different models or prices.
@@ -467,7 +470,6 @@ export default function DocView({ api }: { api: DocViewApi }) {
     [cons, outs, curSig, palOf],
   );
 
-  const genCost = perImage; // one render per doc-Generate click
 
   /* ── 🎲 the dice beside Generate: rail vars → DiceVariable, keyed by the
      node id patchText applies values back under. A checkbox's snippet rides
@@ -600,18 +602,18 @@ export default function DocView({ api }: { api: DocViewApi }) {
                   links und any und resolution UND QUALITY nebeneinander"). */}
               <div className="ncd-genopts ncd-genopts--row">
                 <NcSelect value={docModel?.id ?? "Pick a model"} width={150} title="Model used for this prompt"
-                  options={catalogue.map((mm) => ({ value: mm.id, label: mm.name, sub: "$" + mm.price.toFixed(2) }))}
+                  options={catalogue.map((mm) => ({ value: mm.id, label: mm.name, sub: api.modelPriceLabel(mm.id) }))}
                   onChange={api.setModel} />
                 <NcSelect icon={<span style={{ color: "var(--enki-ink-3)", display: "flex" }}><RatioRect ratio={st.ratio} size={13} /></span>} value={st.ratio} width={80} grow={false} title="Aspect ratio"
                   options={ncRatios(docModel).map((r) => ({ value: r, label: r, icon: <RatioRect ratio={r} size={15} /> }))} onChange={api.setRatio} />
                 {docTiers.length > 0 && (
                   <NcSelect value={docTiers.includes(st.quality) ? st.quality : docTiers[docTiers.length - 1]} width={70} grow={false} title="Resolution"
-                    options={docTiers.map((q) => { const p = tierPrice(st.mode === "premium" ? docModel : undefined, q); return { value: q, label: q, sub: p != null ? "$" + p.toFixed(2) : undefined }; })}
+                    options={docTiers.map((q) => ({ value: q, label: q, sub: api.tierPriceLabel(q) }))}
                     onChange={api.setQuality} />
                 )}
                 {api.supportsGptQuality && (
                   <NcSelect icon={<Gem size={13} style={{ color: "var(--enki-ink-3)" }} />} value={api.gptQuality} width={78} grow={false}
-                    title="Quality — how much detail GPT-Image-2 renders. Your price is the same on every setting."
+                    title="Quality — how much detail GPT-Image-2 renders. Higher quality costs more; the price shown is the server's quote."
                     options={[
                       { value: "low", label: "Low" },
                       { value: "medium", label: "Mid" },
@@ -640,7 +642,7 @@ export default function DocView({ api }: { api: DocViewApi }) {
                     title={canGenerate ? (autoFill ? "AI fills the variables, then renders · " + st.quality : "Render with the current variable values · " + st.quality) : "Write a prompt first"}
                     onClick={() => { if (!canGenerate) return; api.spawnOutput(autoFill); }}>
                     <span className="ncd-gen-top"><Icon name="zap" size={15} stroke={2.2} fill={canGenerate ? "var(--cta-ink)" : "none"} /> Generate</span>
-                    <span className="ncd-gen-price">${genCost.toFixed(2)}</span>
+                    <span className="ncd-gen-price">{priceLabel}</span>
                   </button>
                 </div>
               </div>
