@@ -14,14 +14,30 @@ const ROOT = join(__dirname, "..", "..");
 const ROUTE = readSource(join(ROOT, "app", "api", "generate-image", "route.ts"));
 const AGENT = readSource(join(ROOT, "app", "api", "x402", "generate", "route.ts"));
 
-function prompts(row: Record<string, unknown> | null) {
-  const chain = { select: () => chain, eq: () => chain, maybeSingle: async () => ({ data: row, error: null }) };
-  return { from: () => chain } as unknown as SupabaseClient;
+function prompts(row: Record<string, unknown> | null, vars: Array<Record<string, unknown>> = []) {
+  const from = (table: string) => {
+    const chain: Record<string, unknown> = {
+      maybeSingle: async () => ({ data: row, error: null }),
+      then: (ok: (v: unknown) => unknown) => Promise.resolve({ data: table === "prompt_variables" ? vars : null, error: null }).then(ok),
+    };
+    for (const m of ["select", "eq", "is"]) chain[m] = () => chain;
+    return chain;
+  };
+  return { from } as unknown as SupabaseClient;
 }
 
 describe("fillVariables", () => {
   it("fills the [name] slots with the buyer's values and leaves unknown ones as written", () => {
     expect(fillVariables("a [animal] on a [place]", { animal: "fox" })).toBe("a fox on a [place]");
+  });
+
+  it("fills a slot the artist typed with spaces and capitals from the slugged name the values arrive under", () => {
+    // app/api/prompt stores "[Character Design]" as character_design and keeps the text verbatim.
+    const vars = [{ name: "character_design", label: "Character Design" }, { name: "v_2nd_subject", label: "2nd subject" }];
+    expect(fillVariables("a [Character Design] with a [2nd subject]", { character_design: "knight", v_2nd_subject: "dog" }, vars))
+      .toBe("a knight with a dog");
+    // Without the stored list (an agent), the plain slug still finds it.
+    expect(fillVariables("a [Character Design]", { character_design: "knight" })).toBe("a knight");
   });
 
   it("takes only text values of a sane length", () => {
@@ -32,7 +48,9 @@ describe("fillVariables", () => {
 
 describe("loadPromptText", () => {
   it("reads a prompt's public text when it has no encrypted body", async () => {
-    expect(await loadPromptText(prompts({ public_prompt_text: "a [animal]" }), "p")).toEqual({ ok: true, text: "a [animal]" });
+    expect(await loadPromptText(prompts({ public_prompt_text: "a [animal]" }, [{ name: "animal", label: "Animal" }]), "p")).toEqual({
+      ok: true, text: "a [animal]", variables: [{ name: "animal", label: "Animal" }],
+    });
   });
 
   it("refuses a prompt with no readable text rather than generating from nothing", async () => {
@@ -43,7 +61,7 @@ describe("loadPromptText", () => {
 
 describe("/api/generate-image builds a paid prompt from the artist's text", () => {
   it("composes when the intent carries an artist share, before moderation", () => {
-    const compose = ROUTE.indexOf("prompt = fillVariables(text.text, body.variableValues);");
+    const compose = ROUTE.indexOf("prompt = fillVariables(text.text, body.variableValues, text.variables);");
     const moderate = ROUTE.indexOf("const verdict = await moderate({ prompt,");
     expect(ROUTE).toMatch(/const fromArtist = Boolean\(paid\.prompt_id\) && Number\(paid\.artist_amount_micro\) > 0;/);
     expect(compose).toBeGreaterThan(-1);

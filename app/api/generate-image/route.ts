@@ -233,7 +233,7 @@ export async function POST(request: NextRequest) {
     if (fromArtist) {
       const text = await loadPromptText(getSupabaseServerClient(), paid.prompt_id as string);
       if (!text.ok) return NextResponse.json({ error: text.error }, { status: text.status });
-      prompt = fillVariables(text.text, body.variableValues);
+      prompt = fillVariables(text.text, body.variableValues, text.variables);
     }
     if (!prompt) {
       return NextResponse.json({ error: "prompt is required" }, { status: 400 });

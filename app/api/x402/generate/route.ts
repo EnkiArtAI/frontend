@@ -211,7 +211,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
   if (input.promptId) {
     const text = await loadPromptText(supabase, input.promptId);
     if (!text.ok) return NextResponse.json({ error: text.error }, { status: text.status });
-    promptText = fillVariables(text.text, input.variableValues);
+    promptText = fillVariables(text.text, input.variableValues, text.variables);
   }
 
   const verdict = await moderate({ prompt: promptText, surface: "x402-generate" });
