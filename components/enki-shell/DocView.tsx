@@ -39,6 +39,8 @@ export interface DocViewApi {
   priceLabel: string;
   modelPriceLabel: (id: string) => string | undefined;
   tierPriceLabel: (tier: string) => string | undefined;
+  /** The tier that runs: the pick clamped to the selected model's ceiling. */
+  effTier: string;
   canGenerate: boolean;
   pickedOuts: NodeT[];
   releaseMin: number;
@@ -639,7 +641,7 @@ export default function DocView({ api }: { api: DocViewApi }) {
                     onValues={applyDiceValues}
                   />
                   <button className={"ncd-gen ncd-gen--go" + (cols.page < 540 ? " stack" : "") + (canGenerate ? "" : " disabled")}
-                    title={canGenerate ? (autoFill ? "AI fills the variables, then renders · " + st.quality : "Render with the current variable values · " + st.quality) : "Write a prompt first"}
+                    title={canGenerate ? (autoFill ? "AI fills the variables, then renders · " + api.effTier : "Render with the current variable values · " + api.effTier) : "Write a prompt first"}
                     onClick={() => { if (!canGenerate) return; api.spawnOutput(autoFill); }}>
                     <span className="ncd-gen-top"><Icon name="zap" size={15} stroke={2.2} fill={canGenerate ? "var(--cta-ink)" : "none"} /> Generate</span>
                     <span className="ncd-gen-price">{priceLabel}</span>

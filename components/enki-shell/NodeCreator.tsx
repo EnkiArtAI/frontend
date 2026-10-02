@@ -1613,11 +1613,16 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     quality: m.supportsQuality ? quality : undefined,
     boost: boost && !!m.boostAvailable,
   });
-  const tierNow = asTier(effTier);
+  /* Each model at the tier IT would run: the stored pick, clamped to that
+     model's ceiling, exactly as finalizeOutput clamps it once picked. */
+  const tierFor = (m: CatalogueEntry): "1K" | "2K" | "4K" => {
+    const tiers = tiersUpTo(m.maxResolution ?? "2K");
+    return asTier(tiers.includes(st.quality as never) ? st.quality : tiers[tiers.length - 1]) ?? "2K";
+  };
   const pricedModels = catalogue.filter((m) => !m.free);
   const pricedTiers = selectedModel && !selectedModel.free ? qualityTiers.map(asTier).filter((t): t is "1K" | "2K" | "4K" => !!t) : [];
   const quotes = useServerQuotes([
-    ...(tierNow ? pricedModels.map((m) => quoteFor(m, tierNow)) : []),
+    ...pricedModels.map((m) => quoteFor(m, tierFor(m))),
     ...pricedTiers.map((t) => quoteFor(selectedModel!, t)),
   ]);
   const modelPriceLabel = (id: string): string | undefined => {
@@ -1625,14 +1630,15 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     if (!m) return undefined;
     if (m.free) return "Free";
     const i = pricedModels.indexOf(m);
-    return (tierNow && i >= 0 ? quoteLabel(quotes[i]) : null) ?? undefined;
+    return (i >= 0 ? quoteLabel(quotes[i]) : null) ?? undefined;
   };
   const tierPriceLabel = (tier: string): string | undefined => {
     if (selectedModel?.free) return "Free";
     const i = pricedTiers.indexOf(asTier(tier) as "1K" | "2K" | "4K");
-    return (i >= 0 ? quoteLabel(quotes[(tierNow ? pricedModels.length : 0) + i]) : null) ?? undefined;
+    return (i >= 0 ? quoteLabel(quotes[pricedModels.length + i]) : null) ?? undefined;
   };
-  const nowQuote = selectedModel && tierNow && !selectedModel.free ? quotes[pricedModels.indexOf(selectedModel)] : null;
+  // The selected model's own entry above is priced at tierFor(selected) = effTier.
+  const nowQuote = selectedModel && !selectedModel.free ? quotes[pricedModels.indexOf(selectedModel)] : null;
   /** The current settings for n images: the quote, "Free", or "…" while none is known. */
   const priceFor = (n: number) => (selectedModel?.free ? "Free" : quoteLabel(nowQuote, n) ?? "…");
   const pickedOuts = outs.filter((o) => o.picked && o.img); // images marked for public release (always one group)
@@ -2550,7 +2556,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       {view === "doc" && (
         <DocView api={{
           st, texts, refs, outs, cons: st.cons, curSig, liveTokNames, liveRefCount, pubNames,
-          colorForTok, palOf, priceLabel: priceFor(fillCount), modelPriceLabel, tierPriceLabel, canGenerate, pickedOuts, releaseMin, canRelease,
+          colorForTok, palOf, priceLabel: priceFor(fillCount), modelPriceLabel, tierPriceLabel, effTier, canGenerate, pickedOuts, releaseMin, canRelease,
           modelAccept: modelLimits.accept,
           onBodyChange, pushHist, addText, patchText, setTextKind, renameText, deleteNodeId,
           addRefsFromFiles, onRefFiles, toggleRefUserInput, setRefMax,

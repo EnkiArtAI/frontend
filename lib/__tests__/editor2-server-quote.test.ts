@@ -53,8 +53,17 @@ describe("Editor 2 renders", () => {
 
 describe("Editor 2 runs the tier it shows", () => {
   it("prices and generates the clamped tier, never a stored one above the model's ceiling", () => {
-    expect(NODE).toMatch(/const tierNow = asTier\(effTier\);/);
+    // Each model option is priced at the tier it would run, clamped to its own ceiling.
+    expect(NODE).toMatch(/\.\.\.pricedModels\.map\(\(m\) => quoteFor\(m, tierFor\(m\)\)\),/);
+    expect(NODE).toMatch(/const tiers = tiersUpTo\(m\.maxResolution \?\? "2K"\);/);
     expect(NODE).toMatch(/const tiers = tiersUpTo\(picked\?\.maxResolution \?\? "2K"\);/);
     expect(NODE).toMatch(/tiers\.includes\(wanted as never\) \? wanted : tiers\[tiers\.length - 1\]/);
+  });
+});
+
+describe("the doc view names the tier that runs", () => {
+  it("uses the clamped tier in its Generate tooltip", () => {
+    expect(DOC).toMatch(/renders · " \+ api\.effTier/);
+    expect(DOC).not.toMatch(/renders · " \+ st\.quality/);
   });
 });
