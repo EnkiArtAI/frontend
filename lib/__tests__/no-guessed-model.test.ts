@@ -21,11 +21,19 @@ describe("the agent route sends the routed model", () => {
     expect(X402).toMatch(/const genRequest: ImageGenerationRequest = \{[^}]*modelVersion: route\.providerModel,/);
   });
 
-  it("refuses a route without a provider model before any money moves", () => {
-    const guard = X402.search(/route\.provider !== "pollinations" && !route\.providerModel/);
-    const settle = X402.search(/cosignAsFeePayer\(/);
-    expect(guard).toBeGreaterThan(-1);
-    expect(settle).toBeGreaterThan(guard);
+  it("refuses a route without a provider model, or on a host it cannot call, before any money moves", () => {
+    const hosts = X402.search(/if \(!\["gemini", "wavespeed", "openai"\]\.includes\(route\.provider\)\) \{/);
+    const guard = X402.search(/if \(!route\.providerModel\) \{/);
+    const verify = X402.search(/const parsed = parseXPayment\(paymentHeader\);/);
+    expect(hosts).toBeGreaterThan(-1);
+    expect(guard).toBeGreaterThan(hosts);
+    expect(verify).toBeGreaterThan(guard);
+    expect(X402).not.toMatch(/pollinations-image-generation/);
+  });
+
+  it("requires the agent to name its model: there is no default", () => {
+    expect(X402).toMatch(/modelFamily: z\.string\(\)\.trim\(\)\.min\(1, "modelFamily is required"\)\.max\(64\),/);
+    expect(X402).not.toMatch(/\.default\("nano-banana-pro"\)/);
   });
 });
 

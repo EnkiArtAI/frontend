@@ -12,8 +12,8 @@
  *
  *   GET  /api/x402/generate                    → 402 requirements (probe)
  *   POST /api/x402/generate                    → 402 without X-PAYMENT
- *        { prompt } or { promptId, variableValues? }, plus optional
- *        { modelFamily, resolution, aspectRatio, quality }
+ *        { prompt } or { promptId, variableValues? }, plus the model
+ *        { modelFamily } and optional { resolution, aspectRatio, quality }
  *   POST + X-PAYMENT                           → settle, generate, 200
  *
  * Prices are THE SAME ladders humans pay. Since 2026-08-24 (Kev: "i want
@@ -57,7 +57,6 @@ import { storeGeneratedImage } from "@/lib/generation/derivative-store";
 import { generateImagesWithWaveSpeed } from "@/backend/services/wavespeed-image-generation";
 import { generateImagesWithOpenAI } from "@/backend/services/openai-image-generation";
 import { generateImagesWithGemini } from "@/backend/services/gemini-image-generation";
-import { generateImageWithPollinations } from "@/backend/services/pollinations-image-generation";
 import type { ImageGenerationRequest } from "@/backend/services/types";
 import { PublicKey } from "@solana/web3.js";
 
@@ -69,7 +68,9 @@ const bodySchema = z.object({
   prompt: z.string().trim().min(1).max(4000).optional(),
   promptId: z.string().uuid().optional(),
   variableValues: z.record(z.string(), z.string().max(2000)).optional(),
-  modelFamily: z.string().trim().max(64).default("nano-banana-pro"),
+  // Required: an agent that names no model gets a refusal, never a default
+  // one (Kev, 2026-10-02: "NIEMALS IRGENDEIN standardmodell").
+  modelFamily: z.string().trim().min(1, "modelFamily is required").max(64),
   resolution: z.enum(["1K", "2K", "4K"]).default("2K"),
   aspectRatio: z.string().trim().max(8).default("1:1"),
   quality: z.enum(["low", "medium", "high"]).optional(),
@@ -231,9 +232,13 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
   if (!route) {
     return NextResponse.json({ error: "No healthy route for this model right now — retry shortly" }, { status: 503 });
   }
-  // A paid request never falls back to a guessed model (Kev, 2026-09-22): a
-  // route without its provider model is refused here, before any money moves.
-  if (route.provider !== "pollinations" && !route.providerModel) {
+  // A paid request never falls back to a guessed model (Kev, 2026-09-22) and
+  // never lands on a host this route cannot call or on the free Flux host:
+  // both are refused here, before any money moves.
+  if (!["gemini", "wavespeed", "openai"].includes(route.provider)) {
+    return NextResponse.json({ error: "This model is not available on a paid host right now — nothing was charged" }, { status: 503 });
+  }
+  if (!route.providerModel) {
     return NextResponse.json({ error: "This model has no provider model configured — nothing was charged" }, { status: 503 });
   }
 
@@ -328,7 +333,6 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
   const result =
     route.provider === "wavespeed" ? await generateImagesWithWaveSpeed(genRequest)
     : route.provider === "openai" ? await generateImagesWithOpenAI(genRequest)
-    : route.provider === "pollinations" ? await generateImageWithPollinations(promptText, ratio, input.resolution)
     : await generateImagesWithGemini(genRequest);
 
   const buffer = result.success ? result.imageBuffers?.[0] : undefined;
