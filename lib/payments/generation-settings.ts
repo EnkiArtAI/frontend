@@ -78,3 +78,40 @@ export async function resolvePaidSettings(
     },
   };
 }
+
+/** What the intent row stored, as /api/generate-image reads it back. */
+export interface StoredSettings {
+  model_id: string | null;
+  resolution: string;
+  quality: string | null;
+  boost: boolean;
+  reference_image_count: number;
+}
+
+/**
+ * The first setting a generate request repeats differently from what was
+ * paid, or null. A request may leave a setting out (the intent supplies it);
+ * it may not name another one: pay for low, ask for high, get a refusal.
+ * The model id is compared exactly, so a second row of the same family is not
+ * the same purchase.
+ */
+export function settingMismatch(
+  paid: StoredSettings,
+  asked: {
+    modelIds?: unknown;
+    /** Already normalised; null when the request named none. */
+    resolution: string | null;
+    quality?: unknown;
+    boost?: unknown;
+    referenceImageCount: number;
+  },
+  supportsQuality: boolean,
+): string | null {
+  const ids = Array.isArray(asked.modelIds) ? asked.modelIds : asked.modelIds == null ? [] : [asked.modelIds];
+  if (ids.length && (ids.length !== 1 || ids[0] !== paid.model_id)) return "model";
+  if (asked.resolution && asked.resolution !== paid.resolution) return "resolution";
+  if (asked.quality != null && supportsQuality && asked.quality !== paid.quality) return "quality";
+  if (asked.boost != null && asked.boost !== paid.boost) return "boost";
+  if (asked.referenceImageCount !== paid.reference_image_count) return "number of reference images";
+  return null;
+}

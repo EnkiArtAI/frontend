@@ -2533,7 +2533,7 @@ export default function EnkiPromptEditor() {
         const picked = resolveCatalogueEntry(models.available, models.selected[0]);
         if (!picked) throw new Error("Pick a model first. Nothing was charged.");
         const { intentId } = await authorizePaidGeneration(
-          { modelId: picked.id, resolution: "2K", boost, quality },
+          { modelId: picked.id, resolution: "2K", boost, quality, referenceImageCount: cardRefs.length },
           signPayment,
         );
         const res = await fetch("/api/generate-image", {

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { generateImagesWithWaveSpeed } from "@/backend/services/wavespeed-image-generation";
-import { generateImageWithPollinations } from "@/backend/services/pollinations-image-generation";
 import { generateImagesWithOpenAI } from "@/backend/services/openai-image-generation";
 import { generateImagesWithGemini } from "@/backend/services/gemini-image-generation";
 import type { ImageGenerationRequest } from "@/backend/services/types";
@@ -10,12 +9,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireAuth, checkRateLimit } from "@/lib/auth";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
-import { resolveModel, resolveModelByFamily, chooseRoute } from "@/lib/generation/models";
+import { resolveModel, chooseRoute } from "@/lib/generation/models";
 import { normalizeTier, clampTier } from "@/lib/generation/resolution";
 import { effectiveQuality } from "@/lib/pricing";
 import { reportPriceDrift } from "@/lib/generation/price-drift";
 import { toModelFamily } from "@/lib/generation/model-family";
 import { claimForGeneration, type ClaimMode } from "@/lib/payments/generation-claim";
+import { settingMismatch, type StoredSettings } from "@/lib/payments/generation-settings";
 import { captureAndBroadcast, voidAndFlush, sweepAndFlush } from "@/lib/payments/settle";
 import { solanaChainKey } from "@/lib/payments/solana";
 import type { VoidReason } from "@/lib/payments/authorization";
@@ -260,42 +260,52 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "intentId must be a UUID" }, { status: 400 });
     }
 
+    /* The intent is the sum of settings the buyer paid for (REC-4): the exact
+       model row, the resolution, the quality that runs, boost and how many
+       reference images. Everything below runs those and nothing the request
+       body says instead. */
     const { data: intentRow } = await (getSupabaseServerClientSafe()
       ?.from("generation_payment_intents")
-      .select("model_family")
+      .select("model_id, model_family, resolution, quality, boost, reference_image_count")
       .eq("id", intentId)
       .maybeSingle() ?? Promise.resolve({ data: null }));
-    const paidFamily = (intentRow as { model_family?: string } | null)?.model_family ?? null;
-    if (!paidFamily) {
+    const paid = intentRow as (StoredSettings & { model_family: string }) | null;
+    if (!paid) {
       return NextResponse.json(
         { error: "Payment intent not found. Nothing was generated and nothing was charged." },
         { status: 404 },
       );
     }
-
-    const paidModel = await resolveModelByFamily(getSupabaseServerClientSafe(), paidFamily);
-    if (!paidModel) {
-      // The family names nothing active. Generating on anything else would
-      // be the exact substitution this whole path exists to prevent.
+    const paidTier = normalizeTier(paid.resolution);
+    const paidModel = paid.model_id ? await resolveModel(getSupabaseServerClientSafe(), [paid.model_id]) : null;
+    if (!paidTier || !paidModel || toModelFamily(paidModel.name) !== paid.model_family) {
+      // The row it paid for is gone or changed family. Generating on anything
+      // else would be the exact substitution this path exists to prevent.
       return NextResponse.json(
-        { error: `This payment is for ${paidFamily}, which is not available right now.` },
+        { error: `This payment is for ${paid.model_family}, which is not available right now. Nothing was generated and nothing was charged.` },
         { status: 409 },
       );
     }
-    /* An explicitly requested model that disagrees with the purchase is the
-       fraud case, and the only one left worth refusing: pay for the cheap
-       family, ask for the dear one. There is no fallback model (Kev,
-       2026-10-02): an id that resolves to nothing is refused too. */
-    if (body.modelIds?.length) {
-      const asked = await resolveModel(getSupabaseServerClientSafe(), body.modelIds);
-      if (!asked || toModelFamily(asked.name) !== paidFamily) {
-        return NextResponse.json(
-          {
-            error: `This payment is for ${paidFamily}, but the request asks for ${asked ? toModelFamily(asked.name) : "a model that does not exist"}.`,
-          },
-          { status: 400 },
-        );
-      }
+    // A setting the request repeats must agree with the payment, refused here
+    // before the slot and the claim, so there is nothing to void.
+    const attachedRefs = referenceImageCount(body.referenceImages);
+    const mismatch = settingMismatch(
+      paid,
+      { modelIds: body.modelIds, resolution: askedResolution, quality: body.quality, boost: body.boost, referenceImageCount: attachedRefs },
+      paidModel.supportsQuality,
+    );
+    if (mismatch) {
+      return NextResponse.json(
+        { error: `This payment does not cover the requested ${mismatch}. Nothing was generated and nothing was charged.` },
+        { status: 400 },
+      );
+    }
+    // Never sliced away below: a reference the model cannot take is refused.
+    if (attachedRefs > paidModel.maxRefs) {
+      return NextResponse.json(
+        { error: `${paidModel.name} takes at most ${paidModel.maxRefs} reference images. Nothing was generated and nothing was charged.` },
+        { status: 422 },
+      );
     }
     const preflightModel = paidModel;
     // Chosen HERE and nowhere else, because the quote below carries the price
@@ -307,7 +317,6 @@ export async function POST(request: NextRequest) {
      * quote. Only hosts that can pass images to the model are considered, so a
      * prompt with references takes the Gemini row rather than the cheaper
      * WaveSpeed one that would discard them. */
-    const attachedRefs = referenceImageCount(body.referenceImages);
     /* The quality that will RUN, not the one that was sent: the OpenAI
        service defaults an unstated quality by tier, and gpt's routes carry
        applies_when quality conditions that fail CLOSED on a missing value —
@@ -315,17 +324,15 @@ export async function POST(request: NextRequest) {
        callers without a quality lever (quick create). One value feeds the
        route, the price and the provider call. */
     const effQuality = preflightModel.supportsQuality
-      ? effectiveQuality(askedResolution ?? undefined, body.quality)
+      ? effectiveQuality(paidTier, paid.quality)
       : null;
     const preflightRoute = await chooseRoute(
       getSupabaseServerClientSafe(),
       preflightModel,
       {
-        boost: body.boost,
+        boost: paid.boost,
         quality: effQuality,
-        resolution: preflightModel.supportsResolution
-          ? askedResolution
-          : null,
+        resolution: preflightModel.supportsResolution ? paidTier : null,
         referenceImages: attachedRefs,
       },
     );
@@ -352,7 +359,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const IMPLEMENTED: readonly string[] = ["gemini", "wavespeed", "pollinations", "openai"];
+    // No free host: a paid model never renders on Pollinations' Flux.
+    const IMPLEMENTED: readonly string[] = ["gemini", "wavespeed", "openai"];
     if (!IMPLEMENTED.includes(preflightRoute.provider)) {
       return NextResponse.json(
         { error: `${preflightModel.name} is not available yet.` },
@@ -360,7 +368,7 @@ export async function POST(request: NextRequest) {
       );
     }
     // A paid request never falls back to a guessed model (Kev, 2026-09-22).
-    if (preflightRoute.provider !== "pollinations" && !preflightRoute.providerModel) {
+    if (!preflightRoute.providerModel) {
       return NextResponse.json(
         { error: `${preflightModel.name} has no provider model configured. Nothing was generated and nothing was charged.` },
         { status: 503 },
@@ -429,7 +437,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: redemption.error }, { status: redemption.status });
     }
     consumedIntent = { supabase, id: intentId, mode: redemption.mode };
-    const paidResolution = redemption.resolution;
 
     /* The buyer must receive the model they paid for.
      *
@@ -476,185 +483,103 @@ export async function POST(request: NextRequest) {
       resolution: redemption.resolution,
     };
 
-    let geminiResult;
-    const xaiKey = process.env.XAI_API_KEY;
     // Every request here holds a payment — bound the provider call so a hung
     // generation can't strand it.
+    // The model the user actually picked, resolved to a provider model id.
+    // Without this the service fell back to a hard coded model for every
+    // generation, so the choice in the UI changed nothing while the price
+    // was charged per selection.
+    // Resolved once, in the pre-payment guard above — a second lookup could
+    // disagree with the one the refusal was based on.
+    const chosen = preflightModel;
+    const route = preflightRoute;
+    const shared = {
+      prompt: enhancedPrompt,
+      modelVersion: route.providerModel,
+      aspectRatio: (body.aspectRatio || body.ratio || "1:1") as ImageGenerationRequest["aspectRatio"],
+      // Only sent to models that honour it. Asking a model without imageSize
+      // for 2K silently returns 1024² — and we would still have charged for 2K.
+      /* Clamped to what the CHOSEN route renders, not to what was asked.
+         The router can fail over to a different host mid-request, and asking
+         a host for a tier it does not have is how a 4K charge came back as a
+         1K picture with nothing reporting it. */
+      imageSize: chosen.supportsResolution
+        ? (clampTier(
+            paidTier,
+            route.provider,
+            route.providerModel,
+          ) as ImageGenerationRequest["imageSize"])
+        : undefined,
+      // Reference images reached the model for the first time here: they were
+      // uploaded, counted against the per-model cap and stored, and then
+      // dropped before the request was built.
+      // Sent only where it means something — and as the EFFECTIVE value,
+      // the same one that chose the route and priced the request.
+      quality: chosen.supportsQuality ? (effQuality ?? undefined) : undefined,
+      // Exactly the count paid for, already checked against the model above.
+      referenceImages: body.referenceImages,
+      numImages: 1,
+    };
 
-    // Gated on the RESOLVED ROUTE, not on the key alone. As `if (xaiKey)` this
-    // hijacked every generation the moment XAI_API_KEY appeared in the
-    // environment: the buyer picked and paid for Nano Banana Pro at 4K with
-    // reference images, and got grok-imagine-image instead — past the
-    // preflight, the resolution, the quality tier and the breaker. Exactly the
-    // bug lib/generation/models.ts exists to prevent, sitting in a branch that
-    // ran before the provider switch.
+    // Boost picks WHERE the model runs, never which model. WaveSpeed hosts
+    // the same Nano Banana Pro at ~73-78s; going direct costs more and takes
+    // ~19-39s. Same picture either way — the user is buying time.
     //
-    // No provider row has the key "xai" and it is absent from IMPLEMENTED, so
-    // this is now unreachable rather than merely unset. Reaching it needs a
-    // providers row, which is the same gate every other host passes through.
-    // (xAI's real intended use here is workflow variable generation — a text
-    // call, not this.)
-    if (xaiKey && (preflightRoute.provider as string) === "xai") {
-      console.log('🎨 Generating image with Grok...');
+    // One switch over the resolved provider, so adding a host is a case here
+    // and a row in model_providers — not a new branch scattered through the
+    // request flow, which is how the free path ended up special-cased in its
+    // own route with no price, no ratio list and no reference limit.
+    const geminiRequest =
+      route.provider === "wavespeed"
+        ? generateImagesWithWaveSpeed(shared)
+        : route.provider === "openai"
+          ? generateImagesWithOpenAI(shared)
+          : generateImagesWithGemini(shared);
 
-      const xaiRequest = fetch("https://api.x.ai/v1/images/generations", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${xaiKey}`,
-        },
-        body: JSON.stringify({
-          model: "grok-imagine-image",
-          prompt: enhancedPrompt,
-          n: 1,
-        }),
-      });
-      const xaiResponse = await withTimeout(
-        xaiRequest,
-        SOLANA_GENERATION_TIMEOUT_MS,
-        "Image generation timed out after payment. Please try again with a shorter prompt or lower resolution."
-      );
+    const geminiResult = await withTimeout(
+      geminiRequest,
+      SOLANA_GENERATION_TIMEOUT_MS,
+      "Image generation timed out after payment. Please try again with a shorter prompt or lower resolution."
+    );
 
-      if (!xaiResponse.ok) {
-        const errTxt = await xaiResponse.text();
-        console.error('❌ Grok image generation failed:', errTxt);
-        await releaseIfConsumed();
-        await releaseHeldSlot();
-        return NextResponse.json({ error: 'Grok Image generation failed', retryable: true }, { status: 500 });
-      }
-
-      const xaiData = await xaiResponse.json();
-      const grokUrl = xaiData.data?.[0]?.url;
-
-      if (!grokUrl) {
-        await releaseIfConsumed();
-        await releaseHeldSlot();
-        return NextResponse.json({ error: 'No image URL returned from Grok', retryable: true }, { status: 500 });
-      }
-
-      // The download shares the paid-upfront bound — a stalled CDN read must
-      // reject into the catch-all (which releases the intent), not hang past
-      // the function budget.
-      const download = fetch(grokUrl).then(async (res) => {
-        if (!res.ok) throw new Error("Failed to download image from Grok");
-        return res.arrayBuffer();
-      });
-      const arrayBuffer = await withTimeout(
-        download,
-        SOLANA_GENERATION_TIMEOUT_MS,
-        "Image download timed out after payment. Please try again."
-      );
-      const imageBuffer = Buffer.from(arrayBuffer);
-
-      geminiResult = {
-        success: true,
-        imageBuffers: [imageBuffer],
-        metadata: { model: 'grok-imagine-image' },
-        generationTime: 0
-      };
-    } else {
-      console.log('🎨 XAI_API_KEY not set, generating image with Gemini...');
-      // The model the user actually picked, resolved to a provider model id.
-      // Without this the service fell back to a hard coded model for every
-      // generation, so the choice in the UI changed nothing while the price
-      // was charged per selection.
-      // Resolved once, in the pre-payment guard above — a second lookup could
-      // disagree with the one the refusal was based on.
-      const chosen = preflightModel;
-      const route = preflightRoute;
-      const shared = {
-        prompt: enhancedPrompt,
-        modelVersion: route.providerModel,
-        aspectRatio: (body.aspectRatio || body.ratio || "1:1") as ImageGenerationRequest["aspectRatio"],
-        // Only sent to models that honour it. Asking a model without imageSize
-        // for 2K silently returns 1024² — and we would still have charged for 2K.
-        /* Clamped to what the CHOSEN route renders, not to what was asked.
-           The router can fail over to a different host mid-request, and asking
-           a host for a tier it does not have is how a 4K charge came back as a
-           1K picture with nothing reporting it. */
-        imageSize: chosen.supportsResolution
-          ? (clampTier(
-              normalizeTier(paidResolution) ?? askedResolution ?? "2K",
-              route.provider,
-              route.providerModel,
-            ) as ImageGenerationRequest["imageSize"])
-          : undefined,
-        // Reference images reached the model for the first time here: they were
-        // uploaded, counted against the per-model cap and stored, and then
-        // dropped before the request was built.
-        // Sent only where it means something — and as the EFFECTIVE value,
-        // the same one that chose the route and priced the request.
-        quality: chosen.supportsQuality ? (effQuality ?? undefined) : undefined,
-        referenceImages: body.referenceImages?.slice(0, chosen.maxRefs),
-        numImages: 1,
-      };
-
-      // Boost picks WHERE the model runs, never which model. WaveSpeed hosts
-      // the same Nano Banana Pro at ~73-78s; going direct costs more and takes
-      // ~19-39s. Same picture either way — the user is buying time.
-      //
-      // One switch over the resolved provider, so adding a host is a case here
-      // and a row in model_providers — not a new branch scattered through the
-      // request flow, which is how the free path ended up special-cased in its
-      // own route with no price, no ratio list and no reference limit.
-      const geminiRequest =
-        route.provider === "wavespeed"
-          ? generateImagesWithWaveSpeed(shared)
-          : route.provider === "openai"
-            ? generateImagesWithOpenAI(shared)
-          : route.provider === "pollinations"
-            ? generateImageWithPollinations(
-                shared.prompt,
-                shared.aspectRatio ?? "1:1",
-                (normalizeTier(paidResolution) ?? askedResolution ?? "2K") as string,
-              )
-            : generateImagesWithGemini(shared);
-
-      geminiResult = await withTimeout(
-        geminiRequest,
-        SOLANA_GENERATION_TIMEOUT_MS,
-        "Image generation timed out after payment. Please try again with a shorter prompt or lower resolution."
-      );
-
-      if (!geminiResult.success || !geminiResult.imageBuffers?.length) {
-        // Tell the breaker. It classifies: a refused prompt says nothing about
-        // the host and never counts, while a dead key or an empty balance
-        // takes every route of that provider out at once.
-        if (route.modelProviderId && route.providerId) {
-          after(
-            reportFailure(
-              getSupabaseServerClient(),
-              route.modelProviderId,
-              route.providerId,
-              geminiResult.error || "generation failed",
-            ),
-          );
-        }
-        await releaseIfConsumed();
-        await releaseHeldSlot();
-        return NextResponse.json(
-          { error: geminiResult.error || 'Gemini image generation failed', retryable: geminiResult.retryable ?? true },
-          { status: 500 }
+    if (!geminiResult.success || !geminiResult.imageBuffers?.length) {
+      // Tell the breaker. It classifies: a refused prompt says nothing about
+      // the host and never counts, while a dead key or an empty balance
+      // takes every route of that provider out at once.
+      if (route.modelProviderId && route.providerId) {
+        after(
+          reportFailure(
+            getSupabaseServerClient(),
+            route.modelProviderId,
+            route.providerId,
+            geminiResult.error || "generation failed",
+          ),
         );
       }
+      await releaseIfConsumed();
+      await releaseHeldSlot();
+      return NextResponse.json(
+        { error: geminiResult.error || 'Gemini image generation failed', retryable: geminiResult.retryable ?? true },
+        { status: 500 }
+      );
+    }
 
-      // A delivered image resets the count, so three unrelated blips spread
-      // over a week never add up to an outage.
-      if (route.modelProviderId && route.providerId) {
-        after(reportSuccess(getSupabaseServerClient(), route.modelProviderId, route.providerId));
-      }
-      /* Runtime price-drift check: the vendor's bill for THIS image against
-         the cell we charge by. A repriced provider is noticed on the first
-         image, and the admins are mailed (Kev, 2026-09-05). */
-      if (typeof geminiResult.usage?.costUsd === "number") {
-        after(reportPriceDrift(getSupabaseServerClientSafe(), {
-          provider: route.provider,
-          modelFamily: toModelFamily(chosen.name),
-          resolution: normalizeTier(paidResolution) ?? askedResolution ?? "2K",
-          quality: effQuality,
-          observedUsd: geminiResult.usage.costUsd,
-        }));
-      }
+    // A delivered image resets the count, so three unrelated blips spread
+    // over a week never add up to an outage.
+    if (route.modelProviderId && route.providerId) {
+      after(reportSuccess(getSupabaseServerClient(), route.modelProviderId, route.providerId));
+    }
+    /* Runtime price-drift check: the vendor's bill for THIS image against
+       the cell we charge by. A repriced provider is noticed on the first
+       image, and the admins are mailed (Kev, 2026-09-05). */
+    if (typeof geminiResult.usage?.costUsd === "number") {
+      after(reportPriceDrift(getSupabaseServerClientSafe(), {
+        provider: route.provider,
+        modelFamily: toModelFamily(chosen.name),
+        resolution: paidTier,
+        quality: effQuality,
+        observedUsd: geminiResult.usage.costUsd,
+      }));
     }
 
     const generatedImageBuffer = geminiResult.imageBuffers?.[0];
@@ -763,9 +688,9 @@ export async function POST(request: NextRequest) {
             variableValues: {},
             model: preflightModel,
             route: preflightRoute,
-            boost: !!body.boost,
+            boost: paid.boost,
             aspectRatio: body.aspectRatio || body.ratio || null,
-            resolution: normalizeTier(paidResolution) ?? askedResolution ?? null,
+            resolution: paidTier,
             // Only Pollinations exposes one, and it currently discards it.
             seed: null,
             output:

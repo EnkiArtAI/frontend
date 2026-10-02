@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { join } from "node:path";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { readSource } from "@/lib/__tests__/_read-source";
-import { settingsSchema, resolvePaidSettings } from "@/lib/payments/generation-settings";
+import { settingsSchema, resolvePaidSettings, settingMismatch } from "@/lib/payments/generation-settings";
 
 /**
  * The quote and the intent take the sum of settings, and the server decides
@@ -106,5 +106,56 @@ describe("settingsSchema", () => {
     for (const col of ["model_id: settings.modelId", "resolution: settings.resolution", "quality: settings.quality", "boost: settings.boost", "reference_image_count: settings.referenceImageCount"]) {
       expect(src).toContain(col);
     }
+  });
+});
+
+describe("settingMismatch", () => {
+  const PAID = { model_id: GPT.id, resolution: "2K", quality: "low", boost: false, reference_image_count: 2 };
+  const asked = (over: Record<string, unknown> = {}) => ({ resolution: null, referenceImageCount: 2, ...over });
+
+  it("accepts a request that repeats nothing or repeats exactly what was paid", () => {
+    expect(settingMismatch(PAID, asked(), true)).toBeNull();
+    expect(settingMismatch(PAID, asked({ modelIds: [GPT.id], resolution: "2K", quality: "low", boost: false }), true)).toBeNull();
+  });
+
+  it("refuses the cheap-quality, dear-render trade", () => {
+    expect(settingMismatch(PAID, asked({ quality: "high" }), true)).toBe("quality");
+  });
+
+  it("ignores quality on a model without the lever", () => {
+    expect(settingMismatch({ ...PAID, model_id: NANO.id, quality: null }, asked({ quality: "high" }), false)).toBeNull();
+  });
+
+  it("refuses another model row, even one of the same family, and a list of several", () => {
+    expect(settingMismatch(PAID, asked({ modelIds: [NANO.id] }), true)).toBe("model");
+    expect(settingMismatch(PAID, asked({ modelIds: [GPT.id, NANO.id] }), true)).toBe("model");
+    expect(settingMismatch(PAID, asked({ modelIds: GPT.id }), true)).toBeNull();
+  });
+
+  it("refuses another resolution, boost or reference count", () => {
+    expect(settingMismatch(PAID, asked({ resolution: "4K" }), true)).toBe("resolution");
+    expect(settingMismatch(PAID, asked({ boost: true }), true)).toBe("boost");
+    expect(settingMismatch(PAID, asked({ boost: "false" }), true)).toBe("boost");
+    // Strictly the boolean paid for: a truthy stand-in is another request.
+    expect(settingMismatch({ ...PAID, boost: true }, asked({ boost: 1 }), true)).toBe("boost");
+    expect(settingMismatch(PAID, asked({ referenceImageCount: 3 }), true)).toBe("number of reference images");
+    expect(settingMismatch(PAID, asked({ referenceImageCount: 0 }), true)).toBe("number of reference images");
+  });
+});
+
+describe("/api/generate-image runs the paid settings", () => {
+  const ROUTE = readSource(join(__dirname, "..", "..", "..", "app", "api", "generate-image", "route.ts"));
+
+  it("routes and renders with the intent's boost, tier and quality, never the body's", () => {
+    expect(ROUTE).toMatch(/boost: paid\.boost,\n\s+quality: effQuality,\n\s+resolution: preflightModel\.supportsResolution \? paidTier : null,/);
+    expect(ROUTE).toMatch(/\? effectiveQuality\(paidTier, paid\.quality\)/);
+    // The body's own values appear only where they are compared with the payment.
+    expect(ROUTE.match(/body\.(boost|quality)\b/g)).toEqual(["body.quality", "body.boost"]);
+  });
+
+  it("has no free host on the paid route and drops no reference", () => {
+    expect(ROUTE).toMatch(/const IMPLEMENTED: readonly string\[\] = \["gemini", "wavespeed", "openai"\];/);
+    expect(ROUTE).not.toMatch(/pollinations-image-generation/);
+    expect(ROUTE).not.toMatch(/referenceImages\?\.slice\(/);
   });
 });

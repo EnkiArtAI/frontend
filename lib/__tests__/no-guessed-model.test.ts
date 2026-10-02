@@ -55,7 +55,7 @@ describe("every paid adapter refuses a request without a model", () => {
 describe("the human route refuses a route without a provider model before payment", () => {
   const HUMAN = readSource(join(ROOT, "app", "api", "generate-image", "route.ts"));
   it("guards next to the IMPLEMENTED check, before the concurrency slot and any payment step", () => {
-    const guard = HUMAN.search(/preflightRoute\.provider !== "pollinations" && !preflightRoute\.providerModel/);
+    const guard = HUMAN.search(/if \(!preflightRoute\.providerModel\) \{/);
     const slot = HUMAN.search(/const slot = await acquireSlot\(/);
     expect(guard).toBeGreaterThan(-1);
     expect(slot).toBeGreaterThan(guard);
@@ -122,7 +122,7 @@ describe("there is no fallback model: a pick that cannot be resolved is refused"
   });
 
   it("the human route refuses an unresolved pick before any payment step", () => {
-    const refuse = HUMAN.search(/if \(!asked \|\| toModelFamily\(asked\.name\) !== paidFamily\) \{/);
+    const refuse = HUMAN.search(/if \(!paidTier \|\| !paidModel \|\| toModelFamily\(paidModel\.name\) !== paid\.model_family\) \{/);
     const slot = HUMAN.search(/const slot = await acquireSlot\(/);
     expect(refuse).toBeGreaterThan(-1);
     expect(slot).toBeGreaterThan(refuse);
