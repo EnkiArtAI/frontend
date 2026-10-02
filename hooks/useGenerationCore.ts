@@ -29,7 +29,6 @@ import {
   FALLBACK_RATIOS, type CatalogueEntry,
 } from "@/hooks/useModelLimits";
 import { tiersUpTo, type ResolutionTier } from "@/lib/generation/resolution";
-import { apiBoostPricePerImage } from "@/lib/pricing";
 
 export type TierOption = { tier: ResolutionTier; price: number | null };
 
@@ -51,8 +50,6 @@ export type GenerationCore = {
   boostAvailable: boolean;
   /** Nothing is charged (free model, or the free route). */
   free: boolean;
-  /** One image at this tier/boost, from the same numbers the checkout uses. */
-  perImage: (tier: string, boost?: boolean) => number;
   /** Keep a stored value inside the legal list (pickers call this in an
       effect so a model switch can never leave an unsupported pick behind). */
   clampRatio: (v: string) => string;
@@ -61,24 +58,26 @@ export type GenerationCore = {
 
 export function useGenerationCore(
   idOrSlugOrName?: string,
-  opts?: { freeRoute?: boolean; allowAny?: boolean },
+  opts?: { allowAny?: boolean },
 ): GenerationCore {
   const catalogue = useModelCatalogue();
-  const freeRoute = opts?.freeRoute === true;
   const allowAny = opts?.allowAny === true;
 
   return useMemo(() => {
     const selected =
       catalogue.find((m) => m.name === idOrSlugOrName) ??
       resolveCatalogueEntry(catalogue, idOrSlugOrName);
-    const freeEntry = catalogue.find((m) => m.price === 0);
-    // The EFFECTIVE model: what will actually render this request.
-    const entry = freeRoute ? freeEntry ?? selected : selected;
+    // What renders is the selection itself. A "free route" option used to
+    // swap in the free model whatever was picked (Kev, 2026-10-02: "IMMER DAS
+    // AUSGEWÄHLTE").
+    const entry = selected;
 
     const baseRatios = entry?.ratios ?? FALLBACK_RATIOS;
     const ratios = allowAny ? ["Any", ...baseRatios] : baseRatios;
     const cap: ResolutionTier = entry?.maxResolution ?? "2K";
-    const free = freeRoute || !entry || entry.price === 0;
+    // Free only when the server says the model renders on the free host. No
+    // selection is not free; it is no selection.
+    const free = entry?.free === true;
     const tiers: TierOption[] = tiersUpTo(cap).map((t) => ({
       tier: t,
       price: free ? null : tierPrice(entry, t),
@@ -93,18 +92,11 @@ export function useGenerationCore(
       supportsQuality: entry?.supportsQuality ?? false,
       boostAvailable: entry?.boostAvailable ?? false,
       free,
-      /* Boost = the vendor-direct route's REAL per-image price, never a
-         multiplier (Kev, 2026-08-23). gpt quality is priced as medium here;
-         surfaces with the lever quote the server directly. */
-      perImage: (tier: string, boost = false) =>
-        free ? 0
-        : boost ? apiBoostPricePerImage(entry?.id ?? "", tier)
-        : (entry?.price ?? 0) * tierScale(entry, tier),
       clampRatio: (v: string) => (ratios.includes(v) ? v : ratios[0]),
       clampTier: (v: string) => {
         const list = tiersUpTo(cap);
         return list.includes(v as ResolutionTier) ? (v as ResolutionTier) : list[list.length - 1];
       },
     };
-  }, [catalogue, idOrSlugOrName, freeRoute, allowAny]);
+  }, [catalogue, idOrSlugOrName, allowAny]);
 }

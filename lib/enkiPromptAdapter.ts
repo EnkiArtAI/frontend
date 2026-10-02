@@ -187,7 +187,8 @@ export function mapMarketplacePromptToEnkiPrompt(prompt: unknown, index = 0): En
     versions: [1, 2, 3, 4].map((offset) => imageFromUnknown(previewImages[offset] || showcaseImages[offset])),
     variables,
     promptTemplate: promptTemplateFrom(prompt, variables),
-    model: readString(record.model) || readString(record.aiModel) || "Nano Banana Pro",
+    // The prompt's own model or nothing; never an invented default.
+    model: readString(record.model) || readString(record.aiModel) || "",
     publishedAt: listedAt || createdAt ? new Date(listedAt || createdAt || "").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "",
   };
 }
