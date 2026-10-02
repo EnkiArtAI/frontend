@@ -18,13 +18,18 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   try {
     const { data: p } = await getSupabaseServerClient()
       .from("prompts")
-      .select("title, description, public_prompt_text, is_free_showcase, price_usd_cents")
+      .select("title, description, is_free_showcase, price_usd_cents, is_listed, listing_status, deleted_at")
       .eq("id", id)
       .maybeSingle();
-    if (p?.title) {
+    // Bots read this head without the team cookie, and every unfurl republishes
+    // it. Only a live prompt gets a card, and its lead is the creator's own
+    // description, never the prompt's words: a paid prompt's text is the
+    // artist's secret.
+    const live = p?.is_listed === true && p.listing_status === "active" && !p.deleted_at;
+    if (p?.title && live) {
       title = `${p.title} · Enki Art`;
       const free = p.is_free_showcase === true || (p.price_usd_cents ?? 0) === 0;
-      const lead = String(p.description || p.public_prompt_text || "").trim().slice(0, 160);
+      const lead = String(p.description || "").trim().slice(0, 160);
       description = `${free ? "Free prompt" : `$${((p.price_usd_cents ?? 0) / 100).toFixed(2)} per generation`}${lead ? ` — ${lead}` : ""}`;
     }
   } catch {
