@@ -1,6 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { join } from "node:path";
 import { readSource } from "@/lib/__tests__/_read-source";
+import { generateImagesWithWaveSpeed } from "@/backend/services/wavespeed-image-generation";
+import { generateImagesWithOpenAI } from "@/backend/services/openai-image-generation";
+import { generateImagesWithGemini } from "@/backend/services/gemini-image-generation";
 
 /**
  * ENG-01. Rule (Kev, 2026-09-22): a paid request never falls back to a guessed
@@ -23,4 +26,27 @@ describe("the agent route sends the routed model", () => {
     expect(guard).toBeGreaterThan(-1);
     expect(settle).toBeGreaterThan(guard);
   });
+});
+
+describe("every paid adapter refuses a request without a model", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  const adapters = [
+    ["WaveSpeed", generateImagesWithWaveSpeed, "WAVESPEED_API_KEY"],
+    ["OpenAI", generateImagesWithOpenAI, "OPENAI_API_KEY"],
+    ["Gemini", generateImagesWithGemini, "GEMINI_API_KEY"],
+  ] as const;
+
+  for (const [name, generate, keyVar] of adapters) {
+    it(`${name}: no modelVersion means MODEL_REQUIRED, not a default model`, async () => {
+      // A configured key, so the refusal cannot come from a missing key.
+      vi.stubEnv(keyVar, "test-key");
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      const result = await generate({ prompt: "a red cube", aspectRatio: "1:1", numImages: 1 });
+      expect(result.success).toBe(false);
+      expect(result.code).toBe("MODEL_REQUIRED");
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    });
+  }
 });

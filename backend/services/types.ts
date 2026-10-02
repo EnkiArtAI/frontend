@@ -38,6 +38,8 @@ export interface ImageGenerationResult {
   imageUrls?: string[];
   imageBuffers?: Buffer[];
   error?: string;
+  /** Machine readable reason for a refusal; MODEL_REQUIRED = no modelVersion sent. */
+  code?: 'MODEL_REQUIRED';
   generationTime?: number;
   retryable?: boolean;
   /**

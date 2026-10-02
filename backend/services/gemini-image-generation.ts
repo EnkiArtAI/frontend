@@ -19,6 +19,7 @@
 
 import { GoogleGenAI, Modality } from '@google/genai';
 import type { ImageGenerationRequest, ImageGenerationResult } from './types';
+import { missingModel } from './model-required';
 
 // Initialize Gemini AI client
 let ai: GoogleGenAI | null = null;
@@ -64,6 +65,8 @@ export async function generateImagesWithGemini(
   request: ImageGenerationRequest
 ): Promise<ImageGenerationResult> {
   const startTime = Date.now();
+  const model = request.modelVersion;
+  if (!model) return missingModel(startTime);
 
   try {
     // 1. Validate request
@@ -78,9 +81,6 @@ export async function generateImagesWithGemini(
 
     // 2. Get Gemini client
     const client = getGeminiClient();
-
-    // 3. Determine model to use
-    const model = request.modelVersion || 'gemini-2.5-flash-image';
 
     // 4. Build generation config
     const config: any = {
