@@ -287,6 +287,11 @@ export async function POST(req: Request) {
     // (re-saving used to null it), and inserts get the session-resolved
     // creator below — body.userId is ignored entirely.
     const clientPromptType = body.promptType ?? "create-now";
+    /* The model this prompt is made for is the one its creator picked. It
+       defaulted to "gemini", which is no catalogue row, and a re-save without
+       a model overwrote the creator's pick with it. Absent on an update now
+       leaves the stored value; absent on a new prompt is refused below. */
+    const aiModel = typeof body.aiModel === "string" ? body.aiModel.trim() : "";
     const promptRow = {
       title: body.title,
       encrypted_content: enc.encrypted,
@@ -295,7 +300,7 @@ export async function POST(req: Request) {
       encrypted_content_kid: enc.kid,
       category: body.category ?? "",
       tags,
-      ai_model: body.aiModel ?? "gemini",
+      ...(aiModel ? { ai_model: aiModel } : {}),
       // The body sends dollars (float); the column is integer cents.
       price_usd_cents:
         typeof body.price === "number" ? Math.round(body.price * 100) : 100,
@@ -372,6 +377,10 @@ export async function POST(req: Request) {
     }
 
     let promptId: string;
+
+    if (!body.id && !aiModel) {
+      return NextResponse.json({ error: "Pick the model this prompt is made for." }, { status: 400 });
+    }
 
     if (body.id) {
       promptId = body.id;
@@ -484,7 +493,7 @@ export async function POST(req: Request) {
       title: body.title,
       category: body.category ?? "",
       tags: body.tags ?? [],
-      aiModel: body.aiModel ?? "gemini",
+      aiModel: aiModel || null,
       price: typeof body.price === "number" ? body.price : 1,
       aspectRatio: body.aspectRatio ?? null,
       photoCount: typeof body.photoCount === "number" ? body.photoCount : 1,
@@ -565,7 +574,7 @@ export async function GET(req: Request) {
       userId: (prompt.creator_id as string | null | undefined) ?? null,
       category: (prompt.category as string | undefined) ?? "",
       tags: Array.isArray(prompt.tags) ? (prompt.tags as string[]) : [],
-      aiModel: (prompt.ai_model as string | undefined) ?? "gemini",
+      aiModel: (prompt.ai_model as string | undefined) ?? null,
       price:
         typeof prompt.price_usd_cents === "number"
           ? prompt.price_usd_cents / 100
