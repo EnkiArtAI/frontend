@@ -13,12 +13,10 @@
  * arithmetic (Terms of Use §4: the price shown is the price charged, network
  * fee included and itemised).
  *
- * Signing goes through lib/cdp-bridge — the window-event indirection exists
- * because CDP hooks throw outside their provider, and an eslint rule bans
- * importing them directly (that import once took the editor down).
+ * The caller passes the signer (hooks/usePaymentSigner): the buyer's own
+ * wallet, external through the wallet adapter or embedded through CDP.
  */
 import { sessionAuthHeaders } from "@/lib/session-headers";
-import { requestCdpSign } from "@/lib/cdp-bridge";
 
 /** The models table stores display names; pricing keys are their slugs. */
 /* Re-exported, not redefined: the server enforces the same key and cannot
@@ -102,15 +100,21 @@ async function post(path: string, body: unknown): Promise<Response> {
   });
 }
 
+/** Base64 transaction in, the same transaction with the buyer's signature out. */
+export type PaymentSigner = (transaction: string) => Promise<string>;
+
 const errorOf = async (res: Response, fallback: string) =>
   ((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? fallback;
 
 /**
- * Hold the payment: intent → authorize → sign in the CDP wallet → submit.
+ * Hold the payment: intent → authorize → sign in the buyer's wallet → submit.
  * Returns the intentId to generate with. Throws CheckoutError; no step of it
  * moves money, so every failure leaves the buyer exactly where they started.
  */
-export async function authorizePaidGeneration(req: QuoteRequest): Promise<{ intentId: string }> {
+export async function authorizePaidGeneration(
+  req: QuoteRequest,
+  sign: PaymentSigner,
+): Promise<{ intentId: string }> {
   const intentRes = await post("/api/payments/generation/intent", req);
   if (!intentRes.ok) {
     throw new CheckoutError("intent", await errorOf(intentRes, "Could not prepare the payment"));
@@ -127,8 +131,9 @@ export async function authorizePaidGeneration(req: QuoteRequest): Promise<{ inte
 
   let signed: string;
   try {
-    signed = await requestCdpSign(transaction);
+    signed = await sign(transaction);
   } catch (e) {
+    if (e instanceof CheckoutError) throw e;
     throw new CheckoutError(
       "sign",
       e instanceof Error && /reject|denied|cancel/i.test(e.message)

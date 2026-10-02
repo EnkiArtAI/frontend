@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useCdpAddress } from "@/hooks/useCdpAddress";
+import { usePaymentSigner } from "@/hooks/usePaymentSigner";
 import { useToast } from "@/hooks/use-toast";
 import { addCreation } from "@/lib/creations";
 import {
@@ -121,6 +122,7 @@ export default function PromptGeneratorView({
   const account = useActiveAccount();
   const { publicKey: solanaPublicKey } = useWallet();
   const { address: cdpAddress } = useCdpAddress();
+  const signPayment = usePaymentSigner();
   const userKey = useMemo(
     () => account?.address ?? solanaPublicKey?.toBase58() ?? cdpAddress ?? null,
     [account?.address, solanaPublicKey, cdpAddress]
@@ -887,7 +889,7 @@ export default function PromptGeneratorView({
           resolution: quoteResolution,
           boost,
           quality,
-        });
+        }, signPayment);
         res = await fetch("/api/generate-image", {
           method: "POST",
           headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
@@ -993,7 +995,7 @@ export default function PromptGeneratorView({
        so a prompt whose variables arrived after it would have generated from
        an empty set. Same class of bug as the edited-prompt one this component
        already carried. */
-  }, [isFree, noCharge, modelFamily, quoteResolution, promptText, editedPrompt, vars, variables, promptSegments, title, aspect, resolution, userKey, promptId, refs.length, toast, queryClient, genQueryKey]);
+  }, [isFree, noCharge, modelFamily, quoteResolution, promptText, editedPrompt, vars, variables, promptSegments, title, aspect, resolution, userKey, promptId, refs.length, toast, queryClient, genQueryKey, signPayment]);
 
   const download = useCallback(() => {
     if (!resultUrl) return;

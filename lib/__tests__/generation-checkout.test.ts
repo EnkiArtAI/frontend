@@ -5,12 +5,11 @@ import { describe, it, expect, vi } from "vitest";
  * submit — and every failure must stop the line COLD. A submit that fires
  * without a signature, or a sign prompt for an intent the server refused,
  * is the kind of bug that ends with a wallet popup nobody can explain.
- * The signing bridge is mocked at the module boundary; everything else runs
- * the real code against a scripted fetch.
+ * The signer is passed in, so it is a plain mock; everything else runs the
+ * real code against a scripted fetch.
  */
 
 const signMock = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/cdp-bridge", () => ({ requestCdpSign: signMock }));
 vi.mock("@/lib/session-headers", () => ({
   sessionAuthHeaders: () => ({ "X-Session-Token": "test-session" }),
 }));
@@ -62,7 +61,7 @@ describe("the happy line", () => {
     });
     signMock.mockResolvedValue("c2lnbmVk");
 
-    const out = await authorizePaidGeneration(REQ);
+    const out = await authorizePaidGeneration(REQ, signMock);
     expect(out).toEqual({ intentId: "i-1" });
     expect(calls).toEqual([
       "/api/payments/generation/intent",
@@ -79,7 +78,7 @@ describe("every failure stops the line cold", () => {
     scriptFetch({
       "/api/payments/generation/intent": { status: 422, body: { error: "no artist wallet" } },
     });
-    await expect(authorizePaidGeneration(REQ)).rejects.toMatchObject({
+    await expect(authorizePaidGeneration(REQ, signMock)).rejects.toMatchObject({
       step: "intent",
       message: "no artist wallet",
     });
@@ -92,7 +91,7 @@ describe("every failure stops the line cold", () => {
       "/api/payments/generation/intent": { status: 200, body: { intent: { id: "i-1" } } },
       "/api/payments/generation/authorize": { status: 500, body: { error: "nope" } },
     });
-    await expect(authorizePaidGeneration(REQ)).rejects.toMatchObject({ step: "authorize" });
+    await expect(authorizePaidGeneration(REQ, signMock)).rejects.toMatchObject({ step: "authorize" });
     expect(signMock).not.toHaveBeenCalled();
   });
 
@@ -111,7 +110,7 @@ describe("every failure stops the line cold", () => {
       throw new Error("User rejected the request");
     });
 
-    const err = await authorizePaidGeneration(REQ).catch((e) => e as CheckoutError);
+    const err = await authorizePaidGeneration(REQ, signMock).catch((e) => e as CheckoutError);
     expect(err).toBeInstanceOf(CheckoutError);
     expect((err as CheckoutError).step).toBe("sign");
     // Literally true at every step of this flow — and the one sentence the
@@ -120,11 +119,26 @@ describe("every failure stops the line cold", () => {
     expect(calls).not.toContain("/api/payments/generation/submit");
   });
 
+  it("a refusal from the signer itself reaches the buyer word for word", async () => {
+    scriptFetch({
+      "/api/payments/generation/intent": { status: 200, body: { intent: { id: "i-1" } } },
+      "/api/payments/generation/authorize": { status: 200, body: { transaction: "dHg=" } },
+    });
+    signMock.mockImplementation(() => {
+      throw new CheckoutError("sign", "Connect the wallet you signed in with");
+    });
+    await expect(authorizePaidGeneration(REQ, signMock)).rejects.toMatchObject({
+      step: "sign",
+      message: "Connect the wallet you signed in with",
+    });
+    expect(calls).not.toContain("/api/payments/generation/submit");
+  });
+
   it("an intent with no id is a refusal, not an undefined ride-along", async () => {
     scriptFetch({
       "/api/payments/generation/intent": { status: 200, body: { intent: {} } },
     });
-    await expect(authorizePaidGeneration(REQ)).rejects.toMatchObject({ step: "intent" });
+    await expect(authorizePaidGeneration(REQ, signMock)).rejects.toMatchObject({ step: "intent" });
     expect(calls).toHaveLength(1);
   });
 });
