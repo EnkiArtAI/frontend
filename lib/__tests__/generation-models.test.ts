@@ -78,9 +78,12 @@ describe("model → route resolution", () => {
     expect(deadProvider.normal.providerModel).not.toBe("y");
   });
 
-  it("never charges by resolution for a model that ignores it", () => {
-    // gemini-2.5-flash-image always returns 1024x1024 — measured, not assumed.
-    expect(fromRow({ id: "m2", name: "Nano Banana" }, "public").supportsResolution).toBe(false);
+  it("gives a row with no provider rows and no bridge entry no route, never a guessed one", () => {
+    // ENG-01: the old fallback routed any unknown name to Nano Banana Pro.
+    const m = fromRow({ id: "m2", name: "Nano Banana" }, "public");
+    expect(m.normal).toEqual({ provider: "none", providerModel: "" });
+    expect(m.boost).toEqual({ provider: "none", providerModel: "" });
+    expect(m.supportsResolution).toBe(false);
     expect(fromRow(NANO, "public").supportsResolution).toBe(true);
   });
 

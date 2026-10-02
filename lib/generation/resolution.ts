@@ -14,8 +14,6 @@
  *  - gemini / gemini-3-pro-image — imageSize accepts "1K" | "2K" | "4K"
  *    (uppercase K is mandatory, "lowercase parameters will be rejected"). 4K is
  *    not square: 4096x4096 at 1:1, 5504x3072 at 16:9, 6336x2688 at 21:9.
- *  - gemini / gemini-2.5-flash-image — has no imageSize at all and always
- *    returns ~1 MP. Measured 2026-08-06, and the docs agree.
  *  - wavespeed / nano-banana-pro and gpt-image-2 — `resolution` enum
  *    "1k" | "2k" | "4k", default 1k. 8k exists only on the -ultra endpoints,
  *    which nothing here routes to.

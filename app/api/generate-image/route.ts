@@ -466,6 +466,13 @@ export async function POST(request: NextRequest) {
         { status: 501 },
       );
     }
+    // A paid request never falls back to a guessed model (Kev, 2026-09-22).
+    if (preflightRoute.provider !== "pollinations" && !preflightRoute.providerModel) {
+      return NextResponse.json(
+        { error: `${preflightModel.name} has no provider model configured. Nothing was generated and nothing was charged.` },
+        { status: 503 },
+      );
+    }
 
     // 3c. Concurrency cap — before any payment step, so a refused request is
     // never a charged one. Unlimited unless an admin sets a number.
@@ -1018,7 +1025,7 @@ export async function POST(request: NextRequest) {
     } else {
       console.log('🎨 XAI_API_KEY not set, generating image with Gemini...');
       // The model the user actually picked, resolved to a provider model id.
-      // Without this the service fell back to gemini-2.5-flash-image for every
+      // Without this the service fell back to a hard coded model for every
       // generation, so the choice in the UI changed nothing while the price
       // was charged per selection.
       // Resolved once, in the pre-payment guard above — a second lookup could
@@ -1029,8 +1036,8 @@ export async function POST(request: NextRequest) {
         prompt: enhancedPrompt,
         modelVersion: route.providerModel,
         aspectRatio: (body.aspectRatio || body.ratio || "1:1") as ImageGenerationRequest["aspectRatio"],
-        // Only sent to models that honour it. Asking gemini-2.5-flash-image for
-        // 2K silently returns 1024² — and we would still have charged for 2K.
+        // Only sent to models that honour it. Asking a model without imageSize
+        // for 2K silently returns 1024² — and we would still have charged for 2K.
         /* Clamped to what the CHOSEN route renders, not to what was asked.
            The router can fail over to a different host mid-request, and asking
            a host for a tier it does not have is how a 4K charge came back as a

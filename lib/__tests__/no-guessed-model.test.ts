@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { join } from "node:path";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { readSource } from "@/lib/__tests__/_read-source";
 import { generateImagesWithWaveSpeed } from "@/backend/services/wavespeed-image-generation";
 import { generateImagesWithOpenAI } from "@/backend/services/openai-image-generation";
@@ -47,6 +48,40 @@ describe("every paid adapter refuses a request without a model", () => {
       expect(result.code).toBe("MODEL_REQUIRED");
       expect(fetchSpy).not.toHaveBeenCalled();
       fetchSpy.mockRestore();
+    });
+  }
+});
+
+describe("the human route refuses a route without a provider model before payment", () => {
+  const HUMAN = readSource(join(ROOT, "app", "api", "generate-image", "route.ts"));
+  it("guards next to the IMPLEMENTED check, before the concurrency slot and any payment step", () => {
+    const guard = HUMAN.search(/preflightRoute\.provider !== "pollinations" && !preflightRoute\.providerModel/);
+    const slot = HUMAN.search(/const slot = await acquireSlot\(/);
+    expect(guard).toBeGreaterThan(-1);
+    expect(slot).toBeGreaterThan(guard);
+  });
+});
+
+// Live code only: tests may name the dead ids to prove they are gone.
+const DEAD_IDS = ["gemini-2.5-flash-image", "gemini-3-pro-image-preview"];
+function liveFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((n) => {
+    const p = join(dir, n);
+    if (n === "node_modules" || n === "__tests__" || n === "scripts" || n.startsWith(".")) return [];
+    if (statSync(p).isDirectory()) return liveFiles(p);
+    return /\.(ts|tsx|js|mjs)$/.test(n) ? [p] : [];
+  });
+}
+
+describe("no live code names a Gemini model Google has shut down", () => {
+  const files = ["app", "lib", "components", "hooks", "backend"].flatMap((d) => liveFiles(join(ROOT, d)));
+  it("scans a real set of files", () => {
+    expect(files.length).toBeGreaterThan(100);
+  });
+  for (const id of DEAD_IDS) {
+    it(`${id} appears nowhere, comments included`, () => {
+      const hits = files.filter((f) => readFileSync(f, "utf8").includes(id));
+      expect(hits).toEqual([]);
     });
   }
 });

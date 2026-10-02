@@ -3,7 +3,7 @@
  *
  * This is the piece that was missing: the editor sent `modelIds`, the route
  * used them for ratio validation only, and the generation then ran on whatever
- * the service happened to default to (gemini-2.5-flash-image). So "Nano Banana
+ * the service happened to default to (a hard coded Gemini model). So "Nano Banana
  * Pro" and "GPT-Image-2" produced identical output from a third model, while
  * the price was charged per the user's selection.
  *
@@ -20,7 +20,8 @@ import { maxTier, type ResolutionTier } from "@/lib/generation/resolution";
 import { toModelFamily } from "@/lib/generation/model-family";
 import { MODEL_IMAGE_PRICING, DEFAULT_IMAGE_PRICING } from "@/lib/pricing";
 
-export type Provider = "gemini" | "openai" | "wavespeed" | "pollinations" | "acedata";
+/** "none" = no route at all: a model with no provider rows and no bridge entry. */
+export type Provider = "gemini" | "openai" | "wavespeed" | "pollinations" | "acedata" | "none";
 
 export interface Route {
   provider: Provider;
@@ -101,14 +102,9 @@ const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
 
 /**
  * Bridge for rows that predate models.provider_model. Measured 2026-08-06:
- * gemini-3-pro-image honours imageSize (1K 1024², 2K 2048², 4K 4096²);
- * gemini-2.5-flash-image ignores it and always returns 1024².
- *
- * The id here was gemini-3-pro-image-PREVIEW, which Google shut down on
- * 2026-06-25 ("The gemini-3-pro-image-preview models are deprecated and will
- * be shut down on June 25, 2026"). The GA id, released 2026-05-28, is
- * gemini-3-pro-image. The live model_providers rows carried the dead id too;
- * migrations/2026-08-12-reference-image-limits.sql renames them.
+ * gemini-3-pro-image honours imageSize (1K 1024², 2K 2048², 4K 4096²).
+ * The GA id gemini-3-pro-image replaced the preview id Google shut down on
+ * 2026-06-25; migrations/2026-08-12-reference-image-limits.sql renamed the rows.
  */
 const BY_SLUG: Record<string, Pick<ResolvedModel, "normal" | "boost" | "supportsResolution" | "supportsQuality">> = {
   "nano-banana-pro": {
@@ -120,14 +116,6 @@ const BY_SLUG: Record<string, Pick<ResolvedModel, "normal" | "boost" | "supports
     normal: { provider: "gemini", providerModel: "gemini-3-pro-image" },
     boost: { provider: "gemini", providerModel: "gemini-3-pro-image" },
     supportsResolution: true,
-    supportsQuality: false,
-  },
-  "nano-banana": {
-    // gemini-2.5-flash-image ignores imageSize entirely — measured, it always
-    // returns 1024x1024 — so it must never be charged by resolution.
-    normal: { provider: "gemini", providerModel: "gemini-2.5-flash-image" },
-    boost: { provider: "gemini", providerModel: "gemini-2.5-flash-image" },
-    supportsResolution: false,
     supportsQuality: false,
   },
   "gpt-image-2": {
@@ -221,8 +209,19 @@ function linkToRoute(link: LinkRow | undefined, audience: Audience): Route | nul
   };
 }
 
+/* A row the bridge does not know and that has no provider rows gets no route,
+   not Nano Banana Pro's (the old fallback): a paid request never runs on a
+   guessed model (Kev, 2026-09-22). "none" is no implemented provider, so the
+   routes refuse it before any payment step. */
+const NO_ROUTE: Pick<ResolvedModel, "normal" | "boost" | "supportsResolution" | "supportsQuality"> = {
+  normal: { provider: "none", providerModel: "" },
+  boost: { provider: "none", providerModel: "" },
+  supportsResolution: false,
+  supportsQuality: false,
+};
+
 function fromRow(row: ModelRow, audience: Audience): ResolvedModel {
-  const bridge = BY_SLUG[slug(row.name ?? "")] ?? BY_SLUG["nano-banana-pro"];
+  const bridge = BY_SLUG[slug(row.name ?? "")] ?? NO_ROUTE;
   const links = row.model_providers ?? [];
 
   // The database is the truth once the providers migration has run; the slug
