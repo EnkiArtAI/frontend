@@ -65,7 +65,8 @@ export async function runGeneration(req: GenerationRequest, sign: PaymentSigner)
           modelId: model.id,
           resolution: req.resolution,
           quality: model.supportsQuality ? req.quality : undefined,
-          boost: req.boost === true,
+          // Masked like quality: a boost the model cannot run is not a selection.
+          boost: req.boost === true && model.boostAvailable === true,
           referenceImageCount: req.referenceImages?.length ?? 0,
         },
         sign,

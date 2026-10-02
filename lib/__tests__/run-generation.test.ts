@@ -72,6 +72,16 @@ describe("a paid model", () => {
     expect(calls[3].headers["X-Session-Token"]).toBe("t");
   });
 
+  it("sends boost only where the model has a faster host", async () => {
+    // The toggle hides on a model without boost; a boost left on must not travel.
+    scriptFetch(PAID);
+    await runGeneration({ ...BASE, model: GPT, boost: true }, vi.fn(async () => "s"));
+    expect(calls[0].body.boost).toBe(false);
+    scriptFetch(PAID);
+    await runGeneration({ ...BASE, model: entry({ boostAvailable: true }), boost: true }, vi.fn(async () => "s"));
+    expect(calls[0].body.boost).toBe(true);
+  });
+
   it("never sends a quality to a model without the lever", async () => {
     scriptFetch(PAID);
     await runGeneration({ ...BASE, model: NANO, quality: "high" }, vi.fn(async () => "s"));

@@ -29,6 +29,10 @@ describe("the marketplace generator runs the selected model", () => {
     expect(PGV).not.toMatch(/\/api\/generate-free/);
   });
 
+  it("quotes the boost that will run, not a hidden one", () => {
+    expect(PGV).toMatch(/fetchGenerationQuote\(\{ promptId: promptId!, modelId: core\.entry!\.id, resolution: quoteResolution, boost: core\.boostAvailable && boost, quality \}\)/);
+  });
+
   it("free is the server's flag", () => {
     expect(PGV).toMatch(/const freeModel = core\.free;/);
   });
