@@ -30,18 +30,21 @@ export type AgentInputs =
   | { ok: true; paid: boolean; variables: Declared[]; values: Map<string, string> }
   | { ok: false; status: 400 | 404 | 500; error: string };
 
-/** The slug app/api/prompt stores a variable name as. */
-const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+/** The name app/api/prompt stores a slot as (toDbVarName, before its tie-breaks). */
+function storedName(slot: string): string {
+  const s = slot.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+  return /^[a-z]/.test(s) ? s : `v_${s}`;
+}
 
 /**
- * The declared variable a key or a [slot] names: its stored name or its label
- * exactly, else the slug the name was stored as. Exact first, because two
- * slots that slug alike were stored as tie-breaks ("Hero" as hero, "hero!" as
- * hero_2) and only the label tells them apart.
+ * The declared variable a key or a [slot] names: its stored name exactly,
+ * else the name the slot's text was stored as ("Hero Name" is hero_name).
+ * Labels are never used: they hold the text the creator selected, not the
+ * slot, and could hand one variable's value to another.
  */
 function variableFor(variables: Declared[], key: string): Declared | undefined {
   const k = key.trim();
-  return variables.find((v) => k === v.name || k === v.label) ?? variables.find((v) => slug(k) === v.name);
+  return variables.find((v) => k === v.name) ?? variables.find((v) => storedName(k) === v.name);
 }
 
 function optionValues(options: unknown): string[] {

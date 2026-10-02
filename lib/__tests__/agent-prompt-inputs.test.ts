@@ -110,27 +110,28 @@ describe("a paid prompt takes only values that fit its variables", () => {
     expect(await check({ age: "120" })).toMatchObject({ ok: false, status: 400 });
   });
 
-  it("fills a slot by the variable's label", async () => {
+  it("fills a slot by its text or by the variable's stored name", async () => {
     const inputs = await check({ "Character Design": "knight", mood: "calm", age: "30" });
     if (!inputs.ok || !inputs.paid) throw new Error("expected paid inputs");
     expect(composeAgentPrompt("a [Character Design], [mood], aged [age]", inputs)).toBe("a knight, calm, aged 30");
   });
 
-  it("fills a slot whose stored name its slug cannot reach", async () => {
-    variables = [{ name: "v_2nd_subject", label: "2nd subject", data_type: "text", options: null, min_value: null, max_value: null }];
-    const inputs = await check({ "2nd subject": "a fox" });
+  it("fills a slot whose stored name carries the v_ prefix", async () => {
+    variables = [{ name: "v_2nd_subject", label: "a fox", data_type: "text", options: null, min_value: null, max_value: null }];
+    const inputs = await check({ v_2nd_subject: "a wolf" });
     if (!inputs.ok || !inputs.paid) throw new Error("expected paid inputs");
-    expect(composeAgentPrompt("with [2nd subject]", inputs)).toBe("with a fox");
+    expect(composeAgentPrompt("with [2nd subject]", inputs)).toBe("with a wolf");
   });
 
-  it("tells two slots that slug alike apart by their labels", async () => {
+  it("never lets a label hand one variable's value to another", async () => {
+    // The label is the text the creator selected: hero was made from "Knight".
     variables = [
-      { name: "hero", label: "Hero", data_type: "text", options: null, min_value: null, max_value: null },
-      { name: "hero_2", label: "hero!", data_type: "text", options: null, min_value: null, max_value: null },
+      { name: "hero", label: "Knight", data_type: "text", options: null, min_value: null, max_value: null },
+      { name: "knight", label: "templar", data_type: "text", options: null, min_value: null, max_value: null },
     ];
-    const inputs = await check({ hero: "an elf", hero_2: "a dwarf" });
+    const inputs = await check({ hero: "elf", knight: "paladin" });
     if (!inputs.ok || !inputs.paid) throw new Error("expected paid inputs");
-    expect(composeAgentPrompt("[Hero] meets [hero!]", inputs)).toBe("an elf meets a dwarf");
+    expect(composeAgentPrompt("[Hero] faces the [Knight]", inputs)).toBe("elf faces the paladin");
   });
 
   it("keeps a text value on one line without brackets", async () => {
