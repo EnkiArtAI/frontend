@@ -116,9 +116,10 @@ export async function GET(
           chainName: purchase.chain_name,
           purchasedAt: purchase.created_at,
           status: purchase.status,
-          // Note: Decrypted content is not included in purchase list for security
-          // Use the secure content endpoint with an access token to retrieve content
-          content: null, // Content requires access token - use /api/prompts/[id]/content/secure
+          // A buyer pays for generations from a prompt, never for its text:
+          // the artist's words stay encrypted and are only ever composed on the
+          // server.
+          content: null,
           variables: variables,
           isDeleted: isDeleted,
           consistencyIssue: isDeleted, // If title is missing, prompt might be deleted
