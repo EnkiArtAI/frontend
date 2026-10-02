@@ -10,7 +10,7 @@
  * the X-PAYMENT header. We verify offline, co-sign, submit with preflight,
  * generate, and answer with the image plus X-PAYMENT-RESPONSE.
  *
- *   GET  /api/x402/generate                    → 402 requirements (probe)
+ *   GET  /api/x402/generate?modelFamily=…      → 402 requirements (probe)
  *   POST /api/x402/generate                    → 402 without X-PAYMENT
  *        { prompt } or { promptId, variableValues? }, plus the model
  *        { modelFamily } and optional { resolution, aspectRatio, quality }
@@ -70,7 +70,7 @@ const bodySchema = z.object({
   variableValues: z.record(z.string(), z.string().max(2000)).optional(),
   // Required: an agent that names no model gets a refusal, never a default
   // one (Kev, 2026-10-02: "NIEMALS IRGENDEIN standardmodell").
-  modelFamily: z.string().trim().min(1, "modelFamily is required").max(64),
+  modelFamily: z.string({ error: "modelFamily is required" }).trim().min(1, "modelFamily is required").max(64),
   resolution: z.enum(["1K", "2K", "4K"]).default("2K"),
   aspectRatio: z.string().trim().max(8).default("1:1"),
   quality: z.enum(["low", "medium", "high"]).optional(),

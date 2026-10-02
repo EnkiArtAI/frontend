@@ -32,7 +32,7 @@ describe("the agent route sends the routed model", () => {
   });
 
   it("requires the agent to name its model: there is no default", () => {
-    expect(X402).toMatch(/modelFamily: z\.string\(\)\.trim\(\)\.min\(1, "modelFamily is required"\)\.max\(64\),/);
+    expect(X402).toMatch(/modelFamily: z\.string\(\{ error: "modelFamily is required" \}\)\.trim\(\)\.min\(1, "modelFamily is required"\)\.max\(64\),/);
     expect(X402).not.toMatch(/\.default\("nano-banana-pro"\)/);
   });
 });
