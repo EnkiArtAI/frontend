@@ -86,14 +86,29 @@ describe("settingsSchema", () => {
     expect(settingsSchema.safeParse({ modelFamily: "nano-banana-pro", resolution: "2K" }).success).toBe(false);
   });
 
-  it.each(["intent", "quote"])("the %s route parses with it and resolves before pricing", (route) => {
-    const src = readSource(join(__dirname, "..", "..", "..", "app", "api", "payments", "generation", route, "route.ts"));
+  const routeSrc = (route: string) =>
+    readSource(join(__dirname, "..", "..", "..", "app", "api", "payments", "generation", route, "route.ts"));
+
+  it("the intent route parses with it and resolves before pricing", () => {
+    const src = routeSrc("intent");
     const parse = src.indexOf("settingsSchema.safeParse(body)");
     const resolve = src.indexOf("resolvePaidSettings(supabase, parsed.data)");
     const price = src.indexOf("computeQuote(supabase, {");
     expect(parse).toBeGreaterThan(-1);
     expect(resolve).toBeGreaterThan(parse);
     expect(price).toBeGreaterThan(resolve);
+    expect(src).toMatch(/modelFamily: settings\.modelFamily,/);
+  });
+
+  it("the quote route prices every request, single or batch, through the same resolve-then-price step", () => {
+    const src = routeSrc("quote");
+    const resolve = src.indexOf("resolvePaidSettings(supabase, input)");
+    const price = src.indexOf("computeQuote(supabase, {");
+    expect(resolve).toBeGreaterThan(-1);
+    expect(price).toBeGreaterThan(resolve);
+    expect(src).toMatch(/const batchSchema = z\.object\(\{ items: z\.array\(settingsSchema\)\.min\(1\)\.max\(24\) \}\);/);
+    expect(src).toMatch(/batch\.data\.items\.map\(\(item\) => quoteOne\(supabase, item, authUser\)\)/);
+    expect(src).toMatch(/const one = await quoteOne\(supabase, parsed\.data, authUser\);/);
     expect(src).toMatch(/modelFamily: settings\.modelFamily,/);
   });
 

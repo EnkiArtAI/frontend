@@ -17,6 +17,7 @@ vi.mock("@/lib/session-headers", () => ({
 import {
   authorizePaidGeneration,
   fetchGenerationQuote,
+  fetchGenerationQuotes,
   toModelFamily,
   microToUsd,
   CheckoutError,
@@ -168,6 +169,33 @@ describe("the quote never invents a price", () => {
     signMock.mockReset();
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("offline"); }));
     expect(await fetchGenerationQuote(REQ)).toBeNull();
+  });
+});
+
+describe("many quotes in one request", () => {
+  const Q = (total: string) => ({
+    expiresAt: "2026-10-02T12:00:00Z",
+    breakdown: { totalAmount: total, networkFee: "0", artistAmount: "0" },
+    appliedRule: null,
+  });
+
+  it("answers each option in order, with null where the server gave none", async () => {
+    let sent: unknown = null;
+    vi.stubGlobal("fetch", vi.fn(async (_u: string, init: RequestInit) => {
+      sent = JSON.parse(String(init.body));
+      return { ok: true, status: 200, json: async () => ({ quotes: [Q("147400"), { error: "free" }, Q("13200")] }) } as Response;
+    }));
+    const out = await fetchGenerationQuotes([REQ, REQ, REQ]);
+    expect(sent).toEqual({ items: [REQ, REQ, REQ] });
+    expect(out.map((q) => q?.totalUsd ?? null)).toEqual(["0.147", null, "0.013"]);
+    expect(out[0]?.totalMicro).toBe(147400);
+  });
+
+  it("invents nothing on a failed request", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 429, json: async () => ({}) }) as Response));
+    expect(await fetchGenerationQuotes([REQ, REQ])).toEqual([null, null]);
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("offline"); }));
+    expect(await fetchGenerationQuotes([REQ])).toEqual([null]);
   });
 });
 

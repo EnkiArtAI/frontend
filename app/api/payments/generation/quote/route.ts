@@ -24,13 +24,63 @@
  * in their own wallet.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { requireAuth, checkRateLimit } from "@/lib/auth";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { PRICING_POLICY, splitToBreakdown } from "@/lib/payments/generation-pricing";
 import { computeQuote } from "@/lib/payments/generation-quote";
-import { settingsSchema, resolvePaidSettings } from "@/lib/payments/generation-settings";
+import { settingsSchema, resolvePaidSettings, type SettingsInput } from "@/lib/payments/generation-settings";
 
+/* Every price a picker shows is a server quote (Kev, 2026-10-02: "ich brauche
+   safe überall den server-quote"). A picker prices all its options at once,
+   so it asks once: one request, one rate-limit slot, up to 24 quotes. */
+const batchSchema = z.object({ items: z.array(settingsSchema).min(1).max(24) });
+
+/** One quote, or why there is none: the same answer for a single request and for each batch item. */
+async function quoteOne(
+  supabase: SupabaseClient,
+  input: SettingsInput,
+  user: { userId: string; walletAddress: string },
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const resolved = await resolvePaidSettings(supabase, input);
+  if (!resolved.ok) return { status: resolved.status, body: { error: resolved.error } };
+  const { settings } = resolved;
+  const promptId = input.promptId;
+
+  // Shared with the intent route (lib/payments/generation-quote.ts) so the two
+  // paths can never drift apart — including DB pricing rules (discounts).
+  const quote = await computeQuote(supabase, {
+    promptId,
+    modelFamily: settings.modelFamily,
+    resolution: settings.resolution,
+    boost: settings.boost,
+    quality: settings.quality ?? undefined,
+    buyer: user.userId,
+  });
+  if (!quote.ok) return { status: quote.status, body: { error: quote.error } };
+  const { artistWallet, split, appliedRule } = quote;
+
+  const expiresAt = new Date(
+    Date.now() + PRICING_POLICY.quoteTtlSeconds * 1000,
+  ).toISOString();
+
+  return {
+    status: 200,
+    body: {
+      quote: {
+        promptId: promptId ?? null,
+        ...settings,
+        buyerWallet: user.walletAddress,
+        artistWallet,
+        expiresAt,
+        breakdown: splitToBreakdown(split),
+        appliedRule: appliedRule ? { name: appliedRule.name, effect: appliedRule.effect } : null,
+      },
+    },
+  };
+}
 
 export async function POST(req: NextRequest) {
   // 60 payments/min per user (Kev, 2026-07-08 — dApp-friendly); IP cap above
@@ -55,6 +105,16 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
+  const supabase = getSupabaseServerClient();
+
+  const batch = batchSchema.safeParse(body);
+  if (batch.success) {
+    const results = await Promise.all(batch.data.items.map((item) => quoteOne(supabase, item, authUser)));
+    return NextResponse.json({
+      quotes: results.map((r) => (r.status === 200 ? r.body.quote : { error: r.body.error })),
+    });
+  }
+
   const parsed = settingsSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
@@ -62,40 +122,6 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  const supabase = getSupabaseServerClient();
-  const resolved = await resolvePaidSettings(supabase, parsed.data);
-  if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status });
-  const { settings } = resolved;
-  const promptId = parsed.data.promptId;
-
-  // Shared with the intent route (lib/payments/generation-quote.ts) so the two
-  // paths can never drift apart — including DB pricing rules (discounts).
-  const quote = await computeQuote(supabase, {
-    promptId,
-    modelFamily: settings.modelFamily,
-    resolution: settings.resolution,
-    boost: settings.boost,
-    quality: settings.quality ?? undefined,
-    buyer: authUser.userId,
-  });
-  if (!quote.ok) {
-    return NextResponse.json({ error: quote.error }, { status: quote.status });
-  }
-  const { artistWallet, split, appliedRule } = quote;
-
-  const expiresAt = new Date(
-    Date.now() + PRICING_POLICY.quoteTtlSeconds * 1000,
-  ).toISOString();
-
-  return NextResponse.json({
-    quote: {
-      promptId: promptId ?? null,
-      ...settings,
-      buyerWallet: authUser.walletAddress,
-      artistWallet,
-      expiresAt,
-      breakdown: splitToBreakdown(split),
-      appliedRule: appliedRule ? { name: appliedRule.name, effect: appliedRule.effect } : null,
-    },
-  });
+  const one = await quoteOne(supabase, parsed.data, authUser);
+  return NextResponse.json(one.body, { status: one.status });
 }
