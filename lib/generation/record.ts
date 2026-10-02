@@ -19,11 +19,8 @@ import type { StoredReference } from "@/lib/generation/reference-images";
  *   1. No provider we use exposes a seed except Pollinations, which generates
  *      one and discards it. `seed` is NULL for Gemini and WaveSpeed, and NULL
  *      here means "not reproducible", not "not recorded".
- *   2. The route rewrites every prompt through gemini-1.5-flash at temperature
- *      0.7. Replaying the user's prompt re-runs that rewrite and produces a
- *      different request each time — which is why effectivePrompt (the text
- *      that actually reached the model) is stored separately and is what a
- *      replay must send.
+ *   2. effectivePrompt (the text that actually reached the model) is stored
+ *      separately from what the user typed, and it is what a replay must send.
  *
  * So the button this feeds should say "Re-run", not "Reproduce".
  */

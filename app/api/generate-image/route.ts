@@ -95,82 +95,6 @@ type GenerateImageBody = {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/**
- * Enhance prompt using Gemini API and track token usage
- * Returns enhanced prompt and token usage for pricing
- */
-async function enhancePromptWithGemini(prompt: string): Promise<{
-  enhancedPrompt: string;
-  tokensUsed: number;
-  inputTokens: number;
-  outputTokens: number;
-}> {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) {
-    return {
-      enhancedPrompt: prompt,
-      tokensUsed: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-    };
-  }
-
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(
-    key
-  )}`;
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: `Rewrite the following text-to-image prompt to be more vivid and detailed while preserving intent. Return ONLY the rewritten prompt text, no quotes, no markdown.\n\nPROMPT:\n${prompt}`,
-            },
-          ],
-        },
-      ],
-      generationConfig: { temperature: 0.7, maxOutputTokens: 512 },
-    }),
-  });
-
-  if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    throw new Error(`Gemini error: ${res.status} ${t}`);
-  }
-
-  type GeminiResponse = {
-    candidates?: Array<{
-      content?: { parts?: Array<{ text?: unknown }> };
-    }>;
-    usageMetadata?: {
-      promptTokenCount?: number;
-      candidatesTokenCount?: number;
-      totalTokenCount?: number;
-    };
-  };
-  
-  const data = (await res.json()) as GeminiResponse;
-  const text: unknown = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  const enhancedPrompt = typeof text === "string" && text.trim() ? text.trim() : prompt;
-  
-  // Extract token usage
-  const usage = data.usageMetadata || {};
-  const inputTokens = usage.promptTokenCount || 0;
-  const outputTokens = usage.candidatesTokenCount || 0;
-  const tokensUsed = usage.totalTokenCount || (inputTokens + outputTokens);
-
-  return {
-    enhancedPrompt,
-    tokensUsed,
-    inputTokens,
-    outputTokens,
-  };
-}
-
 function redactIdentifier(value?: string | null, prefix = 8, suffix = 6): string | undefined {
   if (!value) return undefined;
   if (value.length <= prefix + suffix) return "[redacted]";
@@ -565,9 +489,6 @@ export async function POST(request: NextRequest) {
       : basePrice;
     const minPrice = basePrice;
 
-    // Gemini pricing: $0.00001 per token (very affordable)
-    const GEMINI_PRICE_PER_TOKEN = 0.00001;
-
     const isSolanaPayment = isSolanaChain(chain);
 
     /* Enki settles on Solana, and only on Solana (Kev, 2026-08-19:
@@ -614,9 +535,7 @@ export async function POST(request: NextRequest) {
     }
 
     let paymentResult;
-    let enhancedPrompt = prompt;
-    let usedGemini = false;
-    let geminiTokens = 0;
+    const enhancedPrompt = prompt;
 
     if (intentId) {
       // --- SERVER-BUILT PAYMENT: redeem a confirmed intent ---
@@ -708,17 +627,6 @@ export async function POST(request: NextRequest) {
         },
       };
 
-      try {
-        const geminiResult = await enhancePromptWithGemini(prompt);
-        if (geminiResult.enhancedPrompt !== prompt) {
-          enhancedPrompt = geminiResult.enhancedPrompt;
-          usedGemini = true;
-          geminiTokens = geminiResult.tokensUsed;
-        }
-      } catch {
-        enhancedPrompt = prompt;
-        usedGemini = false;
-      }
     } else if (isSolanaPayment) {
       /* The SERVER's chain, not the caller's. The fee payer, the RPC
          connection and the USDC mint are all resolved from
@@ -818,17 +726,6 @@ export async function POST(request: NextRequest) {
         },
       };
 
-      try {
-        const geminiResult = await enhancePromptWithGemini(prompt);
-        if (geminiResult.enhancedPrompt !== prompt) {
-          enhancedPrompt = geminiResult.enhancedPrompt;
-          usedGemini = true;
-          geminiTokens = geminiResult.tokensUsed;
-        }
-      } catch {
-        enhancedPrompt = prompt;
-        usedGemini = false;
-      }
     } else if (useUpto) {
       // Use upto payment scheme: verify first, do work, then settle with actual price
       paymentResult = await paymentEngine.settleWithUpto(
@@ -840,57 +737,11 @@ export async function POST(request: NextRequest) {
           scheme: 'upto',
           maxPrice: maxPrice,
           minPrice: minPrice,
-          description: `Generate ${askedResolution || '2K'} image with AI enhancement`,
+          description: `Generate ${askedResolution || '2K'} image`,
           payToAddress: serverWalletAddress,
           category: 'image-generation',
         },
-        async () => {
-          // This callback does the expensive work and returns actual price
-          try {
-            // Enhance prompt with Gemini
-            const geminiResult = await enhancePromptWithGemini(prompt);
-            enhancedPrompt = geminiResult.enhancedPrompt;
-            geminiTokens = geminiResult.tokensUsed;
-            usedGemini = geminiTokens > 0;
-
-            // Calculate actual price: base price + Gemini token cost
-            const geminiCost = geminiTokens * GEMINI_PRICE_PER_TOKEN;
-            const basePriceUsd = parseFloat(basePrice.replace('$', ''));
-            const actualPriceUsd = basePriceUsd + geminiCost;
-            const actualPrice = `$${actualPriceUsd.toFixed(4)}`;
-
-            console.log('💰 Gemini token usage:', {
-              tokens: geminiTokens,
-              inputTokens: geminiResult.inputTokens,
-              outputTokens: geminiResult.outputTokens,
-              geminiCost: `$${geminiCost.toFixed(4)}`,
-              basePrice,
-              actualPrice,
-            });
-
-            return {
-              actualPrice,
-              metadata: {
-                geminiTokens,
-                geminiInputTokens: geminiResult.inputTokens,
-                geminiOutputTokens: geminiResult.outputTokens,
-                geminiCost: `$${geminiCost.toFixed(4)}`,
-                basePrice,
-              },
-            };
-          } catch (error) {
-            // If Gemini fails, fall back to base price
-            console.error('⚠️ Gemini enhancement failed, using base price:', error);
-            enhancedPrompt = prompt;
-            usedGemini = false;
-            return {
-              actualPrice: basePrice,
-              metadata: {
-                geminiError: error instanceof Error ? error.message : String(error),
-              },
-            };
-          }
-        }
+        async () => ({ actualPrice: basePrice, metadata: { basePrice } })
       );
     } else {
       // Use exact payment scheme (original behavior)
@@ -905,21 +756,6 @@ export async function POST(request: NextRequest) {
         category: 'image-generation',
       });
 
-      // If payment successful, enhance prompt (but don't track tokens for pricing)
-      if (paymentResult.success) {
-        try {
-          const geminiResult = await enhancePromptWithGemini(prompt);
-          if (geminiResult.enhancedPrompt !== prompt) {
-            enhancedPrompt = geminiResult.enhancedPrompt;
-            usedGemini = true;
-            geminiTokens = geminiResult.tokensUsed;
-          }
-        } catch {
-          // Gemini enhancement failed, use original prompt
-          enhancedPrompt = prompt;
-          usedGemini = false;
-        }
-      }
     }
 
     if (!intentId) {
@@ -1278,8 +1114,6 @@ export async function POST(request: NextRequest) {
         prompt: enhancedPrompt,
         provider: preflightRoute.provider,
         model: geminiResult.metadata?.model || preflightRoute.providerModel,
-        usedGemini,
-        geminiTokens: usedGemini ? geminiTokens : undefined,
         generationTime: geminiResult.generationTime,
         paymentScheme: consumedIntent ? 'intent' : isSolanaPayment ? 'solana-exact' : useUpto ? 'upto' : 'exact',
         metadata: {

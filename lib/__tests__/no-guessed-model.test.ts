@@ -63,7 +63,7 @@ describe("the human route refuses a route without a provider model before paymen
 });
 
 // Live code only: tests may name the dead ids to prove they are gone.
-const DEAD_IDS = ["gemini-2.5-flash-image", "gemini-3-pro-image-preview"];
+const DEAD_IDS = ["gemini-2.5-flash-image", "gemini-3-pro-image-preview", "gemini-1.5-flash"];
 function liveFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((n) => {
     const p = join(dir, n);
