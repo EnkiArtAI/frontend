@@ -26,6 +26,9 @@ function chain(table: string) {
 
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => ({ from: chain }) }));
 vi.mock("@/lib/crypto", () => ({ decryptString: () => "the full free text" }));
+vi.mock("@/lib/session-user", () => ({
+  resolveSessionUserId: async (_s: unknown, token: string | null) => (token === "owner-token" ? "owner-1" : null),
+}));
 
 import { GET as feed } from "../../app/api/marketplace/prompts/route";
 import { GET as detail } from "../../app/api/prompts/[id]/route";
@@ -33,7 +36,7 @@ import { GET as detail } from "../../app/api/prompts/[id]/route";
 const SECRET = "the artist's secret words around [subject]";
 const LIVE = { is_listed: true, listing_status: "active", deleted_at: null };
 const paid: Row = { id: "p1", title: "Paid", prompt_type: "paid", price_usd_cents: 150, public_prompt_text: SECRET, description: "A moody portrait", encrypted_content: "ct", ...LIVE };
-const showcase: Row = { id: "s1", title: "Free", prompt_type: "create-now", is_free_showcase: true, price_usd_cents: 0, public_prompt_text: "a free [subject]", description: null, encrypted_content: "ct", ...LIVE };
+const showcase: Row = { id: "s1", title: "Free", creator_id: "owner-1", prompt_type: "create-now", is_free_showcase: true, price_usd_cents: 0, public_prompt_text: "a free [subject]", description: null, encrypted_content: "ct", ...LIVE };
 
 beforeEach(() => {
   tables = { prompts: [], prompt_variables: [], users: [], user_wallets: [] };
@@ -45,9 +48,10 @@ async function card(row: Row) {
   return (await res.json()).prompts[0];
 }
 
-async function detailOf(row: Row) {
+async function detailOf(row: Row, token?: string) {
   tables.prompts = [row];
-  const res = await detail(new Request(`http://localhost/api/prompts/${row.id}`), { params: Promise.resolve({ id: String(row.id) }) });
+  const req = new Request(`http://localhost/api/prompts/${row.id}`, { headers: token ? { "X-Session-Token": token } : {} });
+  const res = await detail(req, { params: Promise.resolve({ id: String(row.id) }) });
   return (await res.json()).prompt;
 }
 
@@ -72,6 +76,11 @@ describe("the prompt detail route", () => {
 
   it("sends a listed free showcase's full text", async () => {
     expect((await detailOf(showcase)).publicPromptText).toBe("the full free text");
+  });
+
+  it("lets the creator preview their own unlisted free prompt", async () => {
+    const draft = { ...showcase, is_listed: false, listing_status: "draft" };
+    expect((await detailOf(draft, "owner-token")).publicPromptText).toBe("the full free text");
   });
 
   it("never sends the text of an unlisted free prompt", async () => {

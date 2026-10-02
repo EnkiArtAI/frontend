@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { decryptString } from "@/lib/crypto";
 import { isListed, isPublicText } from "@/lib/prompt-visibility";
+import { resolveSessionUserId } from "@/lib/session-user";
 import { requireAuth } from "@/lib/auth";
 
 type PatchBody = {
@@ -39,7 +40,7 @@ const VAR_TYPE_FROM_DB: Record<string, string> = {
 };
 
 export async function GET(
-  _: Request,
+  req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params;
@@ -113,12 +114,16 @@ export async function GET(
 
     const dbPromptType = String(prompt.prompt_type ?? "");
 
-    // Text only for a free prompt that is live on the marketplace, and then
-    // in full (decrypted through lib/crypto's keyring). A paid prompt's body
-    // is the artist's secret: its buyers see the variables, never the words.
-    // An unlisted prompt's text is nobody else's business yet.
+    // Text only for a free prompt, and then in full (decrypted through
+    // lib/crypto's keyring). A paid prompt's body is the artist's secret: its
+    // buyers see the variables, never the words. An unlisted prompt's text is
+    // nobody's business but its creator's yet, who may preview it.
+    const viewerId = isListed(prompt)
+      ? null
+      : await resolveSessionUserId(supabase, req.headers.get("X-Session-Token"));
+    const isOwner = viewerId !== null && prompt.creator_id === viewerId;
     let publicPromptText: string | undefined;
-    if (isPublicText(prompt) && isListed(prompt)) {
+    if (isPublicText(prompt) && (isListed(prompt) || isOwner)) {
       publicPromptText =
         typeof prompt.public_prompt_text === "string" ? prompt.public_prompt_text : undefined;
       if (prompt.encrypted_content) {
