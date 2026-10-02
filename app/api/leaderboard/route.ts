@@ -13,6 +13,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { isListed } from "@/lib/prompt-visibility";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TREND_DAYS = 14;
@@ -63,7 +64,11 @@ export async function GET(req: NextRequest) {
   // ── best-effort extras, fetched in parallel ──
   const since14 = new Date(Date.now() - TREND_DAYS * DAY_MS).toISOString();
   const podiumIds = raw.slice(0, 3).map((r) => r.best_prompt_id).filter(Boolean) as string[];
-  const [seriesRes, showcaseRes, genImgRes, purchRes] = await Promise.all([
+  const bestIds = [...new Set(raw.map((r) => r.best_prompt_id).filter(Boolean))] as string[];
+  const [liveRes, seriesRes, showcaseRes, genImgRes, purchRes] = await Promise.all([
+    bestIds.length
+      ? supabase.from("prompts").select("id, is_listed, listing_status, deleted_at").in("id", bestIds)
+      : Promise.resolve({ data: [], error: null }),
     ids.length
       ? supabase.rpc(isEarn ? "leaderboard_earn_series" : "leaderboard_gen_series", { p_creators: ids, p_since: since14 })
       : Promise.resolve({ data: [], error: null }),
@@ -114,7 +119,17 @@ export async function GET(req: NextRequest) {
     (promptCounts.get(p.seller_id) ?? promptCounts.set(p.seller_id, new Set()).get(p.seller_id)!).add(p.prompt_id);
   }
 
+  // A creator's best prompt is shown only while it is live. It can be a private
+  // draft, whose title may be the first words of a prompt nobody else should
+  // read; a failed lookup shows none.
+  const live = new Set(
+    ((liveRes.data ?? []) as { id: string; is_listed?: unknown; listing_status?: unknown; deleted_at?: unknown }[])
+      .filter(isListed)
+      .map((p) => p.id),
+  );
+
   const rows = raw.map((r, i) => {
+    const best = r.best_prompt_id && live.has(r.best_prompt_id) ? r.best_prompt_id : null;
     const s = spark.get(r.creator_id) ?? (trendReady ? new Array(TREND_DAYS).fill(0) : null);
     const delta = s ? s.slice(7).reduce((a, b) => a + b, 0) - s.slice(0, 7).reduce((a, b) => a + b, 0) : null;
     return {
@@ -122,9 +137,9 @@ export async function GET(req: NextRequest) {
       handle: r.handle ?? "unnamed",
       value: isEarn ? (r.total_cents ?? 0) / 100 : (r.total ?? 0),
       unit: isEarn ? ("usd" as const) : ("gen" as const),
-      bestPromptId: r.best_prompt_id,
-      bestPromptTitle: r.best_prompt_title,
-      image: (r.best_prompt_id && images.get(r.best_prompt_id)) || null,
+      bestPromptId: best,
+      bestPromptTitle: best ? r.best_prompt_title : null,
+      image: (best && images.get(best)) || null,
       spark: s,
       delta,
       sub: isEarn ? (promptCounts.get(r.creator_id)?.size ?? 0) : null,
