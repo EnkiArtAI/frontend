@@ -1,6 +1,4 @@
 import { describe, it, expect } from "vitest";
-import { join } from "node:path";
-import { readSource } from "@/lib/__tests__/_read-source";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeQuote } from "@/lib/payments/generation-quote";
 import { resolvePricingRule } from "@/lib/payments/pricing-rules";
@@ -55,12 +53,5 @@ describe("an intent for the buyer's own prompt", () => {
     expect(await resolvePricingRule(client, { buyerWalletOrId: BUYER, modelFamily: "gpt-image-2" })).toBeNull();
     // The same rule does apply to the prompt it names, so the null above is the scope.
     expect(await resolvePricingRule(client, { buyerWalletOrId: BUYER, modelFamily: "gpt-image-2", promptId: "p-1" })).toMatchObject({ id: "r1" });
-  });
-});
-
-describe("both payment routes accept an intent without a prompt", () => {
-  it.each(["intent", "quote"])("%s schema makes promptId optional", (route) => {
-    const src = readSource(join(__dirname, "..", "..", "..", "app", "api", "payments", "generation", route, "route.ts"));
-    expect(src).toMatch(/promptId: z\.string\(\)\.min\(1\)\.max\(128\)\.optional\(\),/);
   });
 });

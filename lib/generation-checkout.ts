@@ -38,14 +38,17 @@ export interface GenerationQuote {
   appliedRule: { name: string } | null;
 }
 
+/** The sum of settings the server prices and the intent stores (lib/payments/generation-settings.ts). */
 export interface QuoteRequest {
   /** Absent for the buyer's own prompt (the editors). */
   promptId?: string;
-  modelFamily: string;
-  resolution?: "1K" | "2K" | "4K"; // 1K accepted since 2026-08-22 (priced as 2K server-side)
+  /** The exact catalogue row the user selected. */
+  modelId: string;
+  resolution: "1K" | "2K" | "4K";
   /** Boost reprices the model leg at the vendor-direct route's real cost. */
   boost?: boolean;
   quality?: "low" | "medium" | "high";
+  referenceImageCount?: number;
 }
 
 /** Null on any failure: a missing quote greys the paid button, never fakes a price. */

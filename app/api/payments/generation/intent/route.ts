@@ -4,7 +4,8 @@
  * Server-built payments (backlog #2), step 2: persist the intent. The client
  * sends ONLY identifiers — never a price, amount, or destination:
  *
- *   Body: { promptId?: string, modelFamily: string, resolution?: "1K" | "2K" | "4K" }
+ *   Body: { promptId?, modelId, resolution, quality?, boost?, referenceImageCount? }
+ *   (lib/payments/generation-settings.ts: the sum of settings, priced once)
  *
  * The server recomputes the full split from its own DB and pricing (it never
  * trusts an earlier quote response), stores it as a payment intent with
@@ -21,27 +22,12 @@
  * Requires migrations/generation_payment_intents.sql to be applied.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { requireAuth, checkRateLimit } from "@/lib/auth";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { PRICING_POLICY, splitToBreakdown } from "@/lib/payments/generation-pricing";
 import { computeQuote } from "@/lib/payments/generation-quote";
-
-const intentSchema = z.object({
-  /* Absent when buyers generate from their own prompt (the editors). */
-  promptId: z.string().min(1).max(128).optional(),
-  modelFamily: z.string().min(1).max(64),
-  /* 1K joined 2026-08-22 (Kev: "warum keine 1K generierungen"). It is
-     priced as 2K — toResolutionTier maps it, the provider fact being that
-     both hosts charge 1K and 2K identically — so the schema admitting it
-     cannot underprice anything. */
-  resolution: z.enum(["1K", "2K", "4K"]).optional(),
-  /* Same boost fields as the quote route — the intent MUST price exactly
-     what the quote showed, so both feed getModelCostMicro identically. */
-  boost: z.boolean().optional(),
-  quality: z.enum(["low", "medium", "high"]).optional(),
-});
+import { settingsSchema, resolvePaidSettings } from "@/lib/payments/generation-settings";
 
 export async function POST(req: NextRequest) {
   // 60 payments/min per user (Kev, 2026-07-08 — dApp-friendly). The IP cap
@@ -67,17 +53,27 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
-  const parsed = intentSchema.safeParse(body);
+  const parsed = settingsSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.issues },
       { status: 400 },
     );
   }
-  const { promptId, modelFamily, resolution } = parsed.data;
-
   const supabase = getSupabaseServerClient();
-  const quote = await computeQuote(supabase, { ...parsed.data, buyer: authUser.userId });
+  const resolved = await resolvePaidSettings(supabase, parsed.data);
+  if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status });
+  const { settings } = resolved;
+  const promptId = parsed.data.promptId;
+
+  const quote = await computeQuote(supabase, {
+    promptId,
+    modelFamily: settings.modelFamily,
+    resolution: settings.resolution,
+    boost: settings.boost,
+    quality: settings.quality ?? undefined,
+    buyer: authUser.userId,
+  });
   if (!quote.ok) {
     return NextResponse.json({ error: quote.error }, { status: quote.status });
   }
@@ -96,8 +92,13 @@ export async function POST(req: NextRequest) {
     .insert({
       buyer_wallet: authUser.walletAddress,
       prompt_id: promptId ?? null,
-      model_family: modelFamily,
-      resolution: resolution ?? "2K",
+      // The sum of settings: /api/generate-image runs exactly these.
+      model_id: settings.modelId,
+      model_family: settings.modelFamily,
+      resolution: settings.resolution,
+      quality: settings.quality,
+      boost: settings.boost,
+      reference_image_count: settings.referenceImageCount,
       artist_wallet: artistWallet,
       artist_amount_micro: split.artistAmountMicro,
       model_cost_micro: split.modelCostMicro,
@@ -124,8 +125,7 @@ export async function POST(req: NextRequest) {
     intent: {
       id: intent.id,
       promptId: promptId ?? null,
-      modelFamily,
-      resolution: resolution ?? "2K",
+      ...settings,
       buyerWallet: authUser.walletAddress,
       artistWallet,
       expiresAt,

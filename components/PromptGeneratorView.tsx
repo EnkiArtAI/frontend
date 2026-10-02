@@ -417,10 +417,10 @@ export default function PromptGeneratorView({
     /* boost + quality are part of the key: toggling either MUST refetch, or
        the shown price is the old route's (Kev, 2026-08-23: boost = real cost
        everywhere). */
-    queryKey: ["generation-quote", promptId, modelFamily, quoteResolution, boost, quality],
+    queryKey: ["generation-quote", promptId, core.entry?.id, quoteResolution, boost, quality],
     queryFn: () =>
-      fetchGenerationQuote({ promptId: promptId!, modelFamily, resolution: quoteResolution, boost, quality }),
-    enabled: !noCharge && !!promptId && !loading,
+      fetchGenerationQuote({ promptId: promptId!, modelId: core.entry!.id, resolution: quoteResolution, boost, quality }),
+    enabled: !noCharge && !!promptId && !loading && !!core.entry,
     // Quotes expire server-side after 5 minutes; refresh a little sooner.
     refetchInterval: 4 * 60 * 1000,
   });
@@ -883,9 +883,10 @@ export default function PromptGeneratorView({
          route: the marketplace showed prices and never charged anyone. */
       let res: Response;
       if (!noCharge && promptId) {
+        if (!core.entry) throw new Error("Pick a model first. Nothing was charged.");
         const { intentId } = await authorizePaidGeneration({
           promptId,
-          modelFamily,
+          modelId: core.entry.id,
           resolution: quoteResolution,
           boost,
           quality,

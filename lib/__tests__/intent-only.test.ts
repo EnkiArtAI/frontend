@@ -20,7 +20,7 @@ describe("the classic editor", () => {
   });
 
   it("holds a payment with the buyer's wallet and generates with the intent", () => {
-    expect(EDITOR).toMatch(/await authorizePaidGeneration\(\s*\{ modelFamily: toModelFamily\(picked\.name\)/);
+    expect(EDITOR).toMatch(/await authorizePaidGeneration\(\s*\{ modelId: picked\.id,/);
     expect(EDITOR).toMatch(/signPayment,\s*\);/);
     expect(EDITOR).toMatch(/intentId,\s*prompt: previewText,/);
     // The id of the model it priced, so the server refuses a mismatch.

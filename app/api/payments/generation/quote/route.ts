@@ -4,7 +4,8 @@
  * First half of server-built payments (backlog #2). The client sends ONLY
  * identifiers — never a price, amount, or destination:
  *
- *   Body: { promptId?: string, modelFamily: string, resolution?: "1K" | "2K" | "4K" }
+ *   Body: { promptId?, modelId, resolution, quality?, boost?, referenceImageCount? }
+ *   (lib/payments/generation-settings.ts: the sum of settings, priced once)
  *
  * The server loads the prompt price and artist wallet from its own DB,
  * takes the model cost from server-side pricing, and returns the full
@@ -23,28 +24,13 @@
  * in their own wallet.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { requireAuth, checkRateLimit } from "@/lib/auth";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { PRICING_POLICY, splitToBreakdown } from "@/lib/payments/generation-pricing";
 import { computeQuote } from "@/lib/payments/generation-quote";
+import { settingsSchema, resolvePaidSettings } from "@/lib/payments/generation-settings";
 
-const quoteSchema = z.object({
-  /* Absent when buyers generate from their own prompt (the editors). */
-  promptId: z.string().min(1).max(128).optional(),
-  modelFamily: z.string().min(1).max(64),
-  /* 1K joined 2026-08-22 (Kev: "warum keine 1K generierungen"). It is
-     priced as 2K — toResolutionTier maps it, the provider fact being that
-     both hosts charge 1K and 2K identically — so the schema admitting it
-     cannot underprice anything. */
-  resolution: z.enum(["1K", "2K", "4K"]).optional(),
-  /* Boost prices the model leg at the vendor-direct route's REAL cost
-     (quality-aware for gpt) — see getModelCostMicro. Optional: absent means
-     the normal ladder, so existing clients quote unchanged. */
-  boost: z.boolean().optional(),
-  quality: z.enum(["low", "medium", "high"]).optional(),
-});
 
 export async function POST(req: NextRequest) {
   // 60 payments/min per user (Kev, 2026-07-08 — dApp-friendly); IP cap above
@@ -69,20 +55,29 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
-  const parsed = quoteSchema.safeParse(body);
+  const parsed = settingsSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.issues },
       { status: 400 },
     );
   }
-  const { promptId, modelFamily, resolution } = parsed.data;
-
   const supabase = getSupabaseServerClient();
+  const resolved = await resolvePaidSettings(supabase, parsed.data);
+  if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status });
+  const { settings } = resolved;
+  const promptId = parsed.data.promptId;
 
   // Shared with the intent route (lib/payments/generation-quote.ts) so the two
   // paths can never drift apart — including DB pricing rules (discounts).
-  const quote = await computeQuote(supabase, { ...parsed.data, buyer: authUser.userId });
+  const quote = await computeQuote(supabase, {
+    promptId,
+    modelFamily: settings.modelFamily,
+    resolution: settings.resolution,
+    boost: settings.boost,
+    quality: settings.quality ?? undefined,
+    buyer: authUser.userId,
+  });
   if (!quote.ok) {
     return NextResponse.json({ error: quote.error }, { status: quote.status });
   }
@@ -95,8 +90,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     quote: {
       promptId: promptId ?? null,
-      modelFamily,
-      resolution: resolution ?? "2K",
+      ...settings,
       buyerWallet: authUser.walletAddress,
       artistWallet,
       expiresAt,

@@ -13,7 +13,7 @@
 
 import { addCreation } from "@/lib/creations";
 import { sessionAuthHeaders } from "@/lib/session-headers";
-import { authorizePaidGeneration, toModelFamily, type PaymentSigner } from "@/lib/generation-checkout";
+import { authorizePaidGeneration, type PaymentSigner } from "@/lib/generation-checkout";
 
 /**
  * ── What this file used to claim, and what it did ───────────────────────
@@ -72,8 +72,9 @@ export async function generateWithModel(opts: {
       });
     } else {
       const tier = (["1K", "2K", "4K"] as const).find((t) => t === resolution);
+      if (!tier) return { error: "Pick a resolution first. Nothing was charged." };
       const { intentId } = await authorizePaidGeneration(
-        { modelFamily: toModelFamily(model.name), resolution: tier, boost: !!boost, quality },
+        { modelId: model.id, resolution: tier, boost: !!boost, quality },
         sign,
       );
       res = await fetch("/api/generate-image", {

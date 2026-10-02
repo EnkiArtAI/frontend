@@ -49,7 +49,7 @@ describe("a paid model in the editor", () => {
       "/api/generate-image",
     ]);
     expect(sign).toHaveBeenCalledWith("dHg=");
-    expect(calls[0].body).toEqual({ modelFamily: "gpt-image-2", resolution: "4K", boost: false, quality: "high" });
+    expect(calls[0].body).toEqual({ modelId: GPT.id, resolution: "4K", boost: false, quality: "high" });
     const gen = calls[3];
     expect(gen.body).toMatchObject({ intentId: "i-1", modelIds: [GPT.id], quality: "high" });
     // The intent is bound to the session's buyer, so the session must travel.

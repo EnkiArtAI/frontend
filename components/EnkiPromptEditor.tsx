@@ -11,7 +11,7 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { PAYMENT_CHAINS } from "@/shared/payment-config";
 import { addCreation, getUserKeyFromAccount } from "@/lib/creations";
 import { usePaymentSigner } from "@/hooks/usePaymentSigner";
-import { authorizePaidGeneration, toModelFamily } from "@/lib/generation-checkout";
+import { authorizePaidGeneration } from "@/lib/generation-checkout";
 import { useCdpAddress } from "@/hooks/useCdpAddress";
 import { useCdpSolanaSigner } from "@/hooks/useCdpSolanaSigner";
 import { useModelLimits, FALLBACK_RATIOS, resolveCatalogueEntry } from "@/hooks/useModelLimits";
@@ -2533,7 +2533,7 @@ export default function EnkiPromptEditor() {
         const picked = resolveCatalogueEntry(models.available, models.selected[0]);
         if (!picked) throw new Error("Pick a model first. Nothing was charged.");
         const { intentId } = await authorizePaidGeneration(
-          { modelFamily: toModelFamily(picked.name), resolution: "2K", boost, quality },
+          { modelId: picked.id, resolution: "2K", boost, quality },
           signPayment,
         );
         const res = await fetch("/api/generate-image", {

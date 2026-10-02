@@ -22,7 +22,7 @@ import {
   CheckoutError,
 } from "@/lib/generation-checkout";
 
-const REQ = { promptId: "p-1", modelFamily: "nano-banana-pro", resolution: "2K" as const };
+const REQ = { promptId: "p-1", modelId: "db00c518-ee31-4d12-b40a-f8130f8e605b", resolution: "2K" as const };
 
 type Script = Record<string, { status: number; body: unknown }>;
 let calls: string[] = [];
