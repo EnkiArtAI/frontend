@@ -6,19 +6,17 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { useActiveAccount, useActiveWalletChain } from "thirdweb/react";
+import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { PAYMENT_CHAINS } from "@/shared/payment-config";
 import { addCreation, getUserKeyFromAccount } from "@/lib/creations";
-import { useX402PaymentProduction } from "@/hooks/useX402PaymentProduction";
-import { useSolanaX402Payment } from "@/hooks/useSolanaX402Payment";
+import { usePaymentSigner } from "@/hooks/usePaymentSigner";
+import { authorizePaidGeneration, toModelFamily } from "@/lib/generation-checkout";
 import { useCdpAddress } from "@/hooks/useCdpAddress";
 import { useCdpSolanaSigner } from "@/hooks/useCdpSolanaSigner";
-import { useModelLimits, FALLBACK_RATIOS } from "@/hooks/useModelLimits";
+import { useModelLimits, FALLBACK_RATIOS, resolveCatalogueEntry } from "@/hooks/useModelLimits";
 import BoostToggle from "@/components/generation/BoostToggle";
 import QualitySelect, { type Quality } from "@/components/generation/QualitySelect";
-import { useBestPaymentChain } from "@/hooks/useWalletBalance";
-import type { ChainKey } from "@/shared/payment-config";
 import EnkiMobileGenerateModal from "./EnkiMobileGenerateModal";
 import { WalletPickerModal } from "./WalletPickerModal";
 import {
@@ -467,43 +465,15 @@ export default function EnkiPromptEditor() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const account = useActiveAccount();
-  /* Live EVM chain the user's wallet is currently connected to. Updates
-     when the user switches networks in MetaMask / their wallet, so the
-     "via …" line in the Verify panel always reflects the network the
-     payment will actually go through right now. */
-  const activeWalletChain = useActiveWalletChain();
   const { connected: solanaAdapterConnected } = useWallet();
   const { address: cdpAddress } = useCdpAddress();
   const cdpSolana = useCdpSolanaSigner();
   // Anyone who can sign a Solana transaction counts as "Solana connected":
-  // an external adapter, a CDP embedded wallet, or (until those sessions are
-  // migrated) Turnkey. Without the CDP arm here, a CDP user fell through to
-  // the EVM x402 branch below and could not pay at all despite holding a
-  // perfectly good Solana wallet.
+  // an external adapter or a CDP embedded wallet.
   const solanaConnected = solanaAdapterConnected || cdpSolana.isAvailable || !!cdpAddress;
-  const { generateImage: generateImageWithPayment, isPending: isPaymentPending } = useX402PaymentProduction();
-  const { generateImage: generateImageWithSolana, isPending: isSolanaPaymentPending } = useSolanaX402Payment();
-  // Server-built payments (intent → pay → generate) for Turnkey email users:
-  // no SOL needed, Enki pays the network fee. Kicks in once the prompt is
-  // saved (an intent needs the DB prompt row for pricing).
-  const { chainKey: bestChain } = useBestPaymentChain();
-  const [selectedChain] = useState<ChainKey>(bestChain || "base-sepolia");
-  /* Human-readable name of the network the user is paying on right
-     now. Source-of-truth priority:
-       1. Solana adapter / Turnkey email -> the Solana mainnet/devnet
-          name from PAYMENT_CHAINS (which holds the canonical labels).
-       2. Live EVM chain reported by the connected wallet (changes if
-          the user switches networks in MetaMask).
-       3. The `selectedChain` (best-balance chain) name as a fallback
-          before the wallet has reported its chain.
-     The Verify panel renders this string after "via " so the user
-     always sees the actual network — never the payment-protocol name
-     ("x402") or the wallet-provider name ("Thirdweb"). */
-  const currentNetworkName = solanaConnected
-    ? PAYMENT_CHAINS["solana"].name
-    : activeWalletChain?.name ??
-      PAYMENT_CHAINS[selectedChain]?.name ??
-      selectedChain;
+  const signPayment = usePaymentSigner();
+  // Payments run on Solana only.
+  const currentNetworkName = PAYMENT_CHAINS["solana"].name;
   const { toast } = useToast();
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -773,7 +743,7 @@ export default function EnkiPromptEditor() {
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const [showWalletPicker, setShowWalletPicker] = useState(false);
   const walletConnected = Boolean(account?.address) || solanaConnected;
-  const isGeneratingPaymentPending = isPaymentPending || isSolanaPaymentPending;
+  const isGeneratingPaymentPending = versions.some((v) => v.status === "generating" || v.status === "queued");
 
   useEffect(() => {
     const handleResize = () => setIsMobileViewport(window.innerWidth <= 768);
@@ -2528,7 +2498,7 @@ export default function EnkiPromptEditor() {
     const isFreePrompt = promptData.type === "free-prompt";
     if (!isFreePrompt && !walletConnected) {
       setShowWalletPicker(true);
-      toast({ title: "Wallet required", description: "Connect a wallet to generate with x402.", variant: "destructive" });
+      toast({ title: "Wallet required", description: "Connect a wallet to pay for this generation.", variant: "destructive" });
       return;
     }
     setVersions(prev => prev.map(v => v.id === versionId ? { ...v, status: "generating" } : v));
@@ -2557,22 +2527,33 @@ export default function EnkiPromptEditor() {
         }
         data = await res.json() as { imageUrl: string; provider?: string; usedGemini?: boolean };
       } else {
-        // The server-built path (intent → pay → generate) is gone with Turnkey:
-        // it only ever worked because the server could sign for the buyer.
-        // Everyone now signs their own transaction — external wallet or CDP
-        // embedded wallet — through the x402 flow. Rebuilding the server-built
-        // route on client signing is separate work; the migration that pins the
-        // transaction message for it is already in place.
-        data = solanaConnected
-          ? await generateImageWithSolana({
-              prompt: previewText,
-              resolution: "2K",
-              chain: "solana-devnet",
-            }) as { imageUrl: string; provider?: string; usedGemini?: boolean }
-          : await generateImageWithPayment(
-              { prompt: previewText, resolution: "2K", modelIds: models.selected, ratio: ratioForApi, boost, quality },
-              selectedChain
-            ) as { imageUrl: string; provider?: string; usedGemini?: boolean };
+        // Hold a payment for the buyer's own prompt (intent → authorize → sign
+        // with the buyer's wallet → submit), then generate with the intentId.
+        // The server captures after the image is stored and voids on failure.
+        const picked = resolveCatalogueEntry(models.available, models.selected[0]);
+        if (!picked) throw new Error("Pick a model first. Nothing was charged.");
+        const { intentId } = await authorizePaidGeneration(
+          { modelFamily: toModelFamily(picked.name), resolution: "2K", boost, quality },
+          signPayment,
+        );
+        const res = await fetch("/api/generate-image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
+          body: JSON.stringify({
+            intentId,
+            prompt: previewText,
+            aspectRatio: ratioForApi,
+            modelIds: [picked.id],
+            boost,
+            quality,
+            referenceImages: cardRefs.length ? cardRefs : undefined,
+          }),
+        });
+        if (!res.ok) {
+          const err = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(err.error || "Generation failed");
+        }
+        data = await res.json() as { imageUrl: string; provider?: string; usedGemini?: boolean };
       }
       if (!data?.imageUrl) {
         throw new Error("Image generated, but no image URL was returned.");
@@ -2780,11 +2761,11 @@ export default function EnkiPromptEditor() {
   const getRefillCost = (slotCount: number): string =>
     formatCost(getPricePerSlot() * slotCount * 0.8);
 
-  /* ─── Pay & Generate — UX shows total cost, fires sequential per-slot x402 ─── */
+  /* ─── Pay & Generate — UX shows total cost, fires one paid generation per slot ─── */
   const handlePayAndGenerate = () => {
     if (!walletConnected) {
       setShowWalletPicker(true);
-      toast({ title: "Wallet required", description: "Connect a wallet to generate with x402.", variant: "destructive" });
+      toast({ title: "Wallet required", description: "Connect a wallet to pay for this generation.", variant: "destructive" });
       return;
     }
     const processableCards = versions.filter(v => v.status === "idle" || v.status === "failed");
@@ -2803,9 +2784,9 @@ export default function EnkiPromptEditor() {
     setUi(prev => ({ ...prev, queueTotal: total }));
     toast({
       title: `Paying ${cost} for ${total} image${total > 1 ? "s" : ""}`,
-      description: "Each slot will process a micro-payment via Thirdweb.",
+      description: "Each slot is paid separately from your wallet.",
     });
-    // Fire each with 400ms stagger — each triggers its own x402 payment
+    // Fire each with 400ms stagger — each holds its own payment
     processableCards.forEach((card, i) => {
       setTimeout(() => {
         setVersions(prev => prev.map(v =>
@@ -5102,7 +5083,7 @@ export default function EnkiPromptEditor() {
         onGenerate={() => {
           if (!walletConnected) {
             setShowWalletPicker(true);
-            toast({ title: "Wallet required", description: "Connect a wallet to generate with x402.", variant: "destructive" });
+            toast({ title: "Wallet required", description: "Connect a wallet to pay for this generation.", variant: "destructive" });
             return;
           }
           const snapshot: Record<string, string> = {};
