@@ -1,16 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
-import { paymentEngine } from "@/backend/x402-engine";
 import { generateImagesWithWaveSpeed } from "@/backend/services/wavespeed-image-generation";
 import { generateImageWithPollinations } from "@/backend/services/pollinations-image-generation";
 import { generateImagesWithOpenAI } from "@/backend/services/openai-image-generation";
-import type { ChainKey } from "@/shared/payment-config";
-import { isSolanaChain, isChainKey } from "@/shared/payment-config";
-import {
-  buildSolana402Response,
-  checkAndRecordSolanaSignature,
-  parseSolanaPaymentHeader,
-  verifySolanaUsdcTransfer,
-} from "@/backend/solana-x402-verifier";
 import { generateImagesWithGemini } from "@/backend/services/gemini-image-generation";
 import type { ImageGenerationRequest } from "@/backend/services/types";
 import { referenceImageCount } from "@/lib/generation/provider-capabilities";
@@ -19,7 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireAuth, checkRateLimit } from "@/lib/auth";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
-import { resolveModel, resolveModelByFamily, chooseRoute, type ResolvedModel } from "@/lib/generation/models";
+import { resolveModel, resolveModelByFamily, chooseRoute } from "@/lib/generation/models";
 import { normalizeTier, clampTier } from "@/lib/generation/resolution";
 import { effectiveQuality } from "@/lib/pricing";
 import { reportPriceDrift } from "@/lib/generation/price-drift";
@@ -77,7 +68,6 @@ type GenerateImageBody = {
   prompt?: string;
   aspectRatio?: string;
   resolution?: string;
-  useUptoPayment?: boolean; // Enable upto payment scheme for dynamic pricing
   modelIds?: string[];
   /** Spend more to run the same model directly instead of via WaveSpeed. */
   boost?: boolean;
@@ -88,18 +78,11 @@ type GenerateImageBody = {
   /** The editor node graph. Image bytes inside it are extracted server-side. */
   workflow?: unknown;
   ratio?: string;
-  // Server-built payments: id of a confirmed generation_payment_intents row.
-  // When present, the x402 header flow is skipped entirely.
+  /** An authorised generation_payment_intents row. Every generation here needs one. */
   intentId?: string;
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function redactIdentifier(value?: string | null, prefix = 8, suffix = 6): string | undefined {
-  if (!value) return undefined;
-  if (value.length <= prefix + suffix) return "[redacted]";
-  return `${value.slice(0, prefix)}...${value.slice(-suffix)}`;
-}
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -118,28 +101,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
 }
 
 export async function POST(request: NextRequest) {
-  const requestUrl = new URL(request.url);
-  const { searchParams } = requestUrl;
-  /* The chain a payment settles on is validated, not cast.
-   *
-   * This read the raw query string and asserted it into ChainKey, so an
-   * unknown value reached isSolanaChain() below, which does
-   * PAYMENT_CHAINS[key].isSolana on an undefined entry — a TypeError, i.e. a
-   * 500 on a payment route from a one-word query parameter. A value that is
-   * not a chain is a bad request and now says so. */
-  const requestedChain = searchParams.get('chain');
-  // An empty parameter means "no preference", not "a chain called nothing" —
-  // the first version of this check turned `?chain=` into a 400 and made its
-  // own default unreachable.
-  if (requestedChain && !isChainKey(requestedChain)) {
-    return NextResponse.json(
-      { error: `Unknown chain ${JSON.stringify(requestedChain)}` },
-      { status: 400 },
-    );
-  }
-  const chain = (requestedChain || 'base-sepolia') as ChainKey;
-  const paymentHeader = request.headers.get('X-Payment');
-
   // Set after a successful intent redemption (client captured then, so this
   // helper can never throw); every generation-failure path — including the
   // catch-all below — must release it so the buyer retries without paying
@@ -286,58 +247,57 @@ export async function POST(request: NextRequest) {
      * the buyer's wallet before anything is consumed, so a stolen id buys a
      * wasted preflight and nothing else. */
     const intentId = typeof body.intentId === "string" ? body.intentId.trim() : "";
-    if (intentId && !UUID_RE.test(intentId)) {
+    // Intents only (REC-4): the legacy X-PAYMENT rail paid first and generated
+    // second, so a failed generation kept the money. Free models have their
+    // own route, /api/generate-free.
+    if (!intentId) {
+      return NextResponse.json(
+        { error: "A paid generation needs a payment intent. Nothing was generated and nothing was charged." },
+        { status: 402 },
+      );
+    }
+    if (!UUID_RE.test(intentId)) {
       return NextResponse.json({ error: "intentId must be a UUID" }, { status: 400 });
     }
 
-    let paidFamily: string | null = null;
-    if (intentId) {
-      const { data: intentRow } = await (getSupabaseServerClientSafe()
-        ?.from("generation_payment_intents")
-        .select("model_family")
-        .eq("id", intentId)
-        .maybeSingle() ?? Promise.resolve({ data: null }));
-      paidFamily = (intentRow as { model_family?: string } | null)?.model_family ?? null;
+    const { data: intentRow } = await (getSupabaseServerClientSafe()
+      ?.from("generation_payment_intents")
+      .select("model_family")
+      .eq("id", intentId)
+      .maybeSingle() ?? Promise.resolve({ data: null }));
+    const paidFamily = (intentRow as { model_family?: string } | null)?.model_family ?? null;
+    if (!paidFamily) {
+      return NextResponse.json(
+        { error: "Payment intent not found. Nothing was generated and nothing was charged." },
+        { status: 404 },
+      );
     }
 
-    let preflightModel: ResolvedModel;
-    if (paidFamily) {
-      const paidModel = await resolveModelByFamily(getSupabaseServerClientSafe(), paidFamily);
-      if (!paidModel) {
-        // The family names nothing active. Generating on anything else would
-        // be the exact substitution this whole path exists to prevent.
-        return NextResponse.json(
-          { error: `This payment is for ${paidFamily}, which is not available right now.` },
-          { status: 409 },
-        );
-      }
-      /* An explicitly requested model that disagrees with the purchase is the
-         fraud case, and the only one left worth refusing: pay for the cheap
-         family, ask for the dear one. */
-      if (body.modelIds?.length) {
-        const asked = await resolveModel(getSupabaseServerClientSafe(), body.modelIds);
-        if (!asked || toModelFamily(asked.name) !== paidFamily) {
-          return NextResponse.json(
-            {
-              error: `This payment is for ${paidFamily}, but the request asks for ${asked ? toModelFamily(asked.name) : "a model that does not exist"}.`,
-            },
-            { status: 400 },
-          );
-        }
-      }
-      preflightModel = paidModel;
-    } else {
-      // No fallback model (Kev, 2026-10-02): a pick that cannot be resolved
-      // is refused here, before any payment step, never swapped for another.
-      const chosen = await resolveModel(getSupabaseServerClientSafe(), body.modelIds);
-      if (!chosen) {
-        return NextResponse.json(
-          { error: "The chosen model is unknown or not available right now. Nothing was generated and nothing was charged." },
-          { status: 422 },
-        );
-      }
-      preflightModel = chosen;
+    const paidModel = await resolveModelByFamily(getSupabaseServerClientSafe(), paidFamily);
+    if (!paidModel) {
+      // The family names nothing active. Generating on anything else would
+      // be the exact substitution this whole path exists to prevent.
+      return NextResponse.json(
+        { error: `This payment is for ${paidFamily}, which is not available right now.` },
+        { status: 409 },
+      );
     }
+    /* An explicitly requested model that disagrees with the purchase is the
+       fraud case, and the only one left worth refusing: pay for the cheap
+       family, ask for the dear one. There is no fallback model (Kev,
+       2026-10-02): an id that resolves to nothing is refused too. */
+    if (body.modelIds?.length) {
+      const asked = await resolveModel(getSupabaseServerClientSafe(), body.modelIds);
+      if (!asked || toModelFamily(asked.name) !== paidFamily) {
+        return NextResponse.json(
+          {
+            error: `This payment is for ${paidFamily}, but the request asks for ${asked ? toModelFamily(asked.name) : "a model that does not exist"}.`,
+          },
+          { status: 400 },
+        );
+      }
+    }
+    const preflightModel = paidModel;
     // Chosen HERE and nowhere else, because the quote below carries the price
     // of a specific host: quoting AceData and then generating on WaveSpeed
     // would charge the wrong amount. This also skips hosts whose breaker is
@@ -430,367 +390,96 @@ export async function POST(request: NextRequest) {
     // max 10 generations per user per minute
     // --- END SECURITY GUARDS ---
 
-    // Server-built payments (backlog #2, step 4): a confirmed intent replaces
-    // the whole x402 header flow, so the x402 env/URL plumbing below is only
-    // required on the legacy paths.
-    // intentId is parsed above, before the model is resolved — the intent
-    // decides which model runs, so it cannot be read after that decision.
-    // The paid resolution from the intent row overrides the request body.
-    let paidResolution: string | null = null;
-
-    let serverWalletAddress = "";
-    let resourceUrl = "";
-    if (!intentId) {
-      const configuredWallet = process.env.SERVER_WALLET_ADDRESS;
-      if (!configuredWallet) {
-        return NextResponse.json(
-          { error: 'SERVER_WALLET_ADDRESS is not configured' },
-          { status: 500 }
-        );
-      }
-      serverWalletAddress = configuredWallet;
-
-      // Construct full URL for X402 payment (requires absolute URL)
-      let baseUrl = process.env.NEXT_PUBLIC_APP_URL;
-
-      if (!baseUrl) {
-        const protocol = requestUrl.protocol || 'http:';
-        const host = requestUrl.host || requestUrl.hostname || 'localhost:3000';
-        baseUrl = `${protocol}//${host}`;
-      }
-
-      baseUrl = baseUrl.replace(/\/$/, '');
-      resourceUrl = `${baseUrl}${requestUrl.pathname}${requestUrl.search}`;
-
-      // Validate URL format
-      try {
-        const testUrl = new URL(resourceUrl);
-        if (!testUrl.protocol || !testUrl.host) {
-          throw new Error('Invalid URL: missing protocol or host');
-        }
-      } catch (urlError) {
-        console.error('❌ Invalid resourceUrl constructed:', resourceUrl);
-        return NextResponse.json(
-          { error: 'Failed to construct payment URL', details: urlError instanceof Error ? urlError.message : String(urlError) },
-          { status: 500 }
-        );
-      }
-    }
-
-    // Determine if we should use upto payment scheme
-    // Use upto if: Gemini is enabled AND user requested it OR it's the default
-    // Check for both GEMINI_API_KEY and GOOGLE_GEMINI_API_KEY for compatibility
-    const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY);
-    const useUpto = body.useUptoPayment !== false && hasGeminiKey;
-    
-    // Pricing configuration
-    const prices: Record<string, string> = {
-      '1K': '$0.05',
-      '2K': '$0.10',
-      '4K': '$0.25',
-    };
-    const basePrice = prices[askedResolution || '2K'] || '$0.10';
-
-    // For upto scheme: max price is base price + 50% buffer for Gemini tokens
-    // Min price is base price (for Pollinations image generation)
-    const maxPrice = useUpto 
-      ? `$${(parseFloat(basePrice.replace('$', '')) * 1.5).toFixed(2)}`
-      : basePrice;
-    const minPrice = basePrice;
-
-    const isSolanaPayment = isSolanaChain(chain);
-
-    /* Enki settles on Solana, and only on Solana (Kev, 2026-08-19:
-       "wir haben KEINE evm abrechnung, das soll als code existieren, aber
-       nicht implementiert sein").
-     *
-     * The EVM half of this route is real and reachable — useX402PaymentProduction
-     * is mounted in four components and defaults to base-sepolia — so leaving it
-     * merely unused is not the same as switching it off. It carries three
-     * verified defects that are pointless to repair on a rail we do not bill on:
-     * the caller picks the chain, that caller-supplied string is what lands in
-     * the generation record, and shared/payment-config declares "unichain" as
-     * mainnet while giving it Unichain SEPOLIA's chain id (1301; mainnet is 130).
-     *
-     * So the decision is enforced where the money is rather than only in the UI.
-     * The code stays — this is a switch, not a deletion — and turning it back on
-     * means reading the chain from the user's stored preference server-side,
-     * never from a query parameter, with that chain id corrected first.
-     *
-     * Nothing regresses: no payment has ever settled on this branch. The live
-     * generations table holds 9 rows, every one provider=pollinations.
-     */
-    if (!intentId && !isSolanaPayment) {
-      return NextResponse.json(
-        {
-          error: "Enki settles on Solana only. EVM payment is not enabled.",
-          chain,
-          solanaOnly: true,
-        },
-        { status: 501 },
-      );
-    }
-
-    if (!intentId) {
-      console.log('💳 X402 Payment Request:', {
-        resourceUrl,
-        method: 'POST',
-        chain,
-        scheme: isSolanaPayment ? 'solana-exact' : useUpto ? 'upto' : 'exact',
-        price: useUpto ? `${minPrice} - ${maxPrice}` : basePrice,
-        hasPaymentHeader: !!paymentHeader || !!request.headers.get("X-PAYMENT"),
-        serverWallet: serverWalletAddress?.slice(0, 10) + '...',
-      });
-    }
-
-    let paymentResult;
     const enhancedPrompt = prompt;
 
-    if (intentId) {
-      // --- SERVER-BUILT PAYMENT: redeem a confirmed intent ---
-      // Identity comes from the session (the intent is bound to its buyer),
-      // the paid resolution comes from the intent row — neither is taken
-      // from the request. Redemption is a one-shot conditional UPDATE, so a
-      // replayed intentId can never buy a second generation.
-      const ipLimit = checkRequestRateLimit(rateLimitKey(request, "generate:intent:ip"), 120, 60_000);
-      if (!ipLimit.allowed) return rateLimitResponse(ipLimit.retryAfterSeconds);
+    // --- Redeem the authorised intent ---
+    // Identity comes from the session (the intent is bound to its buyer),
+    // the paid resolution comes from the intent row — neither is taken
+    // from the request. Redemption is a one-shot conditional UPDATE, so a
+    // replayed intentId can never buy a second generation.
+    const ipLimit = checkRequestRateLimit(rateLimitKey(request, "generate:intent:ip"), 120, 60_000);
+    if (!ipLimit.allowed) return rateLimitResponse(ipLimit.retryAfterSeconds);
 
-      // Session token only — requireAuth's fallback (X-Wallet-Address
-      // signature headers, no server nonce) is replayable and deliberately
-      // not accepted on payment paths (same gate as payments/generation/pay).
-      if (!request.headers.get("X-Session-Token")) {
-        return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-      }
-      let authUser;
-      try {
-        authUser = await requireAuth(request);
-      } catch {
-        return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-      }
-      if (!checkRateLimit(authUser.userId, "generate:intent", 60, 60_000)) {
-        return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
-      }
-      const supabase = getSupabaseServerClient();
-      // One claim function for both payment models. Two independent claim
-      // paths against one row is how a double charge happens: each correct on
-      // its own, together broadcasting a held transaction for funds that had
-      // already settled. It refuses an intent carrying the markers of both
-      // rather than guessing which.
-      const redemption = await claimForGeneration(supabase, {
-        intentId,
-        buyerWallet: authUser.userId,
-      });
-      if (!redemption.ok) {
-        return NextResponse.json({ error: redemption.error }, { status: redemption.status });
-      }
-      consumedIntent = { supabase, id: intentId, mode: redemption.mode };
-      paidResolution = redemption.resolution;
-
-      /* The buyer must receive the model they paid for.
-       *
-       * model_family is written onto the intent when the quote is taken and
-       * priced from it — nano-banana-pro and gpt-image-2 are $0.134 and $0.167
-       * at 2K, and $0.24 and $0.25 at 4K. Which model actually RUNS comes from
-       * body.modelIds via resolveModel() above, a completely separate input
-       * that nothing compared to the intent. `modelFamily` appeared exactly
-       * once in this file, as a field on the metadata literal below, and was
-       * never read again.
-       *
-       * So quoting the cheap family and then sending the expensive one in
-       * modelIds cost the difference on every generation, and the reverse —
-       * paying for the dear one and being served the cheap one — was equally
-       * silent. Both end here: the intent decides, and a mismatch is refused
-       * before anything is generated, with the intent released so the buyer
-       * can retry rather than losing the payment. */
-      /* Belt and braces. preflightModel was SELECTED from the intent's family
-         above, so this can only fire if the two reads disagreed — a row
-         changing under us between them. Cheap, and the failure it guards
-         against is a buyer receiving a model they did not buy. */
-      const runningFamily = toModelFamily(preflightModel.name);
-      if (redemption.modelFamily && runningFamily !== redemption.modelFamily) {
-        console.warn(
-          "[generate] model family mismatch:",
-          { intentId, paidFor: redemption.modelFamily, wouldRun: runningFamily },
-        );
-        /* releaseIfConsumed, not a hand-rolled undo: it already knows that an
-           AUTHORIZED intent must be voided rather than released — returning
-           the claim would leave a live signature on a generation we refused.
-           "rejected" is the reason that fits; the provider never failed, we
-           declined to run. */
-        await releaseIfConsumed("rejected");
-        return NextResponse.json(
-          {
-            error: `This payment is for ${redemption.modelFamily}, but the request would generate with ${runningFamily}.`,
-          },
-          { status: 400 },
-        );
-      }
-      paymentResult = {
-        success: true,
-        status: 200,
-        headers: {},
-        metadata: {
-          paymentIntentId: intentId,
-          modelFamily: redemption.modelFamily,
-          resolution: redemption.resolution,
-        },
-      };
-
-    } else if (isSolanaPayment) {
-      /* The SERVER's chain, not the caller's. The fee payer, the RPC
-         connection and the USDC mint are all resolved from
-         SOLANA_PAYMENT_CHAIN; taking the key from the query string as well
-         meant a caller could ask to be verified against mainnet while every
-         other part of the transaction was built on devnet. One decision, one
-         source. */
-      const solanaChain = solanaChainKey() as "solana" | "solana-devnet";
-      const solanaPlatformWallet = process.env.SOLANA_PLATFORM_WALLET;
-      if (!solanaPlatformWallet) {
-        return NextResponse.json(
-          { error: 'SOLANA_PLATFORM_WALLET is not configured' },
-          { status: 500 }
-        );
-      }
-
-      const solanaPaymentHeader = request.headers.get("X-PAYMENT");
-      if (!solanaPaymentHeader) {
-        const solana402 = buildSolana402Response({
-          chainKey: solanaChain,
-          resource: resourceUrl,
-          description: `Generate ${askedResolution || "2K"} image`,
-          priceUsdc: basePrice,
-          payTo: solanaPlatformWallet,
-          mimeType: "application/json",
-        });
-        return NextResponse.json(solana402.body, { status: 402, headers: solana402.headers });
-      }
-
-      const payload = parseSolanaPaymentHeader(solanaPaymentHeader);
-      if (!payload) {
-        return NextResponse.json({ error: "Invalid Solana payment header" }, { status: 402 });
-      }
-
-      const minAmountMicro = Math.round(parseFloat(basePrice.replace("$", "")) * 1_000_000);
-      const verification = await verifySolanaUsdcTransfer({
-        signature: payload.signature,
-        chainKey: solanaChain,
-        recipientAddress: solanaPlatformWallet,
-        minAmountMicro,
-      });
-
-      if (!verification.verified) {
-        return NextResponse.json(
-          { error: `Solana payment verification failed: ${verification.error}` },
-          { status: 402 }
-        );
-      }
-
-      // Cross-path replay guard: the server-built intent flow writes its
-      // confirmed tx signature into generation_payment_intents and returns it
-      // to the client. That same on-chain payment could otherwise be replayed
-      // HERE as an X-PAYMENT header to buy a second, free generation — the two
-      // flows keep replay state in disjoint tables. Reject any signature that
-      // already settled an intent.
-      const replayDb = getSupabaseServerClientSafe();
-      if (replayDb) {
-        const { data: intentSig } = await replayDb
-          .from("generation_payment_intents")
-          .select("id")
-          .eq("tx_signature", payload.signature)
-          .maybeSingle();
-        if (intentSig) {
-          return NextResponse.json(
-            { error: "Transaction signature has already been used" },
-            { status: 402 }
-          );
-        }
-      }
-
-      const replayCheck = await checkAndRecordSolanaSignature(
-        payload.signature,
-        solanaChain,
-        "image-generation"
-      );
-      if (!replayCheck.isNew) {
-        return NextResponse.json(
-          { error: replayCheck.error || "Transaction signature has already been used" },
-          { status: 402 }
-        );
-      }
-
-      console.log("✅ Solana payment verified:", {
-        signature: redactIdentifier(payload.signature),
-        buyer: redactIdentifier(verification.buyerAddress, 6, 4),
-        amountPaid: verification.amountPaid,
-      });
-
-      paymentResult = {
-        success: true,
-        status: 200,
-        headers: {},
-        metadata: {
-          solanaTxSignature: redactIdentifier(payload.signature),
-          chainKey: solanaChain,
-          chainName: "Solana",
-        },
-      };
-
-    } else if (useUpto) {
-      // Use upto payment scheme: verify first, do work, then settle with actual price
-      paymentResult = await paymentEngine.settleWithUpto(
-        {
-          resourceUrl: resourceUrl,
-          method: 'POST',
-          paymentHeader: paymentHeader || undefined,
-          chainKey: chain,
-          scheme: 'upto',
-          maxPrice: maxPrice,
-          minPrice: minPrice,
-          description: `Generate ${askedResolution || '2K'} image`,
-          payToAddress: serverWalletAddress,
-          category: 'image-generation',
-        },
-        async () => ({ actualPrice: basePrice, metadata: { basePrice } })
-      );
-    } else {
-      // Use exact payment scheme (original behavior)
-      paymentResult = await paymentEngine.settle({
-        resourceUrl: resourceUrl,
-        method: 'POST',
-        paymentHeader: paymentHeader || undefined,
-        chainKey: chain,
-        price: basePrice,
-        description: `Generate ${askedResolution || '2K'} image`,
-        payToAddress: serverWalletAddress,
-        category: 'image-generation',
-      });
-
+    // Session token only — requireAuth's fallback (X-Wallet-Address
+    // signature headers, no server nonce) is replayable and deliberately
+    // not accepted on payment paths (same gate as payments/generation/pay).
+    if (!request.headers.get("X-Session-Token")) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
-
-    if (!intentId) {
-      console.log('💳 X402 Payment Result:', {
-        success: paymentResult.success,
-        status: paymentResult.status,
-        scheme: useUpto ? 'upto' : 'exact',
-        hasMetadata: !!paymentResult.metadata,
-        txHash: paymentResult.metadata?.txHash,
-        actualPrice: paymentResult.metadata?.actualPrice,
-      });
+    let authUser;
+    try {
+      authUser = await requireAuth(request);
+    } catch {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
+    if (!checkRateLimit(authUser.userId, "generate:intent", 60, 60_000)) {
+      return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
+    }
+    const supabase = getSupabaseServerClient();
+    // One claim function for both payment models. Two independent claim
+    // paths against one row is how a double charge happens: each correct on
+    // its own, together broadcasting a held transaction for funds that had
+    // already settled. It refuses an intent carrying the markers of both
+    // rather than guessing which.
+    const redemption = await claimForGeneration(supabase, {
+      intentId,
+      buyerWallet: authUser.userId,
+    });
+    if (!redemption.ok) {
+      return NextResponse.json({ error: redemption.error }, { status: redemption.status });
+    }
+    consumedIntent = { supabase, id: intentId, mode: redemption.mode };
+    const paidResolution = redemption.resolution;
 
-    // If payment not successful, return payment response
-    if (!paymentResult.success) {
+    /* The buyer must receive the model they paid for.
+     *
+     * model_family is written onto the intent when the quote is taken and
+     * priced from it — nano-banana-pro and gpt-image-2 are $0.134 and $0.167
+     * at 2K, and $0.24 and $0.25 at 4K. Which model actually RUNS comes from
+     * body.modelIds via resolveModel() above, a completely separate input
+     * that nothing compared to the intent. `modelFamily` appeared exactly
+     * once in this file, as a field on the metadata literal below, and was
+     * never read again.
+     *
+     * So quoting the cheap family and then sending the expensive one in
+     * modelIds cost the difference on every generation, and the reverse —
+     * paying for the dear one and being served the cheap one — was equally
+     * silent. Both end here: the intent decides, and a mismatch is refused
+     * before anything is generated, with the intent released so the buyer
+     * can retry rather than losing the payment. */
+    /* Belt and braces. preflightModel was SELECTED from the intent's family
+       above, so this can only fire if the two reads disagreed — a row
+       changing under us between them. Cheap, and the failure it guards
+       against is a buyer receiving a model they did not buy. */
+    const runningFamily = toModelFamily(preflightModel.name);
+    if (redemption.modelFamily && runningFamily !== redemption.modelFamily) {
+      console.warn(
+        "[generate] model family mismatch:",
+        { intentId, paidFor: redemption.modelFamily, wouldRun: runningFamily },
+      );
+      /* releaseIfConsumed, not a hand-rolled undo: it already knows that an
+         AUTHORIZED intent must be voided rather than released — returning
+         the claim would leave a live signature on a generation we refused.
+         "rejected" is the reason that fits; the provider never failed, we
+         declined to run. */
+      await releaseIfConsumed("rejected");
       return NextResponse.json(
-        paymentResult.body || { error: 'Payment required' },
-        { status: paymentResult.status, headers: paymentResult.headers }
+        {
+          error: `This payment is for ${redemption.modelFamily}, but the request would generate with ${runningFamily}.`,
+        },
+        { status: 400 },
       );
     }
+    const paymentMetadata = {
+      paymentIntentId: intentId,
+      modelFamily: redemption.modelFamily,
+      resolution: redemption.resolution,
+    };
 
     let geminiResult;
     const xaiKey = process.env.XAI_API_KEY;
-    // Intent payments are paid upfront like Solana x402 — bound the provider
-    // call so a hung generation can't strand an already-paid request.
-    const paidUpfront = isSolanaPayment || !!consumedIntent;
+    // Every request here holds a payment — bound the provider call so a hung
+    // generation can't strand it.
 
     // Gated on the RESOLVED ROUTE, not on the key alone. As `if (xaiKey)` this
     // hijacked every generation the moment XAI_API_KEY appeared in the
@@ -820,13 +509,11 @@ export async function POST(request: NextRequest) {
           n: 1,
         }),
       });
-      const xaiResponse = paidUpfront
-        ? await withTimeout(
-            xaiRequest,
-            SOLANA_GENERATION_TIMEOUT_MS,
-            "Image generation timed out after payment. Please try again with a shorter prompt or lower resolution."
-          )
-        : await xaiRequest;
+      const xaiResponse = await withTimeout(
+        xaiRequest,
+        SOLANA_GENERATION_TIMEOUT_MS,
+        "Image generation timed out after payment. Please try again with a shorter prompt or lower resolution."
+      );
 
       if (!xaiResponse.ok) {
         const errTxt = await xaiResponse.text();
@@ -852,13 +539,11 @@ export async function POST(request: NextRequest) {
         if (!res.ok) throw new Error("Failed to download image from Grok");
         return res.arrayBuffer();
       });
-      const arrayBuffer = paidUpfront
-        ? await withTimeout(
-            download,
-            SOLANA_GENERATION_TIMEOUT_MS,
-            "Image download timed out after payment. Please try again."
-          )
-        : await download;
+      const arrayBuffer = await withTimeout(
+        download,
+        SOLANA_GENERATION_TIMEOUT_MS,
+        "Image download timed out after payment. Please try again."
+      );
       const imageBuffer = Buffer.from(arrayBuffer);
 
       geminiResult = {
@@ -925,13 +610,11 @@ export async function POST(request: NextRequest) {
               )
             : generateImagesWithGemini(shared);
 
-      geminiResult = paidUpfront
-        ? await withTimeout(
-            geminiRequest,
-            SOLANA_GENERATION_TIMEOUT_MS,
-            "Image generation timed out after payment. Please try again with a shorter prompt or lower resolution."
-          )
-        : await geminiRequest;
+      geminiResult = await withTimeout(
+        geminiRequest,
+        SOLANA_GENERATION_TIMEOUT_MS,
+        "Image generation timed out after payment. Please try again with a shorter prompt or lower resolution."
+      );
 
       if (!geminiResult.success || !geminiResult.imageBuffers?.length) {
         // Tell the breaker. It classifies: a refused prompt says nothing about
@@ -1105,10 +788,7 @@ export async function POST(request: NextRequest) {
               stripped.images.length ? stripped.images : (body.referenceImages ?? []),
               recUserId,
             ),
-            transactionHash: isSolanaPayment
-              ? ((paymentResult.metadata as { solanaTxSignature?: string })?.solanaTxSignature ?? null)
-              : null,
-            chainKey: chain,
+            chainKey: solanaChainKey(),
           }),
         );
       }
@@ -1124,23 +804,13 @@ export async function POST(request: NextRequest) {
         provider: preflightRoute.provider,
         model: geminiResult.metadata?.model || preflightRoute.providerModel,
         generationTime: geminiResult.generationTime,
-        paymentScheme: consumedIntent ? 'intent' : isSolanaPayment ? 'solana-exact' : useUpto ? 'upto' : 'exact',
+        paymentScheme: 'intent',
         metadata: {
-          ...paymentResult.metadata,
-          // x402 upto pricing fields would be misleading on intent-paid
-          // responses — the intent path reports its own metadata above.
-          ...(useUpto && !consumedIntent && {
-            maxPrice,
-            minPrice,
-            actualPrice: paymentResult.metadata?.actualPrice,
-          }),
+          ...paymentMetadata,
           geminiMetadata: geminiResult.metadata,
         },
       },
-      {
-        status: 200,
-        headers: paymentResult.headers,
-      }
+      { status: 200 },
     );
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
@@ -1149,10 +819,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: message }, { status: 500 });
   } finally {
     // Unavoidable, because the early returns between taking the slot and
-    // answering are the ones that matter: a 402 is the NORMAL path — the
-    // client gets it, pays, and retries — and a slot leaked there would refuse
-    // the retry it just paid for. releaseHeldSlot() nulls its own reference,
-    // so the explicit calls on the success and failure paths stay correct.
+    // answering are the ones that matter: a refused claim leaking its slot
+    // would refuse the buyer's retry too. releaseHeldSlot() nulls its own
+    // reference, so the explicit calls on the success and failure paths stay
+    // correct.
     await releaseHeldSlot();
   }
 }

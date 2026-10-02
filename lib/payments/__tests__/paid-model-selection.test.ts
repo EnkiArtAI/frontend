@@ -94,29 +94,16 @@ describe("the route lets the purchase choose the model", () => {
     expect(ROUTE).toMatch(/but the request asks for/);
   });
 
-  /** The `if (paidFamily) { … }` block, isolated from its else. */
-  function paidBranch(): string {
-    const start = ROUTE.indexOf("if (paidFamily) {");
-    expect(start, "the paid branch moved — this test is reading the wrong block").toBeGreaterThan(-1);
-    const end = ROUTE.indexOf("} else {", start);
-    expect(end, "no else branch found after the paid branch").toBeGreaterThan(start);
-    return ROUTE.slice(start, end);
-  }
-
-  it("the PAID branch assigns the model it resolved from the purchase", () => {
-    // The first draft of this test asserted only that the default resolution
-    // appeared SOMEWHERE in the route, which stayed true when the paid branch
-    // was mutated back to using it — the probe passed and proved nothing.
-    const branch = paidBranch();
-    expect(branch).toMatch(/preflightModel = paidModel/);
-    expect(branch).not.toMatch(/preflightModel = await resolveModel\(/);
+  it("runs the model the purchase names, never the request's own pick", () => {
+    expect(ROUTE).toMatch(/const preflightModel = paidModel;/);
+    expect(ROUTE).not.toMatch(/preflightModel = (await )?resolveModel\(/);
   });
 
-  it("uses the request's own selection only when nothing was paid, and refuses it when it cannot be resolved", () => {
-    const start = ROUTE.indexOf("} else {", ROUTE.indexOf("if (paidFamily) {"));
-    const unpaid = ROUTE.slice(start, start + 600);
-    expect(unpaid).toMatch(/const chosen = await resolveModel\(getSupabaseServerClientSafe\(\), body\.modelIds\)/);
-    expect(unpaid).toMatch(/if \(!chosen\) \{/);
-    expect(unpaid).toMatch(/preflightModel = chosen;/);
+  it("has no unpaid branch: no intent is refused before any model or slot is touched", () => {
+    // REC-4: every generation on this route holds a payment.
+    const refuse = ROUTE.indexOf("if (!intentId) {");
+    expect(refuse).toBeGreaterThan(-1);
+    expect(ROUTE.indexOf("resolveModelByFamily(")).toBeGreaterThan(refuse);
+    expect(ROUTE.indexOf("const slot = await acquireSlot(")).toBeGreaterThan(refuse);
   });
 });

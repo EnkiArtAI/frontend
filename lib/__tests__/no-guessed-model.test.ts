@@ -122,7 +122,7 @@ describe("there is no fallback model: a pick that cannot be resolved is refused"
   });
 
   it("the human route refuses an unresolved pick before any payment step", () => {
-    const refuse = HUMAN.search(/if \(!chosen\) \{/);
+    const refuse = HUMAN.search(/if \(!asked \|\| toModelFamily\(asked\.name\) !== paidFamily\) \{/);
     const slot = HUMAN.search(/const slot = await acquireSlot\(/);
     expect(refuse).toBeGreaterThan(-1);
     expect(slot).toBeGreaterThan(refuse);
