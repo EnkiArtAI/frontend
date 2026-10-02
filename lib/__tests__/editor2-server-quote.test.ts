@@ -27,7 +27,10 @@ describe("Editor 2 shows server quotes only", () => {
 
   it("every price label reads the quote", () => {
     expect(NODE.match(/\{priceFor\(imgCount\)\}/g)?.length).toBe(2);
-    expect(NODE).toMatch(/<span className="nc-genbtn-sub">\{priceFor\(1\)\}<\/span>/);
+    // The prompt-node Generate fills every empty slot of the composition.
+    expect(NODE).toMatch(/<span className="nc-genbtn-sub">\{priceFor\(fillCount\)\}<\/span>/);
+    expect(NODE).toMatch(/priceLabel: priceFor\(fillCount\)/);
+    expect(NODE).toMatch(/const fillCount = Math\.max\(1, outs\.filter\(\(o\) => o\.status === "empty" && \(!o\.sig \|\| o\.sig === curSig\)\)\.length\);/);
     expect(NODE).toMatch(/const total = priceFor\(genConfirm\.checked\.size\);/);
     expect(DOC).toMatch(/<span className="ncd-gen-price">\{priceLabel\}<\/span>/);
     expect(DOC).toMatch(/sub: api\.modelPriceLabel\(mm\.id\)/);
@@ -36,5 +39,13 @@ describe("Editor 2 shows server quotes only", () => {
 
   it("no longer claims quality is free", () => {
     expect(NODE + DOC).not.toMatch(/same on every setting/);
+  });
+});
+
+describe("Editor 2 runs the tier it shows", () => {
+  it("prices and generates the clamped tier, never a stored one above the model's ceiling", () => {
+    expect(NODE).toMatch(/const tierNow = asTier\(effTier\);/);
+    expect(NODE).toMatch(/const tiers = tiersUpTo\(picked\?\.maxResolution \?\? "2K"\);/);
+    expect(NODE).toMatch(/tiers\.includes\(wanted as never\) \? wanted : tiers\[tiers\.length - 1\]/);
   });
 });

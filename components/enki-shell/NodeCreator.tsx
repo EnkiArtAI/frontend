@@ -410,6 +410,10 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const selectedModel = resolveCatalogueEntry(catalogue, st.models[0]);
   const supportsQuality = selectedModel?.supportsQuality ?? false;
   const qualityTiers = ncQualities(st.mode, selectedModel?.maxResolution);
+  /* The tier that runs: the stored pick, or the model's ceiling when the pick
+     is above it. The picker showed this clamped value while the stored one
+     was priced and sent, and the server refused it. */
+  const effTier = qualityTiers.includes(st.quality) ? st.quality : qualityTiers[qualityTiers.length - 1] ?? st.quality;
   const mockModeRef = useRef(false); mockModeRef.current = mockMode;
   // canvas tool: "select" (left = marquee, right = pan) or "hand" (left = pan)
   const [tool, setTool] = useState<"select" | "hand">("select");
@@ -864,6 +868,9 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   // Can only generate once there's an actual prompt and every text var has a value.
   // Only a prompt is required to generate — unfilled variables just resolve to empty.
   const canGenerate = st.body.trim().length > 0 && !!selectedModel;
+  /* spawnOutput fills every empty slot of the current composition (one
+     payment each), so its price and title name that count, not "one". */
+  const fillCount = Math.max(1, outs.filter((o) => o.status === "empty" && (!o.sig || o.sig === curSig)).length);
 
   const curSig = sigOf(st.body, texts);
   const layout = useMemo(() => {
@@ -1352,7 +1359,10 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     // dependency. The server pulls the image bytes and the authored text out
     // of it before storing.
     const picked = resolveCatalogueEntry(catalogueRef.current, stRef.current.models[0]);
-    const tier = (["1K", "2K", "4K"] as const).find((t) => t === stRef.current.quality);
+    // Clamped to the picked model's ceiling, exactly as the picker shows it.
+    const tiers = tiersUpTo(picked?.maxResolution ?? "2K");
+    const wanted = stRef.current.quality;
+    const tier = (["1K", "2K", "4K"] as const).find((t) => t === (tiers.includes(wanted as never) ? wanted : tiers[tiers.length - 1]));
     const outcome = tier
       ? await runGeneration(
           {
@@ -1603,7 +1613,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     quality: m.supportsQuality ? quality : undefined,
     boost: boost && !!m.boostAvailable,
   });
-  const tierNow = asTier(st.quality);
+  const tierNow = asTier(effTier);
   const pricedModels = catalogue.filter((m) => !m.free);
   const pricedTiers = selectedModel && !selectedModel.free ? qualityTiers.map(asTier).filter((t): t is "1K" | "2K" | "4K" => !!t) : [];
   const quotes = useServerQuotes([
@@ -2153,7 +2163,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                     headers={sessionAuthHeaders()}
                     onValues={applyDiceValues}
                   />
-                  <button className={"nc-prompt-genbtn nc-prompt-genbtn--stack" + (canGenerate ? "" : " disabled")} title={canGenerate ? "Generate one image at " + st.quality : !selectedModel ? "Pick a model first" : "Write a prompt first"} onClick={() => spawnOutput()}>
+                  <button className={"nc-prompt-genbtn nc-prompt-genbtn--stack" + (canGenerate ? "" : " disabled")} title={canGenerate ? `Generate ${fillCount} image${fillCount > 1 ? "s" : ""} at ${effTier}` : !selectedModel ? "Pick a model first" : "Write a prompt first"} onClick={() => spawnOutput()}>
                     {/* zap, like every Generate — sparkles is Release's icon.
                         The icon sits BESIDE the Generate/price block, so the
                         flex row centers it against both lines, not just the
@@ -2161,7 +2171,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                     <Icon name="zap" size={16} stroke={2.2} fill={canGenerate ? "var(--cta-ink)" : "none"} />
                     <span className="nc-genbtn-txt">
                       <span className="nc-genbtn-top">Generate</span>
-                      <span className="nc-genbtn-sub">{priceFor(1)}</span>
+                      <span className="nc-genbtn-sub">{priceFor(fillCount)}</span>
                     </span>
                   </button>
                 </div>
@@ -2540,7 +2550,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       {view === "doc" && (
         <DocView api={{
           st, texts, refs, outs, cons: st.cons, curSig, liveTokNames, liveRefCount, pubNames,
-          colorForTok, palOf, priceLabel: priceFor(1), modelPriceLabel, tierPriceLabel, canGenerate, pickedOuts, releaseMin, canRelease,
+          colorForTok, palOf, priceLabel: priceFor(fillCount), modelPriceLabel, tierPriceLabel, canGenerate, pickedOuts, releaseMin, canRelease,
           modelAccept: modelLimits.accept,
           onBodyChange, pushHist, addText, patchText, setTextKind, renameText, deleteNodeId,
           addRefsFromFiles, onRefFiles, toggleRefUserInput, setRefMax,
