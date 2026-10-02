@@ -100,13 +100,6 @@ export function tiersUpTo(cap: ResolutionTier): ResolutionTier[] {
  * promising a size the route cannot render.
  */
 export const FREE_TIERS: ResolutionTier[] = tiersUpTo(maxTier("pollinations", "flux"));
-/**
- * Price multiplier per resolution tier, relative to the model's base price.
- * 1K is 1, not 0.5: both hosts charge 1K and 2K identically (Google, 1120
- * tokens either way; WaveSpeed nano-banana-pro, $0.14 either way), and the
- * server prices a 1K request as the 2K tier (lib/pricing.toResolutionTier).
- */
-export const TIER_PRICE_MULT: Record<string, number> = { "1K": 1, "2K": 1, "4K": 2 };
 
 /* PAID_TIERS is gone: the paid checkout accepts 1K/2K/4K (quote and intent
    validate z.enum(["1K","2K","4K"]) since 2026-08-22), so paid pickers offer

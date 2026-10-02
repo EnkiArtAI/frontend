@@ -12,7 +12,7 @@ import type { QuoteRequest } from "@/lib/generation-checkout";
 import { moveToken } from "@/lib/editor/move-token";
 import { TOKEN_SRC, variableRange } from "@/lib/editor/selection-variable";
 import RatioRect from "@/components/generation/RatioRect";
-import { FREE_TIERS, tiersUpTo, TIER_PRICE_MULT } from "@/lib/generation/resolution";
+import { tiersUpTo } from "@/lib/generation/resolution";
 import { useState, useRef, useEffect, useMemo, useCallback, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Maximize2, Gem } from "lucide-react";
@@ -108,8 +108,10 @@ export type St = {
  * image under a bigger name, and NC_QUALITY_MULT below charged x2 for it.
  * Premium starts at 2K because the quote and intent schemas do.
  */
-export const ncQualities = (mode: St["mode"], maxResolution?: "1K" | "2K" | "4K"): readonly string[] => {
-  if (mode === "free") return FREE_TIERS;
+export const ncQualities = (_mode: St["mode"], maxResolution?: "1K" | "2K" | "4K"): readonly string[] => {
+  /* The tiers the SELECTED MODEL renders, whatever the prompt's release
+     mode: "free" capped every model at Flux's tiers when generation still
+     followed the prompt type. */
   /* Premium: the tiers the SELECTED MODEL genuinely renders, intersected with
      what the paid checkout accepts (2K floor — the quote and intent schemas
      are z.enum(["2K","4K"])). The list used to be hardcoded, so "2K/4K" showed
@@ -121,12 +123,6 @@ export const ncQualities = (mode: St["mode"], maxResolution?: "1K" | "2K" | "4K"
   const cap = maxResolution ?? "2K";
   return tiersUpTo(cap);
 };
-/* Price multiplier per resolution, relative to the model's base 2K price.
-   1K is 1, not 0.5: both hosts charge 1K and 2K identically (Google, 1120
-   tokens either way; WaveSpeed nano-banana-pro, $0.14 either way), and the
-   server prices a 1K request as the 2K tier (lib/pricing.toResolutionTier).
-   Halving it here made the editor's estimate disagree with the real quote. */
-export const NC_QUALITY_MULT = TIER_PRICE_MULT;
 export type TextNode = NodeT & { name: string; kind: Kind; value: string };
 
 const sigOf = (body: string, texts: TextNode[]) => body + "||" + texts.map((t) => t.name + ":" + t.kind).join(",");

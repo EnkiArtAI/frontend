@@ -3,6 +3,7 @@
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import { fetchGenerationQuote, toModelFamily } from "@/lib/generation-checkout";
 import { runGeneration } from "@/lib/generation/run-generation";
+import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
 import { useModelCatalogue, resolveCatalogueEntry } from "@/hooks/useModelLimits";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -434,6 +435,15 @@ export default function PromptGeneratorView({
     // Quotes expire server-side after 5 minutes; refresh a little sooner.
     refetchInterval: 4 * 60 * 1000,
   });
+  /* Each tier's price is the server's quote for this prompt at the current
+     settings (Kev, 2026-10-02: "ich brauche safe überall den server-quote");
+     it was the catalogue price x tier scale, without the artist share and
+     without the fee. */
+  const tierQuotes = useServerQuotes(
+    !noCharge && promptId && core.entry && !loading
+      ? resolutions.map((t) => ({ promptId, modelId: core.entry!.id, resolution: t, boost: core.boostAvailable && boost, quality }))
+      : [],
+  );
   const showcaseImages = prompt?.showcaseImages?.length ? prompt.showcaseImages : propShowcaseImages;
   const mainImage = showcaseImages[0]?.thumbnail || showcaseImages[0]?.url || propImageUrl || "";
   const promptText = prompt?.publicPromptText || "";
@@ -1673,7 +1683,7 @@ export default function PromptGeneratorView({
                 <ResolutionSelect
                   value={resolution}
                   onChange={setResolution}
-                  options={core.tiers.map(t => ({ tier: t.tier, price: noCharge ? null : t.price }))}
+                  options={resolutions.map((t, i) => ({ tier: t, priceLabel: noCharge ? undefined : quoteLabel(tierQuotes[i]) ?? undefined }))}
                   title={noCharge
                     ? "Resolution — this run renders on the FREE route (Flux), which tops out at 2K. Paid models unlock 4K."
                     : "Resolution"}
@@ -1811,9 +1821,10 @@ export default function PromptGeneratorView({
           <div className="pgv-x402-inner">
           <div className="pgv-x402-body">
             <p>
-              Hand this prompt to your AI agent. It pays the same price as
-              you, in USDC on Solana, and needs no account and no gas. The
-              server tells it the exact price, it pays, it gets the image.
+              Hand this prompt to your AI agent. It pays in USDC on Solana
+              and needs no account and no gas. The server quotes it the exact
+              price for its own settings (discounts on your account do not
+              carry over), it pays, it gets the image.
               Paste the request below into your agent chat.
             </p>
             <code className="pgv-x402-endpoint mono">POST {typeof window !== "undefined" ? window.location.origin : ""}/api/x402/generate</code>

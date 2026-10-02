@@ -25,12 +25,12 @@
  */
 import { useMemo } from "react";
 import {
-  useModelCatalogue, resolveCatalogueEntry, tierPrice, tierScale,
+  useModelCatalogue, resolveCatalogueEntry,
   FALLBACK_RATIOS, type CatalogueEntry,
 } from "@/hooks/useModelLimits";
 import { tiersUpTo, type ResolutionTier } from "@/lib/generation/resolution";
 
-export type TierOption = { tier: ResolutionTier; price: number | null };
+export type TierOption = { tier: ResolutionTier };
 
 export type GenerationCore = {
   /** Every active model, DB-driven — for model pickers. */
@@ -78,10 +78,8 @@ export function useGenerationCore(
     // Free only when the server says the model renders on the free host. No
     // selection is not free; it is no selection.
     const free = entry?.free === true;
-    const tiers: TierOption[] = tiersUpTo(cap).map((t) => ({
-      tier: t,
-      price: free ? null : tierPrice(entry, t),
-    }));
+    // Prices are server quotes on each surface (useServerQuotes), never here.
+    const tiers: TierOption[] = tiersUpTo(cap).map((t) => ({ tier: t }));
 
     return {
       catalogue,

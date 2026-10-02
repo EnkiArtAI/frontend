@@ -3,9 +3,7 @@ import {
   apiBoostPricePerImage,
   apiPricePerImage,
   MODEL_IMAGE_PRICING,
-  computeGenerationPrice,
   effectiveQuality,
-  PLATFORM_FEE_PERCENT,
 } from "@/lib/pricing";
 import { getModelCostMicro } from "@/lib/payments/generation-pricing";
 
@@ -63,29 +61,18 @@ describe("apiBoostPricePerImage", () => {
     }
   });
 
-  it("models without a boost route answer their normal price", () => {
-    expect(apiBoostPricePerImage("flux", "2K")).toBe(apiPricePerImage("flux", "2K"));
+  it("a family without a price table has no price: it never borrows Nano Banana Pro's", () => {
+    expect(() => apiPricePerImage("flux", "2K")).toThrow(/No price table/);
+    expect(() => apiBoostPricePerImage("flux", "2K")).toThrow(/No price table/);
   });
 });
 
-describe("computeGenerationPrice", () => {
-  it("prices the boost route per image, fee on top, count applied", () => {
-    const p = computeGenerationPrice("nano-banana-pro", "4K", 3, { boost: true });
-    expect(p.perImage).toBe(0.24);
-    expect(p.apiSubtotal).toBeCloseTo(0.72, 10);
-    expect(p.total).toBeCloseTo(0.72 * (1 + PLATFORM_FEE_PERCENT), 10);
-  });
-
-  it("without boost the ladder price is unchanged for nano", () => {
-    const p = computeGenerationPrice("nano-banana-pro", "4K", 1);
-    expect(p.perImage).toBe(apiPricePerImage("nano-banana-pro", "4K"));
-  });
-
-  it("gpt quality feeds the NORMAL price — the route depends on it", () => {
-    expect(computeGenerationPrice("gpt-image-2", "2K", 1, { quality: "high" }).perImage).toBe(0.428);
-    expect(computeGenerationPrice("gpt-image-2", "2K", 1, { quality: "low" }).perImage).toBe(0.012);
-    // No quality: the tier default, same as the server will render.
-    expect(computeGenerationPrice("gpt-image-2", "4K", 1).perImage).toBe(0.712);
+describe("apiPricePerImage by quality", () => {
+  it("gpt quality sets the price, and no quality means the tier default the server renders", () => {
+    expect(apiPricePerImage("gpt-image-2", "2K", "high")).toBe(0.428);
+    expect(apiPricePerImage("gpt-image-2", "2K", "low")).toBe(0.012);
+    expect(apiPricePerImage("gpt-image-2", "4K")).toBe(0.712);
+    expect(apiBoostPricePerImage("nano-banana-pro", "4K")).toBe(0.24);
   });
 });
 

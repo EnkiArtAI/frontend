@@ -10,7 +10,6 @@
  */
 import { useEffect, useState } from "react";
 import { toModelFamily } from "@/lib/generation/model-family";
-import { TIER_PRICE_MULT } from "@/lib/generation/resolution";
 
 export interface ModelLimits {
   maxRefs: number;
@@ -50,7 +49,6 @@ interface ModelRow {
   /** Resolved server-side by /api/models via withCapabilities(). */
   maxResolution?: string;
   supportsQuality?: boolean;
-  tierScale?: Record<string, number>;
   boostAvailable?: boolean;
   free?: boolean;
 }
@@ -154,12 +152,6 @@ export interface CatalogueEntry {
    * database!").
    */
   ratios: string[];
-  /**
-   * Price multiplier per tier relative to the row's base price, computed
-   * SERVER-SIDE from the same ladder the checkout charges (1K priced as 2K;
-   * 4K/2K is per model). The old client-side flat x2 overstated 4K.
-   */
-  tierScale?: Record<string, number>;
   /** Whether a faster host exists for this model — server-derived (hasBoost). */
   boostAvailable?: boolean;
   /** How many reference images the model takes (models.max_reference_images). */
@@ -179,27 +171,6 @@ export interface CatalogueEntry {
  * (Kev's screenshot, 2026-08-19). Matching falls back to the name's family
  * slug, which is exactly what those stored slugs are.
  */
-/**
- * What ONE image at this resolution costs on this model, in dollars — or
- * null when nothing is charged (free model, or no model resolved yet).
- *
- * The pickers used to annotate tiers with multipliers ("x1, x2"), which told
- * the user a factor and made them do the arithmetic; a generation has no
- * multiplier, it has a price (Kev, 2026-08-22). Every generate surface reads
- * this one function, so the number can never drift between pickers.
- */
-export function tierPrice(
-  entry: Pick<CatalogueEntry, "price" | "tierScale"> | undefined,
-  tier: string,
-): number | null {
-  if (!entry || !(entry.price > 0)) return null;
-  return entry.price * tierScale(entry, tier);
-}
-
-/** The per-model tier multiplier; TIER_PRICE_MULT only while /api/models loads. */
-export function tierScale(entry: Pick<CatalogueEntry, "tierScale"> | undefined, tier: string): number {
-  return entry?.tierScale?.[tier] ?? TIER_PRICE_MULT[tier] ?? 1;
-}
 
 export function resolveCatalogueEntry(
   catalogue: CatalogueEntry[],
@@ -274,7 +245,6 @@ function toCatalogue(rows: ModelRow[]): CatalogueEntry[] {
         ? r.maxResolution
         : "2K") as CatalogueEntry["maxResolution"],
       ratios: Array.isArray(r.allowed_ratios) && r.allowed_ratios.length > 0 ? r.allowed_ratios : FALLBACK_RATIOS,
-      tierScale: r.tierScale && typeof r.tierScale === "object" ? (r.tierScale as Record<string, number>) : undefined,
       boostAvailable: typeof r.boostAvailable === "boolean" ? r.boostAvailable : undefined,
       maxRefs: typeof r.max_reference_images === "number" ? r.max_reference_images : undefined,
       free: r.free === true,

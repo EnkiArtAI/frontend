@@ -53,3 +53,24 @@ describe("the classic editor", () => {
     expect(EDITOR).toMatch(/const ids = Array\.from\(\{ length: count \}, \(_, i\) => base \+ i\);/);
   });
 });
+
+describe("the marketplace tiers and the shared helpers", () => {
+  const PGV = readSource(join(ROOT, "components", "PromptGeneratorView.tsx"));
+  const CORE = readSource(join(ROOT, "hooks", "useGenerationCore.ts"));
+  const LIMITS = readSource(join(ROOT, "hooks", "useModelLimits.ts"));
+  const QUALITY = readSource(join(ROOT, "components", "generation", "QualitySelect.tsx"));
+
+  it("each tier shows the server's quote for this prompt", () => {
+    expect(PGV).toMatch(/const tierQuotes = useServerQuotes\(/);
+    expect(PGV).toMatch(/priceLabel: noCharge \? undefined : quoteLabel\(tierQuotes\[i\]\) \?\? undefined/);
+  });
+
+  it("no surface can compute a price in the browser any more", () => {
+    expect(CORE).not.toMatch(/tierPrice|tierScale|price:/);
+    expect(LIMITS).not.toMatch(/export function tierPrice|export function tierScale/);
+  });
+
+  it("the quality hints make no price claims", () => {
+    expect(QUALITY).not.toMatch(/\d+x the price/);
+  });
+});
