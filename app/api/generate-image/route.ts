@@ -331,21 +331,22 @@ export async function POST(request: NextRequest) {
     // tier 2 keeps its sexual flag for the artist's text unless the prompt is
     // marked 18+ (legacy prompts were never judged at save).
     const verdict = await moderate({ prompt, surface: "generate-image", signal: request.signal, adultJudged: !fromArtist || promptAdult });
+    // A child-safety hit on a marketplace prompt is a warning on the buyer's
+    // ladder, and that warning is its one record: it weighs ten, so it
+    // suspends at once, and every repeat climbs the ladder to a ban for good
+    // (Kev, 2026-10-03: whoever keeps at it is banned).
+    const minors = fromArtist && !verdict.allowed ? childSafetyScore(verdict) : null;
+    if (minors !== null) {
+      const outcome = await recordWarning(getSupabaseServerClient(), {
+        surface: "generate-image", request, category: "minor_sexual", text: JSON.stringify(checked), confidence: minors, ...about,
+      });
+      return NextResponse.json({ error: warningMessage("minor_sexual", outcome) }, { status: 422 });
+    }
     // after() and not a bare void: on a block this route returns immediately,
     // and a floating promise can be frozen with the lambda before the insert
     // lands — losing exactly the events we most want recorded.
     after(recordModerationEvent(verdict, { surface: "generate-image", request, prompt: fromArtist ? JSON.stringify(checked) : authoring ? "" : prompt, ...about }));
     if (!verdict.allowed) {
-      // A child-safety hit on a marketplace prompt is a warning on the buyer's
-      // ladder: it weighs ten, so it suspends at once, and a repeat ends in a
-      // ban for good (Kev, 2026-10-03: whoever keeps at it is banned).
-      const minors = fromArtist ? childSafetyScore(verdict) : null;
-      if (minors !== null) {
-        const outcome = await recordWarning(getSupabaseServerClient(), {
-          surface: "generate-image", request, category: "minor_sexual", text: JSON.stringify(checked), confidence: minors, ...about,
-        });
-        return NextResponse.json({ error: warningMessage("minor_sexual", outcome) }, { status: 422 });
-      }
       return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
     }
 

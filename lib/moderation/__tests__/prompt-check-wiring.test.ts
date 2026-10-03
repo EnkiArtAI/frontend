@@ -38,13 +38,17 @@ describe("the human rail", () => {
 
   it("counts a child-safety hit on a marketplace prompt on the requester's ladder", () => {
     // Kev, 2026-10-03: whoever keeps at it is banned, a buyer of an artist's prompt too.
-    const human = HUMAN.slice(HUMAN.indexOf("if (!verdict.allowed) {"), HUMAN.indexOf("return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });", HUMAN.indexOf("if (!verdict.allowed) {")));
-    expect(human).toMatch(/const minors = fromArtist \? childSafetyScore\(verdict\) : null;/);
+    // The warning is the hit's one record: one pending case, which its overturn closes.
+    const decide = HUMAN.indexOf("const minors = fromArtist && !verdict.allowed ? childSafetyScore(verdict) : null;");
+    const record = HUMAN.indexOf('after(recordModerationEvent(verdict, { surface: "generate-image"');
+    expect(decide).toBeGreaterThan(-1);
+    const human = HUMAN.slice(decide, record);
     expect(human).toMatch(/category: "minor_sexual", text: JSON\.stringify\(checked\), confidence: minors, \.\.\.about,/);
     expect(human).toMatch(/return NextResponse\.json\(\{ error: warningMessage\("minor_sexual", outcome\) \}, \{ status: 422 \}\);/);
+    // The agent rail counts every hit, its own prompts' too: it has no account to ban for good.
     const agent = AGENT.slice(AGENT.indexOf("if (!verdict.allowed) {"), AGENT.indexOf("return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });", AGENT.indexOf("if (!verdict.allowed) {")));
-    expect(agent).toMatch(/const minors = input\.promptId \? childSafetyScore\(verdict\) : null;/);
-    expect(agent).toMatch(/category: "minor_sexual", text: JSON\.stringify\(checked\), confidence: minors, promptId: input\.promptId,/);
+    expect(agent).toMatch(/const minors = childSafetyScore\(verdict\);/);
+    expect(agent).toMatch(/category: "minor_sexual", text: JSON\.stringify\(checked\), confidence: minors,\n\s+\.\.\.\(input\.promptId \? \{ promptId: input\.promptId \} : \{\}\),/);
     expect(agent).toMatch(/return NextResponse\.json\(\{ error: warningMessage\("minor_sexual", outcome\) \}, \{ status: 422 \}\);/);
   });
 

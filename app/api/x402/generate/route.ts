@@ -287,12 +287,14 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // 18+: its save already judged that text 18+ and not explicit.
   const verdict = await moderate({ prompt: promptText, surface: "x402-generate", adultJudged: !input.promptId || promptAdult });
   if (!verdict.allowed) {
-    // A child-safety hit on a marketplace prompt counts on the address's
-    // ladder like the human rail's, where it stops the address at once.
-    const minors = input.promptId ? childSafetyScore(verdict) : null;
+    // A child-safety hit counts on the requester's ladder, where it stops an
+    // address at once; an agent's own prompt too, since this rail has no
+    // account to ban for good.
+    const minors = childSafetyScore(verdict);
     if (minors !== null) {
       const outcome = await recordWarning(supabase, {
-        surface: "x402-generate", request, category: "minor_sexual", text: JSON.stringify(checked), confidence: minors, promptId: input.promptId,
+        surface: "x402-generate", request, category: "minor_sexual", text: JSON.stringify(checked), confidence: minors,
+        ...(input.promptId ? { promptId: input.promptId } : {}),
       });
       return NextResponse.json({ error: warningMessage("minor_sexual", outcome) }, { status: 422 });
     }
