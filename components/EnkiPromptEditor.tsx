@@ -2936,7 +2936,12 @@ export default function EnkiPromptEditor() {
         body: JSON.stringify(payload),
       });
       const savedPrompt: unknown = await response.json();
-      if (!response.ok) throw new Error("Failed to save prompt");
+      if (!response.ok) {
+        // The server's own sentence: a refusal with its warning, or "could not
+        // be checked". A generic one hid both from the creator.
+        const reason = (savedPrompt as { error?: unknown } | null)?.error;
+        throw new Error(typeof reason === "string" && reason ? reason : "Failed to save prompt");
+      }
       if (typeof savedPrompt === "object" && savedPrompt !== null && "id" in savedPrompt) {
         setUi(prev => ({ ...prev, currentPromptId: String((savedPrompt as { id?: unknown }).id ?? "") }));
       }

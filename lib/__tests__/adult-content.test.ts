@@ -187,3 +187,9 @@ describe("an agent's refusal", () => {
   });
 });
 
+describe("the editor", () => {
+  it("shows the server's reason when a save is refused", () => {
+    const EDITOR = readSource(join(__dirname, "..", "..", "components", "EnkiPromptEditor.tsx"));
+    expect(EDITOR).toMatch(/throw new Error\(typeof reason === "string" && reason \? reason : "Failed to save prompt"\);/);
+  });
+});
