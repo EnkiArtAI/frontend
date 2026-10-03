@@ -1,5 +1,5 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
-import { viewerHeaders } from "@/lib/session-headers";
+import { sessionAuthHeaders, viewerHeaders } from "@/lib/session-headers";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -8,16 +8,6 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
-// The prompt-save API resolves the creator/owner from the session, never
-// from the payload — without this header saves are anonymous and updates
-// are rejected. Same token the PATCH publish call already forwards.
-function sessionHeader(): Record<string, string> {
-  const token =
-    typeof window !== "undefined"
-      ? localStorage.getItem("turnkey_session_token")
-      : null;
-  return token ? { "X-Session-Token": token } : {};
-}
 
 export async function apiRequest(
   method: string,
@@ -29,7 +19,8 @@ export async function apiRequest(
       method,
       headers: {
         ...(data ? { "Content-Type": "application/json" } : {}),
-        ...sessionHeader(),
+        // The APIs resolve the user from the session, never from the payload.
+        ...sessionAuthHeaders(),
       },
       body: data ? JSON.stringify(data) : undefined,
       credentials: "include",

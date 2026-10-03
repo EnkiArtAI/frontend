@@ -2924,17 +2924,14 @@ export default function EnkiPromptEditor() {
           .slice(0, 4),
         price: promptData.type === "premium-prompt" ? promptPrice : 0,
       };
-      // Forward the Turnkey session so the server records the creator
-      // (user_id) — the intent payment flow can only price prompts whose
-      // creator is known. Same header the publish PATCH already sends.
-      const sessionToken =
-        typeof window !== "undefined" ? localStorage.getItem("turnkey_session_token") : null;
+      // Forward the session so the server records the creator (user_id) —
+      // the intent payment flow can only price prompts whose creator is
+      // known. Same header the publish PATCH sends. It read Turnkey's token
+      // only, which nothing writes since Turnkey was retired, so every save
+      // went out anonymous and was refused.
       const response = await fetch("/api/prompt", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(sessionToken ? { "X-Session-Token": sessionToken } : {}),
-        },
+        headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
         credentials: "include",
         body: JSON.stringify(payload),
       });
@@ -2965,18 +2962,11 @@ export default function EnkiPromptEditor() {
       // action if the column/route is missing — the prompt is already saved
       // and shows on /showcase regardless.
       try {
-        // The PATCH route now requires a session (it used to accept anonymous
-        // edits), so forward the Turnkey session token.
-        const sessionToken =
-          typeof window !== "undefined"
-            ? localStorage.getItem("turnkey_session_token")
-            : null;
+        // The PATCH route requires a session (it used to accept anonymous
+        // edits), so forward it.
         await fetch(`/api/prompts/${id}`, {
           method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            ...(sessionToken ? { "X-Session-Token": sessionToken } : {}),
-          },
+          headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
           credentials: "include",
           body: JSON.stringify({ published: true }),
         });
@@ -3044,9 +3034,6 @@ export default function EnkiPromptEditor() {
     );
   };
 
-  // Same session header the save/publish fetches send.
-  const diceSessionToken =
-    typeof window !== "undefined" ? localStorage.getItem("turnkey_session_token") : null;
 
   const settingsPristine =
     !promptData.title.trim() &&
@@ -4988,7 +4975,7 @@ export default function EnkiPromptEditor() {
                   <DiceButton
                     variables={diceVariables}
                     context={promptData.body.slice(0, DICE_LIMITS.maxContextLen)}
-                    headers={diceSessionToken ? { "X-Session-Token": diceSessionToken } : undefined}
+                    headers={sessionAuthHeaders()}
                     onValues={applyDiceValues}
                     size={12}
                   />
