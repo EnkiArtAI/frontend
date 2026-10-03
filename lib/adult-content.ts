@@ -46,3 +46,11 @@ export function mayShowAdult(v: Viewer, ownerId?: string | null): boolean {
 export function hideAdult<Q extends { eq(column: string, value: boolean): Q }>(query: Q, v: Viewer, ownerId?: string | null): Q {
   return mayShowAdult(v, ownerId) ? query : query.eq("is_adult", false);
 }
+
+/** Whether any of these URLs is one of our renders marked 18+: a prompt showing one is 18+ itself. */
+export async function showsAdultRender(supabase: SupabaseClient, urls: string[]): Promise<boolean> {
+  if (urls.length === 0) return false;
+  const hits = await Promise.all(["storage_url", "preview_url", "thumbnail_url"].map((column) =>
+    supabase.from("generated_images").select("id").eq("is_adult", true).in(column, urls).limit(1)));
+  return hits.some((r) => (r.data ?? []).length > 0);
+}

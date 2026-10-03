@@ -40,7 +40,8 @@ function insertBlock(): string {
 
 /** The column list GET selects from prompts. */
 function promptSelect(): string {
-  const m = src.match(/\.from\("prompts"\)\s*\.select\(\s*"([^"]+)"/);
+  // The GET handler's read; the save path has its own ownership lookup.
+  const m = src.slice(src.indexOf("export async function GET")).match(/\.from\("prompts"\)\s*\.select\(\s*"([^"]+)"/);
   expect(m, "prompts select list not found").not.toBeNull();
   return m![1];
 }

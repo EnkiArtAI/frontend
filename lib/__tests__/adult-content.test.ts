@@ -143,10 +143,11 @@ describe("the routes", () => {
   });
 
   it("check a prompt before saving it and mark it 18+ by itself", () => {
-    const check = SAVE.indexOf("await checkPrompt({ title: body.title, content: body.content }");
+    const check = SAVE.indexOf("const check = await checkPrompt(judged, { hidden: false, signal: req.signal });");
     expect(check).toBeGreaterThan(-1);
     expect(SAVE.indexOf("const promptRow = {")).toBeGreaterThan(check);
-    expect(SAVE).toMatch(/const promptRow = \{\n\s+is_adult: check\.adult === true,/);
+    expect(SAVE).toMatch(/const adult = check\.adult === true \|\| \(await showsAdultRender\(supabase, uploadedPhotos\)\);/);
+    expect(SAVE).toMatch(/const promptRow = \{\n\s+is_adult: adult,/);
   });
 
   it("refuse an explicit prompt with a warning, and save nothing unchecked", () => {

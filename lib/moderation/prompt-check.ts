@@ -58,6 +58,24 @@ export function textValues(values: unknown): Record<string, string> {
   );
 }
 
+type SavedVariable = { name: string; defaultValue?: unknown; options?: { visibleName?: string; label?: string; promptValue?: string }[] };
+
+/**
+ * Everything a saved prompt can put into an image or show a buyer, for the
+ * check at save: title, text, tags, and every variable's default and options.
+ */
+export function savedPromptInputs(p: { title: string; content: string; tags: string[]; variables?: SavedVariable[] }): Record<string, string> {
+  const inputs: Record<string, string> = { title: p.title, content: p.content };
+  if (p.tags.length) inputs.tags = p.tags.join(", ");
+  for (const v of p.variables ?? []) {
+    const values = [v.defaultValue, ...(v.options ?? []).flatMap((o) => [o.visibleName, o.label, o.promptValue])]
+      .flat()
+      .filter((x): x is string => typeof x === "string" && x.trim() !== "");
+    if (values.length) inputs[`variable ${v.name}`] = [...new Set(values)].join(" | ");
+  }
+  return inputs;
+}
+
 const LABELS = ["extraction", "minor_sexual", "explicit_sexual", "sexual_suggestive"] as const;
 
 /**
