@@ -60,7 +60,8 @@ const warn = vi.fn(async () => ({ total: 1, suspendedUntil: null, nextStepAt: 10
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), after: () => {} }));
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => fake }));
 vi.mock("@/lib/crypto", () => ({ encryptString: () => ({ encrypted: "ct", iv: "iv", authTag: "tag", kid: "k1" }), decryptString: () => "" }));
-vi.mock("@/lib/moderation", () => ({ moderate: async () => ({ allowed: true }), CLIENT_BLOCK_MESSAGE: "blocked" }));
+const tier2 = vi.fn(async (_i: { prompt: string }) => ({ allowed: true }));
+vi.mock("@/lib/moderation", () => ({ moderate: (i: { prompt: string }) => tier2(i), CLIENT_BLOCK_MESSAGE: "blocked" }));
 vi.mock("@/lib/moderation-enforcement", () => ({ recordModerationEvent: async () => {} }));
 vi.mock("@/lib/moderation/warnings", () => ({ recordWarning: (...a: unknown[]) => warn(...(a as [])), warningMessage: () => "warned" }));
 vi.mock("@/lib/moderation/prompt-check", async (original) => ({
@@ -102,7 +103,7 @@ describe("saving a prompt", () => {
     await save({ ...BASE, variables: [{ ...BASE.variables[0], options: [{ visibleName: "Coat", promptValue: "a long coat" }] }] });
     expect(check).toHaveBeenCalledOnce();
     expect(check.mock.calls[0][0]).toEqual({
-      title: "Portrait", content: "Portrait of a woman, [outfit]", tags: "portrait", "variable outfit": "a red coat | Coat | a long coat",
+      title: "Portrait", content: "Portrait of a woman, [outfit]", tags: "portrait", "variable outfit": "outfit | a red coat | Coat | a long coat",
     });
   });
 
@@ -173,5 +174,26 @@ describe("who saves", () => {
     tables.bans.push({ user_id: "u1", lifted_at: null, expires_at: null });
     expect((await save(BASE)).status).toBe(401);
     expect(check).not.toHaveBeenCalled();
+  });
+});
+
+describe("judged whole", () => {
+  it("includes a variable's label and description, which buyers see", async () => {
+    await save({ ...BASE, variables: [{ ...BASE.variables[0], label: "Lingerie style", description: "how revealing" }] });
+    expect(check.mock.calls[0][0]["variable outfit"]).toBe("Lingerie style | how revealing | a red coat");
+  });
+
+  it("includes the stored description on an update, so a re-save cannot lower its 18+ mark", async () => {
+    tables.prompts.push({ id: "11111111-1111-4111-8111-111111111111", creator_id: "u1", description: "a sultry boudoir scene", is_adult: true });
+    check.mockImplementation(async (inputs: Record<string, string>) => (inputs.description ? { verdict: "clear", adult: true } : { verdict: "clear" }));
+    await save({ ...BASE, id: "11111111-1111-4111-8111-111111111111" });
+    expect(check.mock.calls[0][0].description).toBe("a sultry boudoir scene");
+    expect(tables.prompts[0].is_adult).toBe(true);
+  });
+
+  it("hands tier 2 the same whole", async () => {
+    tier2.mockClear();
+    await save({ ...BASE, variables: [{ ...BASE.variables[0], defaultValue: "sheer lingerie" }] });
+    expect(tier2.mock.calls[0][0].prompt).toContain("sheer lingerie");
   });
 });

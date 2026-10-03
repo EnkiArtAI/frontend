@@ -345,6 +345,9 @@ export async function POST(req: Request) {
     // ownership oracle).
     let ownerIds: string[] = [];
     let creatorId: string | null = null;
+    // The description is not part of this save (it is edited through the
+    // PATCH route) but is shown with the prompt, so an update judges it too.
+    let storedDescription: string | null = null;
     if (body.id) {
       const owners = await resolveOwnerIds(supabase, req);
       if (!owners) {
@@ -353,8 +356,9 @@ export async function POST(req: Request) {
       // A session whose wallet maps to no user row owns no prompts, and
       // .in() with an empty list is a PostgREST parse error, not a no-op.
       if (owners.length === 0) return NextResponse.json({ error: "not found" }, { status: 404 });
-      const { data: own } = await supabase.from("prompts").select("id").eq("id", body.id).in("creator_id", owners).maybeSingle();
+      const { data: own } = await supabase.from("prompts").select("id, description").eq("id", body.id).in("creator_id", owners).maybeSingle();
       if (!own) return NextResponse.json({ error: "not found" }, { status: 404 });
+      storedDescription = (own.description as string | null) ?? null;
       ownerIds = owners;
     } else {
       creatorId = await resolveCreatorId(supabase, req);
@@ -370,7 +374,7 @@ export async function POST(req: Request) {
     // is one whose showcase images are 18+ renders, so the creator never has
     // to (Kev, 2026-10-03). An outage of the check saves nothing rather than
     // an unjudged prompt.
-    const judged = savedPromptInputs({ ...body, tags });
+    const judged = savedPromptInputs({ ...body, tags, description: storedDescription });
     const check = await checkPrompt(judged, { hidden: false, signal: req.signal });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
       const outcome = await recordWarning(supabase, {
@@ -395,9 +399,8 @@ export async function POST(req: Request) {
     // The full content is checked, not just the public excerpt: encryption at
     // rest protects the artist's work from a database dump, it does not make
     // the prompt safe to run.
-    const moderatedText = [body.title, body.content, ...(Array.isArray(tags) ? tags : [])]
-      .filter((v): v is string => typeof v === "string" && v.length > 0)
-      .join("\n");
+    // Tier 2 reads the same whole as the prompt check.
+    const moderatedText = Object.values(judged).join("\n");
     if (moderatedText) {
       const verdict = await moderate({ prompt: moderatedText, surface: "upload", signal: req.signal, adultJudged: true });
       after(recordModerationEvent(verdict, { surface: "upload", request: req, prompt: moderatedText }));
