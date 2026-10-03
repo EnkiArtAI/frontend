@@ -63,12 +63,13 @@ export async function GET(req: NextRequest) {
   // ── best-effort extras, fetched in parallel ──
   const since14 = new Date(Date.now() - TREND_DAYS * DAY_MS).toISOString();
   const podiumIds = raw.slice(0, 3).map((r) => r.best_prompt_id).filter(Boolean) as string[];
+  const bestIds = raw.map((r) => r.best_prompt_id).filter(Boolean) as string[];
   const [seriesRes, showcaseRes, genImgRes, purchRes] = await Promise.all([
     ids.length
       ? supabase.rpc(isEarn ? "leaderboard_earn_series" : "leaderboard_gen_series", { p_creators: ids, p_since: since14 })
       : Promise.resolve({ data: [], error: null }),
-    podiumIds.length
-      ? supabase.from("prompts").select("id, showcase_images, is_adult").in("id", podiumIds)
+    bestIds.length
+      ? supabase.from("prompts").select("id, showcase_images, is_adult").in("id", bestIds)
       : Promise.resolve({ data: [], error: null }),
     podiumIds.length
       ? supabase.from("generated_images").select("prompt_id, thumbnail_url, storage_url, created_at")
@@ -98,18 +99,19 @@ export async function GET(req: NextRequest) {
   }
   const trendReady = !seriesRes.error;
 
-  // The Hall of Fame is public: an 18+ prompt keeps its rank but shows no
-  // image, not even one of its renders.
+  // The Hall of Fame is public: a creator whose best prompt is 18+ keeps the
+  // rank, but the prompt shows no title, link or image, not even one of its
+  // renders, on any row.
   const images = new Map<string, string>();
-  const adult = new Set<string>();
+  const hidden = new Set<string>();
   for (const p of (showcaseRes.data ?? []) as { id: string; showcase_images: unknown; is_adult: boolean | null }[]) {
-    if (p.is_adult) { adult.add(p.id); continue; }
+    if (p.is_adult) { hidden.add(p.id); continue; }
     const u = firstShowcase(p.showcase_images);
-    if (u) images.set(p.id, u);
+    if (u && podiumIds.includes(p.id)) images.set(p.id, u);
   }
   for (const g of (genImgRes.data ?? []) as { prompt_id: string; thumbnail_url: string | null; storage_url: string | null }[]) {
     const u = g.thumbnail_url || g.storage_url;
-    if (u && !images.has(g.prompt_id) && !adult.has(g.prompt_id)) images.set(g.prompt_id, u);
+    if (u && !images.has(g.prompt_id)) images.set(g.prompt_id, u);
   }
 
   const promptCounts = new Map<string, Set<string>>();
@@ -119,6 +121,7 @@ export async function GET(req: NextRequest) {
   }
 
   const rows = raw.map((r, i) => {
+    const show = !(r.best_prompt_id && hidden.has(r.best_prompt_id));
     const s = spark.get(r.creator_id) ?? (trendReady ? new Array(TREND_DAYS).fill(0) : null);
     const delta = s ? s.slice(7).reduce((a, b) => a + b, 0) - s.slice(0, 7).reduce((a, b) => a + b, 0) : null;
     return {
@@ -126,9 +129,9 @@ export async function GET(req: NextRequest) {
       handle: r.handle ?? "unnamed",
       value: isEarn ? (r.total_cents ?? 0) / 100 : (r.total ?? 0),
       unit: isEarn ? ("usd" as const) : ("gen" as const),
-      bestPromptId: r.best_prompt_id,
-      bestPromptTitle: r.best_prompt_title,
-      image: (r.best_prompt_id && images.get(r.best_prompt_id)) || null,
+      bestPromptId: show ? r.best_prompt_id : null,
+      bestPromptTitle: show ? r.best_prompt_title : null,
+      image: (show && r.best_prompt_id && images.get(r.best_prompt_id)) || null,
       spark: s,
       delta,
       sub: isEarn ? (promptCounts.get(r.creator_id)?.size ?? 0) : null,

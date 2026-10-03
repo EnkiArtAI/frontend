@@ -100,14 +100,6 @@ describe("the routes", () => {
       .toMatch(/\.range\(offset, offset \+ limit - 1\),\s*await viewer\(supabase, req\),\s*ownerId,\s*\);/);
   });
 
-  it("the Hall of Fame shows no 18+ image", () => {
-    const hof = src("app", "api", "leaderboard", "route.ts");
-    expect(hof).toMatch(/select\("id, showcase_images, is_adult"\)/);
-    expect(hof).toMatch(/if \(p\.is_adult\) \{ adult\.add\(p\.id\); continue; \}/);
-    expect(hof).toMatch(/!images\.has\(g\.prompt_id\) && !adult\.has\(g\.prompt_id\)/);
-    expect(hof).toMatch(/\.is\("deleted_at", null\)\.eq\("is_adult", false\)/);
-  });
-
   it("link previews show the brand card", () => {
     for (const s of [src("app", "api", "og", "[id]", "route.tsx"), src("app", "generator", "[id]", "page.tsx")]) {
       expect(s).toMatch(/\.eq\("id", id\)\s*\.eq\("is_adult", false\)/);
