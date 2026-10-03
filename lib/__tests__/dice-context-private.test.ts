@@ -35,6 +35,7 @@ vi.mock("@/lib/rate-limit", () => ({
 import { POST as dice } from "../../app/api/workflow/variables/route";
 
 const SECRET = "the artist's secret words around [subject]";
+const LIVE = { is_listed: true, listing_status: "active", deleted_at: null };
 
 async function sentToXai(): Promise<string> {
   const fetchMock = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: "{}" } }] }), { status: 200 }));
@@ -63,8 +64,17 @@ describe("a dice roll's context", () => {
     expect(await sentToXai()).toContain("Moody - A portrait");
   });
 
-  it("keeps a free prompt's excerpt", async () => {
-    promptRow = { prompt_type: "free", public_prompt_text: "a free [subject]", title: "Free" };
+  it("keeps a live free prompt's excerpt", async () => {
+    promptRow = { prompt_type: "free", public_prompt_text: "a free [subject]", title: "Free", ...LIVE };
     expect(await sentToXai()).toContain("a free [subject]");
+  });
+
+  it("never carries the excerpt of a free prompt that is not released", async () => {
+    for (const unreleased of [{ is_listed: false }, { listing_status: "delisted" }, { deleted_at: "2026-10-01T00:00:00Z" }]) {
+      promptRow = { prompt_type: "free", public_prompt_text: "a draft [subject]", title: "Draft", ...LIVE, ...unreleased };
+      const body = await sentToXai();
+      expect(body).not.toContain("a draft [subject]");
+      expect(body).toContain("Draft");
+    }
   });
 });

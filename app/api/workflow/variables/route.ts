@@ -17,7 +17,7 @@ import { z } from "zod";
 import { requireAuth, checkRateLimit } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { mayShowAdult, viewer } from "@/lib/adult-content";
-import { isPublicText } from "@/lib/prompt-visibility";
+import { isListed, isPublicText } from "@/lib/prompt-visibility";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import {
   buildDiceMessages,
@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
         .order("position"),
       supabase
         .from("prompts")
-        .select("public_prompt_text, prompt_type, is_free_showcase, title, description, is_adult, creator_id")
+        .select("public_prompt_text, prompt_type, is_free_showcase, is_listed, listing_status, deleted_at, title, description, is_adult, creator_id")
         .eq("id", parsed.data.promptId)
         .maybeSingle(),
     ]);
@@ -128,10 +128,11 @@ export async function POST(req: NextRequest) {
     }
     sourceVars = (rows ?? []).map(rowToDiceVariable);
     // Public words only, never the encrypted content: a buyer's dice roll must
-    // not carry the artist's secret to a third party. A free prompt lends its
-    // excerpt; a paid one only what its card shows, the title and description.
+    // not carry the artist's secret to a third party. A live free prompt lends
+    // its excerpt; a paid or unreleased one only its title and description
+    // (the editor sends a draft's own words as variables' context itself).
     context =
-      (prompt && isPublicText(prompt) ? (prompt.public_prompt_text as string | null) : null) ||
+      (prompt && isPublicText(prompt) && isListed(prompt) ? (prompt.public_prompt_text as string | null) : null) ||
       [prompt?.title, prompt?.description].filter((v): v is string => typeof v === "string" && v.trim() !== "").join(" - ") ||
       undefined;
   } else if (parsed.data.variables) {
