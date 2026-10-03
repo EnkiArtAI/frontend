@@ -111,7 +111,10 @@ export async function recordModerationEvent(
       review_state: verdict.enforcement === "review" ? "pending" : "none",
     }).select("id").single();
 
-    if (userId) await maybeAutoBan(supabase, userId, verdict, (event?.id as string | undefined) ?? null);
+    // On a marketplace prompt the classifier read the artist's words with the
+    // buyer's values, so its score is not the buyer's alone: the event waits
+    // for a human, who can have the owner reveal the prompt.
+    if (userId && !ctx.promptId) await maybeAutoBan(supabase, userId, verdict, (event?.id as string | undefined) ?? null);
   } catch {
     /* recording is best-effort by design */
   }
