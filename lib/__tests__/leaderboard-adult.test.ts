@@ -14,15 +14,20 @@ let renders: Row[];
 
 const chain = (rows: () => Row[]) => {
   const filters: ((r: Row) => boolean)[] = [];
+  let cols: string[] | null = null;
   const q = {
-    select: () => q,
+    // Only the selected columns come back, as from PostgREST.
+    select: (c: string) => { cols = c.split(",").map((x) => x.trim()); return q; },
     in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return q; },
     is: (c: string, v: null) => { filters.push((r) => (r[c] ?? null) === v); return q; },
     eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
     gte: () => q,
     order: () => q,
     limit: () => q,
-    then: (ok: (v: unknown) => unknown) => Promise.resolve({ data: rows().filter((r) => filters.every((f) => f(r))), error: null }).then(ok),
+    then: (ok: (v: unknown) => unknown) => Promise.resolve({
+      data: rows().filter((r) => filters.every((f) => f(r))).map((r) => (cols ? Object.fromEntries(cols.map((c) => [c, r[c]])) : r)),
+      error: null,
+    }).then(ok),
   };
   return q;
 };
@@ -39,7 +44,7 @@ const rank = (n: number, prompt: string) => ({ creator_id: `c${n}`, handle: `h${
 
 beforeEach(() => {
   ranking = [rank(1, "p1"), rank(2, "p2"), rank(3, "p3"), rank(4, "p4"), rank(5, "p5")];
-  prompts = ["p1", "p2", "p3", "p4", "p5"].map((id) => ({ id, is_adult: false, showcase_images: [`https://img/${id}.png`] }));
+  prompts = ["p1", "p2", "p3", "p4", "p5"].map((id) => ({ id, is_adult: false, is_listed: true, showcase_images: [`https://img/${id}.png`] }));
   renders = [];
 });
 
@@ -59,15 +64,20 @@ describe("the Hall of Fame", () => {
   });
 
   it("does not fall back to one of the 18+ prompt's renders", async () => {
-    prompts[0] = { id: "p1", is_adult: true, showcase_images: [] };
+    prompts[0] = { id: "p1", is_adult: true, is_listed: true, showcase_images: [] };
     renders.push({ prompt_id: "p1", storage_url: "https://img/render.png", deleted_at: null, is_adult: false });
     expect((await rows())[0].image).toBeNull();
   });
 
   it("shows no 18+ render even for an ordinary prompt", async () => {
-    prompts[0] = { id: "p1", is_adult: false, showcase_images: [] };
+    prompts[0] = { id: "p1", is_adult: false, is_listed: true, showcase_images: [] };
     renders.push({ prompt_id: "p1", storage_url: "https://img/adult-render.png", deleted_at: null, is_adult: true });
     expect((await rows())[0].image).toBeNull();
+  });
+
+  it("shows no title of a prompt that was never released", async () => {
+    prompts[1].is_listed = false;
+    expect((await rows())[1]).toMatchObject({ rank: 2, bestPromptId: null, bestPromptTitle: null, image: null });
   });
 
   it("shows images on the podium only", async () => {

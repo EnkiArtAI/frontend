@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
       ? supabase.rpc(isEarn ? "leaderboard_earn_series" : "leaderboard_gen_series", { p_creators: ids, p_since: since14 })
       : Promise.resolve({ data: [], error: null }),
     bestIds.length
-      ? supabase.from("prompts").select("id, showcase_images, is_adult").in("id", bestIds)
+      ? supabase.from("prompts").select("id, showcase_images, is_adult, is_listed").in("id", bestIds)
       : Promise.resolve({ data: [], error: null }),
     podiumIds.length
       ? supabase.from("generated_images").select("prompt_id, thumbnail_url, storage_url, created_at")
@@ -99,13 +99,15 @@ export async function GET(req: NextRequest) {
   }
   const trendReady = !seriesRes.error;
 
-  // The Hall of Fame is public: a creator whose best prompt is 18+ keeps the
-  // rank, but the prompt shows no title, link or image, not even one of its
-  // renders, on any row.
+  // The Hall of Fame is public: a creator whose best prompt is 18+ or was
+  // never released keeps the rank, but the prompt shows no title, link or
+  // image, not even one of its renders, on any row. An unreleased prompt is
+  // a draft, or the row a free-form generation creates, titled with the
+  // first words the user typed.
   const images = new Map<string, string>();
   const hidden = new Set<string>();
-  for (const p of (showcaseRes.data ?? []) as { id: string; showcase_images: unknown; is_adult: boolean | null }[]) {
-    if (p.is_adult) { hidden.add(p.id); continue; }
+  for (const p of (showcaseRes.data ?? []) as { id: string; showcase_images: unknown; is_adult: boolean | null; is_listed: boolean | null }[]) {
+    if (p.is_adult || !p.is_listed) { hidden.add(p.id); continue; }
     const u = firstShowcase(p.showcase_images);
     if (u && podiumIds.includes(p.id)) images.set(p.id, u);
   }
