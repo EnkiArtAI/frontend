@@ -10,6 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { ADDRESS_WINDOW_MS, weightSince } from "@/lib/moderation/warnings";
 import { hitsSince } from "@/lib/moderation/extraction-hits";
 import { activeBanFor } from "@/lib/session-user";
+import { readEvidence } from "@/lib/moderation/evidence";
 
 /** Categories that flag a child-safety case; only an admin may overturn one or lift its ban. */
 export const CHILD_SAFETY = ["minor_sexual", "sexual/minors", "csam"];
@@ -111,7 +112,7 @@ export async function listPeople(supabase: SupabaseClient): Promise<Person[]> {
 export interface PersonDetail {
   events: {
     id: string; category: string | null; severity: string; tier: number | null; surface: string;
-    rules: string[]; weight: number; confidence: number | null; prompt: string | null; state: string;
+    rules: string[]; weight: number; confidence: number | null; prompt: string | null; withheld: boolean; state: string;
     reviewedAt: string | null; note: string | null; at: string;
   }[];
   failures: {
@@ -145,6 +146,8 @@ export async function personDetail(supabase: SupabaseClient, who: Who, decrypt: 
   return {
     events: ((ev.data ?? []) as Row[]).map((r) => {
       const scores = (r.scores ?? {}) as Record<string, unknown>;
+      // Never an artist's words (lib/moderation/evidence).
+      const evidence = readEvidence(r);
       return {
         id: String(r.id),
         category: (r.category as string | null) ?? null,
@@ -154,7 +157,8 @@ export async function personDetail(supabase: SupabaseClient, who: Who, decrypt: 
         rules: Array.isArray(r.matched_rules) ? (r.matched_rules as string[]) : [],
         weight: Number(scores.weight) || 0,
         confidence: typeof scores.confidence === "number" ? scores.confidence : typeof scores.extraction === "number" ? scores.extraction : null,
-        prompt: decrypt(r.evidence_ct, r.evidence_iv, r.evidence_tag, r.evidence_kid),
+        prompt: evidence.text,
+        withheld: evidence.withheld,
         state: String(r.review_state),
         reviewedAt: (r.reviewed_at as string | null) ?? null,
         note: (r.review_notes as string | null) ?? null,

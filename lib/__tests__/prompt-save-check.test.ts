@@ -65,7 +65,8 @@ vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => fake }))
 vi.mock("@/lib/crypto", () => ({ encryptString: () => ({ encrypted: "ct", iv: "iv", authTag: "tag", kid: "k1" }), decryptString: () => "" }));
 const tier2 = vi.fn(async (_i: { prompt: string }) => ({ allowed: true }));
 vi.mock("@/lib/moderation", () => ({ moderate: (i: { prompt: string }) => tier2(i), CLIENT_BLOCK_MESSAGE: "blocked" }));
-vi.mock("@/lib/moderation-enforcement", () => ({ recordModerationEvent: async () => {} }));
+const recorded = vi.fn(async (..._a: unknown[]) => {});
+vi.mock("@/lib/moderation-enforcement", () => ({ recordModerationEvent: (...a: unknown[]) => recorded(...a) }));
 vi.mock("@/lib/moderation/warnings", () => ({ recordWarning: (...a: unknown[]) => warn(...(a as [])), warningMessage: () => "warned" }));
 vi.mock("@/lib/moderation/prompt-check", async (original) => ({
   ...(await original<typeof import("@/lib/moderation/prompt-check")>()),
@@ -134,6 +135,26 @@ describe("saving a prompt", () => {
     expect((await save(BASE)).status).toBe(422);
     expect(warn).toHaveBeenCalledOnce();
     expect(tables.prompts).toEqual([]);
+  });
+
+  it("keeps the body of a refused save from every moderator", async () => {
+    check.mockResolvedValue({ verdict: "explicit_sexual", confidence: 0.9 });
+    await save(BASE);
+    const ctx = (warn.mock.calls[0] as unknown[])[1] as { text: string; withheld?: string };
+    expect(ctx.text).not.toContain("Portrait of a woman");
+    expect(ctx.text).toContain("Portrait");
+    expect(ctx.withheld).toBe("Portrait of a woman, [outfit]");
+  });
+
+  it("keeps the body of a save tier 2 blocks from every moderator", async () => {
+    tier2.mockResolvedValueOnce({ allowed: false });
+    recorded.mockClear();
+    expect((await save(BASE)).status).toBe(422);
+    const ctx = recorded.mock.calls[0][1] as { prompt: string; withheld?: string };
+    expect(ctx.prompt).not.toContain("Portrait of a woman");
+    expect(ctx.withheld).toBe("Portrait of a woman, [outfit]");
+    // Tier 2 itself still judged the whole prompt.
+    expect(tier2.mock.calls.at(-1)![0].prompt).toContain("Portrait of a woman");
   });
 
   it("saves nothing while the check is unavailable", async () => {

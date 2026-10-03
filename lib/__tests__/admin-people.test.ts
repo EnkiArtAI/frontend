@@ -96,6 +96,9 @@ vi.mock("@/lib/session-user", async (original) => ({
 
 import { listPeople, personDetail, parsePersonKey, hasChildSafetyCase } from "@/lib/admin/people";
 import { GET, POST } from "../../app/api/admin/route";
+import { randomBytes } from "node:crypto";
+import { decryptString, encryptString, resetKeyringCache } from "@/lib/crypto";
+import { sealEvidence } from "@/lib/moderation/evidence";
 
 const HASH = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const ago = (days: number) => new Date(Date.now() - days * 86400_000).toISOString();
@@ -105,6 +108,8 @@ const ev = (user: string | null, category: string, extra: Row = {}): Row => ({
 });
 
 beforeEach(() => {
+  process.env.FIELD_ENCRYPTION_KEY_B64 = randomBytes(32).toString("base64");
+  resetKeyringCache();
   failing = new Set();
   tables = {
     automod_events: [], generation_failures: [], bans: [], appeals: [], models: [{ id: "m1", name: "GPT Image 2" }],
@@ -200,9 +205,32 @@ describe("one person, expanded", () => {
   const decrypt = (ct: unknown) => (ct === "secret" ? "the decrypted prompt" : null);
 
   it("shows every event with its prompt, weight and state", async () => {
-    tables.automod_events.push(ev("u1", "explicit_sexual", { evidence_ct: "secret", surface: "generate-image", severity: "strike", tier: 2, scores: { weight: 1, confidence: 0.92 } }));
+    const sealed = sealEvidence({ shown: "the decrypted prompt" })!;
+    tables.automod_events.push(ev("u1", "explicit_sexual", {
+      evidence_ct: sealed.encrypted, evidence_iv: sealed.iv, evidence_tag: sealed.authTag, evidence_kid: sealed.kid,
+      surface: "generate-image", severity: "strike", tier: 2, scores: { weight: 1, confidence: 0.92 },
+    }));
     const d = await personDetail(fake, { userId: "u1" }, decrypt);
-    expect(d.events[0]).toMatchObject({ category: "explicit_sexual", prompt: "the decrypted prompt", weight: 1, confidence: 0.92, state: "none" });
+    expect(d.events[0]).toMatchObject({ category: "explicit_sexual", prompt: "the decrypted prompt", withheld: false, weight: 1, confidence: 0.92, state: "none" });
+  });
+
+  it("never shows the artist text a refused save withheld", async () => {
+    const sealed = sealEvidence({ shown: "{\"title\":\"Moody\"}", withheld: "the artist's secret words" })!;
+    tables.automod_events.push(ev("u1", "explicit_sexual", {
+      evidence_ct: sealed.encrypted, evidence_iv: sealed.iv, evidence_tag: sealed.authTag, evidence_kid: sealed.kid, surface: "upload",
+    }));
+    // A save recorded before the rule, its body inside, read with the real key.
+    const legacy = encryptString("Moody\nthe artist's secret words");
+    tables.automod_events.push(ev("u1", "explicit_sexual", {
+      evidence_ct: legacy.encrypted, evidence_iv: legacy.iv, evidence_tag: legacy.authTag, evidence_kid: legacy.kid, surface: "upload",
+    }));
+    const real = (ct: unknown, iv: unknown, tag: unknown, kid: unknown) => {
+      try { return decryptString({ encrypted: String(ct), iv: String(iv), authTag: String(tag), kid: kid ? String(kid) : undefined }); } catch { return null; }
+    };
+    const d = await personDetail(fake, { userId: "u1" }, real);
+    expect(d.events.find((e) => e.prompt !== null)).toMatchObject({ prompt: "{\"title\":\"Moody\"}", withheld: true });
+    expect(d.events.filter((e) => e.withheld)).toHaveLength(2);
+    expect(JSON.stringify(d)).not.toContain("secret words");
   });
 
   it("shows a failure with its settings, error and model name", async () => {

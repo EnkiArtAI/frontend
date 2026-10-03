@@ -350,10 +350,13 @@ export async function POST(req: Request) {
     // to (Kev, 2026-10-03). An outage of the check saves nothing rather than
     // an unjudged prompt.
     const judged = savedPromptInputs({ ...body, tags, description: storedDescription });
+    // A record of a refused save shows what a buyer could see; the body is
+    // the artist's and is withheld from every moderator (lib/moderation/evidence).
+    const { content: artistText, ...shownInputs } = judged;
     const check = await checkPrompt(judged, { hidden: false, signal: req.signal });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
       const outcome = await recordWarning(supabase, {
-        surface: "upload", request: req, category: check.verdict, text: JSON.stringify(judged), confidence: check.confidence,
+        surface: "upload", request: req, category: check.verdict, text: JSON.stringify(shownInputs), withheld: artistText, confidence: check.confidence,
       });
       return NextResponse.json({ error: warningMessage(check.verdict, outcome, "save") }, { status: 422 });
     }
@@ -382,7 +385,7 @@ export async function POST(req: Request) {
     const moderatedText = Object.values(judged).join("\n");
     if (moderatedText) {
       const verdict = await moderate({ prompt: moderatedText, surface: "upload", signal: req.signal, adultJudged: true });
-      after(recordModerationEvent(verdict, { surface: "upload", request: req, prompt: moderatedText }));
+      after(recordModerationEvent(verdict, { surface: "upload", request: req, prompt: Object.values(shownInputs).join("\n"), withheld: artistText }));
       if (!verdict.allowed) {
         return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
       }

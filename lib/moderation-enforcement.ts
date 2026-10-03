@@ -21,7 +21,7 @@ import { getSupabaseServerClientSafe } from "@/lib/supabaseServer";
 import { resolveSessionUserWithBan } from "@/lib/session-user";
 import { banUntil } from "@/lib/moderation/bans";
 import { getClientIp, hashIp } from "@/lib/ip-hash";
-import { encryptString } from "@/lib/crypto";
+import { sealEvidence } from "@/lib/moderation/evidence";
 import type { ModerationVerdict } from "@/lib/moderation";
 
 export interface RecordContext {
@@ -33,8 +33,12 @@ export interface RecordContext {
    * cannot report is a route that silently stops being evidence.
    */
   request: { headers: { get(name: string): string | null } };
-  /** The prompt itself; stored encrypted, never in clear. */
+  /** What a moderator may read of the request; stored encrypted, never in clear. */
   prompt: string;
+  /** An artist's words the request carried, kept from every moderator (lib/moderation/evidence). */
+  withheld?: string;
+  /** The marketplace prompt whose text was moderated together with the buyer's values. */
+  promptId?: string;
 }
 
 /**
@@ -79,14 +83,8 @@ export async function recordModerationEvent(
     // Evidence is encrypted at rest: a blocked CSAM prompt is itself a liability
     // in plaintext. The hash (in lib/moderation) carries repeat-offender
     // detection without holding the text readable.
-    let evidence: { encrypted: string; iv: string; authTag: string; kid?: string } | null = null;
-    if (!verdict.allowed) {
-      try {
-        evidence = encryptString(ctx.prompt.slice(0, 4000));
-      } catch {
-        evidence = null; // never let a crypto config problem lose the event
-      }
-    }
+    // A crypto config problem stores the event without it rather than lose it.
+    const evidence = verdict.allowed ? null : sealEvidence({ shown: ctx.prompt, withheld: ctx.withheld, promptId: ctx.promptId });
 
     const { data: event } = await supabase.from("automod_events").insert({
       user_id: userId,

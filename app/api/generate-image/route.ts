@@ -286,10 +286,13 @@ export async function POST(request: NextRequest) {
     // extraction attempt and an outage of the check both answer like any
     // failed generation.
     const checked = fromArtist ? textValues(body.variableValues) : { prompt };
+    // A record of an artist's prompt names it and shows the buyer's values,
+    // never its text (lib/moderation/evidence).
+    const about = fromArtist ? { promptId: String(paid.prompt_id) } : {};
     const check = await checkPrompt(checked, { hidden: fromArtist, signal: request.signal });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
       const outcome = await recordWarning(getSupabaseServerClient(), {
-        surface: "generate-image", request, category: check.verdict, text: JSON.stringify(checked), confidence: check.confidence,
+        surface: "generate-image", request, category: check.verdict, text: JSON.stringify(checked), confidence: check.confidence, ...about,
       });
       return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
     }
@@ -308,7 +311,7 @@ export async function POST(request: NextRequest) {
       // Counted only for a signed-in account: this answer comes before login,
       // where nothing would stop a loop filling the queue and the admins' inbox.
       if (check.verdict === "extraction" && asker) {
-        after(recordExtractionHit(getSupabaseServerClient(), { surface: "generate-image", request, values: checked, confidence: check.confidence }));
+        after(recordExtractionHit(getSupabaseServerClient(), { surface: "generate-image", request, values: checked, confidence: check.confidence, ...about }));
       }
       return NextResponse.json(ADULT_REFUSAL, { status: 403 });
     }
@@ -327,7 +330,7 @@ export async function POST(request: NextRequest) {
     // after() and not a bare void: on a block this route returns immediately,
     // and a floating promise can be frozen with the lambda before the insert
     // lands — losing exactly the events we most want recorded.
-    after(recordModerationEvent(verdict, { surface: "generate-image", request, prompt }));
+    after(recordModerationEvent(verdict, { surface: "generate-image", request, prompt: fromArtist ? JSON.stringify(checked) : prompt, ...about }));
     if (!verdict.allowed) {
       return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
     }
@@ -609,7 +612,7 @@ export async function POST(request: NextRequest) {
     // request that got this far counts as a caught attempt.
     if (silent) {
       if (check.verdict === "extraction") {
-        after(recordExtractionHit(getSupabaseServerClient(), { surface: "generate-image", request, values: checked, confidence: check.confidence }));
+        after(recordExtractionHit(getSupabaseServerClient(), { surface: "generate-image", request, values: checked, confidence: check.confidence, ...about }));
       }
       // The wait comes first: a provider failure holds the claim and the slot
       // until it answers, so a second request meanwhile must see them taken.

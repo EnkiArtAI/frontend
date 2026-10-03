@@ -30,6 +30,12 @@ describe("a real generation failure", () => {
 describe("the human rail", () => {
   const check = HUMAN.indexOf("await checkPrompt(checked, { hidden: fromArtist, signal: request.signal })");
 
+  it("records an artist's prompt by its id and the buyer's values, never its text", () => {
+    expect(HUMAN).toMatch(/const about = fromArtist \? \{ promptId: String\(paid\.prompt_id\) \} : \{\};/);
+    expect(HUMAN).toMatch(/after\(recordModerationEvent\(verdict, \{ surface: "generate-image", request, prompt: fromArtist \? JSON\.stringify\(checked\) : prompt, \.\.\.about \}\)\);/);
+    expect(HUMAN.match(/recordModerationEvent\(/g)).toHaveLength(1);
+  });
+
   it("judges an artist's prompt on the buyer's values and an own prompt whole", () => {
     expect(HUMAN).toMatch(/const checked = fromArtist \? textValues\(body\.variableValues\) : \{ prompt \};/);
   });

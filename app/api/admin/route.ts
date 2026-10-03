@@ -21,6 +21,7 @@ import { resolveSessionUserId } from "@/lib/session-user";
 import { decryptString, encryptString, type EncryptedPayload } from "@/lib/crypto";
 import { notifyAdmins } from "@/lib/admin-notify";
 import { CHILD_SAFETY, hasChildSafetyCase, listPeople, parsePersonKey, personDetail } from "@/lib/admin/people";
+import { readEvidence } from "@/lib/moderation/evidence";
 import { banUntil } from "@/lib/moderation/bans";
 
 /** A ban counts while it is not lifted and has not run out, as activeBanFor reads it. */
@@ -384,6 +385,7 @@ export async function GET(req: NextRequest) {
     },
     automod: (automod.data ?? []).map((r) => {
       const scores = (r.scores as Record<string, number> | null) ?? null;
+      const evidence = readEvidence(r);
       // The single number a moderator needs: what the classifier was most
       // sure about. Everything else is in `scores` if they open the row.
       const worst = scores
@@ -398,9 +400,10 @@ export async function GET(req: NextRequest) {
         category: (r.category as string) ?? null,
         rules: Array.isArray(r.matched_rules) ? (r.matched_rules as string[]) : [],
         topScore: worst ? { name: worst[0], value: worst[1] } : null,
-        // The blocked prompt itself. Encrypted at rest; a moderator judging a
-        // block has to be able to read what was actually written.
-        prompt: tryDecrypt(r.evidence_ct, r.evidence_iv, r.evidence_tag, r.evidence_kid, [undefined]),
+        // What was blocked, as far as a moderator may read it: a user's own
+        // text and a buyer's values, never an artist's words.
+        prompt: evidence.text,
+        withheld: evidence.withheld,
         state: (r.review_state as string) ?? "none",
         at: r.created_at,
       };

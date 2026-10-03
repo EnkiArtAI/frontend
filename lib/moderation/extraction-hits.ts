@@ -14,7 +14,7 @@
 import { createHash } from "crypto";
 import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { encryptString } from "@/lib/crypto";
+import { sealEvidence } from "@/lib/moderation/evidence";
 import { getClientIp, hashIp } from "@/lib/ip-hash";
 import { resolveSessionUserWithBan } from "@/lib/session-user";
 import { banUntil } from "@/lib/moderation/bans";
@@ -62,7 +62,7 @@ export async function agentBlocked(supabase: SupabaseClient, request: Req): Prom
 /** Fire-and-forget from after(): a failure here must never change what the buyer saw. */
 export async function recordExtractionHit(
   supabase: SupabaseClient,
-  ctx: { surface: string; request: Req; values: Record<string, string>; confidence: number },
+  ctx: { surface: string; request: Req; values: Record<string, string>; confidence: number; promptId?: string },
 ): Promise<void> {
   try {
     const token = ctx.request.headers.get("X-Session-Token");
@@ -70,12 +70,8 @@ export async function recordExtractionHit(
     const userId = token ? await resolveSessionUserWithBan(supabase, token).then((s) => s.userId).catch(() => null) : null;
     const ipHash = hashIp(getClientIp(ctx.request));
     const sorted = JSON.stringify(Object.fromEntries(Object.entries(ctx.values).sort(([a], [b]) => a.localeCompare(b))));
-    let evidence: { encrypted: string; iv: string; authTag: string; kid?: string } | null = null;
-    try {
-      evidence = encryptString(sorted.slice(0, 4000));
-    } catch {
-      evidence = null; // never let a crypto config problem lose the event
-    }
+    // A crypto config problem stores the event without it rather than lose it.
+    const evidence = sealEvidence({ shown: sorted, promptId: ctx.promptId });
 
     const { data: event } = await supabase
       .from("automod_events")

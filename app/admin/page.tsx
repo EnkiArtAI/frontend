@@ -29,11 +29,11 @@ type StrikeRow = { userId: string; handle: string; strikes: { id: string; reason
 type Rec = { id: string; handle: string; wallet: string | null; contact: string | null; explanation: string | null; evidence: { kind: string; matched: boolean | null }[]; status: string; at: string };
 type Proposal = { id: string; kind: string; target: string; targetUserId: string | null; days: number | null; violation: string; proposer: string; status: string; confirms: number; denies: number; myVote: string | null; quorum: number; at: string; expiresAt: string };
 type Council = { ready: boolean; isOwner: boolean; enabled: boolean; quorum: number; ttlDays: number; members: { handle: string; role: string; hasEmail: boolean }[]; myEmail: string | null; proposals: Proposal[] };
-type Automod = { id: string; handle: string | null; surface: string; severity: string; tier: number | null; category: string | null; rules: string[]; topScore: { name: string; value: number } | null; prompt: string | null; state: string; at: string };
+type Automod = { id: string; handle: string | null; surface: string; severity: string; tier: number | null; category: string | null; rules: string[]; topScore: { name: string; value: number } | null; prompt: string | null; withheld: boolean; state: string; at: string };
 type GenPolicy = { maxConcurrentPerUser: number | null; canEdit: boolean };
 type Person = { key: string; userId: string | null; ipHash: string | null; handle: string | null; displayName: string | null; warnings: number; extractionHits: number; childSafety: boolean; pending: number; suspension: { until: string | null } | null; failed7d: number; lastActive: string | null };
 type PersonDetail = {
-  events: { id: string; category: string | null; severity: string; surface: string; rules: string[]; weight: number; confidence: number | null; prompt: string | null; state: string; at: string }[];
+  events: { id: string; category: string | null; severity: string; surface: string; rules: string[]; weight: number; confidence: number | null; prompt: string | null; withheld: boolean; state: string; at: string }[];
   failures: { id: string; surface: string; model: string | null; resolution: string | null; quality: string | null; boost: boolean; aspectRatio: string | null; referenceImageCount: number; error: string; prompt: string | null; imageUrl: string | null; txSignature: string | null; at: string }[];
   bans: { id: string; reason: string | null; expiresAt: string | null; liftedAt: string | null; at: string }[];
 };
@@ -49,6 +49,8 @@ const SB = {
   ember: "#c96838", emberText: "#f0b799", emberHover: "#ffd9c2",
 };
 const MONO = "var(--font-mono), monospace";
+/* An artist's words never show in this panel (Kev, 2026-10-03); a record that holds or names them says so. */
+const WITHHELD_NOTE = "An artist's prompt text belongs to this record and is not shown.";
 const SERIF = "var(--font-serif), Georgia, serif";
 /* status pill palettes (literal pastels, same family as the rest of the app) */
 const PILL = {
@@ -786,7 +788,8 @@ export default function AdminPage() {
                                     </>
                                   )}
                                 </div>
-                                <p style={{ margin: 0, fontFamily: MONO, fontSize: 11, color: "var(--enki-ink-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxWidth: 760 }}>{e.prompt ?? "Not readable."}</p>
+                                {(e.prompt !== null || !e.withheld) && <p style={{ margin: 0, fontFamily: MONO, fontSize: 11, color: "var(--enki-ink-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxWidth: 760 }}>{e.prompt ?? "Not readable."}</p>}
+                                {e.withheld && <span style={{ fontSize: 11, fontStyle: "italic", color: "var(--enki-ink-3)" }}>{WITHHELD_NOTE}</span>}
                               </div>
                             ))}
                             {detail?.failures.map((x) => (
@@ -856,8 +859,9 @@ export default function AdminPage() {
                             Blocked prompt
                           </div>
                           <div style={{ fontFamily: SERIF, fontSize: 13.5, lineHeight: 1.5, color: "var(--enki-ink)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                            {r.prompt ?? <em style={{ color: "var(--enki-ink-3)" }}>Not readable — encrypted with a key this server no longer holds.</em>}
+                            {r.prompt ?? (r.withheld ? null : <em style={{ color: "var(--enki-ink-3)" }}>Not readable — encrypted with a key this server no longer holds.</em>)}
                           </div>
+                          {r.withheld && <div style={{ marginTop: 6, fontSize: 11, fontStyle: "italic", color: "var(--enki-ink-3)" }}>{WITHHELD_NOTE}</div>}
                           {r.rules.length > 0 && (
                             <div style={{ marginTop: 10, fontFamily: MONO, fontSize: 10, color: "var(--enki-ink-2)" }}>
                               rules: {r.rules.join(", ")}

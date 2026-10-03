@@ -52,7 +52,8 @@ const fake = { from: (t: string) => new Query(t) } as unknown as SupabaseClient;
 
 const notify = vi.fn(async () => {});
 vi.mock("@/lib/admin-notify", () => ({ notifyAdmins: () => notify() }));
-vi.mock("@/lib/crypto", () => ({ encryptString: () => ({ encrypted: "ct", iv: "iv", authTag: "tag", kid: "k1" }) }));
+const sealed = vi.fn((_plain: string, _aad?: string) => ({ encrypted: "ct", iv: "iv", authTag: "tag", kid: "k1" }));
+vi.mock("@/lib/crypto", () => ({ encryptString: (p: string, a?: string) => sealed(p, a) }));
 vi.mock("@/lib/ip-hash", () => ({
   getClientIp: (r: { headers: { get(n: string): string | null } }) => r.headers.get("x-forwarded-for"),
   hashIp: (ip: string | null) => (ip ? `h:${ip}` : null),
@@ -90,6 +91,13 @@ describe("a warning", () => {
     await warn(user);
     expect(tables.automod_events[0]).toMatchObject({ user_id: "user-1", category: "explicit_sexual", decision: "block", scores: { weight: 1 } });
     expect(JSON.stringify(tables.automod_events[0])).not.toContain("an explicit request");
+  });
+
+  it("seals an artist's words apart from what moderators read", async () => {
+    await recordWarning(fake, { surface: "upload", request: user, category: "explicit_sexual", text: '{"title":"Moody"}', withheld: "the artist's words", confidence: 0.9 });
+    const [plain, aad] = sealed.mock.calls.at(-1)!;
+    expect(aad).toBe("moderation-evidence/v1");
+    expect(JSON.parse(plain)).toMatchObject({ shown: '{"title":"Moody"}', withheld: "the artist's words" });
   });
 
   it("does not suspend before the tenth", async () => {

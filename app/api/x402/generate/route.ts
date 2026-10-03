@@ -259,6 +259,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
     const outcome = await recordWarning(supabase, {
       surface: "x402-generate", request, category: check.verdict, text: JSON.stringify(checked), confidence: check.confidence,
+      ...(input.promptId ? { promptId: input.promptId } : {}),
     });
     return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
   }
@@ -371,7 +372,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // address (agentBlocked).
   if (silent) {
     if (!blocked && check.verdict === "extraction") {
-      after(recordExtractionHit(supabase, { surface: "x402-generate", request, values: checked, confidence: check.confidence }));
+      after(recordExtractionHit(supabase, { surface: "x402-generate", request, values: checked, confidence: check.confidence, promptId: input.promptId }));
     }
     return silentFailure();
   }

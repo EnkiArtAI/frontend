@@ -12,7 +12,7 @@
  */
 import { createHash } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { encryptString } from "@/lib/crypto";
+import { sealEvidence } from "@/lib/moderation/evidence";
 import { getClientIp, hashIp } from "@/lib/ip-hash";
 import { resolveSessionUserWithBan } from "@/lib/session-user";
 import { banUntil } from "@/lib/moderation/bans";
@@ -68,7 +68,11 @@ export async function addressWarnedOut(supabase: SupabaseClient, request: Req): 
 
 export async function recordWarning(
   supabase: SupabaseClient,
-  ctx: { surface: string; request: Req; category: WarningCategory; text: string; confidence: number },
+  ctx: {
+    surface: string; request: Req; category: WarningCategory; confidence: number;
+    /** What a moderator may read; withheld and promptId as in lib/moderation/evidence. */
+    text: string; withheld?: string; promptId?: string;
+  },
 ): Promise<WarningOutcome> {
   const weight = WARNING_WEIGHT[ctx.category];
   const token = ctx.request.headers.get("X-Session-Token");
@@ -76,12 +80,8 @@ export async function recordWarning(
   // suspension still belongs to it, child-safety ones above all.
   const userId = token ? await resolveSessionUserWithBan(supabase, token).then((s) => s.userId).catch(() => null) : null;
   const ipHash = hashIp(getClientIp(ctx.request));
-  let evidence: { encrypted: string; iv: string; authTag: string; kid?: string } | null = null;
-  try {
-    evidence = encryptString(ctx.text.slice(0, 4000));
-  } catch {
-    evidence = null; // never let a crypto config problem lose the warning
-  }
+  // A crypto config problem stores the warning without it rather than lose it.
+  const evidence = sealEvidence({ shown: ctx.text, withheld: ctx.withheld, promptId: ctx.promptId });
 
   await supabase.from("automod_events").insert({
     user_id: userId,
@@ -92,7 +92,7 @@ export async function recordWarning(
     tier: 2,
     category: ctx.category,
     scores: { confidence: ctx.confidence, weight },
-    prompt_hash: createHash("sha256").update(ctx.text).digest("hex"),
+    prompt_hash: createHash("sha256").update(ctx.text + (ctx.withheld ?? "")).digest("hex"),
     evidence_ct: evidence?.encrypted ?? null,
     evidence_iv: evidence?.iv ?? null,
     evidence_tag: evidence?.authTag ?? null,
