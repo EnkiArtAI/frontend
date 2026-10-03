@@ -425,3 +425,23 @@ describe("the strikes tab, appeal order", () => {
     expect(row).toMatchObject({ appeal: { id: "a-perm" } });
   });
 });
+
+describe("the strikes tab, many bans", () => {
+  const get = async () => ((await (await GET(new NextRequest("http://enki.test/api/admin", { headers: { "X-Session-Token": "admin-tok" } }))).json()).strikes as Record<string, unknown>[]);
+
+  it("keeps the ban that holds even when the list is cut at 100", async () => {
+    for (let i = 0; i < 120; i++) tables.bans.push({ id: `t${i}`, user_id: "u2", lifted_at: null, expires_at: ago(-1 - i / 1000), created_at: ago(0), reason: "short" });
+    tables.bans.push({ id: "perm", user_id: "u1", lifted_at: null, expires_at: null, created_at: ago(9), reason: "Council: spam" });
+    expect((await get()).find((r) => r.userId === "u1")).toMatchObject({ banned: true, permanent: true });
+  });
+
+  it("shows which ban an appeal is against", async () => {
+    tables.bans.push(
+      { id: "perm", user_id: "u1", lifted_at: null, expires_at: null, created_at: ago(5), reason: "Council: spam" },
+      { id: "short", user_id: "u1", lifted_at: null, expires_at: ago(-3), created_at: ago(0), reason: "ladder" },
+    );
+    tables.appeals.push({ id: "a-short", user_id: "u1", target_uuid: "short", status: "pending", user_statement: "3 days", created_at: ago(0) });
+    const row = (await get()).find((r) => r.userId === "u1");
+    expect(row).toMatchObject({ appeal: { id: "a-short", against: { reason: "ladder" } } });
+  });
+});

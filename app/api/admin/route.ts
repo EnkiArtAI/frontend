@@ -160,8 +160,8 @@ async function executeProposal(supabase: Supabase, p: ProposalRow, now: string):
     if (error) return error;
   } else {
     const until = p.kind === "ban_perm" ? null : new Date(Date.now() + Number(p.days ?? 7) * 86400_000).toISOString();
-    // Its own row when it ends later than a running ban (lib/moderation/bans.ts),
-    // so each keeps its reason and appeal; nothing new when it ends no later.
+    // Its own row beside any running ban (lib/moderation/bans.ts), so each
+    // keeps its reason and appeal; nothing new if this same ban already runs as long.
     const issued = await banUntil(supabase, {
       userId: String(p.target_user_id), issuedBy: String(p.proposed_by), reason, expiresAt: until,
     }).catch(() => null);
@@ -226,8 +226,10 @@ export async function GET(req: NextRequest) {
       .is("revoked_at", null).order("created_at", { ascending: false }).limit(200),
     supabase.from("bans")
       .select("id, user_id, reason, scope, expires_at, created_at")
-      // Longest last, so per user the ban that holds is the one kept below.
-      .is("lifted_at", null).or(unexpired()).order("expires_at", { ascending: true, nullsFirst: false }).limit(100),
+      // In activeBanFor's order: the ban that holds comes first per user and
+      // survives the limit; ties go to the newest.
+      .is("lifted_at", null).or(unexpired())
+      .order("expires_at", { ascending: false, nullsFirst: true }).order("created_at", { ascending: false }).limit(100),
     supabase.from("appeals")
       .select("id, user_id, user_statement, status, target_uuid, created_at")
       .eq("status", "pending").order("created_at", { ascending: false }).limit(100),
@@ -288,17 +290,24 @@ export async function GET(req: NextRequest) {
   // A user can hold several bans (each sanction is its own row); the one that
   // lasts longest holds, and is the one shown.
   const banByUser = new Map<string, { id: string; reason: string | null; permanent: boolean }>();
+  const banById = new Map<string, { reason: string | null; until: string | null }>();
   for (const b of (ba.data ?? []) as { id: string; user_id: string; reason: string | null; expires_at: string | null }[]) {
-    banByUser.set(String(b.user_id), { id: String(b.id), reason: b.reason, permanent: !b.expires_at });
+    banById.set(String(b.id), { reason: b.reason, until: b.expires_at });
+    if (!banByUser.has(String(b.user_id))) banByUser.set(String(b.user_id), { id: String(b.id), reason: b.reason, permanent: !b.expires_at });
   }
-  // Of several pending appeals, the one against the ban that holds; else the newest.
-  const appealByUser = new Map<string, { id: string; note: string | null; target: string | null }>();
+  // Of several pending appeals, the one against the ban that holds; else the
+  // newest. Each carries the ban it is against, so the admin approves knowing
+  // which one it lifts.
+  const appealByUser = new Map<string, { id: string; note: string | null; target: string | null; against: { reason: string | null; until: string | null } | null }>();
   for (const a of (ap.data ?? []) as { id: string; user_id: string; user_statement: string | null; target_uuid: string | null }[]) {
     const k = String(a.user_id);
     const holding = banByUser.get(k)?.id;
     const cur = appealByUser.get(k);
     if (!cur || (a.target_uuid === holding && cur.target !== holding)) {
-      appealByUser.set(k, { id: String(a.id), note: a.user_statement, target: a.target_uuid ?? null });
+      appealByUser.set(k, {
+        id: String(a.id), note: a.user_statement, target: a.target_uuid ?? null,
+        against: a.target_uuid ? banById.get(a.target_uuid) ?? null : null,
+      });
     }
   }
   const strikeRows = new Map<string, { userId: string; strikes: { id: string; reason: string | null }[] }>();
@@ -593,8 +602,8 @@ export async function POST(req: NextRequest) {
       const days = Number.isInteger(body.days) && body.days! >= 1 && body.days! <= 365 ? body.days! : null;
       if (!permanent && !days) return NextResponse.json({ error: "days (1–365) or permanent required" }, { status: 400 });
       const until = permanent ? null : new Date(Date.now() + days! * 86400_000).toISOString();
-      // Its own row when it ends later than a running ban, so each keeps its
-      // reason and appeal; refused when a running ban already lasts as long.
+      // Its own row beside any running ban, so each keeps its reason and
+      // appeal; refused when this same ban already runs as long.
       const issued = await banUntil(supabase, {
         userId: targetId, issuedBy: userId, reason: (body.reason ?? "Banned from the admin panel").slice(0, 200), expiresAt: until,
       }).catch(() => null);

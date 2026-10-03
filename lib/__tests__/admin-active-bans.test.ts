@@ -12,7 +12,7 @@ const SRC = readSource(join(__dirname, "..", "..", "app", "api", "admin", "route
 
 describe("the admin panel's idea of an active ban", () => {
   it("leaves expired bans out of the list", () => {
-    expect(SRC).toMatch(/\.is\("lifted_at", null\)\.or\(unexpired\(\)\)\.order\("expires_at", \{ ascending: true, nullsFirst: false \}\)\.limit\(100\)/);
+    expect(SRC).toMatch(/\.is\("lifted_at", null\)\.or\(unexpired\(\)\)\n\s+\.order\("expires_at", \{ ascending: false, nullsFirst: true \}\)\.order\("created_at", \{ ascending: false \}\)\.limit\(100\)/);
   });
 
   it("lets a new ban follow an expired one", () => {

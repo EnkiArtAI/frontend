@@ -25,7 +25,7 @@ type Rep = { id: string; target: string; type: "prompt" | "profile"; reason: str
 type Fb = { id: string; name: string; email: string | null; desc: string; images: number; paid: boolean; payoutCents: number | null; at: string };
 type Friend = { id: string; name: string; address: string; type: string; chain: string; notes: string | null };
 type Hunter = { handle: string; total: number; approved: number; denied: number; earningsCents: number };
-type StrikeRow = { userId: string; handle: string; strikes: { id: string; reason: string | null }[]; banned: boolean; permanent: boolean; note: string | null; appeal: { id: string; note: string | null } | null };
+type StrikeRow = { userId: string; handle: string; strikes: { id: string; reason: string | null }[]; banned: boolean; permanent: boolean; note: string | null; appeal: { id: string; note: string | null; against: { reason: string | null; until: string | null } | null } | null };
 type Rec = { id: string; handle: string; wallet: string | null; contact: string | null; explanation: string | null; evidence: { kind: string; matched: boolean | null }[]; status: string; at: string };
 type Proposal = { id: string; kind: string; target: string; targetUserId: string | null; days: number | null; violation: string; proposer: string; status: string; confirms: number; denies: number; myVote: string | null; quorum: number; at: string; expiresAt: string };
 type Council = { ready: boolean; isOwner: boolean; enabled: boolean; quorum: number; ttlDays: number; members: { handle: string; role: string; hasEmail: boolean }[]; myEmail: string | null; proposals: Proposal[] };
@@ -698,6 +698,11 @@ export default function AdminPage() {
                         </div>
                         {appealOpen === r.userId && r.appeal && (
                           <div style={{ padding: "2px 0 12px 10px", borderLeft: `3px solid ${PILL.purple.border}`, margin: "0 0 8px 4px" }}>
+                            {r.appeal.against && (
+                              <span style={{ display: "block", marginBottom: 6, fontFamily: MONO, fontSize: 10, color: "var(--enki-ink-3)" }}>
+                                Against: {r.appeal.against.reason ?? "no reason"} · {r.appeal.against.until ? `until ${r.appeal.against.until.slice(0, 10)}` : "for good"}
+                              </span>
+                            )}
                             <span style={{ ...microLabel, display: "block", marginBottom: 4 }}>Appeal note</span>
                             <p style={{ margin: 0, fontSize: 12, fontStyle: "italic", color: "var(--enki-ink-2)", lineHeight: 1.6, maxWidth: 640 }}>
                               “{r.appeal.note ?? "No statement provided."}”
