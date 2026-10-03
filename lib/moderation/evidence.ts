@@ -11,12 +11,17 @@
  *
  * Records are sealed under their own AAD, so no text anyone typed can pose
  * as one. A record without it predates this rule and shows as written,
- * except a save's, which may hold a body and stays withheld whole.
+ * unless it comes from a save or a generation: those may hold an artist's
+ * words (a body, an editor's draft, a paid prompt's filled text) and stay
+ * withheld whole.
  */
 import { decryptString, encryptString, type EncryptedPayload } from "@/lib/crypto";
 
 const AAD = "moderation-evidence/v1";
 const MAX = 4000;
+/** Where a record from before the rule may hold an artist's words. */
+const LEGACY_ARTIST_SURFACES = ["upload", "generate-image", "generate-free"];
+const mayHoldArtistText = (r: StoredEvidence) => LEGACY_ARTIST_SURFACES.includes(String(r.surface));
 
 export interface Evidence {
   /** What every moderator may read. */
@@ -74,12 +79,12 @@ export function readEvidence(r: StoredEvidence): EvidenceView {
   if (e) return { text: e.shown || null, withheld: Boolean(e.withheld || e.promptId) };
   const legacy = open(r);
   if (legacy === null) return { text: null, withheld: false };
-  return r.surface === "upload" ? { text: null, withheld: true } : { text: legacy, withheld: false };
+  return mayHoldArtistText(r) ? { text: null, withheld: true } : { text: legacy, withheld: false };
 }
 
 /** The withheld part of a record, for the owner's logged reveal and nothing else. */
 export function withheldEvidence(r: StoredEvidence): { text: string | null; promptId: string | null } {
   const e = sealed(r);
   if (e) return { text: e.withheld ?? null, promptId: e.promptId ?? null };
-  return { text: r.surface === "upload" ? open(r) : null, promptId: null };
+  return { text: mayHoldArtistText(r) ? open(r) : null, promptId: null };
 }

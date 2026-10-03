@@ -40,11 +40,18 @@ describe("what a moderator reads", () => {
     // Typed by a user to hide part of their own prompt from moderators.
     const forged = JSON.stringify({ shown: "a red fox", withheld: "the part they want hidden" });
     expect(readEvidence(stored(sealEvidence({ shown: forged })))).toEqual({ text: forged, withheld: false });
-    expect(readEvidence(stored(encryptString(forged)))).toEqual({ text: forged, withheld: false });
+    expect(readEvidence(stored(encryptString(forged), "x402-generate"))).toEqual({ text: forged, withheld: false });
   });
 
-  it("withholds a save's record from before the rule whole, since it may hold a body", () => {
-    expect(readEvidence(stored(encryptString(`Moody\n${ARTIST}`), "upload"))).toEqual({ text: null, withheld: true });
+  it("withholds a save's or a generation's record from before the rule whole, since it may hold an artist's words", () => {
+    // A body, an editor's draft, a paid prompt's filled text.
+    for (const surface of ["upload", "generate-image", "generate-free"]) {
+      expect(readEvidence(stored(encryptString(`Moody\n${ARTIST}`), surface))).toEqual({ text: null, withheld: true });
+    }
+  });
+
+  it("shows a record from before the rule as written where no artist's words could be", () => {
+    expect(readEvidence(stored(encryptString('{"subject":"fox"}'), "x402-generate"))).toEqual({ text: '{"subject":"fox"}', withheld: false });
   });
 
   it("shows nothing it cannot read, and claims nothing withheld", () => {
@@ -58,12 +65,14 @@ describe("what the owner's reveal reads", () => {
     expect(withheldEvidence(stored(sealEvidence({ shown: "{}", promptId: "p1" })))).toEqual({ text: null, promptId: "p1" });
   });
 
-  it("is a save's whole record from before the rule", () => {
-    expect(withheldEvidence(stored(encryptString(ARTIST), "upload"))).toEqual({ text: ARTIST, promptId: null });
+  it("is a save's or a generation's whole record from before the rule", () => {
+    for (const surface of ["upload", "generate-image", "generate-free"]) {
+      expect(withheldEvidence(stored(encryptString(ARTIST), surface))).toEqual({ text: ARTIST, promptId: null });
+    }
   });
 
   it("is nothing for a record that withholds nothing", () => {
     expect(withheldEvidence(stored(sealEvidence({ shown: "a red fox" })))).toEqual({ text: null, promptId: null });
-    expect(withheldEvidence(stored(encryptString("a red fox")))).toEqual({ text: null, promptId: null });
+    expect(withheldEvidence(stored(encryptString("a red fox"), "x402-generate"))).toEqual({ text: null, promptId: null });
   });
 });
