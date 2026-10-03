@@ -145,6 +145,7 @@ export default function AdminPage() {
   const [amOpen, setAmOpen] = useState<string | null>(null);
   const [pplOpen, setPplOpen] = useState<string | null>(null);
   const [pplDetail, setPplDetail] = useState<Record<string, PersonDetail>>({});
+  const [revealed, setRevealed] = useState<Record<string, { text: string; source: string }>>({});
   // Empty string IS unlimited here, mirroring the null in the database.
   const [genLimit, setGenLimit] = useState<string>("");
   const [repSev, setRepSev] = useState("1");
@@ -246,6 +247,41 @@ export default function AdminPage() {
       await loadPerson(personId);
     }
   };
+
+  /* The moderation owner's reveal of an artist's withheld text: the reason is
+     asked here and logged on the server before anything is shown. */
+  const reveal = async (id: string) => {
+    const reason = window.prompt("Why must you read this artist's text? It is logged and every admin is told (10 to 500 characters).")?.trim();
+    if (!reason) return;
+    try {
+      const res = await fetch("/api/admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
+        body: JSON.stringify({ resource: "automod", action: "reveal", id, reason }),
+      });
+      const d = await res.json().catch(() => ({} as { error?: string; text?: string; source?: string }));
+      const text = d.text;
+      if (!res.ok || typeof text !== "string") { say(d.error || "That didn't work."); return; }
+      setRevealed((cur) => ({ ...cur, [id]: { text, source: String(d.source) } }));
+    } catch {
+      say("Network hiccup — nothing was revealed.");
+    }
+  };
+  const withheldBlock = (id: string) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11, fontStyle: "italic", color: "var(--enki-ink-3)" }}>
+        {WITHHELD_NOTE}
+        {data?.council.isOwner && !revealed[id] && (
+          <Pill kind="plain" label="Reveal (logged)" title="Only for a hard case: your reason is logged and every admin is told" onClick={() => void reveal(id)} />
+        )}
+      </span>
+      {revealed[id] && (
+        <p style={{ margin: 0, fontFamily: MONO, fontSize: 11, color: "var(--enki-ink-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxWidth: 760 }}>
+          {revealed[id].source === "prompt" ? "The prompt's text as it stands now:\n" : ""}{revealed[id].text}
+        </p>
+      )}
+    </div>
+  );
 
   const q = query.trim().toLowerCase();
   const tabDef = TABS.find((t) => t.id === tab)!;
@@ -789,7 +825,7 @@ export default function AdminPage() {
                                   )}
                                 </div>
                                 {(e.prompt !== null || !e.withheld) && <p style={{ margin: 0, fontFamily: MONO, fontSize: 11, color: "var(--enki-ink-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxWidth: 760 }}>{e.prompt ?? "Not readable."}</p>}
-                                {e.withheld && <span style={{ fontSize: 11, fontStyle: "italic", color: "var(--enki-ink-3)" }}>{WITHHELD_NOTE}</span>}
+                                {e.withheld && withheldBlock(e.id)}
                               </div>
                             ))}
                             {detail?.failures.map((x) => (
@@ -861,7 +897,7 @@ export default function AdminPage() {
                           <div style={{ fontFamily: SERIF, fontSize: 13.5, lineHeight: 1.5, color: "var(--enki-ink)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
                             {r.prompt ?? (r.withheld ? null : <em style={{ color: "var(--enki-ink-3)" }}>Not readable — encrypted with a key this server no longer holds.</em>)}
                           </div>
-                          {r.withheld && <div style={{ marginTop: 6, fontSize: 11, fontStyle: "italic", color: "var(--enki-ink-3)" }}>{WITHHELD_NOTE}</div>}
+                          {r.withheld && <div style={{ marginTop: 6 }}>{withheldBlock(r.id)}</div>}
                           {r.rules.length > 0 && (
                             <div style={{ marginTop: 10, fontFamily: MONO, fontSize: 10, color: "var(--enki-ink-2)" }}>
                               rules: {r.rules.join(", ")}

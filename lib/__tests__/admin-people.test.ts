@@ -91,8 +91,10 @@ const fake = { from: (t: string) => new Query(t) } as unknown as SupabaseClient;
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => fake }));
 vi.mock("@/lib/session-user", async (original) => ({
   ...(await original<typeof import("@/lib/session-user")>()),
-  resolveSessionUserId: async (_s: unknown, t: string | null) => ({ "mod-tok": "mod-1", "admin-tok": "admin-1" } as Record<string, string>)[t ?? ""] ?? null,
+  resolveSessionUserId: async (_s: unknown, t: string | null) => ({ "mod-tok": "mod-1", "admin-tok": "admin-1", "owner-tok": "owner-1" } as Record<string, string>)[t ?? ""] ?? null,
 }));
+const notified = vi.fn(async (_s: unknown, _m: { subject: string; text: string }) => {});
+vi.mock("@/lib/admin-notify", () => ({ notifyAdmins: (s: unknown, m: { subject: string; text: string }) => notified(s, m) }));
 
 import { listPeople, personDetail, parsePersonKey, hasChildSafetyCase } from "@/lib/admin/people";
 import { GET, POST } from "../../app/api/admin/route";
@@ -115,9 +117,97 @@ beforeEach(() => {
     automod_events: [], generation_failures: [], bans: [], appeals: [], models: [{ id: "m1", name: "GPT Image 2" }],
     users: [
       { id: "u1", handle: "anna", display_name: "Anna" }, { id: "u2", handle: "ben", display_name: null },
-      { id: "mod-1", role: "mod" }, { id: "admin-1", role: "admin" },
+      { id: "mod-1", role: "mod" }, { id: "admin-1", role: "admin" }, { id: "owner-1", role: "admin", handle: "owner" },
     ],
   };
+  notified.mockClear();
+});
+
+describe("revealing an artist's withheld text", () => {
+  beforeEach(() => {
+    tables.moderation_policy = [{ id: 1, owner_user_id: "owner-1" }];
+    tables.artist_text_reveals = [];
+  });
+  const SECRET = "the artist's secret words around [subject]";
+  const post = (token: string, body: unknown) => POST(new NextRequest("http://enki.test/api/admin", {
+    method: "POST", headers: { "X-Session-Token": token, "Content-Type": "application/json" }, body: JSON.stringify(body),
+  }));
+  const record = (e: Parameters<typeof sealEvidence>[0], surface = "upload") => {
+    const s = sealEvidence(e)!;
+    const row = ev("u1", "explicit_sexual", { id: "e-1", surface, evidence_ct: s.encrypted, evidence_iv: s.iv, evidence_tag: s.authTag, evidence_kid: s.kid });
+    tables.automod_events.push(row);
+    return row;
+  };
+  const WHY = "Appeal of a child-safety case on this save";
+
+  it("shows the moderation owner the withheld text and logs who, which and why first", async () => {
+    record({ shown: "{}", withheld: SECRET });
+    const res = await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY });
+    expect(await res.json()).toEqual({ text: SECRET, source: "record" });
+    expect(tables.artist_text_reveals).toEqual([expect.objectContaining({ event_id: "e-1", revealed_by: "owner-1", reason: WHY, prompt_id: null })]);
+    // Every admin is told, without the text.
+    expect(notified).toHaveBeenCalledOnce();
+    expect(JSON.stringify(notified.mock.calls[0][1])).toContain(WHY);
+    expect(JSON.stringify(notified.mock.calls[0][1])).not.toContain("secret words");
+  });
+
+  it("shows a named marketplace prompt's text as it stands now", async () => {
+    record({ shown: '{"subject":"fox"}', promptId: "p1" }, "generate-image");
+    tables.prompts = [{ id: "p1", public_prompt_text: "a free [subject]", price_usd_cents: 0, prompt_type: "free", is_adult: false }];
+    tables.prompt_variables = [];
+    const res = await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY });
+    expect(await res.json()).toEqual({ text: "a free [subject]", source: "prompt" });
+    expect(tables.artist_text_reveals[0]).toMatchObject({ prompt_id: "p1" });
+  });
+
+  it("shows nothing to an admin who is not the owner, nor to a mod", async () => {
+    record({ shown: "{}", withheld: SECRET });
+    for (const tok of ["admin-tok", "mod-tok"]) {
+      const res = await post(tok, { resource: "automod", action: "reveal", id: "e-1", reason: WHY });
+      expect(res.status).toBe(403);
+      expect(JSON.stringify(await res.json())).not.toContain("secret words");
+    }
+    expect(tables.artist_text_reveals).toEqual([]);
+  });
+
+  it("shows nothing to an owner who is no longer an admin", async () => {
+    record({ shown: "{}", withheld: SECRET });
+    tables.users.find((u) => u.id === "owner-1")!.role = "mod";
+    expect((await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).status).toBe(403);
+    expect(tables.artist_text_reveals).toEqual([]);
+  });
+
+  it("is offered in the panel to the owner alone", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const page = readFileSync(join(__dirname, "..", "..", "app", "admin", "page.tsx"), "utf8");
+    expect(page).toContain("{data?.council.isOwner && !revealed[id] && (");
+    expect(page).toContain('body: JSON.stringify({ resource: "automod", action: "reveal", id, reason }),');
+    expect(page.match(/withheldBlock\((e|r)\.id\)/g)).toHaveLength(2);
+  });
+
+  it("asks for a reason", async () => {
+    record({ shown: "{}", withheld: SECRET });
+    for (const reason of [undefined, "", "because"]) {
+      expect((await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason })).status).toBe(400);
+    }
+    expect(tables.artist_text_reveals).toEqual([]);
+  });
+
+  it("shows nothing when the reveal cannot be logged", async () => {
+    record({ shown: "{}", withheld: SECRET });
+    failing.add("artist_text_reveals");
+    const res = await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY });
+    expect(res.status).toBe(503);
+    expect(JSON.stringify(await res.json())).not.toContain("secret words");
+    expect(notified).not.toHaveBeenCalled();
+  });
+
+  it("logs nothing for a record that withholds nothing", async () => {
+    record({ shown: "a user's own words" }, "generate-free");
+    expect((await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).status).toBe(404);
+    expect(tables.artist_text_reveals).toEqual([]);
+  });
 });
 
 describe("the person list", () => {
