@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { decryptString } from "@/lib/crypto";
-import { requireAuth } from "@/lib/auth";
+import { resolveSessionUserWithBan } from "@/lib/session-user";
 import { mayShowAdult, viewer } from "@/lib/adult-content";
 import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
@@ -209,16 +209,21 @@ export async function PATCH(
   // Price and "featured" are deliberately NOT mutable here anymore: price changes
   // must go through the authenticated, ownership-checked /api/prompts/[id]/list
   // endpoint so the payment path can trust the stored price.
-  let userId: string;
+  // The account behind the session, resolved like everywhere else: an email
+  // login carries the users.id itself, so looking it up as a wallet address
+  // answered every edit "not found"; and a suspended account edits nothing.
+  const supabase = getSupabaseServerClient();
+  let ownerId: string;
   try {
-    ({ userId } = await requireAuth(req));
+    const { userId, ban } = await resolveSessionUserWithBan(supabase, req.headers.get("X-Session-Token"));
+    if (!userId || ban) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    ownerId = userId;
   } catch {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
   try {
     const body = (await req.json()) as PatchBody;
-    const supabase = getSupabaseServerClient();
 
     const update: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
@@ -242,21 +247,8 @@ export async function PATCH(
 
     // Ownership is part of the WHERE clause — the service-role client bypasses
     // RLS, so without it any valid session could edit any prompt (IDOR).
-    // requireAuth's userId is the session WALLET ADDRESS; prompts.creator_id
-    // is a users.id uuid, so the address must be mapped through user_wallets —
-    // a raw base58/0x string in a uuid filter is a Postgres type error, not a
-    // miss. A wallet with no user row owns nothing: 404, never an unscoped
-    // update. count:"exact" makes the 0-rows branch real; "not found" covers
-    // both a missing prompt and someone else's prompt (no ownership oracle).
-    const { data: walletRow } = await supabase
-      .from("user_wallets")
-      .select("user_id")
-      .eq("address", userId)
-      .is("removed_at", null)
-      .maybeSingle();
-    if (!walletRow?.user_id) {
-      return NextResponse.json({ error: "not found" }, { status: 404 });
-    }
+    // count:"exact" makes the 0-rows branch real; "not found" covers both a
+    // missing prompt and someone else's prompt (no ownership oracle).
 
     // Edited text is judged like a save (Kev, 2026-10-03): a prompt saved
     // clean must not turn explicit or 18+ through its title, description or
@@ -269,7 +261,7 @@ export async function PATCH(
     );
     if (Object.keys(edited).length > 0) {
       const { data: own } = await supabase.from("prompts").select("id")
-        .eq("id", id).eq("creator_id", String(walletRow.user_id)).maybeSingle();
+        .eq("id", id).eq("creator_id", ownerId).maybeSingle();
       if (!own) return NextResponse.json({ error: "not found" }, { status: 404 });
       const check = await checkPrompt(edited, { hidden: false, signal: req.signal });
       if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
@@ -292,7 +284,7 @@ export async function PATCH(
       .from("prompts")
       .update(update, { count: "exact" })
       .eq("id", id)
-      .eq("creator_id", String(walletRow.user_id));
+      .eq("creator_id", ownerId);
 
     if (error) throw error;
 

@@ -18,10 +18,7 @@ const query = (table: string) => {
     update: (p: Row) => { patch = p; return q; },
     eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
     is: () => q,
-    maybeSingle: async () => {
-      if (table === "user_wallets") return { data: { user_id: "u1" }, error: null };
-      return { data: prompts.find((r) => filters.every((f) => f(r))) ?? null, error: null };
-    },
+    maybeSingle: async () => ({ data: prompts.find((r) => filters.every((f) => f(r))) ?? null, error: null }),
     then: (ok: (v: unknown) => unknown) => {
       const hits = prompts.filter((r) => filters.every((f) => f(r)));
       hits.forEach((r) => Object.assign(r, patch));
@@ -36,7 +33,13 @@ const warn = vi.fn(async () => ({ total: 1, suspendedUntil: null, nextStepAt: 10
 const tier2 = vi.fn(async () => ({ allowed: true }));
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), after: () => {} }));
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => ({ from: query }) }));
-vi.mock("@/lib/auth", () => ({ requireAuth: async () => ({ userId: "wallet-1" }) }));
+// "tok" is u1; "email" is an email login (users.id in the session); "banned" is suspended.
+const SESSIONS: Record<string, { userId: string; ban: { id: string } | null }> = {
+  tok: { userId: "u1", ban: null }, email: { userId: "u3", ban: null }, banned: { userId: "u1", ban: { id: "b1" } },
+};
+vi.mock("@/lib/session-user", () => ({
+  resolveSessionUserWithBan: async (_s: unknown, t: string | null) => SESSIONS[t ?? ""] ?? { userId: null, ban: null },
+}));
 vi.mock("@/lib/moderation", () => ({ moderate: (...a: unknown[]) => tier2(...(a as [])), CLIENT_BLOCK_MESSAGE: "blocked" }));
 vi.mock("@/lib/moderation-enforcement", () => ({ recordModerationEvent: async () => {} }));
 vi.mock("@/lib/moderation/warnings", () => ({ recordWarning: (...a: unknown[]) => warn(...(a as [])), warningMessage: () => "warned" }));
@@ -44,8 +47,8 @@ vi.mock("@/lib/moderation/prompt-check", () => ({ checkPrompt: (inputs: Record<s
 
 import { PATCH } from "../../app/api/prompts/[id]/route";
 
-const edit = (id: string, body: Row) => PATCH(new NextRequest(`http://enki.test/api/prompts/${id}`, {
-  method: "PATCH", headers: { "Content-Type": "application/json", "X-Session-Token": "tok" }, body: JSON.stringify(body),
+const edit = (id: string, body: Row, token = "tok") => PATCH(new NextRequest(`http://enki.test/api/prompts/${id}`, {
+  method: "PATCH", headers: { "Content-Type": "application/json", "X-Session-Token": token }, body: JSON.stringify(body),
 }), { params: Promise.resolve({ id }) });
 
 beforeEach(() => {
@@ -101,6 +104,20 @@ describe("editing a prompt", () => {
 
   it("costs no check when no text changes", async () => {
     expect((await edit("p1", { category: "Poster" })).status).toBe(200);
+    expect(check).not.toHaveBeenCalled();
+  });
+});
+
+describe("who edits", () => {
+  it("an email login edits and publishes the prompts it owns", async () => {
+    prompts.push({ id: "p3", creator_id: "u3", title: "Mine" });
+    expect((await edit("p3", { published: true }, "email")).status).toBe(200);
+    expect(prompts.find((p) => p.id === "p3")?.published_at).toBeTruthy();
+  });
+
+  it("a suspended account edits nothing", async () => {
+    expect((await edit("p1", { title: "New" }, "banned")).status).toBe(401);
+    expect(prompts[0].title).toBe("Portrait");
     expect(check).not.toHaveBeenCalled();
   });
 });
