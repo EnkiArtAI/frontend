@@ -149,3 +149,12 @@ describe("the 300-character limit", () => {
     expect(AGENT).toMatch(/variableValues: z\.record\(z\.string\(\), z\.string\(\)\.max\(VALUE_MAX\)\)/);
   });
 });
+
+describe("an agent payment that already landed", () => {
+  it("is answered as the replay it is, before anything else is decided", () => {
+    const replay = AGENT.indexOf('if (!simulated.ok && simulated.error.includes("AlreadyProcessed")) {');
+    expect(replay).toBeGreaterThan(AGENT.indexOf("const simulated = await simulatePayment("));
+    expect(AGENT.indexOf("  if (silent) {")).toBeGreaterThan(replay);
+    expect(AGENT.slice(replay, replay + 300)).toMatch(/This payment transaction was already settled", transaction: signature \}, \{ status: 409 \}/);
+  });
+});

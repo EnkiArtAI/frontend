@@ -329,6 +329,11 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // is decided, and an unpayable one is refused here, the same way whether or
   // not the request was caught.
   const simulated = await simulatePayment(solanaConnection(), parsed.tx);
+  // A payment that already landed simulates as AlreadyProcessed: answered as
+  // the replay it is, so an agent retrying after a timeout is not told to pay again.
+  if (!simulated.ok && simulated.error.includes("AlreadyProcessed")) {
+    return NextResponse.json({ error: "This payment transaction was already settled", transaction: signature }, { status: 409 });
+  }
   if (!simulated.ok) {
     return NextResponse.json({ error: simulated.error, transaction: signature }, { status: 402 });
   }
