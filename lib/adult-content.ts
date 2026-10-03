@@ -6,7 +6,9 @@
  * or page that shows other people's prompts or images leaves 18+ out unless
  * the viewer is confirmed AND has the pill on (the X-Show-Adult header);
  * owners always see their own. Generating something the prompt check marks
- * 18+ needs the confirmation; agents cannot give it.
+ * 18+ needs the confirmation. An agent cannot give it and is not asked to:
+ * it gets 18+ like anything else the checks let through, explicit stays
+ * refused (Kev, 2026-10-03).
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveSessionUserId } from "@/lib/session-user";
@@ -16,12 +18,6 @@ export const SHOW_ADULT_HEADER = "X-Show-Adult";
 export const ADULT_REFUSAL = {
   error: "This is 18+ content. Confirm that you are 18 or older in Settings to generate it. Nothing was generated and nothing was charged.",
   code: "adult_unconfirmed",
-} as const;
-
-/** An agent cannot confirm an age, so the answer names no Settings it could go to. */
-export const AGENT_ADULT_REFUSAL = {
-  error: "This is 18+ content, which the agent API does not generate. Nothing was generated and nothing was charged.",
-  code: "adult_unavailable",
 } as const;
 
 export async function adultConfirmed(supabase: SupabaseClient, userId: string | null): Promise<boolean> {

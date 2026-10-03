@@ -50,7 +50,6 @@ import { loadPromptText, fillVariables, inputsUnmatched, VALUE_MAX } from "@/lib
 import { checkPrompt, textValues } from "@/lib/moderation/prompt-check";
 import { recordGenerationFailure } from "@/lib/generation/record";
 import { addressWarnedOut, recordWarning, warningMessage } from "@/lib/moderation/warnings";
-import { AGENT_ADULT_REFUSAL } from "@/lib/adult-content";
 import { agentBlocked, recordExtractionHit, silentFailure } from "@/lib/moderation/extraction-hits";
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
@@ -259,7 +258,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
 
   // For a marketplace prompt the check saw only the agent's values, so tier 2
   // keeps its sexual flag for the artist's text, unless the prompt is marked
-  // 18+: then the agent gets the 18+ refusal below, not a content block.
+  // 18+: its save already judged that text 18+ and not explicit.
   const verdict = await moderate({ prompt: promptText, surface: "x402-generate", adultJudged: !input.promptId || promptAdult });
   if (!verdict.allowed) {
     return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
@@ -356,16 +355,6 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   }
   if (!simulated.ok) {
     return NextResponse.json({ error: simulated.error, transaction: signature }, { status: 402 });
-  }
-  // 18+ is never generated for an agent, whatever else the check found, so
-  // the refusal never depends on it. It comes only once the payment is known
-  // to be payable: before that, a junk header made every caught attempt cost
-  // a queue row and a mail to the admins.
-  if (("adult" in check && check.adult) || promptAdult) {
-    if (!blocked && check.verdict === "extraction") {
-      after(recordExtractionHit(supabase, { surface: "x402-generate", request, values: checked, confidence: check.confidence }));
-    }
-    return NextResponse.json(AGENT_ADULT_REFUSAL, { status: 403 });
   }
   // Refused silently: nothing is settled. A real failure only happens after
   // settlement, so a paying agent can still tell a failure from an image, as
