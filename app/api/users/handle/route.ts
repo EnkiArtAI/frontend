@@ -5,6 +5,7 @@
  *   GET            → { handle }                   (session user's own handle)
  *   POST { candidates: string[] } → { available } (batch check for suggestions)
  *   PUT  { handle } → sets it once for the session user (409 if taken/already set)
+ *   PATCH { hideFromLeaderboard?, adultConfirmed? } → the session user's preferences
  *
  * handle is citext in the DB, so equality checks are case-insensitive; we
  * normalize to lowercase anyway so display is consistent.
@@ -32,12 +33,13 @@ export async function GET(req: NextRequest) {
       avatar_url?: string | null;
       cover_image_url?: string | null;
       hide_from_leaderboard?: boolean | null;
+      adult_confirmed_at?: string | null;
     } | null = null;
     // Row + count run in parallel — the profile header waits on this response.
     const [res, countRes] = await Promise.all([
       supabase
         .from("users")
-        .select("handle, role, bio, avatar_url, cover_image_url, hide_from_leaderboard")
+        .select("handle, role, bio, avatar_url, cover_image_url, hide_from_leaderboard, adult_confirmed_at")
         .eq("id", userId)
         .maybeSingle(),
       wantStats
@@ -68,6 +70,7 @@ export async function GET(req: NextRequest) {
       avatarUrl: row.avatar_url ?? null,
       coverUrl: row.cover_image_url ?? null,
       hideFromLeaderboard: row.hide_from_leaderboard ?? false,
+      adultConfirmed: Boolean(row.adult_confirmed_at),
       promptCount,
     });
   }
@@ -148,20 +151,25 @@ export async function PATCH(req: NextRequest) {
   const userId = await resolveSessionUserId(supabase, req.headers.get("X-Session-Token"));
   if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
-  let body: { hideFromLeaderboard?: unknown };
+  let body: { hideFromLeaderboard?: unknown; adultConfirmed?: unknown };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Bad request" }, { status: 400 });
   }
-  if (typeof body.hideFromLeaderboard !== "boolean") {
-    return NextResponse.json({ error: "hideFromLeaderboard must be a boolean" }, { status: 400 });
+  const update: { hide_from_leaderboard?: boolean; adult_confirmed_at?: string | null } = {};
+  if (typeof body.hideFromLeaderboard === "boolean") update.hide_from_leaderboard = body.hideFromLeaderboard;
+  // The user's own word that they are 18 or older (Kev, 2026-10-03), kept
+  // with its time. Withdrawing it hides 18+ again.
+  if (typeof body.adultConfirmed === "boolean") update.adult_confirmed_at = body.adultConfirmed ? new Date().toISOString() : null;
+  if (Object.keys(update).length === 0) {
+    return NextResponse.json({ error: "hideFromLeaderboard or adultConfirmed must be a boolean" }, { status: 400 });
   }
 
-  const { error } = await supabase
-    .from("users")
-    .update({ hide_from_leaderboard: body.hideFromLeaderboard })
-    .eq("id", userId);
+  const { error } = await supabase.from("users").update(update).eq("id", userId);
   if (error) return NextResponse.json({ error: "Could not save" }, { status: 500 });
-  return NextResponse.json({ hideFromLeaderboard: body.hideFromLeaderboard });
+  return NextResponse.json({
+    ...("hide_from_leaderboard" in update && { hideFromLeaderboard: update.hide_from_leaderboard }),
+    ...("adult_confirmed_at" in update && { adultConfirmed: update.adult_confirmed_at !== null }),
+  });
 }

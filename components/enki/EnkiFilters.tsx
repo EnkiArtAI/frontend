@@ -33,6 +33,9 @@ type EnkiFiltersProps = {
   /** Selected generator ids; empty = all. */
   generatorFilter?: string[];
   onGeneratorFilter?: (ids: string[]) => void;
+  /** 18+ pill; rendered only when given, i.e. for a confirmed adult. */
+  showAdult?: boolean;
+  onShowAdult?: (on: boolean) => void;
 };
 
 export type GeneratorGroup = {
@@ -41,7 +44,7 @@ export type GeneratorGroup = {
   entries: Array<{ id: string; name: string }>;
 };
 
-export default function EnkiFilters({ active, toggle, generators, generatorFilter, onGeneratorFilter }: EnkiFiltersProps) {
+export default function EnkiFilters({ active, toggle, generators, generatorFilter, onGeneratorFilter, showAdult, onShowAdult }: EnkiFiltersProps) {
   const allActive = active.length === 0;
   const [visible, setVisible] = useState(true);
   /* Lifted out of SearchChip: while the search is open it OWNS the row —
@@ -115,9 +118,21 @@ export default function EnkiFilters({ active, toggle, generators, generatorFilte
           of the fixed bar — page scrolling can neither move nor close them.
           No chip until the catalogue answered: an empty tree pretends the
           platform has no models. */}
-      {generators && generators.length > 0 && onGeneratorFilter && (
+      {((generators && generators.length > 0 && onGeneratorFilter) || onShowAdult) && (
         <div className="enki-filterrow">
-          <GeneratorInline groups={generators} selected={generatorFilter ?? []} onChange={onGeneratorFilter} />
+          {generators && generators.length > 0 && onGeneratorFilter && (
+            <GeneratorInline groups={generators} selected={generatorFilter ?? []} onChange={onGeneratorFilter} />
+          )}
+          {onShowAdult && (
+            <span className="enki-fltr-group">
+              <button type="button" aria-pressed={showAdult === true}
+                className={"enki-fltr-chip" + (showAdult ? " active" : "")}
+                title={showAdult ? "Hide 18+ prompts" : "Show 18+ prompts"}
+                onClick={() => onShowAdult(!showAdult)}>
+                18+
+              </button>
+            </span>
+          )}
         </div>
       )}
     </div>

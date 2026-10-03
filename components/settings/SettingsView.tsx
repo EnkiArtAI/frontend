@@ -12,7 +12,8 @@ import SettingsToggle from "@/components/settings/SettingsToggle";
 import PaymentPanel from "@/components/settings/PaymentPanel";
 import RecoveryPanel from "@/components/settings/RecoveryPanel";
 import { listReferrals, type Referral } from "@/lib/referrals";
-import { sessionAuthHeaders } from "@/lib/session-headers";
+import { SHOW_ADULT_KEY, sessionAuthHeaders } from "@/lib/session-headers";
+import { useBetaAccess } from "@/components/BetaGate";
 import { useRecoveryStatus } from "@/hooks/useRecoveryStatus";
 import { REFERRAL_SHARE_PCT, PLATFORM_FEE_PCT } from "@/shared/revenue-config";
 import "@/components/settings/settings.css";
@@ -63,6 +64,9 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
 
   // Leaderboard visibility — real flag (users.hide_from_leaderboard).
   const [hideLb, setHideLb] = useState<boolean | null>(null);
+  // 18 or older (users.adult_confirmed_at); null until loaded.
+  const [adult, setAdult] = useState<boolean | null>(null);
+  const { setAdultConfirmed } = useBetaAccess();
   useEffect(() => {
     const headers = sessionAuthHeaders();
     if (Object.keys(headers).length === 0) return;
@@ -71,8 +75,8 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
       try {
         const res = await fetch("/api/users/handle", { headers });
         if (!res.ok) return;
-        const d = (await res.json()) as { hideFromLeaderboard?: boolean };
-        if (!dead) setHideLb(!!d.hideFromLeaderboard);
+        const d = (await res.json()) as { hideFromLeaderboard?: boolean; adultConfirmed?: boolean };
+        if (!dead) { setHideLb(!!d.hideFromLeaderboard); setAdult(!!d.adultConfirmed); }
       } catch { /* leave null (toggle stays until loaded) */ }
     })();
     return () => { dead = true; };
@@ -91,6 +95,25 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
       toast({ title: "Saved", description: next ? "You're hidden from the Hall of Fame." : "You'll appear on the Hall of Fame." });
     } catch {
       setHideLb(prev); // revert on failure
+      toast({ title: "Couldn't save", variant: "destructive" });
+    }
+  };
+  const toggleAdult = async (next: boolean) => {
+    const prev = adult;
+    setAdult(next);
+    try {
+      const res = await fetch("/api/users/handle", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
+        body: JSON.stringify({ adultConfirmed: next }),
+      });
+      if (!res.ok) throw new Error();
+      setAdultConfirmed(next);
+      // Withdrawing the confirmation also turns the feed pill off.
+      if (!next) try { localStorage.removeItem(SHOW_ADULT_KEY); } catch { /* nothing kept */ }
+      toast({ title: "Saved", description: next ? "The feed now offers an 18+ filter." : "18+ is hidden again." });
+    } catch {
+      setAdult(prev);
       toast({ title: "Couldn't save", variant: "destructive" });
     }
   };
@@ -327,7 +350,21 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
                 </div>
               </SettingsSection>
 
-              <SettingsSection num="03" title="Danger Zone">
+              <SettingsSection num="03" title="18+ content">
+                <div className="set-list-item">
+                  <div className="set-item-content">
+                    <div className="set-item-title">I am 18 or older</div>
+                    <div className="set-item-sub">Adds an 18+ filter to the feed, off until you turn it on, and lets you generate 18+ images. 18+ means sexual content; nudity alone is not 18+.</div>
+                  </div>
+                  <SettingsToggle
+                    checked={adult === true}
+                    disabled={adult === null}
+                    onChange={(c) => toggleAdult(c)}
+                  />
+                </div>
+              </SettingsSection>
+
+              <SettingsSection num="04" title="Danger Zone">
                 <div className="set-list-item">
                   <div className="set-item-icon" style={{ color: '#e23b3b', background: '#ffebeb' }}><AlertCircle size={14} /></div>
                   <div className="set-item-content">
@@ -343,7 +380,7 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
               </SettingsSection>
 
               {IS_ADMIN && (
-                <SettingsSection num="04" title="Admin">
+                <SettingsSection num="05" title="Admin">
                   <div className="set-list-item">
                     <div className="set-item-icon" style={{ color: '#f5c542', background: '#fffaeb' }}>⚙</div>
                     <div className="set-item-content">

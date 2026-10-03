@@ -36,11 +36,15 @@ interface BetaAccess {
   setHandle: (h: string | null) => void;
   profile: GateProfile | null;
   setProfile: (p: GateProfile) => void;
+  /** Confirmed 18 or older in Settings: the feed may offer its 18+ pill. */
+  adultConfirmed: boolean;
+  setAdultConfirmed: (v: boolean) => void;
 }
 
 const Ctx = createContext<BetaAccess>({
   access: "checking", role: null, handle: undefined, setHandle: () => {},
   profile: null, setProfile: () => {},
+  adultConfirmed: false, setAdultConfirmed: () => {},
 });
 export const useBetaAccess = () => useContext(Ctx);
 
@@ -50,6 +54,7 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
   const [role, setRole] = useState<string | null>(null);
   const [handle, setHandleState] = useState<string | null | undefined>(undefined);
   const [profile, setProfile] = useState<GateProfile | null>(null);
+  const [adultConfirmed, setAdultConfirmed] = useState(false);
   const setHandle = (h: string | null) => {
     setHandleState(h);
     setProfile((p) => (p ? { ...p, handle: h } : p));
@@ -94,6 +99,7 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
         const data = (await res.json()) as {
           handle: string | null; role?: string;
           bio?: string | null; avatarUrl?: string | null; coverUrl?: string | null;
+          adultConfirmed?: boolean;
         };
         setHandleState(data.handle ?? null);
         setProfile({
@@ -103,6 +109,7 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
           coverUrl: data.coverUrl ?? null,
         });
         setRole(data.role ?? "user");
+        setAdultConfirmed(data.adultConfirmed === true);
         if (BETA_ROLES.has(data.role ?? "user")) setAccess("ok");
         else void teamFallback();
       } catch {
@@ -115,7 +122,7 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
   const isPublic = PUBLIC_PATHS.has(pathname ?? "/");
 
   return (
-    <Ctx.Provider value={{ access, role, handle, setHandle, profile, setProfile }}>
+    <Ctx.Provider value={{ access, role, handle, setHandle, profile, setProfile, adultConfirmed, setAdultConfirmed }}>
       {isPublic || access === "ok" ? (
         children
       ) : access === "denied" ? (
