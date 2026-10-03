@@ -193,9 +193,17 @@ describe("a ban on top of a running suspension", () => {
     expect(tables.bans[1].expires_at ?? null).toBeNull();
   });
 
-  it("links the event only to a ban it issued", async () => {
-    tables.bans.push({ id: "perm", user_id: "buyer-1", lifted_at: null, expires_at: null });
+  it("adds nothing when the same ban already runs, and links the event only to a ban it issued", async () => {
+    tables.bans.push({ id: "perm", user_id: "buyer-1", lifted_at: null, expires_at: null, reason: "Automated: repeated violations of the Terms of Service" });
     for (let i = 0; i < EXTRACTION_HITS_TO_BLOCK; i++) await hit(buyer);
+    expect(tables.bans).toHaveLength(1);
     expect(tables.automod_events.every((e) => e.ban_id == null)).toBe(true);
+  });
+
+  it("is its own row beside a different permanent ban, so that one's appeal cannot lift it", async () => {
+    tables.bans.push({ id: "council", user_id: "buyer-1", lifted_at: null, expires_at: null, reason: "Council: spam" });
+    for (let i = 0; i < EXTRACTION_HITS_TO_BLOCK; i++) await hit(buyer);
+    expect(tables.bans).toHaveLength(2);
+    expect(tables.automod_events.some((e) => e.ban_id === tables.bans[1].id)).toBe(true);
   });
 });

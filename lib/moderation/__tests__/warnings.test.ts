@@ -205,7 +205,7 @@ describe("a suspended account", () => {
 });
 
 describe("a step during a running longer ban", () => {
-  it("adds no shorter ban and reports the end that holds", async () => {
+  it("is its own row, and reports the end that holds", async () => {
     const until = new Date(Date.now() + 60 * DAY).toISOString();
     tables.bans.push({ id: "running", user_id: "user-1", lifted_at: null, expires_at: until });
     // The real activeBanFor reports the longest; this mock finds the only one.
@@ -213,7 +213,8 @@ describe("a step during a running longer ban", () => {
     for (let i = 0; i < WARNINGS_PER_STEP; i++) {
       outcome = await recordWarning(fake, { surface: "generate-image", request: user, category: "explicit_sexual", text: "t", confidence: 0.9 });
     }
-    expect(tables.bans).toHaveLength(1);
+    // Its own row, so an appeal against the longer ban leaves this one standing.
+    expect(tables.bans).toHaveLength(2);
     expect(tables.bans[0].expires_at).toBe(until);
     expect(outcome?.suspendedUntil).toBe(until);
   });

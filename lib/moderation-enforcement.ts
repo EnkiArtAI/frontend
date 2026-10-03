@@ -154,7 +154,7 @@ async function maybeAutoBan(
   const issuedBy = policy?.owner_user_id as string | undefined;
   if (!issuedBy) return; // no owner configured — leave it to human review
 
-  // For good. A running suspension is extended to that, not left to run out:
+  // For good, as its own row beside any running ban (lib/moderation/bans.ts):
   // skipping it let this ban vanish when a 3-day suspension ended.
   await banUntil(supabase, {
     userId, issuedBy, expiresAt: null,

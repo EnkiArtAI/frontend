@@ -119,7 +119,7 @@ async function ban(supabase: SupabaseClient, userId: string, eventId: string | u
   const issuedBy = policy?.owner_user_id as string | undefined;
   if (!issuedBy) return; // no owner configured: the team decides from the queue
 
-  // For good; a running suspension is extended rather than doubled. The
+  // For good, as its own row beside any running ban (lib/moderation/bans.ts). The
   // reason is shown to the user on /banned, so it names nothing that would
   // tell them which of their requests were caught; the events linked through
   // ban_id say what happened.
