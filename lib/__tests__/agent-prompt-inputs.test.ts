@@ -178,35 +178,70 @@ describe("a paid prompt takes only values that fit its variables", () => {
 describe("the agent route checks the inputs before any payment", () => {
   const src = readSource(join(__dirname, "..", "..", "app", "api", "x402", "generate", "route.ts"));
 
-  it("refuses in the 402 requirements, before the quote", () => {
+  // One helper fills the text and refuses; both the 402 and settlement call it.
+  const helper = src.slice(src.indexOf("async function agentPrompt("), src.indexOf("async function requirementsFor("));
+
+  it("refuses in the 402 requirements, before the quote, exactly what settlement refuses", () => {
     const requirements = src.slice(src.indexOf("async function requirementsFor("), src.indexOf("async function settleAndGenerate("));
-    const check = requirements.indexOf("await checkAgentPromptInputs(");
+    const check = requirements.indexOf("const filled = await agentPrompt(supabase, input.promptId, input.variableValues);");
     expect(check).toBeGreaterThan(-1);
     expect(requirements.indexOf("await computeQuote(")).toBeGreaterThan(check);
+    expect(helper.indexOf("await checkAgentPromptInputs(supabase, promptId, values);")).toBeGreaterThan(-1);
   });
 
   it("composes a prompt only through the checked values", () => {
     // The checked variables, read with an error check, not a second unchecked read.
-    expect(src).toMatch(/const filled = fillVariables\(text\.text, Object\.fromEntries\(inputs\.values\), inputs\.variables\);/);
-    expect(src.indexOf("await checkAgentPromptInputs(supabase, input.promptId, input.variableValues);", src.indexOf("async function settleAndGenerate("))).toBeGreaterThan(-1);
+    expect(helper).toMatch(/const filled = fillVariables\(text\.text, Object\.fromEntries\(inputs\.values\), inputs\.variables\);/);
+    expect(src.indexOf("const filled = await agentPrompt(supabase, input.promptId, input.variableValues);", src.indexOf("async function settleAndGenerate("))).toBeGreaterThan(-1);
     expect(src).not.toMatch(/input\.variableValues\?\.\[name\]/);
   });
 
   it("looks for extraction whenever the text is secret, not only when the artist charges", () => {
-    expect(src).toMatch(/hidden = inputs\.paid;/);
+    expect(src).toMatch(/hidden = filled\.paid;/);
+    expect(helper).toMatch(/return \{ ok: true, text: filled\.text, adult: text\.adult, paid: inputs\.paid \};/);
     expect(src).toMatch(/const check = await checkPrompt\(checked, \{ hidden \}\);/);
     expect(src).not.toMatch(/hidden: reqs\.legs/);
   });
 
   it("refuses a value no slot takes before the payment is settled", () => {
-    const refuse = src.indexOf("if (filled.unused.length > 0) {\n      return NextResponse.json({ error: `This prompt's text has no place for ${filled.unused.join(\", \")} — nothing was charged` }, { status: 422 });");
-    expect(refuse).toBeGreaterThan(-1);
-    expect(src.indexOf("await submitAndConfirm(")).toBeGreaterThan(refuse);
+    expect(helper).toContain("if (filled.unused.length > 0) {\n    return { ok: false, status: 422, error: `This prompt's text has no place for ${filled.unused.join(\", \")} — nothing was charged` };");
+    expect(helper).toContain("if (inputsUnmatched(filled)) {");
+    expect(src.indexOf("await submitAndConfirm(")).toBeGreaterThan(src.indexOf("const filled = await agentPrompt(supabase, input.promptId, input.variableValues);", src.indexOf("async function settleAndGenerate(")));
   });
 
   it("refuses a prompt sent alongside a promptId, which would be ignored", () => {
-    expect(src).toMatch(/\.refine\(\(v\) => Boolean\(v\.prompt\) !== Boolean\(v\.promptId\), \{ message: "Send prompt or promptId, not both" \}\);/);
+    expect(src).toContain('.refine((v) => Boolean(v.prompt) !== Boolean(v.promptId), { message: "Send prompt or promptId, not both" })');
+    // Values with a plain prompt would be paid for and never read.
+    expect(src).toContain('.refine((v) => Boolean(v.promptId) || Object.keys(v.variableValues ?? {}).length === 0, { message: "variableValues needs a promptId" });');
+    // A ratio the model cannot take is refused before the 402, not swapped for 1:1 after settlement.
+    expect(src).toContain('aspectRatio: z.enum(RATIOS).default("1:1"),');
+    expect(src).toContain("const ratio = input.aspectRatio;");
     // The 402 probe adds its placeholder prompt only without a promptId.
     expect(src).toMatch(/prompt: req\.nextUrl\.searchParams\.get\("prompt"\) \?\? \(promptId \? undefined : "probe"\),/);
+  });
+});
+
+describe("the agent route's request", () => {
+  const send = async (body: Record<string, unknown>) => {
+    const { POST } = await import("../../app/api/x402/generate/route");
+    const { NextRequest } = await import("next/server");
+    const res = await POST(new NextRequest("http://enki.test/api/x402/generate", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    }));
+    return { status: res.status, error: ((await res.json()) as { error?: string }).error };
+  };
+
+  it("refuses values for a plain prompt, which nothing would read", async () => {
+    expect(await send({ prompt: "a [subject] at dusk", variableValues: { subject: "fox" }, modelFamily: "nano-banana-pro" }))
+      .toEqual({ status: 400, error: "variableValues needs a promptId" });
+  });
+
+  it("refuses a ratio no model takes before any payment is asked", async () => {
+    expect((await send({ prompt: "a fox", aspectRatio: "7:5", modelFamily: "nano-banana-pro" })).status).toBe(400);
+  });
+
+  it("refuses a prompt sent with a promptId", async () => {
+    expect(await send({ prompt: "a fox", promptId: "11111111-1111-4111-8111-111111111111", modelFamily: "nano-banana-pro" }))
+      .toEqual({ status: 400, error: "Send prompt or promptId, not both" });
   });
 });

@@ -18,7 +18,7 @@ export async function GET() {
         resource: "/api/x402/generate",
         method: "POST",
         description:
-          "Generate one image. Body: { prompt } for plain text, or { promptId, variableValues } to use an artist's prompt (the artist's share is paid inside your own transaction). Required: modelFamily (nano-banana-pro | gpt-image-2). Optional: resolution (1K|2K|4K), aspectRatio, quality. A request without X-PAYMENT answers 402 with exact requirements: extra.feePayer carries our gas payer (you only need USDC) and extra.legs lists every required TransferChecked — one per recipient, exact amounts. Send the partially signed transaction back in X-PAYMENT; we co-sign, settle and answer with the image.",
+          "Generate one image. Body: { prompt } for plain text, or { promptId, variableValues } to use an artist's prompt (the artist's share is paid inside your own transaction). Required: modelFamily (nano-banana-pro | gpt-image-2). Optional: resolution (1K|2K|4K), aspectRatio (1:1|2:3|3:2|3:4|4:3|4:5|5:4|9:16|16:9|21:9), quality. variableValues go with a promptId only. A request without X-PAYMENT answers 402 with exact requirements: extra.feePayer carries our gas payer (you only need USDC) and extra.legs lists every required TransferChecked — one per recipient, exact amounts. Send the partially signed transaction back in X-PAYMENT; we co-sign, settle and answer with the image.",
         status: "live — plain prompts, free/showcase prompts and priced artist prompts (multi-leg source split)",
       },
     ],

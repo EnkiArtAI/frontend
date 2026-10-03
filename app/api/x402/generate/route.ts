@@ -78,9 +78,11 @@ const bodySchema = z.object({
   // one (Kev, 2026-10-02: "NIEMALS IRGENDEIN standardmodell").
   modelFamily: z.string({ error: "modelFamily is required" }).trim().min(1, "modelFamily is required").max(64),
   resolution: z.enum(["1K", "2K", "4K"]).default("2K"),
-  aspectRatio: z.string().trim().max(8).default("1:1"),
+  aspectRatio: z.enum(RATIOS).default("1:1"),
   quality: z.enum(["low", "medium", "high"]).optional(),
-}).refine((v) => Boolean(v.prompt) !== Boolean(v.promptId), { message: "Send prompt or promptId, not both" });
+}).refine((v) => Boolean(v.prompt) !== Boolean(v.promptId), { message: "Send prompt or promptId, not both" })
+  // Values for a plain prompt would be paid for and never read.
+  .refine((v) => Boolean(v.promptId) || Object.keys(v.variableValues ?? {}).length === 0, { message: "variableValues needs a promptId" });
 
 type Input = z.infer<typeof bodySchema>;
 
@@ -107,6 +109,33 @@ interface Priced {
 }
 type Requirements = Priced | { status: 400 | 404 | 422 | 500 | 503; body: { error: string } };
 
+/**
+ * A marketplace prompt's text filled with the agent's values, or why not.
+ * Only a live prompt is for sale, and every value must belong to a declared
+ * variable, fit it and land in a slot, so an agent never pays for an input
+ * that is ignored (agent-prompt-inputs). The 402 and settlement refuse the
+ * same requests. The text never leaves the server.
+ */
+async function agentPrompt(
+  supabase: ReturnType<typeof getSupabaseServerClient>,
+  promptId: string,
+  values: Input["variableValues"],
+): Promise<{ ok: true; text: string; adult: boolean; paid: boolean } | { ok: false; status: 400 | 404 | 422 | 500; error: string }> {
+  const inputs = await checkAgentPromptInputs(supabase, promptId, values);
+  if (!inputs.ok) return { ok: false, status: inputs.status as 400 | 404 | 500, error: inputs.error };
+  const text = await loadPromptText(supabase, promptId);
+  if (!text.ok) return text;
+  const filled = fillVariables(text.text, Object.fromEntries(inputs.values), inputs.variables);
+  if (inputsUnmatched(filled)) {
+    return { ok: false, status: 422, error: "This prompt's inputs could not be matched to its text — nothing was charged" };
+  }
+  // Every value is a declared variable's, so one that no slot takes would be paid for and dropped.
+  if (filled.unused.length > 0) {
+    return { ok: false, status: 422, error: `This prompt's text has no place for ${filled.unused.join(", ")} — nothing was charged` };
+  }
+  return { ok: true, text: filled.text, adult: text.adult, paid: inputs.paid };
+}
+
 /** The 402 body, in the x402 ecosystem's shape — Solana-first by decree. */
 async function requirementsFor(input: Input): Promise<Requirements> {
   const payTo = platformWallet();
@@ -119,8 +148,8 @@ async function requirementsFor(input: Input): Promise<Requirements> {
     const supabase = getSupabaseServerClient();
     // Refused here, so the 402 probe already says no, and no payment is ever
     // asked for a draft or for inputs a paid prompt does not take.
-    const inputs = await checkAgentPromptInputs(supabase, input.promptId, input.variableValues);
-    if (!inputs.ok) return { status: inputs.status, body: { error: inputs.error } };
+    const filled = await agentPrompt(supabase, input.promptId, input.variableValues);
+    if (!filled.ok) return { status: filled.status, body: { error: filled.error } };
     const quote = await computeQuote(supabase, {
       promptId: input.promptId,
       modelFamily: input.modelFamily,
@@ -223,26 +252,12 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // the artist charges for it: a paid prompt at 0 cents is still secret.
   let hidden = false;
   if (input.promptId) {
-    // Only a live prompt is for sale, and every value must belong to a
-    // declared variable and fit it, so an agent never pays for an input that
-    // is ignored (agent-prompt-inputs). The fitted values then fill the
-    // artist's text exactly as the human rail fills it.
-    const inputs = await checkAgentPromptInputs(supabase, input.promptId, input.variableValues);
-    if (!inputs.ok) return NextResponse.json({ error: inputs.error }, { status: inputs.status });
-    const text = await loadPromptText(supabase, input.promptId);
-    if (!text.ok) return NextResponse.json({ error: text.error }, { status: text.status });
-    const filled = fillVariables(text.text, Object.fromEntries(inputs.values), inputs.variables);
-    if (inputsUnmatched(filled)) {
-      return NextResponse.json({ error: "This prompt's inputs could not be matched to its text — nothing was charged" }, { status: 422 });
-    }
-    // Every value was checked to be a declared variable's, so one that no
-    // slot takes would be paid for and dropped.
-    if (filled.unused.length > 0) {
-      return NextResponse.json({ error: `This prompt's text has no place for ${filled.unused.join(", ")} — nothing was charged` }, { status: 422 });
-    }
+    // Checked again at settlement: the prompt may have changed since the 402.
+    const filled = await agentPrompt(supabase, input.promptId, input.variableValues);
+    if (!filled.ok) return NextResponse.json({ error: filled.error }, { status: filled.status });
     promptText = filled.text;
-    promptAdult = text.adult;
-    hidden = inputs.paid;
+    promptAdult = filled.adult;
+    hidden = filled.paid;
   }
 
   // What the request asks for, judged before any payment: for a marketplace
@@ -416,7 +431,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   }
 
   // ── Paid work: one provider call on the routed host ─────────────────────
-  const ratio = (RATIOS as readonly string[]).includes(input.aspectRatio) ? input.aspectRatio : "1:1";
+  const ratio = input.aspectRatio;
   const genRequest: ImageGenerationRequest = {
     prompt: promptText,
     // The routed model, exactly as the human route sends it. Without it every

@@ -137,9 +137,12 @@ describe("/api/generate-image builds a paid prompt from the artist's text", () =
     expect(refuse).toBeGreaterThan(-1);
     expect(ROUTE.indexOf("const verdict = await moderate({ prompt,")).toBeGreaterThan(refuse);
     expect(ROUTE.indexOf("await claimForGeneration(")).toBeGreaterThan(refuse);
-    const agent = AGENT.search(/if \(inputsUnmatched\(filled\)\) \{\n\s+return NextResponse\.json\(/);
-    expect(agent).toBeGreaterThan(-1);
-    expect(AGENT.indexOf("parseXPayment(paymentHeader)")).toBeGreaterThan(agent);
+    // The agent rail refuses in agentPrompt, which settlement calls before reading the payment.
+    const helper = AGENT.slice(AGENT.indexOf("async function agentPrompt("), AGENT.indexOf("async function requirementsFor("));
+    expect(helper).toMatch(/if \(inputsUnmatched\(filled\)\) \{\n\s+return \{ ok: false, status: 422,/);
+    const settle = AGENT.indexOf("const filled = await agentPrompt(supabase, input.promptId, input.variableValues);", AGENT.indexOf("async function settleAndGenerate("));
+    expect(settle).toBeGreaterThan(-1);
+    expect(AGENT.indexOf("parseXPayment(paymentHeader)")).toBeGreaterThan(settle);
   });
 
   it("never returns the artist's text to the buyer, and records which prompt was used", () => {
@@ -148,7 +151,7 @@ describe("/api/generate-image builds a paid prompt from the artist's text", () =
   });
 
   it("the agent route uses the same reader", () => {
-    expect(AGENT).toMatch(/const text = await loadPromptText\(supabase, input\.promptId\);/);
+    expect(AGENT).toMatch(/const text = await loadPromptText\(supabase, promptId\);/);
     expect(AGENT).not.toMatch(/decryptPrompt/);
   });
 });
