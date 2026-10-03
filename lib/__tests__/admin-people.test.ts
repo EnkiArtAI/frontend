@@ -285,7 +285,7 @@ describe("the admin route", () => {
 
 describe("a ban landing on a running one", () => {
   it("extends it to the later end, never shortens it", async () => {
-    const { laterEnd } = await import("@/lib/admin/people");
+    const { laterEnd } = await import("@/lib/moderation/bans");
     expect(laterEnd("2026-10-06T00:00:00Z", "2026-11-02T00:00:00Z")).toBe("2026-11-02T00:00:00Z");
     expect(laterEnd("2026-11-02T00:00:00Z", "2026-10-06T00:00:00Z")).toBe("2026-11-02T00:00:00Z");
     expect(laterEnd("2026-10-06T00:00:00Z", null)).toBeNull();
