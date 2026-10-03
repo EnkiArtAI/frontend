@@ -1,8 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { decryptString } from "@/lib/crypto";
 import { requireAuth } from "@/lib/auth";
 import { mayShowAdult, viewer } from "@/lib/adult-content";
+import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
+import { recordModerationEvent } from "@/lib/moderation-enforcement";
+import { checkPrompt } from "@/lib/moderation/prompt-check";
+import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 
 type PatchBody = {
   title?: string;
@@ -252,6 +256,36 @@ export async function PATCH(
       .maybeSingle();
     if (!walletRow?.user_id) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+
+    // Edited text is judged like a save (Kev, 2026-10-03): a prompt saved
+    // clean must not turn explicit or 18+ through its title, description or
+    // tags afterwards. Only the owner's edit is judged, so nobody else's
+    // request costs a check or earns a warning. The rest of the prompt was
+    // judged at save, so an 18+ mark is only ever raised here.
+    const edited = Object.fromEntries(
+      Object.entries({ title: body.title, description: body.description, tags: Array.isArray(body.tags) ? body.tags.join(", ") : undefined })
+        .filter((e): e is [string, string] => typeof e[1] === "string" && e[1].trim() !== ""),
+    );
+    if (Object.keys(edited).length > 0) {
+      const { data: own } = await supabase.from("prompts").select("id")
+        .eq("id", id).eq("creator_id", String(walletRow.user_id)).maybeSingle();
+      if (!own) return NextResponse.json({ error: "not found" }, { status: 404 });
+      const check = await checkPrompt(edited, { hidden: false, signal: req.signal });
+      if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
+        const outcome = await recordWarning(supabase, {
+          surface: "upload", request: req, category: check.verdict, text: JSON.stringify(edited), confidence: check.confidence,
+        });
+        return NextResponse.json({ error: warningMessage(check.verdict, outcome, "save") }, { status: 422 });
+      }
+      if (check.verdict !== "clear") {
+        return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 });
+      }
+      if (check.adult) update.is_adult = true;
+      const text = Object.values(edited).join("\n");
+      const verdict = await moderate({ prompt: text, surface: "upload", signal: req.signal, adultJudged: true });
+      after(recordModerationEvent(verdict, { surface: "upload", request: req, prompt: text }));
+      if (!verdict.allowed) return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
     }
 
     const { error, count } = await supabase
