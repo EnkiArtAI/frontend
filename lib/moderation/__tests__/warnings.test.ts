@@ -12,11 +12,13 @@ let tables: Record<string, Row[]>;
 
 class Query implements PromiseLike<{ data: unknown; error: null }> {
   private filters: ((r: Row) => boolean)[] = [];
-  private op: "select" | "insert" = "select";
+  private op: "select" | "insert" | "update" = "select";
   private payload: Row | null = null;
   constructor(private table: string) {}
   select() { return this; }
   insert(row: Row) { this.op = "insert"; this.payload = row; return this; }
+  update(row: Row) { this.op = "update"; this.payload = row; return this; }
+  single() { return this; }
   eq(c: string, v: unknown) { this.filters.push((r) => r[c] === v); return this; }
   neq(c: string, v: unknown) { this.filters.push((r) => r[c] !== v); return this; }
   in(c: string, vs: unknown[]) { this.filters.push((r) => vs.includes(r[c])); return this; }
@@ -29,10 +31,12 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
   private run() {
     const rows = (tables[this.table] ??= []);
     if (this.op === "insert") {
-      rows.push({ id: `${this.table}-${rows.length + 1}`, created_at: new Date().toISOString(), ...this.payload });
-      return { data: null, error: null };
+      const row = { id: `${this.table}-${rows.length + 1}`, created_at: new Date().toISOString(), ...this.payload };
+      rows.push(row);
+      return { data: { id: row.id }, error: null };
     }
     const hits = rows.filter((r) => this.filters.every((f) => f(r)));
+    if (this.op === "update") { hits.forEach((r) => Object.assign(r, this.payload)); return { data: null, error: null }; }
     return { data: this.table === "moderation_policy" ? hits[0] ?? null : hits, error: null };
   }
 }
@@ -53,6 +57,10 @@ const SESSIONS: Record<string, { userId: string; ban: { id: string } | null }> =
 vi.mock("@/lib/session-user", () => ({
   resolveSessionUserId: async (_s: unknown, token: string | null) => (SESSIONS[token ?? ""]?.ban ? null : SESSIONS[token ?? ""]?.userId ?? null),
   resolveSessionUserWithBan: async (_s: unknown, token: string | null) => SESSIONS[token ?? ""] ?? { userId: null, ban: null },
+  activeBanFor: async (_s: unknown, userId: string) => {
+    const b = tables.bans?.find((x) => x.user_id === userId && !x.lifted_at && (!x.expires_at || String(x.expires_at) > new Date().toISOString()));
+    return b ? { id: String(b.id), reason: null, expiresAt: (b.expires_at as string | null) ?? null } : null;
+  },
 }));
 
 import { recordWarning, warningMessage, addressWarnedOut, WARNINGS_PER_STEP, SUSPENSION_LADDER_DAYS } from "@/lib/moderation/warnings";
@@ -98,14 +106,23 @@ describe("the suspension ladder", () => {
     expect(daysOf(tables.bans[0])).toBe(3);
   });
 
-  it("suspends for 7 days at the twentieth", async () => {
+  it("suspends for 7 days at the twentieth, extending a suspension still running", async () => {
     for (let i = 0; i < 20; i++) await warn(user);
+    expect(tables.bans).toHaveLength(1);
+    expect(daysOf(tables.bans[0])).toBe(7);
+  });
+
+  it("starts a new suspension once the last one has run out", async () => {
+    for (let i = 0; i < 10; i++) await warn(user);
+    tables.bans[0].expires_at = new Date(Date.now() - 1000).toISOString();
+    for (let i = 0; i < 10; i++) await warn(user);
+    expect(tables.bans).toHaveLength(2);
     expect(daysOf(tables.bans[1])).toBe(7);
   });
 
   it("suspends for good at the seventieth", async () => {
     for (let i = 0; i < 70; i++) await warn(user);
-    expect(tables.bans[6]).toMatchObject({ expires_at: null });
+    expect(tables.bans.at(-1)).toMatchObject({ expires_at: null });
   });
 
   it("issues each suspension in the moderation owner's name", async () => {
@@ -185,5 +202,19 @@ describe("a suspended account", () => {
       category: "minor_sexual", text: "t", confidence: 0.9,
     });
     expect(tables.automod_events.at(-1)?.user_id).toBe("user-2");
+  });
+});
+
+describe("a step during a running longer ban", () => {
+  it("adds no shorter ban and reports the end that holds", async () => {
+    const until = new Date(Date.now() + 60 * DAY).toISOString();
+    tables.bans.push({ id: "running", user_id: "user-1", lifted_at: null, expires_at: until });
+    let outcome;
+    for (let i = 0; i < WARNINGS_PER_STEP; i++) {
+      outcome = await recordWarning(fake, { surface: "generate-image", request: user, category: "explicit_sexual", text: "t", confidence: 0.9 });
+    }
+    expect(tables.bans).toHaveLength(1);
+    expect(tables.bans[0].expires_at).toBe(until);
+    expect(outcome?.suspendedUntil).toBe(until);
   });
 });

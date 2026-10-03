@@ -11,7 +11,9 @@ const ROOT = join(__dirname, "..", "..", "..");
 
 describe("an expired suspension is not a ban", () => {
   it("for the child-safety auto-ban", () => {
-    expect(readSource(join(ROOT, "lib", "moderation-enforcement.ts"))).toMatch(/if \(await activeBanFor\(supabase, userId\)\) return;/);
+    const src = readSource(join(ROOT, "lib", "moderation-enforcement.ts"));
+    expect(src).toMatch(/await banUntil\(supabase, \{\n\s+userId, issuedBy, expiresAt: null,/);
+    expect(src).not.toMatch(/if \(await activeBanFor\(supabase, userId\)\) return;/);
   });
 
   it("for a council decision and a manual ban", () => {

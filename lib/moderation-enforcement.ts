@@ -18,7 +18,8 @@
  * bans.issued_by is NOT NULL: the schema already assumes a human signs off.
  */
 import { getSupabaseServerClientSafe } from "@/lib/supabaseServer";
-import { activeBanFor, resolveSessionUserWithBan } from "@/lib/session-user";
+import { resolveSessionUserWithBan } from "@/lib/session-user";
+import { banUntil } from "@/lib/moderation/bans";
 import { getClientIp, hashIp } from "@/lib/ip-hash";
 import { encryptString } from "@/lib/crypto";
 import type { ModerationVerdict } from "@/lib/moderation";
@@ -153,14 +154,10 @@ async function maybeAutoBan(
   const issuedBy = policy?.owner_user_id as string | undefined;
   if (!issuedBy) return; // no owner configured — leave it to human review
 
-  // Never stack a second ban on someone already banned. An expired
-  // suspension (the warnings ladder issues many) is not a ban any more.
-  if (await activeBanFor(supabase, userId)) return;
-
-  await supabase.from("bans").insert({
-    user_id: userId,
-    issued_by: issuedBy,
-    scope: "full",
+  // For good. A running suspension is extended to that, not left to run out:
+  // skipping it let this ban vanish when a 3-day suspension ended.
+  await banUntil(supabase, {
+    userId, issuedBy, expiresAt: null,
     reason: `Automated: sexual/minors ${minors.toFixed(2)} (automod ${verdict.promptHash.slice(0, 12)})`,
   });
   console.warn("[automod] auto-ban issued", { userId, minors });

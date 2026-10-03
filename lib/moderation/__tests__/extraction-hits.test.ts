@@ -178,3 +178,12 @@ describe("a suspended account", () => {
     expect(tables.automod_events.at(-1)?.user_id).toBe("buyer-2");
   });
 });
+
+describe("a ban on top of a running suspension", () => {
+  it("extends the suspension to for good instead of being skipped", async () => {
+    tables.bans.push({ id: "running", user_id: "buyer-1", lifted_at: null, expires_at: new Date(Date.now() + 3 * 86400_000).toISOString() });
+    for (let i = 0; i < EXTRACTION_HITS_TO_BLOCK; i++) await hit(buyer);
+    expect(tables.bans).toHaveLength(1);
+    expect(tables.bans[0].expires_at).toBeNull();
+  });
+});

@@ -15,6 +15,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptString } from "@/lib/crypto";
 import { getClientIp, hashIp } from "@/lib/ip-hash";
 import { resolveSessionUserWithBan } from "@/lib/session-user";
+import { banUntil } from "@/lib/moderation/bans";
 import { notifyAdmins } from "@/lib/admin-notify";
 
 export const WARNINGS_PER_STEP = 10;
@@ -97,9 +98,9 @@ export async function recordWarning(
   if (userId && stepNow > stepBefore) {
     const days = SUSPENSION_LADDER_DAYS[Math.min(stepNow, SUSPENSION_LADDER_DAYS.length) - 1];
     const expiresAt = days === null ? null : new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
-    if (await suspend(supabase, userId, expiresAt, `Automated: ${total} warnings (${ctx.category}), step ${stepNow}`)) {
-      outcome.suspendedUntil = expiresAt ?? "forever";
-    }
+    const suspended = await suspend(supabase, userId, expiresAt, `Automated: ${total} warnings (${ctx.category}), step ${stepNow}`);
+    // A running longer ban stays as it is; the outcome reports the real end.
+    if (suspended) outcome.suspendedUntil = suspended.until ?? "forever";
   }
 
   if (ctx.category === "minor_sexual" || outcome.suspendedUntil) {
@@ -114,14 +115,13 @@ export async function recordWarning(
   return outcome;
 }
 
-async function suspend(supabase: SupabaseClient, userId: string, expiresAt: string | null, reason: string): Promise<boolean> {
+async function suspend(supabase: SupabaseClient, userId: string, expiresAt: string | null, reason: string): Promise<{ until: string | null } | null> {
   // bans.issued_by is NOT NULL: issued in the name of the moderation owner,
   // who answers for it and can lift it, like the existing auto-ban.
   const { data: policy } = await supabase.from("moderation_policy").select("owner_user_id").eq("id", 1).maybeSingle();
   const issuedBy = policy?.owner_user_id as string | undefined;
-  if (!issuedBy) return false;
-  const { error } = await supabase.from("bans").insert({ user_id: userId, issued_by: issuedBy, scope: "full", reason, expires_at: expiresAt });
-  return !error;
+  if (!issuedBy) return null;
+  return banUntil(supabase, { userId, issuedBy, reason, expiresAt });
 }
 
 function duration(days: number | null): string {

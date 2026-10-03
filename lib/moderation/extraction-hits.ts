@@ -16,7 +16,8 @@ import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptString } from "@/lib/crypto";
 import { getClientIp, hashIp } from "@/lib/ip-hash";
-import { activeBanFor, resolveSessionUserWithBan } from "@/lib/session-user";
+import { resolveSessionUserWithBan } from "@/lib/session-user";
+import { banUntil } from "@/lib/moderation/bans";
 import { notifyAdmins } from "@/lib/admin-notify";
 
 export const EXTRACTION_HITS_TO_BLOCK = 3;
@@ -118,21 +119,12 @@ async function ban(supabase: SupabaseClient, userId: string, eventId: string | u
   const issuedBy = policy?.owner_user_id as string | undefined;
   if (!issuedBy) return; // no owner configured: the team decides from the queue
 
-  // An expired suspension from the warnings ladder is not a ban any more.
-  if (await activeBanFor(supabase, userId)) return;
-
-  const { data: issued } = await supabase
-    .from("bans")
-    .insert({
-      user_id: userId,
-      issued_by: issuedBy,
-      scope: "full",
-      // The reason is shown to the user on /banned, so it names nothing that
-      // would tell them which of their requests were caught; the events linked
-      // through ban_id say what happened.
-      reason: "Automated: repeated violations of the Terms of Service",
-    })
-    .select("id")
-    .single();
+  // For good; a running suspension is extended rather than doubled. The
+  // reason is shown to the user on /banned, so it names nothing that would
+  // tell them which of their requests were caught; the events linked through
+  // ban_id say what happened.
+  const issued = await banUntil(supabase, {
+    userId, issuedBy, reason: "Automated: repeated violations of the Terms of Service", expiresAt: null,
+  });
   if (issued?.id && eventId) await supabase.from("automod_events").update({ ban_id: issued.id }).eq("id", eventId);
 }
