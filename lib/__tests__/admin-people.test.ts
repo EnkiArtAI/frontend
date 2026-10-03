@@ -95,7 +95,7 @@ vi.mock("@/lib/session-user", async (original) => ({
 }));
 
 import { listPeople, personDetail, parsePersonKey, hasChildSafetyCase } from "@/lib/admin/people";
-import { POST } from "../../app/api/admin/route";
+import { GET, POST } from "../../app/api/admin/route";
 
 const HASH = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const ago = (days: number) => new Date(Date.now() - days * 86400_000).toISOString();
@@ -315,9 +315,9 @@ describe("the admin route, more", () => {
     expect(String(tables.bans[1].expires_at) > ago(-29)).toBe(true);
   });
 
-  it("says so when the running ban already lasts longer", async () => {
+  it("says so when the same ban already lasts longer", async () => {
     const until = ago(-60);
-    tables.bans.push({ id: "b1", user_id: "u1", lifted_at: null, expires_at: until, created_at: ago(0) });
+    tables.bans.push({ id: "b1", user_id: "u1", lifted_at: null, expires_at: until, created_at: ago(0), reason: "Banned from the admin panel" });
     const res = await post("admin-tok", { resource: "bans", action: "ban", userId: "u1", days: 30 });
     expect(res.status).toBe(400);
     expect(tables.bans[0].expires_at).toBe(until);
@@ -380,5 +380,48 @@ describe("someone without an account", () => {
   it("while an account keeps every warning it ever got", async () => {
     tables.automod_events.push(ev("u1", "explicit_sexual", { created_at: ago(40) }), ev("u1", "explicit_sexual", { created_at: ago(2) }));
     expect((await listPeople(fake))[0].warnings).toBe(2);
+  });
+});
+
+describe("the strikes tab with several bans", () => {
+  const get = () => GET(new NextRequest("http://enki.test/api/admin", { headers: { "X-Session-Token": "admin-tok" } }));
+
+  it("shows the ban that holds and the appeal against it", async () => {
+    tables.bans.push(
+      { id: "perm", user_id: "u1", lifted_at: null, expires_at: null, created_at: ago(1), reason: "Council: spam" },
+      { id: "short", user_id: "u1", lifted_at: null, expires_at: ago(-3), created_at: ago(0), reason: "ladder" },
+    );
+    tables.appeals.push(
+      { id: "a-short", user_id: "u1", target_uuid: "short", status: "pending", user_statement: "about the 3 days", created_at: ago(2) },
+      { id: "a-perm", user_id: "u1", target_uuid: "perm", status: "pending", user_statement: "about the council", created_at: ago(1) },
+    );
+    const row = ((await (await get()).json()).strikes as Record<string, unknown>[]).find((r) => r.userId === "u1");
+    expect(row).toMatchObject({ banned: true, permanent: true, appeal: { id: "a-perm" } });
+  });
+
+  it("lets a different manual ban stand beside a longer running one", async () => {
+    tables.bans.push({ id: "b1", user_id: "u1", lifted_at: null, expires_at: null, created_at: ago(0), reason: "Council: spam" });
+    const res = await POST(new NextRequest("http://enki.test/api/admin", {
+      method: "POST", headers: { "X-Session-Token": "admin-tok", "Content-Type": "application/json" },
+      body: JSON.stringify({ resource: "bans", action: "ban", userId: "u1", days: 30 }),
+    }));
+    expect(res.status).toBe(200);
+    expect(tables.bans).toHaveLength(2);
+  });
+});
+
+describe("the strikes tab, appeal order", () => {
+  it("prefers the appeal against the ban that holds even when another is newer", async () => {
+    tables.bans.push(
+      { id: "perm", user_id: "u1", lifted_at: null, expires_at: null, created_at: ago(5), reason: "Council: spam" },
+      { id: "short", user_id: "u1", lifted_at: null, expires_at: ago(-3), created_at: ago(0), reason: "ladder" },
+    );
+    tables.appeals.push(
+      { id: "a-perm", user_id: "u1", target_uuid: "perm", status: "pending", user_statement: "council", created_at: ago(4) },
+      { id: "a-short", user_id: "u1", target_uuid: "short", status: "pending", user_statement: "3 days", created_at: ago(0) },
+    );
+    const res = await GET(new NextRequest("http://enki.test/api/admin", { headers: { "X-Session-Token": "admin-tok" } }));
+    const row = ((await res.json()).strikes as Record<string, unknown>[]).find((r) => r.userId === "u1");
+    expect(row).toMatchObject({ appeal: { id: "a-perm" } });
   });
 });

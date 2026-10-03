@@ -226,9 +226,10 @@ export async function GET(req: NextRequest) {
       .is("revoked_at", null).order("created_at", { ascending: false }).limit(200),
     supabase.from("bans")
       .select("id, user_id, reason, scope, expires_at, created_at")
-      .is("lifted_at", null).or(unexpired()).limit(100),
+      // Longest last, so per user the ban that holds is the one kept below.
+      .is("lifted_at", null).or(unexpired()).order("expires_at", { ascending: true, nullsFirst: false }).limit(100),
     supabase.from("appeals")
-      .select("id, user_id, user_statement, status, created_at")
+      .select("id, user_id, user_statement, status, target_uuid, created_at")
       .eq("status", "pending").order("created_at", { ascending: false }).limit(100),
     supabase.from("recovery_requests")
       .select("id, user_id, claimed_handle, claimed_wallet, contact_email_ct, contact_email_iv, contact_email_tag, contact_email_kid, explanation_ct, explanation_iv, explanation_tag, explanation_kid, layer, status, rejection_reason, created_at")
@@ -284,13 +285,21 @@ export async function GET(req: NextRequest) {
   }
 
   // strikes tab: one row per user with active strikes, ban state and appeal
-  const banByUser = new Map<string, { reason: string | null; permanent: boolean }>();
-  for (const b of (ba.data ?? []) as { user_id: string; reason: string | null; expires_at: string | null }[]) {
-    banByUser.set(String(b.user_id), { reason: b.reason, permanent: !b.expires_at });
+  // A user can hold several bans (each sanction is its own row); the one that
+  // lasts longest holds, and is the one shown.
+  const banByUser = new Map<string, { id: string; reason: string | null; permanent: boolean }>();
+  for (const b of (ba.data ?? []) as { id: string; user_id: string; reason: string | null; expires_at: string | null }[]) {
+    banByUser.set(String(b.user_id), { id: String(b.id), reason: b.reason, permanent: !b.expires_at });
   }
-  const appealByUser = new Map<string, { id: string; note: string | null }>();
-  for (const a of (ap.data ?? []) as { id: string; user_id: string; user_statement: string | null }[]) {
-    appealByUser.set(String(a.user_id), { id: String(a.id), note: a.user_statement });
+  // Of several pending appeals, the one against the ban that holds; else the newest.
+  const appealByUser = new Map<string, { id: string; note: string | null; target: string | null }>();
+  for (const a of (ap.data ?? []) as { id: string; user_id: string; user_statement: string | null; target_uuid: string | null }[]) {
+    const k = String(a.user_id);
+    const holding = banByUser.get(k)?.id;
+    const cur = appealByUser.get(k);
+    if (!cur || (a.target_uuid === holding && cur.target !== holding)) {
+      appealByUser.set(k, { id: String(a.id), note: a.user_statement, target: a.target_uuid ?? null });
+    }
   }
   const strikeRows = new Map<string, { userId: string; strikes: { id: string; reason: string | null }[] }>();
   for (const s of (st.data ?? []) as { id: string; user_id: string; reason: string | null }[]) {
