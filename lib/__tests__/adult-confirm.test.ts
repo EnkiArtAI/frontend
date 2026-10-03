@@ -84,31 +84,54 @@ describe("confirming", () => {
 describe("the screens", () => {
   const ROOT = join(__dirname, "..", "..");
   const src = (...p: string[]) => readSource(join(ROOT, ...p));
+  const GATE = src("components", "BetaGate.tsx");
+  const FEED = src("components", "enki", "EnkiFeedPage.tsx");
 
-  it("the feed offers the pill only to a confirmed adult, and refetches when it flips", () => {
-    const feed = src("components", "enki", "EnkiFeedPage.tsx");
-    expect(feed).toMatch(/onShowAdult=\{adultConfirmed \? flipAdult : undefined\}/);
-    expect(feed).toMatch(/const showAdult = adultConfirmed && adultPill;/);
-    expect(feed).toMatch(/genFilter\.join\(","\), showAdult \? "18\+" : "safe"\]/);
-    expect(feed).toMatch(/fetch\(`\/api\/marketplace\/prompts\?\$\{params\.toString\(\)\}`, \{ headers: viewerHeaders\(\)/);
-  });
-
-  it("the pill starts off", () => {
-    expect(src("components", "enki", "EnkiFeedPage.tsx")).toMatch(/const \[adultPill, setAdultPill\] = useState\(false\);/);
+  it("the feed offers the pill only to a confirmed adult and asks for exactly what it shows", () => {
+    expect(FEED).toMatch(/onShowAdult=\{adultConfirmed \? setAdultPill : undefined\}/);
+    expect(FEED).toMatch(/const showAdult = adultConfirmed && adultPill;/);
+    expect(FEED).toMatch(/genFilter\.join\(","\), showAdult \? "18\+" : "safe"\]/);
+    expect(FEED).toMatch(/\{ headers: sessionHeadersWith\(showAdult\), credentials: "include" \}/);
   });
 
   it("the filter bar draws the pill only when given one", () => {
     expect(src("components", "enki", "EnkiFilters.tsx")).toMatch(/\{onShowAdult && \(\s*<span className="enki-fltr-group">/);
   });
 
-  it("the sign-in check carries the confirmation app-wide", () => {
-    expect(src("components", "BetaGate.tsx")).toMatch(/setAdultConfirmed\(data\.adultConfirmed === true\);/);
+  it("the pill starts off on every new check, and the confirmation comes from the server", () => {
+    expect(GATE).toMatch(/const \[adultPill, setAdultPillState\] = useState\(false\);/);
+    expect(GATE).toMatch(/setAdultConfirmedState\(false\);\n\s+setAdultPillState\(false\);/);
+    expect(GATE).toMatch(/const confirmed = data\.adultConfirmed === true;/);
+    expect(GATE).toMatch(/setAdultConfirmedState\(confirmed\);\n\s+setAdultPillState\(Boolean\(stored\)\);/);
   });
 
-  it("withdrawing in Settings turns the pill off too", () => {
+  it("the pill belongs to the account that turned it on", () => {
+    expect(GATE).toMatch(/if \(on && meId\) localStorage\.setItem\(SHOW_ADULT_KEY, meId\);/);
+    expect(GATE).toMatch(/if \(stored && \(!confirmed \|\| stored !== data\.id\)\) \{ forgetPill\(\); stored = null; \}/);
+  });
+
+  it("logging out forgets it", () => {
+    expect(GATE).toMatch(/const teamFallback = async \(\) => \{\n\s+forgetPill\(\);/);
+  });
+
+  it("a change in Settings turns it off, either way", () => {
+    expect(GATE).toMatch(/const setAdultConfirmed = \(v: boolean\) => \{ setAdultConfirmedState\(v\); setAdultPill\(false\); \};/);
     const settings = src("components", "settings", "SettingsView.tsx");
     expect(settings).toMatch(/body: JSON\.stringify\(\{ adultConfirmed: next \}\)/);
     expect(settings).toMatch(/setAdultConfirmed\(next\);/);
-    expect(settings).toMatch(/if \(!next\) try \{ localStorage\.removeItem\(SHOW_ADULT_KEY\); \}/);
+  });
+});
+
+describe("the request headers", () => {
+  it("carry the pill only when asked to", async () => {
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "enki_session_token" ? "s" : null) });
+    try {
+      const { sessionHeadersWith } = await import("@/lib/session-headers");
+      expect(sessionHeadersWith(true)).toEqual({ "X-Session-Token": "s", "X-Show-Adult": "1" });
+      expect(sessionHeadersWith(false)).toEqual({ "X-Session-Token": "s" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

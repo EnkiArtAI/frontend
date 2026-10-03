@@ -13,7 +13,7 @@
 import { CDP_ADDRESS_EVENT } from "@/lib/cdp-bridge";
 import { createContext, useContext, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
-import { sessionAuthHeaders } from "@/lib/session-headers";
+import { SHOW_ADULT_KEY, sessionAuthHeaders } from "@/lib/session-headers";
 import AccessGate from "@/components/enki-shell/AccessGate";
 
 const PUBLIC_PATHS = new Set(["/", "/landing", "/gate", "/guardian", "/reset-password"]);
@@ -39,12 +39,16 @@ interface BetaAccess {
   /** Confirmed 18 or older in Settings: the feed may offer its 18+ pill. */
   adultConfirmed: boolean;
   setAdultConfirmed: (v: boolean) => void;
+  /** The feed's 18+ pill, this account's own. */
+  adultPill: boolean;
+  setAdultPill: (on: boolean) => void;
 }
 
 const Ctx = createContext<BetaAccess>({
   access: "checking", role: null, handle: undefined, setHandle: () => {},
   profile: null, setProfile: () => {},
   adultConfirmed: false, setAdultConfirmed: () => {},
+  adultPill: false, setAdultPill: () => {},
 });
 export const useBetaAccess = () => useContext(Ctx);
 
@@ -54,7 +58,21 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
   const [role, setRole] = useState<string | null>(null);
   const [handle, setHandleState] = useState<string | null | undefined>(undefined);
   const [profile, setProfile] = useState<GateProfile | null>(null);
-  const [adultConfirmed, setAdultConfirmed] = useState(false);
+  const [adultConfirmed, setAdultConfirmedState] = useState(false);
+  const [adultPill, setAdultPillState] = useState(false);
+  const [meId, setMeId] = useState<string | null>(null);
+  /* The 18+ pill belongs to the account that turned it on: the stored value
+     is that account's id, so another account in this browser starts with it
+     off, and logging out forgets it. viewerHeaders reads the same key. */
+  const setAdultPill = (on: boolean) => {
+    try {
+      if (on && meId) localStorage.setItem(SHOW_ADULT_KEY, meId);
+      else localStorage.removeItem(SHOW_ADULT_KEY);
+    } catch { /* not kept */ }
+    setAdultPillState(on && Boolean(meId));
+  };
+  /** A change in Settings: the pill starts off after it, either way. */
+  const setAdultConfirmed = (v: boolean) => { setAdultConfirmedState(v); setAdultPill(false); };
   const setHandle = (h: string | null) => {
     setHandleState(h);
     setProfile((p) => (p ? { ...p, handle: h } : p));
@@ -76,11 +94,16 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let dead = false;
+    // A new check is a possibly new account: nothing 18+ until it answers.
+    const forgetPill = () => { try { localStorage.removeItem(SHOW_ADULT_KEY); } catch { /* none */ } };
+    setAdultConfirmedState(false);
+    setAdultPillState(false);
     /* No session (or a denied one): a valid TEAM-CODE cookie still opens the
        UI for browsing — team members enter with the code alone (Kev,
        2026-08-23). Server APIs keep requiring a real session for anything
        user-bound; this wall is only the client half of the pair. */
     const teamFallback = async () => {
+      forgetPill();
       try {
         const r = await fetch("/api/gate");
         const d = await r.json().catch(() => ({}));
@@ -97,7 +120,7 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
         if (dead) return;
         if (!res.ok) { void teamFallback(); return; }
         const data = (await res.json()) as {
-          handle: string | null; role?: string;
+          id?: string; handle: string | null; role?: string;
           bio?: string | null; avatarUrl?: string | null; coverUrl?: string | null;
           adultConfirmed?: boolean;
         };
@@ -109,7 +132,14 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
           coverUrl: data.coverUrl ?? null,
         });
         setRole(data.role ?? "user");
-        setAdultConfirmed(data.adultConfirmed === true);
+        const confirmed = data.adultConfirmed === true;
+        let stored: string | null = null;
+        try { stored = localStorage.getItem(SHOW_ADULT_KEY); } catch { /* none */ }
+        // Another account's pill, or one without a confirmation, is switched off.
+        if (stored && (!confirmed || stored !== data.id)) { forgetPill(); stored = null; }
+        setMeId(data.id ?? null);
+        setAdultConfirmedState(confirmed);
+        setAdultPillState(Boolean(stored));
         if (BETA_ROLES.has(data.role ?? "user")) setAccess("ok");
         else void teamFallback();
       } catch {
@@ -122,7 +152,7 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
   const isPublic = PUBLIC_PATHS.has(pathname ?? "/");
 
   return (
-    <Ctx.Provider value={{ access, role, handle, setHandle, profile, setProfile, adultConfirmed, setAdultConfirmed }}>
+    <Ctx.Provider value={{ access, role, handle, setHandle, profile, setProfile, adultConfirmed, setAdultConfirmed, adultPill, setAdultPill }}>
       {isPublic || access === "ok" ? (
         children
       ) : access === "denied" ? (

@@ -12,7 +12,7 @@ import { mapMarketplacePromptToEnkiPrompt } from "@/lib/enkiPromptAdapter";
 import { useModelCatalogue } from "@/hooks/useModelLimits";
 import { toModelFamily } from "@/lib/generation/model-family";
 import { useBetaAccess } from "@/components/BetaGate";
-import { SHOW_ADULT_KEY, viewerHeaders } from "@/lib/session-headers";
+import { sessionHeadersWith } from "@/lib/session-headers";
 
 function useLocalFavorites() {
   const [favs, setFavs] = useState<Record<string, boolean>>(() => {
@@ -59,17 +59,10 @@ export default function EnkiFeedPage() {
   const [open, setOpen] = useState<EnkiPrompt | null>(null);
   const { favs, toggleFav } = useLocalFavorites();
   /* 18+ pill (Kev, 2026-10-03): only a user who confirmed in Settings that
-     they are 18 or older sees it, and it stays off until they turn it on.
-     The server checks the confirmation again behind the header. */
-  const { adultConfirmed } = useBetaAccess();
-  const [adultPill, setAdultPill] = useState(false);
-  useEffect(() => {
-    try { setAdultPill(localStorage.getItem(SHOW_ADULT_KEY) === "1"); } catch { /* off */ }
-  }, []);
-  const flipAdult = (on: boolean) => {
-    try { if (on) localStorage.setItem(SHOW_ADULT_KEY, "1"); else localStorage.removeItem(SHOW_ADULT_KEY); } catch { /* not kept */ }
-    setAdultPill(on);
-  };
+     they are 18 or older sees it, off until they turn it on, and it belongs
+     to their account (BetaGate). The page asks for exactly what it shows, and
+     the server checks the confirmation again behind the header. */
+  const { adultConfirmed, adultPill, setAdultPill } = useBetaAccess();
   const showAdult = adultConfirmed && adultPill;
 
   // OPEN counter: opening a prompt fires a fire-and-forget beacon; the server
@@ -143,7 +136,7 @@ export default function EnkiFeedPage() {
           if (alias) params.append("models", String(alias));
         }
       }
-      const res = await fetch(`/api/marketplace/prompts?${params.toString()}`, { headers: viewerHeaders(), credentials: "include" });
+      const res = await fetch(`/api/marketplace/prompts?${params.toString()}`, { headers: sessionHeadersWith(showAdult), credentials: "include" });
       if (!res.ok) {
         // The server's own sentence (e.g. "database unreachable") beats a
         // generic one — and a failure must never look like an empty feed.
@@ -284,7 +277,7 @@ export default function EnkiFeedPage() {
 
       <EnkiFilters active={tags} toggle={toggleTag}
         generators={generatorGroups} generatorFilter={genFilter} onGeneratorFilter={setGenFilter}
-        showAdult={showAdult} onShowAdult={adultConfirmed ? flipAdult : undefined} />
+        showAdult={showAdult} onShowAdult={adultConfirmed ? setAdultPill : undefined} />
     </>
   );
 }

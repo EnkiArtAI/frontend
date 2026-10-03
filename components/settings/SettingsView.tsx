@@ -12,7 +12,7 @@ import SettingsToggle from "@/components/settings/SettingsToggle";
 import PaymentPanel from "@/components/settings/PaymentPanel";
 import RecoveryPanel from "@/components/settings/RecoveryPanel";
 import { listReferrals, type Referral } from "@/lib/referrals";
-import { SHOW_ADULT_KEY, sessionAuthHeaders } from "@/lib/session-headers";
+import { sessionAuthHeaders } from "@/lib/session-headers";
 import { useBetaAccess } from "@/components/BetaGate";
 import { useRecoveryStatus } from "@/hooks/useRecoveryStatus";
 import { REFERRAL_SHARE_PCT, PLATFORM_FEE_PCT } from "@/shared/revenue-config";
@@ -109,8 +109,6 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
       });
       if (!res.ok) throw new Error();
       setAdultConfirmed(next);
-      // Withdrawing the confirmation also turns the feed pill off.
-      if (!next) try { localStorage.removeItem(SHOW_ADULT_KEY); } catch { /* nothing kept */ }
       toast({ title: "Saved", description: next ? "The feed now offers an 18+ filter." : "18+ is hidden again." });
     } catch {
       setAdult(prev);

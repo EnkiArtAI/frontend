@@ -25,19 +25,21 @@ export function sessionAuthHeaders(): Record<string, string> {
   return {};
 }
 
-/** Where the feed's 18+ pill is kept. */
+/** Where the feed's 18+ pill is kept: the id of the account that turned it on (BetaGate). */
 export const SHOW_ADULT_KEY = "enki:show-adult";
 
-/**
- * For reads that show other people's work: the session plus the 18+ pill.
- * The server still checks the age confirmation behind the pill.
- */
+/** The session, plus the 18+ pill when it is on. The server still checks the age confirmation behind it. */
+export function sessionHeadersWith(showAdult: boolean): Record<string, string> {
+  return showAdult ? { ...sessionAuthHeaders(), "X-Show-Adult": "1" } : sessionAuthHeaders();
+}
+
+/** For reads that show other people's work: the session plus the stored pill. */
 export function viewerHeaders(): Record<string, string> {
-  const headers = sessionAuthHeaders();
+  let on = false;
   try {
-    if (localStorage.getItem(SHOW_ADULT_KEY) === "1") headers["X-Show-Adult"] = "1";
+    on = Boolean(localStorage.getItem(SHOW_ADULT_KEY));
   } catch {
     /* no storage: the safe view */
   }
-  return headers;
+  return sessionHeadersWith(on);
 }
