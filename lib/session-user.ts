@@ -45,7 +45,11 @@ export async function resolveSessionUserWithBan(
   return { userId, ban: await activeBanFor(supabase, userId) };
 }
 
-/** The user's newest active (unlifted, unexpired) full ban, or null. */
+/**
+ * The user's active (unlifted, unexpired) full ban that lasts longest, or
+ * null. Several can run at once (each sanction is its own row); the longest is
+ * the one that holds, so it is the one reported.
+ */
 export async function activeBanFor(supabase: SupabaseClient, userId: string): Promise<ActiveBan | null> {
   const { data: bans, error: banErr } = await supabase
     .from("bans")
@@ -53,6 +57,7 @@ export async function activeBanFor(supabase: SupabaseClient, userId: string): Pr
     .eq("user_id", userId)
     .is("lifted_at", null)
     .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+    .order("expires_at", { ascending: false, nullsFirst: true })
     .order("created_at", { ascending: false })
     .limit(1);
   if (isDbUnreachable(banErr)) throw new DbUnreachableError();

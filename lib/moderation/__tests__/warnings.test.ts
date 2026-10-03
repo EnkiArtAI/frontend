@@ -106,10 +106,9 @@ describe("the suspension ladder", () => {
     expect(daysOf(tables.bans[0])).toBe(3);
   });
 
-  it("suspends for 7 days at the twentieth, extending a suspension still running", async () => {
+  it("suspends for 7 days at the twentieth, as its own row beside a 3-day one still running", async () => {
     for (let i = 0; i < 20; i++) await warn(user);
-    expect(tables.bans).toHaveLength(1);
-    expect(daysOf(tables.bans[0])).toBe(7);
+    expect(tables.bans.map(daysOf)).toEqual([3, 7]);
   });
 
   it("starts a new suspension once the last one has run out", async () => {
@@ -209,6 +208,7 @@ describe("a step during a running longer ban", () => {
   it("adds no shorter ban and reports the end that holds", async () => {
     const until = new Date(Date.now() + 60 * DAY).toISOString();
     tables.bans.push({ id: "running", user_id: "user-1", lifted_at: null, expires_at: until });
+    // The real activeBanFor reports the longest; this mock finds the only one.
     let outcome;
     for (let i = 0; i < WARNINGS_PER_STEP; i++) {
       outcome = await recordWarning(fake, { surface: "generate-image", request: user, category: "explicit_sexual", text: "t", confidence: 0.9 });
@@ -216,5 +216,17 @@ describe("a step during a running longer ban", () => {
     expect(tables.bans).toHaveLength(1);
     expect(tables.bans[0].expires_at).toBe(until);
     expect(outcome?.suspendedUntil).toBe(until);
+  });
+});
+
+describe("a suspension that cannot be written", () => {
+  it("still answers the warning", async () => {
+    tables.moderation_policy = [{ id: 1, owner_user_id: "owner-1" }];
+    const failing = { from: (t: string) => (t === "bans" ? (() => { throw new Error("fetch failed"); })() : new Query(t)) } as unknown as SupabaseClient;
+    let outcome;
+    for (let i = 0; i < WARNINGS_PER_STEP; i++) {
+      outcome = await recordWarning(failing, { surface: "generate-image", request: user, category: "explicit_sexual", text: "t", confidence: 0.9 });
+    }
+    expect(outcome).toMatchObject({ total: WARNINGS_PER_STEP, suspendedUntil: null });
   });
 });

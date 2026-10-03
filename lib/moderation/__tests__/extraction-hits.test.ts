@@ -56,8 +56,12 @@ vi.mock("@/lib/session-user", () => ({
     userId: token === "buyer-token" ? "buyer-1" : token === "suspended-token" ? "buyer-2" : null,
     ban: token === "suspended-token" ? { id: "b1" } : null,
   }),
-  activeBanFor: async (_s: unknown, userId: string) =>
-    tables.bans.find((b) => b.user_id === userId && !b.lifted_at && (!b.expires_at || String(b.expires_at) > new Date().toISOString())) ?? null,
+  // As the real one: the active ban that lasts longest, in its returned shape.
+  activeBanFor: async (_s: unknown, userId: string) => {
+    const active = tables.bans.filter((b) => b.user_id === userId && !b.lifted_at && (!b.expires_at || String(b.expires_at) > new Date().toISOString()));
+    const b = active.find((x) => x.expires_at == null) ?? active.sort((x, y) => String(y.expires_at).localeCompare(String(x.expires_at)))[0];
+    return b ? { id: String(b.id), reason: (b.reason as string | null) ?? null, expiresAt: (b.expires_at as string | null) ?? null } : null;
+  },
 }));
 
 import { recordExtractionHit, agentBlocked, EXTRACTION_HITS_TO_BLOCK, SILENT_FAILURE, SILENT_DELAY_MS, silentFailure } from "@/lib/moderation/extraction-hits";
@@ -180,10 +184,18 @@ describe("a suspended account", () => {
 });
 
 describe("a ban on top of a running suspension", () => {
-  it("extends the suspension to for good instead of being skipped", async () => {
-    tables.bans.push({ id: "running", user_id: "buyer-1", lifted_at: null, expires_at: new Date(Date.now() + 3 * 86400_000).toISOString() });
+  it("is issued as its own row, the suspension keeping its reason and appeal", async () => {
+    const until = new Date(Date.now() + 3 * 86400_000).toISOString();
+    tables.bans.push({ id: "running", user_id: "buyer-1", lifted_at: null, expires_at: until, reason: "ladder step 1" });
     for (let i = 0; i < EXTRACTION_HITS_TO_BLOCK; i++) await hit(buyer);
-    expect(tables.bans).toHaveLength(1);
-    expect(tables.bans[0].expires_at).toBeNull();
+    expect(tables.bans).toHaveLength(2);
+    expect(tables.bans[0]).toMatchObject({ expires_at: until, reason: "ladder step 1" });
+    expect(tables.bans[1].expires_at ?? null).toBeNull();
+  });
+
+  it("links the event only to a ban it issued", async () => {
+    tables.bans.push({ id: "perm", user_id: "buyer-1", lifted_at: null, expires_at: null });
+    for (let i = 0; i < EXTRACTION_HITS_TO_BLOCK; i++) await hit(buyer);
+    expect(tables.automod_events.every((e) => e.ban_id == null)).toBe(true);
   });
 });

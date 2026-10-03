@@ -121,7 +121,8 @@ async function suspend(supabase: SupabaseClient, userId: string, expiresAt: stri
   const { data: policy } = await supabase.from("moderation_policy").select("owner_user_id").eq("id", 1).maybeSingle();
   const issuedBy = policy?.owner_user_id as string | undefined;
   if (!issuedBy) return null;
-  return banUntil(supabase, { userId, issuedBy, reason, expiresAt });
+  // A warning is always answered; an unreachable database only costs the suspension.
+  return banUntil(supabase, { userId, issuedBy, reason, expiresAt }).catch(() => null);
 }
 
 function duration(days: number | null): string {

@@ -1,9 +1,11 @@
 /**
- * One rule for every ban that lands on a running one: the running ban is
- * extended to the later end, never shortened and never doubled. A second,
- * shorter row was reported as the end (activeBanFor reads the newest), and a
- * skipped ban let a permanent child-safety ban vanish behind a 3-day
- * suspension.
+ * One rule for every ban that lands on a running one. A ban that ends later
+ * is issued as its own row, never merged into the running one: each keeps its
+ * reason and its appeal, and lifting one (an approved appeal) leaves the
+ * other in force. A ban that ends no later than the running one adds nothing.
+ * activeBanFor reports the ban that lasts longest, so a shorter row never
+ * hides a longer one. Skipping the later ban instead let a permanent
+ * child-safety ban vanish behind a 3-day suspension.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { activeBanFor } from "@/lib/session-user";
@@ -14,24 +16,23 @@ export function laterEnd(running: string | null, next: string | null): string | 
   return Date.parse(running) >= Date.parse(next) ? running : next;
 }
 
-/** Bans the user until `expiresAt` (null: for good), extending a running ban rather than adding one. */
+/**
+ * Bans the user until `expiresAt` (null: for good) unless a running ban
+ * already lasts as long. issued says whether a new row was written; until is
+ * the end that now holds.
+ */
 export async function banUntil(
   supabase: SupabaseClient,
   ban: { userId: string; issuedBy: string; reason: string; expiresAt: string | null },
-): Promise<{ id: string | null; until: string | null } | null> {
+): Promise<{ id: string | null; until: string | null; issued: boolean } | null> {
   const running = await activeBanFor(supabase, ban.userId);
-  if (running) {
-    const end = laterEnd(running.expiresAt, ban.expiresAt);
-    if (end !== running.expiresAt) {
-      const { error } = await supabase.from("bans").update({ expires_at: end }).eq("id", running.id);
-      if (error) return null;
-    }
-    return { id: running.id, until: end };
+  if (running && laterEnd(running.expiresAt, ban.expiresAt) === running.expiresAt) {
+    return { id: running.id, until: running.expiresAt, issued: false };
   }
   const { data, error } = await supabase
     .from("bans")
     .insert({ user_id: ban.userId, issued_by: ban.issuedBy, scope: "full", reason: ban.reason, expires_at: ban.expiresAt })
     .select("id")
     .single();
-  return error ? null : { id: (data?.id as string | undefined) ?? null, until: ban.expiresAt };
+  return error ? null : { id: (data?.id as string | undefined) ?? null, until: ban.expiresAt, issued: true };
 }

@@ -126,5 +126,5 @@ async function ban(supabase: SupabaseClient, userId: string, eventId: string | u
   const issued = await banUntil(supabase, {
     userId, issuedBy, reason: "Automated: repeated violations of the Terms of Service", expiresAt: null,
   });
-  if (issued?.id && eventId) await supabase.from("automod_events").update({ ban_id: issued.id }).eq("id", eventId);
+  if (issued?.issued && issued.id && eventId) await supabase.from("automod_events").update({ ban_id: issued.id }).eq("id", eventId);
 }
