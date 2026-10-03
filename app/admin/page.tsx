@@ -34,7 +34,7 @@ type GenPolicy = { maxConcurrentPerUser: number | null; canEdit: boolean };
 type Person = { key: string; userId: string | null; ipHash: string | null; handle: string | null; displayName: string | null; warnings: number; extractionHits: number; childSafety: boolean; pending: number; suspension: { until: string | null } | null; failed7d: number; lastActive: string | null };
 type PersonDetail = {
   events: { id: string; category: string | null; severity: string; surface: string; rules: string[]; weight: number; confidence: number | null; prompt: string | null; withheld: boolean; state: string; at: string }[];
-  failures: { id: string; surface: string; model: string | null; resolution: string | null; quality: string | null; boost: boolean; aspectRatio: string | null; referenceImageCount: number; error: string; prompt: string | null; imageUrl: string | null; txSignature: string | null; at: string }[];
+  failures: { id: string; surface: string; model: string | null; resolution: string | null; quality: string | null; boost: boolean; aspectRatio: string | null; referenceImageCount: number; error: string; prompt: string | null; draft: boolean; imageUrl: string | null; txSignature: string | null; at: string }[];
   bans: { id: string; reason: string | null; expiresAt: string | null; liftedAt: string | null; at: string }[];
 };
 type AdminData = { generation: GenPolicy; imports: Imp[]; reports: Rep[]; feedback: Fb[]; friends: Friend[]; hunters: Hunter[]; strikes: StrikeRow[]; recovery: Rec[]; council: Council; automod: Automod[]; people: Person[] };
@@ -804,7 +804,7 @@ export default function AdminPage() {
                                     </span>
                                   </div>
                                   <span style={{ fontSize: 11, color: "var(--enki-danger)", wordBreak: "break-word" }}>{x.error}</span>
-                                  <p style={{ margin: 0, fontFamily: MONO, fontSize: 11, color: "var(--enki-ink-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxWidth: 760 }}>{x.prompt ?? "Not readable."}</p>
+                                  <p style={{ margin: 0, fontFamily: MONO, fontSize: 11, color: "var(--enki-ink-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxWidth: 760 }}>{x.prompt ?? (x.draft ? "An artist's draft from an editor; its text is not stored." : "Not readable.")}</p>
                                   {x.txSignature && <span style={{ fontFamily: MONO, fontSize: 9, color: "var(--enki-ink-3)" }}>paid: {x.txSignature}</span>}
                                 </div>
                               </div>

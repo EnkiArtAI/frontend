@@ -2558,6 +2558,7 @@ export default function EnkiPromptEditor() {
           prompt: previewText,
           aspectRatio: ratioForApi ?? "1:1",
           referenceImages: cardRefs.length ? cardRefs : undefined,
+          authoring: true,
         },
         signPayment,
       );

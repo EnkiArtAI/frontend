@@ -32,6 +32,8 @@ export interface GenerationRequest {
   aspectRatio: string;
   referenceImages?: string[];
   workflow?: unknown;
+  /** An artist's draft from an editor: no moderator may read it (lib/moderation/evidence). */
+  authoring?: boolean;
 }
 
 export type GenerationOutcome =
@@ -56,6 +58,7 @@ export async function runGeneration(req: GenerationRequest, sign: PaymentSigner)
           resolution: req.resolution,
           referenceImages: req.referenceImages,
           workflow: req.workflow,
+          authoring: req.authoring,
         }),
       });
     } else {
@@ -82,6 +85,7 @@ export async function runGeneration(req: GenerationRequest, sign: PaymentSigner)
           aspectRatio: req.aspectRatio,
           referenceImages: req.referenceImages,
           workflow: req.workflow,
+          authoring: req.authoring,
         }),
       });
     }

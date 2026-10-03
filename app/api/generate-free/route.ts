@@ -115,10 +115,13 @@ export async function POST(request: NextRequest) {
     // A warned-out address is still judged, so its answers and their timing
     // match everyone else's up to the point where it fails silently.
     const warnedOut = await addressWarnedOut(supabaseForChecks, request);
+    // An artist's draft from an editor: no moderator may read it (lib/moderation/evidence).
+    const authoring = body?.authoring === true;
     const check = await checkPrompt({ prompt }, { hidden: false, signal: request.signal });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
       const outcome = await recordWarning(supabaseForChecks, {
-        surface: "generate-free", request, category: check.verdict, text: prompt, confidence: check.confidence,
+        surface: "generate-free", request, category: check.verdict, confidence: check.confidence,
+        ...(authoring ? { text: "", withheld: prompt } : { text: prompt }),
       });
       return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
     }
@@ -138,7 +141,7 @@ export async function POST(request: NextRequest) {
     }
 
     const verdict = await moderate({ prompt, surface: "generate-free", signal: request.signal, adultJudged: true });
-    after(recordModerationEvent(verdict, { surface: "generate-free", request, prompt }));
+    after(recordModerationEvent(verdict, { surface: "generate-free", request, ...(authoring ? { prompt: "", withheld: prompt } : { prompt }) }));
     if (!verdict.allowed) {
       return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
     }
@@ -196,7 +199,7 @@ export async function POST(request: NextRequest) {
 
     failCtx = {
       request, surface: "generate-free", modelId: model.id, resolution, quality: null, boost: false,
-      aspectRatio: body.aspectRatio || "1:1", referenceImageCount: 0, prompt,
+      aspectRatio: body.aspectRatio || "1:1", referenceImageCount: 0, prompt: authoring ? null : prompt,
     };
     const result = await generateImageWithPollinations(
       prompt,

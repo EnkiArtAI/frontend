@@ -69,6 +69,10 @@ describe("recording a failed generation", () => {
 
   it("cuts a long error", async () => {
     await recordGenerationFailure(fake, { ...base, error: "x".repeat(5000) });
+    await recordGenerationFailure(fake, { ...base, prompt: null });
+    // An artist's draft: the failure is recorded without any text.
+    expect(inserted.at(-1)).not.toHaveProperty("prompt_ct");
+    inserted.pop();
     expect(String(inserted[0].error)).toHaveLength(1000);
   });
 
@@ -100,7 +104,9 @@ describe("every failure point records it", () => {
   });
 
   it("never stores an artist's text with a failure", () => {
-    expect(HUMAN).toMatch(/prompt: fromArtist \? JSON\.stringify\(textValues\(body\.variableValues\)\) : prompt,/);
+    expect(HUMAN).toMatch(/prompt: fromArtist \? JSON\.stringify\(textValues\(body\.variableValues\)\) : authoring \? null : prompt,/);
+    // An artist's draft from an editor is the artist's text too.
+    expect(FREE).toMatch(/aspectRatio: body\.aspectRatio \|\| "1:1", referenceImageCount: 0, prompt: authoring \? null : prompt,/);
     expect(AGENT).toMatch(/prompt: input\.promptId \? JSON\.stringify\(textValues\(input\.variableValues\)\) : promptText,/);
   });
 });

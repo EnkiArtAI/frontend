@@ -278,8 +278,8 @@ export interface GenerationFailure {
   boost: boolean;
   aspectRatio: string | null;
   referenceImageCount: number;
-  /** The prompt as the user wrote it; for an artist's prompt only the buyer's values. Stored encrypted. */
-  prompt: string;
+  /** The prompt as the user wrote it; for an artist's prompt only the buyer's values; null for an artist's draft. Stored encrypted. */
+  prompt: string | null;
   error: string;
   imageUrl?: string | null;
   intentId?: string | null;
@@ -307,7 +307,7 @@ export async function recordGenerationFailure(supabase: SupabaseClient | null, f
       aspect_ratio: f.aspectRatio,
       reference_image_count: f.referenceImageCount,
       error: f.error.slice(0, 1000),
-      ...envelope("prompt", f.prompt.slice(0, 4000)),
+      ...(f.prompt === null ? {} : envelope("prompt", f.prompt.slice(0, 4000))),
       image_url: f.imageUrl ?? null,
       intent_id: f.intentId ?? null,
       tx_signature: f.txSignature ?? null,

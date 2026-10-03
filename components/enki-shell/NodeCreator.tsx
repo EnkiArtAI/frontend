@@ -1373,6 +1373,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
             prompt: promptText,
             aspectRatio: ratio,
             workflow: buildExportJSON(),
+            authoring: true,
           },
           signPayment,
         )

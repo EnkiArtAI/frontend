@@ -31,8 +31,17 @@ describe("the human rail", () => {
   const check = HUMAN.indexOf("await checkPrompt(checked, { hidden: fromArtist, signal: request.signal })");
 
   it("records an artist's prompt by its id and the buyer's values, never its text", () => {
-    expect(HUMAN).toMatch(/const about = fromArtist \? \{ promptId: String\(paid\.prompt_id\) \} : \{\};/);
-    expect(HUMAN).toMatch(/after\(recordModerationEvent\(verdict, \{ surface: "generate-image", request, prompt: fromArtist \? JSON\.stringify\(checked\) : prompt, \.\.\.about \}\)\);/);
+    expect(HUMAN).toMatch(/const about = fromArtist \? \{ promptId: String\(paid\.prompt_id\) \} : authoring \? \{ withheld: prompt \} : \{\};/);
+    expect(HUMAN).toMatch(/after\(recordModerationEvent\(verdict, \{ surface: "generate-image", request, prompt: fromArtist \? JSON\.stringify\(checked\) : authoring \? "" : prompt, \.\.\.about \}\)\);/);
+    expect(HUMAN).toMatch(/text: authoring \? "" : JSON\.stringify\(checked\), confidence: check\.confidence, \.\.\.about,/);
+  });
+
+  it("withholds an artist's draft from an editor in every record", () => {
+    // Only for the requester's own text: an artist's prompt keeps its values shown.
+    expect(HUMAN).toMatch(/const authoring = !fromArtist && body\.authoring === true;/);
+    expect(FREE).toMatch(/const authoring = body\?\.authoring === true;/);
+    expect(FREE).toMatch(/\.\.\.\(authoring \? \{ text: "", withheld: prompt \} : \{ text: prompt \}\),/);
+    expect(FREE).toMatch(/after\(recordModerationEvent\(verdict, \{ surface: "generate-free", request, \.\.\.\(authoring \? \{ prompt: "", withheld: prompt \} : \{ prompt \}\) \}\)\);/);
     expect(HUMAN.match(/recordModerationEvent\(/g)).toHaveLength(1);
   });
 

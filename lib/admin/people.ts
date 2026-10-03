@@ -117,7 +117,7 @@ export interface PersonDetail {
   }[];
   failures: {
     id: string; surface: string; model: string | null; resolution: string | null; quality: string | null; boost: boolean;
-    aspectRatio: string | null; referenceImageCount: number; error: string; prompt: string | null;
+    aspectRatio: string | null; referenceImageCount: number; error: string; prompt: string | null; draft: boolean;
     imageUrl: string | null; txSignature: string | null; at: string;
   }[];
   bans: { id: string; reason: string | null; expiresAt: string | null; liftedAt: string | null; at: string }[];
@@ -176,6 +176,8 @@ export async function personDetail(supabase: SupabaseClient, who: Who, decrypt: 
       referenceImageCount: Number(r.reference_image_count) || 0,
       error: String(r.error ?? ""),
       prompt: decrypt(r.prompt_ct, r.prompt_iv, r.prompt_tag, r.prompt_kid),
+      // An artist's draft from an editor is stored without its text.
+      draft: r.prompt_ct == null,
       imageUrl: (r.image_url as string | null) ?? null,
       txSignature: (r.tx_signature as string | null) ?? null,
       at: String(r.created_at),

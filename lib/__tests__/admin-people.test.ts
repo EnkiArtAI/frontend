@@ -240,8 +240,13 @@ describe("one person, expanded", () => {
     });
     const d = await personDetail(fake, { userId: "u1" }, decrypt);
     expect(d.failures[0]).toMatchObject({
-      model: "GPT Image 2", resolution: "2K", quality: "high", aspectRatio: "16:9", referenceImageCount: 2, error: "provider said no", prompt: "the decrypted prompt",
+      model: "GPT Image 2", resolution: "2K", quality: "high", aspectRatio: "16:9", referenceImageCount: 2, error: "provider said no", prompt: "the decrypted prompt", draft: false,
     });
+  });
+
+  it("says a failure without text was an artist's draft", async () => {
+    tables.generation_failures.push({ id: "f2", user_id: "u1", surface: "generate-free", error: "provider said no", created_at: ago(1) });
+    expect((await personDetail(fake, { userId: "u1" }, decrypt)).failures[0]).toMatchObject({ prompt: null, draft: true });
   });
 
   it("shows only that person's events", async () => {

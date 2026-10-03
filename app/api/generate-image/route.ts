@@ -87,6 +87,8 @@ type GenerateImageBody = {
   variableValues?: Record<string, string>;
   /** An authorised generation_payment_intents row. Every generation here needs one. */
   intentId?: string;
+  /** An artist's draft from an editor: no moderator may read it. */
+  authoring?: boolean;
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -287,12 +289,14 @@ export async function POST(request: NextRequest) {
     // failed generation.
     const checked = fromArtist ? textValues(body.variableValues) : { prompt };
     // A record of an artist's prompt names it and shows the buyer's values,
-    // never its text (lib/moderation/evidence).
-    const about = fromArtist ? { promptId: String(paid.prompt_id) } : {};
+    // never its text; an artist's draft from an editor shows nothing
+    // (lib/moderation/evidence).
+    const authoring = !fromArtist && body.authoring === true;
+    const about = fromArtist ? { promptId: String(paid.prompt_id) } : authoring ? { withheld: prompt } : {};
     const check = await checkPrompt(checked, { hidden: fromArtist, signal: request.signal });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
       const outcome = await recordWarning(getSupabaseServerClient(), {
-        surface: "generate-image", request, category: check.verdict, text: JSON.stringify(checked), confidence: check.confidence, ...about,
+        surface: "generate-image", request, category: check.verdict, text: authoring ? "" : JSON.stringify(checked), confidence: check.confidence, ...about,
       });
       return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
     }
@@ -330,7 +334,7 @@ export async function POST(request: NextRequest) {
     // after() and not a bare void: on a block this route returns immediately,
     // and a floating promise can be frozen with the lambda before the insert
     // lands — losing exactly the events we most want recorded.
-    after(recordModerationEvent(verdict, { surface: "generate-image", request, prompt: fromArtist ? JSON.stringify(checked) : prompt, ...about }));
+    after(recordModerationEvent(verdict, { surface: "generate-image", request, prompt: fromArtist ? JSON.stringify(checked) : authoring ? "" : prompt, ...about }));
     if (!verdict.allowed) {
       return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
     }
@@ -462,8 +466,9 @@ export async function POST(request: NextRequest) {
     failCtx = {
       request, surface: "generate-image", modelId: paid.model_id ?? null, resolution: paidTier ?? null, quality: effQuality,
       boost: paid.boost === true, aspectRatio: body.aspectRatio || body.ratio || null, referenceImageCount: attachedRefs,
-      // For an artist's prompt only the buyer's values: the artist's text is never stored with a failure.
-      prompt: fromArtist ? JSON.stringify(textValues(body.variableValues)) : prompt, intentId,
+      // For an artist's prompt only the buyer's values, for an artist's draft
+      // nothing: an artist's text is never stored with a failure.
+      prompt: fromArtist ? JSON.stringify(textValues(body.variableValues)) : authoring ? null : prompt, intentId,
     };
     const slot = await acquireSlot(slotSupabase, slotUserId);
     if (slot.slotId) heldSlot = { supabase: slotSupabase, id: slot.slotId };

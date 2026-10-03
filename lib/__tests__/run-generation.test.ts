@@ -41,6 +41,25 @@ const PAID = {
 };
 const BASE = { prompt: "a cat", aspectRatio: "1:1", resolution: "4K" as const };
 
+describe("an artist's draft", () => {
+  it("is marked as one on both routes, so no moderator reads it", async () => {
+    scriptFetch(PAID);
+    await runGeneration({ ...BASE, model: GPT, authoring: true }, vi.fn(async () => "c2lnbmVk"));
+    expect(calls.find((c) => c.path === "/api/generate-image")?.body.authoring).toBe(true);
+    scriptFetch({ "/api/generate-free": { imageUrl: "https://img/2.png" } });
+    await runGeneration({ ...BASE, model: FLUX, authoring: true }, vi.fn());
+    expect(calls[0].body.authoring).toBe(true);
+  });
+
+  it("comes from both editors", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const ROOT = join(__dirname, "..", "..");
+    expect(readFileSync(join(ROOT, "components", "EnkiPromptEditor.tsx"), "utf8")).toMatch(/referenceImages: cardRefs\.length \? cardRefs : undefined,\s*authoring: true,/);
+    expect(readFileSync(join(ROOT, "components", "enki-shell", "NodeCreator.tsx"), "utf8")).toMatch(/workflow: buildExportJSON\(\),\s*authoring: true,/);
+  });
+});
+
 describe("no selection, no generation", () => {
   it("sends nothing at all without a resolved model", async () => {
     scriptFetch({});
