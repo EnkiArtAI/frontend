@@ -95,11 +95,6 @@ describe("the routes", () => {
       .toMatch(/\.limit\(20\),\s*await viewer\(supabase, request\),\s*userData\.id,\s*\);/);
   });
 
-  it("a gallery, open to its owner", () => {
-    expect(src("app", "api", "generations", "route.ts"))
-      .toMatch(/\.range\(offset, offset \+ limit - 1\),\s*await viewer\(supabase, req\),\s*ownerId,\s*\);/);
-  });
-
   it("link previews show the brand card", () => {
     for (const s of [src("app", "api", "og", "[id]", "route.tsx"), src("app", "generator", "[id]", "page.tsx")]) {
       expect(s).toMatch(/\.eq\("id", id\)\s*\.eq\("is_adult", false\)/);

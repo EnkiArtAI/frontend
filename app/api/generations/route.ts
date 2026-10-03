@@ -58,17 +58,19 @@ export async function GET(req: Request) {
     // Images live in generated_images, not generations: the latter holds the
     // generation record (encrypted prompt, prompt_id NOT NULL) and has no image
     // column at all. Reading `generations` here is what made uploads invisible.
-    const { data, error, count } = await hideAdult(
-      supabase
-        .from("generated_images")
-        .select("id, storage_url, preview_url, thumbnail_url, description, is_uploaded, created_at", { count: 'exact' })
-        .eq("user_id", ownerId)
-        .is("deleted_at", null)
-        .order("created_at", { ascending: false })
-        .range(offset, offset + limit - 1),
-      await viewer(supabase, req),
-      ownerId,
-    );
+    const v = await viewer(supabase, req);
+    let gallery = supabase
+      .from("generated_images")
+      .select("id, storage_url, preview_url, thumbnail_url, description, is_uploaded, created_at", { count: 'exact' })
+      .eq("user_id", ownerId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+    // Uploads are images nothing has checked yet: no 18+ mark, no child-safety
+    // check (the image check is stage 2). Their owner sees them; nobody else
+    // does until that check exists.
+    if (v.userId !== ownerId) gallery = gallery.eq("is_uploaded", false);
+    const { data, error, count } = await hideAdult(gallery, v, ownerId);
 
     if (error) {
       console.error('Database error:', error);
