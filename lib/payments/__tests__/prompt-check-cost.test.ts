@@ -4,8 +4,8 @@ import { computeQuote } from "@/lib/payments/generation-quote";
 import { getModelCostMicro, PRICING_POLICY } from "@/lib/payments/generation-pricing";
 
 /**
- * The extraction check on an artist's prompt costs an OpenAI call; the buyer
- * pays it as part of the model cost (Kev, 2026-10-02).
+ * The prompt check before every paid generation costs an OpenAI call; the
+ * buyer pays it as part of the model cost (Kev, 2026-10-02).
  */
 
 describe("the buyer pays the check", () => {
@@ -29,9 +29,9 @@ describe("the buyer pays the check", () => {
     expect(q.split.modelCostMicro).toBe(base + PRICING_POLICY.extractionCheckMicro);
   });
 
-  it("not on the buyer's own prompt, which nothing checks", async () => {
+  it("on the buyer's own prompt too, which is checked as well", async () => {
     const q = await computeQuote(db(null), { modelFamily: "nano-banana-pro", resolution: "2K" });
     if (!q.ok) throw new Error(q.error);
-    expect(q.split.modelCostMicro).toBe(base);
+    expect(q.split.modelCostMicro).toBe(base + PRICING_POLICY.extractionCheckMicro);
   });
 });

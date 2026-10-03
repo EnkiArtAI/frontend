@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeQuote } from "@/lib/payments/generation-quote";
 import { resolvePricingRule } from "@/lib/payments/pricing-rules";
-import { computeGenerationSplit, getModelCostMicro } from "@/lib/payments/generation-pricing";
+import { PRICING_POLICY, computeGenerationSplit, getModelCostMicro } from "@/lib/payments/generation-pricing";
 
 /**
  * The editors generate from the buyer's OWN prompt, so their intents name no
@@ -36,7 +36,8 @@ describe("an intent for the buyer's own prompt", () => {
     expect(q.ok).toBe(true);
     if (!q.ok) return;
     expect(q.artistWallet).toBeNull();
-    expect(q.split).toEqual(computeGenerationSplit(0, getModelCostMicro("gpt-image-2", "2K")));
+    // The model leg includes the prompt check every paid generation carries.
+    expect(q.split).toEqual(computeGenerationSplit(0, getModelCostMicro("gpt-image-2", "2K") + PRICING_POLICY.extractionCheckMicro));
     expect(read).not.toContain("prompts");
     expect(read).not.toContain("user_wallets");
   });

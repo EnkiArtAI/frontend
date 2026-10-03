@@ -54,8 +54,8 @@ export const PRICING_POLICY: {
    */
   networkFeeMicro: 0,
   /**
-   * The extraction check on a paid prompt's inputs (lib/moderation/
-   * extraction-check), passed on to the buyer (Kev, 2026-10-02: "den openAI
+   * The prompt check before every paid generation (lib/moderation/
+   * prompt-check), passed on to the buyer (Kev, 2026-10-02: "den openAI
    * checker können wir ruhig auch als kosten dem kunden auferlegen"). One
    * gpt-6-luna call is about $0.000055 at 500 tokens in and 10 out; $0.0001
    * per image covers a longer answer and EU processing. Part of the model
