@@ -13,7 +13,7 @@
 import { CDP_ADDRESS_EVENT } from "@/lib/cdp-bridge";
 import { createContext, useContext, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
-import { SHOW_ADULT_KEY, pillSurvives, sessionAuthHeaders } from "@/lib/session-headers";
+import { SHOW_ADULT_KEY, pillSurvives, sessionAuthHeaders, setPillActive } from "@/lib/session-headers";
 import { useQueryClient } from "@tanstack/react-query";
 import AccessGate from "@/components/enki-shell/AccessGate";
 
@@ -82,6 +82,8 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
     setProfile((p) => (p ? { ...p, handle: h } : p));
   };
   const [tick, setTick] = useState(0);
+  // What every other read sends follows what this gate decided, nothing else.
+  useEffect(() => { setPillActive(adultConfirmed && adultPill); }, [adultConfirmed, adultPill]);
 
   // Re-verify when a login/logout happens in this or another tab.
   useEffect(() => {

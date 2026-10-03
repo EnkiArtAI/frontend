@@ -133,6 +133,10 @@ describe("the screens", () => {
     expect(GATE).not.toMatch(/const teamFallback = async \(\) => \{\n\s+forgetPill\(\);/);
   });
 
+  it("hands every other read exactly what it decided", () => {
+    expect(GATE).toMatch(/useEffect\(\(\) => \{ setPillActive\(adultConfirmed && adultPill\); \}, \[adultConfirmed, adultPill\]\);/);
+  });
+
   it("refetches every cached read when it flips", () => {
     expect(GATE).toMatch(/setAdultPillState\(on && Boolean\(meId\)\);\n\s+void queryClient\.invalidateQueries\(\);/);
   });

@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { join } from "node:path";
 import { readSource } from "@/lib/__tests__/_read-source";
 import { hideAdult, mayShowAdult } from "@/lib/adult-content";
-import { viewerHeaders } from "@/lib/session-headers";
+import { setPillActive, viewerHeaders } from "@/lib/session-headers";
 
 /**
  * Other people's 18+ stays out of every read unless the viewer is a confirmed
@@ -50,19 +50,20 @@ describe("a read", () => {
 });
 
 describe("the browser", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => { vi.unstubAllGlobals(); setPillActive(false); });
   const storage = (items: Record<string, string>) => {
     vi.stubGlobal("window", {});
     vi.stubGlobal("localStorage", { getItem: (k: string) => items[k] ?? null });
   };
 
-  it("sends the pill with the session when it is on", () => {
-    storage({ enki_session_token: "tok", "enki:show-adult": "1" });
+  it("sends the pill with the session once the sign-in check confirmed it", () => {
+    storage({ enki_session_token: "tok" });
+    setPillActive(true);
     expect(viewerHeaders()).toEqual({ "X-Session-Token": "tok", "X-Show-Adult": "1" });
   });
 
-  it("sends only the session when it is off", () => {
-    storage({ enki_session_token: "tok" });
+  it("does not send a stored pill the sign-in check has not confirmed", () => {
+    storage({ enki_session_token: "tok", "enki:show-adult": "someone-else" });
     expect(viewerHeaders()).toEqual({ "X-Session-Token": "tok" });
   });
 

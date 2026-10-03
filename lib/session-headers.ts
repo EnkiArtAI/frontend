@@ -28,6 +28,16 @@ export function sessionAuthHeaders(): Record<string, string> {
 /** Where the feed's 18+ pill is kept: the id of the account that turned it on (BetaGate). */
 export const SHOW_ADULT_KEY = "enki:show-adult";
 
+/**
+ * Whether the pill is on for the account signed in right now. Set only by
+ * BetaGate, once the sign-in check has confirmed the stored pill belongs to
+ * this confirmed account; storage is where it is kept, not what is sent.
+ */
+let pillActive = false;
+export function setPillActive(on: boolean): void {
+  pillActive = on;
+}
+
 /** Whether a stored pill survives the sign-in check: only for the confirmed account that turned it on. */
 export function pillSurvives(stored: string | null, account: { id?: string; adultConfirmed?: boolean }): boolean {
   return Boolean(stored) && account.adultConfirmed === true && stored === account.id;
@@ -38,13 +48,7 @@ export function sessionHeadersWith(showAdult: boolean): Record<string, string> {
   return showAdult ? { ...sessionAuthHeaders(), "X-Show-Adult": "1" } : sessionAuthHeaders();
 }
 
-/** For reads that show other people's work: the session plus the stored pill. */
+/** For reads that show other people's work: the session plus the pill, if BetaGate confirmed it. */
 export function viewerHeaders(): Record<string, string> {
-  let on = false;
-  try {
-    on = Boolean(localStorage.getItem(SHOW_ADULT_KEY));
-  } catch {
-    /* no storage: the safe view */
-  }
-  return sessionHeadersWith(on);
+  return sessionHeadersWith(pillActive);
 }
