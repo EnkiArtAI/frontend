@@ -388,10 +388,9 @@ export async function GET(req: NextRequest) {
       const scores = (r.scores as Record<string, number> | null) ?? null;
       const evidence = readEvidence(r);
       // The single number a moderator needs: what the classifier was most
-      // sure about. Everything else is in `scores` if they open the row.
-      const worst = scores
-        ? Object.entries(scores).sort((a, b) => b[1] - a[1])[0] ?? null
-        : null;
+      // sure about. Everything else is in `scores` if they open the row. A
+      // warning's weight is no score.
+      const worst = Object.entries(scores ?? {}).filter(([k]) => k !== "weight").sort((a, b) => b[1] - a[1])[0] ?? null;
       return {
         id: String(r.id),
         handle: r.user_id ? (handles.get(String(r.user_id)) ?? "unknown") : null,

@@ -338,7 +338,7 @@ export async function POST(request: NextRequest) {
     const minors = fromArtist && !verdict.allowed ? childSafetyScore(verdict) : null;
     if (minors !== null) {
       const outcome = await recordWarning(getSupabaseServerClient(), {
-        surface: "generate-image", request, category: "minor_sexual", text: JSON.stringify(checked), confidence: minors, ...about,
+        surface: "generate-image", request, category: "minor_sexual", text: JSON.stringify(checked), confidence: minors, scores: verdict.scores, ...about,
       });
       return NextResponse.json({ error: warningMessage("minor_sexual", outcome) }, { status: 422 });
     }

@@ -82,6 +82,8 @@ export async function recordWarning(
     surface: string; request: Req; category: WarningCategory; confidence: number;
     /** What a moderator may read; withheld and promptId as in lib/moderation/evidence. */
     text: string; withheld?: string; promptId?: string; draft?: boolean;
+    /** The classifier's own scores when it made the call: the warning is then its one record. */
+    scores?: Record<string, number> | null;
   },
 ): Promise<WarningOutcome> {
   const weight = WARNING_WEIGHT[ctx.category];
@@ -101,7 +103,7 @@ export async function recordWarning(
     severity: "strike",
     tier: 2,
     category: ctx.category,
-    scores: { confidence: ctx.confidence, weight },
+    scores: { ...ctx.scores, confidence: ctx.confidence, weight },
     prompt_hash: createHash("sha256").update(ctx.text + (ctx.withheld ?? "")).digest("hex"),
     evidence_ct: evidence?.encrypted ?? null,
     evidence_iv: evidence?.iv ?? null,

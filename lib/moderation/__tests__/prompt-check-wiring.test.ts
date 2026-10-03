@@ -43,12 +43,12 @@ describe("the human rail", () => {
     const record = HUMAN.indexOf('after(recordModerationEvent(verdict, { surface: "generate-image"');
     expect(decide).toBeGreaterThan(-1);
     const human = HUMAN.slice(decide, record);
-    expect(human).toMatch(/category: "minor_sexual", text: JSON\.stringify\(checked\), confidence: minors, \.\.\.about,/);
+    expect(human).toMatch(/category: "minor_sexual", text: JSON\.stringify\(checked\), confidence: minors, scores: verdict\.scores, \.\.\.about,/);
     expect(human).toMatch(/return NextResponse\.json\(\{ error: warningMessage\("minor_sexual", outcome\) \}, \{ status: 422 \}\);/);
     // The agent rail counts every hit, its own prompts' too: it has no account to ban for good.
     const agent = AGENT.slice(AGENT.indexOf("if (!verdict.allowed) {"), AGENT.indexOf("return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });", AGENT.indexOf("if (!verdict.allowed) {")));
     expect(agent).toMatch(/const minors = childSafetyScore\(verdict\);/);
-    expect(agent).toMatch(/category: "minor_sexual", text: JSON\.stringify\(checked\), confidence: minors,\n\s+\.\.\.\(input\.promptId \? \{ promptId: input\.promptId \} : \{\}\),/);
+    expect(agent).toMatch(/category: "minor_sexual", text: JSON\.stringify\(checked\), confidence: minors, scores: verdict\.scores,\n\s+\.\.\.\(input\.promptId \? \{ promptId: input\.promptId \} : \{\}\),/);
     expect(agent).toMatch(/return NextResponse\.json\(\{ error: warningMessage\("minor_sexual", outcome\) \}, \{ status: 422 \}\);/);
   });
 

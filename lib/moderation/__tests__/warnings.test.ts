@@ -100,6 +100,16 @@ describe("a warning", () => {
     expect(JSON.parse(plain)).toMatchObject({ shown: '{"title":"Moody"}', withheld: "the artist's words" });
   });
 
+  it("keeps the classifier's own scores when the classifier made the call", async () => {
+    await recordWarning(fake, { surface: "generate-image", request: user, category: "minor_sexual", text: "{}", confidence: 0.95, scores: { "sexual/minors": 0.95, sexual: 0.6 } });
+    expect(tables.automod_events[0].scores).toEqual({ "sexual/minors": 0.95, sexual: 0.6, confidence: 0.95, weight: 10 });
+  });
+
+  it("never lets a classifier score change a warning's weight on the ladder", async () => {
+    await recordWarning(fake, { surface: "generate-image", request: user, category: "minor_sexual", text: "{}", confidence: 0.95, scores: { weight: 0.2, confidence: 0.1 } });
+    expect(tables.automod_events[0].scores).toEqual({ weight: 10, confidence: 0.95 });
+  });
+
   it("does not suspend before the tenth", async () => {
     for (let i = 1; i < WARNINGS_PER_STEP; i++) await warn(user);
     expect(tables.bans).toEqual([]);

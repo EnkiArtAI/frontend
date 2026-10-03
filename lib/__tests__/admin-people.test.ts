@@ -624,3 +624,17 @@ describe("the strikes tab, many bans", () => {
     expect(row).toMatchObject({ appeal: { id: "a-short", against: { reason: "ladder" } } });
   });
 });
+
+describe("the auto-filter log's score", () => {
+  const automod = async () => ((await (await GET(new NextRequest("http://enki.test/api/admin", { headers: { "X-Session-Token": "admin-tok" } }))).json()).automod as Record<string, unknown>[]);
+
+  it("is the classifier's own score, never a warning's weight", async () => {
+    tables.automod_events.push(ev("u1", "minor_sexual", { id: "w-cls", severity: "strike", scores: { "sexual/minors": 0.97, sexual: 0.5, confidence: 0.97, weight: 10 } }));
+    expect((await automod()).find((r) => r.id === "w-cls")?.topScore).toEqual({ name: "sexual/minors", value: 0.97 });
+  });
+
+  it("is a prompt-check warning's confidence when no classifier score came with it", async () => {
+    tables.automod_events.push(ev("u1", "explicit_sexual", { id: "w-chk", severity: "strike", scores: { confidence: 0.92, weight: 1 } }));
+    expect((await automod()).find((r) => r.id === "w-chk")?.topScore).toEqual({ name: "confidence", value: 0.92 });
+  });
+});

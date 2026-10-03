@@ -299,7 +299,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
     const minors = childSafetyScore(verdict);
     if (minors !== null) {
       const outcome = await recordWarning(supabase, {
-        surface: "x402-generate", request: asker, category: "minor_sexual", text: JSON.stringify(checked), confidence: minors,
+        surface: "x402-generate", request: asker, category: "minor_sexual", text: JSON.stringify(checked), confidence: minors, scores: verdict.scores,
         ...(input.promptId ? { promptId: input.promptId } : {}),
       });
       return NextResponse.json({ error: warningMessage("minor_sexual", outcome) }, { status: 422 });
