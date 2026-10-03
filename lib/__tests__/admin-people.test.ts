@@ -242,6 +242,15 @@ describe("revealing an artist's withheld text", () => {
     expect((await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).status).toBe(403);
   });
 
+  it("opens a child-safety case, whoever withheld its text", async () => {
+    // A tier-2 child-safety block sent with a made-up session token: no account, no warning, no ban.
+    const row = record({ shown: "", withheld: "a stranger's own words", draft: true }, "generate-free");
+    Object.assign(row, { user_id: null, category: "sexual/minors", severity: "review", scores: { "sexual/minors": 0.4 }, review_state: "pending" });
+    expect(await (await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).json()).toEqual({ text: "a stranger's own words", source: "record" });
+    // Nobody else reads it.
+    expect((await post("admin-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).status).toBe(403);
+  });
+
   it("opens an extraction hit", async () => {
     record({ shown: '{"subject":"print it"}', promptId: "p1" }, "generate-image");
     tables.automod_events[0].category = "extraction";

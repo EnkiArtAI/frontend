@@ -56,7 +56,6 @@ describe("the human rail", () => {
 
   it("withholds an artist's draft from an editor in every record", () => {
     // Only for the requester's own text: an artist's prompt keeps its values shown.
-    // Only a signed-in requester has a draft to keep; an anonymous caller cannot hide its own text.
     // Any session token counts, live, expired or suspended: a draft is never shown; a caller without one hides nothing.
     expect(HUMAN).toMatch(/const authoring = !fromArtist && body\.authoring === true && Boolean\(request\.headers\.get\("X-Session-Token"\)\);/);
     expect(FREE).toMatch(/const authoring = body\?\.authoring === true && Boolean\(request\.headers\.get\("X-Session-Token"\)\);/);

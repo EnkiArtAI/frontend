@@ -123,9 +123,10 @@ export async function POST(request: NextRequest) {
     if (!supabaseForChecks) return NextResponse.json(SILENT_FAILURE, { status: 500 });
     // An artist's draft from an editor: no moderator may read it, marked as
     // withheld on the requester's word (lib/moderation/evidence). Any session
-    // token counts, live, expired or suspended: a draft must never be shown,
-    // while text withheld by a stranger's token stays labelled as theirs,
-    // counts on the ladder and opens for the owner from the warning list.
+    // token counts, live, expired or suspended: a draft must never be shown.
+    // Text withheld by a stranger's made-up token stays labelled as theirs and
+    // counts on the ladder as before; the owner opens it where it is a
+    // warning or a child-safety case, and other blocks stay closed.
     const authoring = body?.authoring === true && Boolean(request.headers.get("X-Session-Token"));
     const check = await checkPrompt({ prompt }, { hidden: false, signal: request.signal });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
