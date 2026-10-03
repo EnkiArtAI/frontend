@@ -21,6 +21,7 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
   insert(row: Row) { this.op = "insert"; this.payload = row; return this; }
   update(row: Row) { this.op = "update"; this.payload = row; return this; }
   eq(c: string, v: unknown) { this.filters.push((r) => r[c] === v); return this; }
+  neq(c: string, v: unknown) { this.filters.push((r) => r[c] !== v); return this; }
   is(c: string, v: null) { this.filters.push((r) => (r[c] ?? null) === v); return this; }
   gte(c: string, v: string) { this.filters.push((r) => String(r[c]) >= v); return this; }
   limit() { return this; }
@@ -127,6 +128,13 @@ describe("a caught attempt", () => {
     tables.bans.push({ user_id: "buyer-1", lifted_at: null, expires_at: new Date(Date.now() - 60_000).toISOString() });
     for (let i = 0; i < EXTRACTION_HITS_TO_BLOCK; i++) await hit(buyer);
     expect(tables.bans).toHaveLength(2);
+  });
+
+  it("does not count a hit an admin overturned", async () => {
+    for (let i = 0; i < EXTRACTION_HITS_TO_BLOCK - 1; i++) await hit(buyer);
+    tables.automod_events[0].review_state = "overturned";
+    await hit(buyer);
+    expect(tables.bans).toEqual([]);
   });
 
   it("does not count hits older than 30 days", async () => {

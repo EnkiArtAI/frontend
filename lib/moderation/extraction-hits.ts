@@ -21,7 +21,7 @@ import { banUntil } from "@/lib/moderation/bans";
 import { notifyAdmins } from "@/lib/admin-notify";
 
 export const EXTRACTION_HITS_TO_BLOCK = 3;
-const WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+export const EXTRACTION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 type Req = { headers: { get(name: string): string | null } };
 
@@ -42,8 +42,10 @@ export async function silentFailure(): Promise<NextResponse> {
 }
 
 async function hitsSince(supabase: SupabaseClient, who: { userId: string | null; ipHash: string | null }): Promise<number> {
-  const since = new Date(Date.now() - WINDOW_MS).toISOString();
-  let q = supabase.from("automod_events").select("id", { count: "exact", head: true }).eq("category", "extraction").gte("created_at", since);
+  const since = new Date(Date.now() - EXTRACTION_WINDOW_MS).toISOString();
+  // An admin who overturns a hit takes it out of the count.
+  let q = supabase.from("automod_events").select("id", { count: "exact", head: true }).eq("category", "extraction")
+    .neq("review_state", "overturned").gte("created_at", since);
   if (who.userId) q = q.eq("user_id", who.userId);
   else if (who.ipHash) q = q.is("user_id", null).eq("ip_hash", who.ipHash);
   else return 0;

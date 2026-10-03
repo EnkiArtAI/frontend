@@ -249,3 +249,15 @@ describe("a banned account that keeps going", () => {
     expect(new Set(tables.bans.map((b) => b.reason)).size).toBe(tables.bans.length);
   });
 });
+
+describe("the shared warning count", () => {
+  it("adds the weights of warning categories and skips overturned ones", async () => {
+    const { warningWeight } = await import("@/lib/moderation/warnings");
+    expect(warningWeight([
+      { category: "explicit_sexual", review_state: "none", scores: { weight: 1 } },
+      { category: "minor_sexual", review_state: "pending", scores: { weight: 10 } },
+      { category: "explicit_sexual", review_state: "overturned", scores: { weight: 1 } },
+      { category: "extraction", review_state: "none", scores: { weight: 5 } },
+    ])).toBe(11);
+  });
+});

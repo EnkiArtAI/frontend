@@ -37,14 +37,25 @@ export interface WarningOutcome {
   nextStepAt: number;
 }
 
+/**
+ * The warning count, for enforcement and for the admin panel alike: the weights
+ * of the warning categories, without overturned ones. One rule, so what an admin
+ * sees is what suspends.
+ */
+export function warningWeight(rows: { category?: unknown; review_state?: unknown; scores?: { weight?: unknown } | null }[]): number {
+  return rows
+    .filter((r) => CATEGORIES.includes(String(r.category)) && r.review_state !== "overturned")
+    .reduce((s, r) => s + (Number(r.scores?.weight) || 0), 0);
+}
+
 async function weightSince(supabase: SupabaseClient, who: { userId: string | null; ipHash: string | null }, since?: string): Promise<number> {
-  let q = supabase.from("automod_events").select("scores").in("category", CATEGORIES).neq("review_state", "overturned");
+  let q = supabase.from("automod_events").select("category, review_state, scores").in("category", CATEGORIES).neq("review_state", "overturned");
   if (since) q = q.gte("created_at", since);
   if (who.userId) q = q.eq("user_id", who.userId);
   else if (who.ipHash) q = q.is("user_id", null).eq("ip_hash", who.ipHash);
   else return 0;
   const { data } = await q;
-  return ((data ?? []) as { scores?: { weight?: unknown } | null }[]).reduce((s, r) => s + (Number(r.scores?.weight) || 0), 0);
+  return warningWeight((data ?? []) as Parameters<typeof warningWeight>[0]);
 }
 
 /** An address without an account that has reached the first step in the last 30 days. */
