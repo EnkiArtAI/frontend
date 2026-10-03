@@ -246,13 +246,6 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
   const silent = blocked || check.verdict !== "clear";
   // An agent cannot confirm it is an adult, so 18+ is never generated for one.
-  // Whatever else the check found, so the refusal never depends on it.
-  if (("adult" in check && check.adult) || promptAdult) {
-    if (!blocked && check.verdict === "extraction") {
-      after(recordExtractionHit(supabase, { surface: "x402-generate", request, values: checked, confidence: check.confidence }));
-    }
-    return NextResponse.json(AGENT_ADULT_REFUSAL, { status: 403 });
-  }
 
   // For a marketplace prompt the check saw only the agent's values, so tier 2
   // keeps its sexual flag for the artist's text.
@@ -352,6 +345,16 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   }
   if (!simulated.ok) {
     return NextResponse.json({ error: simulated.error, transaction: signature }, { status: 402 });
+  }
+  // 18+ is never generated for an agent, whatever else the check found, so
+  // the refusal never depends on it. It comes only once the payment is known
+  // to be payable: before that, a junk header made every caught attempt cost
+  // a queue row and a mail to the admins.
+  if (("adult" in check && check.adult) || promptAdult) {
+    if (!blocked && check.verdict === "extraction") {
+      after(recordExtractionHit(supabase, { surface: "x402-generate", request, values: checked, confidence: check.confidence }));
+    }
+    return NextResponse.json(AGENT_ADULT_REFUSAL, { status: 403 });
   }
   // Refused silently: nothing is settled. A real failure only happens after
   // settlement, so a paying agent can still tell a failure from an image, as

@@ -121,7 +121,7 @@ describe("the routes", () => {
     const refuse = HUMAN.indexOf("return NextResponse.json(ADULT_REFUSAL, { status: 403 });");
     expect(HUMAN).toMatch(/const adult = \("adult" in check && check\.adult === true\) \|\| promptAdult;/);
     // A refusal on 18+ still counts the extraction attempt it refuses.
-    expect(HUMAN).toMatch(/if \(check\.verdict === "extraction"\) \{\n\s+after\(recordExtractionHit\([^\n]+\n\s+\}\n\s+return NextResponse\.json\(ADULT_REFUSAL, \{ status: 403 \}\);/);
+    expect(HUMAN).toMatch(/if \(check\.verdict === "extraction" && asker\) \{\n\s+after\(recordExtractionHit\([^\n]+\n\s+\}\n\s+return NextResponse\.json\(ADULT_REFUSAL, \{ status: 403 \}\);/);
     expect(refuse).toBeGreaterThan(-1);
     expect(HUMAN.indexOf("await claimForGeneration(")).toBeGreaterThan(refuse);
   });

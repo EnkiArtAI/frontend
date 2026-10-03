@@ -303,8 +303,11 @@ export async function POST(request: NextRequest) {
     // only, refused before anything is charged.
     // Whatever else the check found, so the refusal never depends on it.
     const adult = ("adult" in check && check.adult === true) || promptAdult;
-    if (adult && !(await adultConfirmed(getSupabaseServerClient(), await resolveRecordingUserId(getSupabaseServerClient(), request)))) {
-      if (check.verdict === "extraction") {
+    const asker = adult ? await resolveRecordingUserId(getSupabaseServerClient(), request) : null;
+    if (adult && !(await adultConfirmed(getSupabaseServerClient(), asker))) {
+      // Counted only for a signed-in account: this answer comes before login,
+      // where nothing would stop a loop filling the queue and the admins' inbox.
+      if (check.verdict === "extraction" && asker) {
         after(recordExtractionHit(getSupabaseServerClient(), { surface: "generate-image", request, values: checked, confidence: check.confidence }));
       }
       return NextResponse.json(ADULT_REFUSAL, { status: 403 });

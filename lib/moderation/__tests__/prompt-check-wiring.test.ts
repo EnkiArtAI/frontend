@@ -60,7 +60,16 @@ describe("the human rail", () => {
   });
 
   it("counts a caught attempt only once it got that far", () => {
+    // Twice on the human rail: where a refused generation fails, and on the
+    // 18+ refusal for a signed-in account only (that answer comes before login).
+    expect(HUMAN.split("recordExtractionHit(").length - 1).toBe(2);
     expect(HUMAN.lastIndexOf("recordExtractionHit(")).toBeGreaterThan(HUMAN.indexOf("    if (silent) {"));
+    expect(HUMAN).toMatch(/if \(check\.verdict === "extraction" && asker\) \{\n\s+after\(recordExtractionHit\(/);
+    // On x402 never before the payment is simulated.
+    const sim = AGENT.indexOf("const simulated = await simulatePayment(");
+    for (let at = AGENT.indexOf("after(recordExtractionHit("); at >= 0; at = AGENT.indexOf("after(recordExtractionHit(", at + 1)) {
+      expect(at).toBeGreaterThan(sim);
+    }
   });
 
   it("answers anything else that is refused with the ordinary failure", () => {
