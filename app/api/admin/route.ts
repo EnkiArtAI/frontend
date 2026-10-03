@@ -20,7 +20,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { decryptString, encryptString, type EncryptedPayload } from "@/lib/crypto";
 import { notifyAdmins } from "@/lib/admin-notify";
-import { CHILD_SAFETY, hasChildSafetyCase, listPeople, parsePersonKey, personDetail } from "@/lib/admin/people";
+import { CHILD_SAFETY, hasChildSafetyCase, inWarningOrBanList, listPeople, parsePersonKey, personDetail } from "@/lib/admin/people";
 import { readEvidence, withheldEvidence } from "@/lib/moderation/evidence";
 import { loadPromptText } from "@/lib/generation/prompt-text";
 import { banUntil } from "@/lib/moderation/bans";
@@ -559,8 +559,9 @@ export async function POST(req: NextRequest) {
   }
 
   // An artist's withheld words, for the moderation owner alone, one record
-  // at a time (Kev, 2026-10-03: only the most important admins, in hard
-  // cases). The reason is logged before anything shows: no log, no text.
+  // of the warning and ban list at a time (Kev, 2026-10-03: only the most
+  // important admins, in hard cases, and only there). The reason is logged
+  // before anything shows: no log, no text.
   if (body.resource === "automod" && body.action === "reveal" && body.id) {
     const reason = typeof body.reason === "string" ? body.reason.trim() : "";
     if (reason.length < 10 || reason.length > 500) {
@@ -571,8 +572,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Only the moderation owner can reveal an artist's text." }, { status: 403 });
     }
     const { data: ev } = await supabase.from("automod_events")
-      .select("id, surface, evidence_ct, evidence_iv, evidence_tag, evidence_kid").eq("id", body.id).maybeSingle();
+      .select("id, surface, category, ban_id, evidence_ct, evidence_iv, evidence_tag, evidence_kid").eq("id", body.id).maybeSingle();
     if (!ev) return NextResponse.json({ error: "Event not found" }, { status: 404 });
+    if (!inWarningOrBanList(ev)) {
+      return NextResponse.json({ error: "Only a warning, an extraction hit or a record behind a ban can be opened." }, { status: 403 });
+    }
     // The record's own copy, or else the named prompt's text as it stands now.
     const part = withheldEvidence(ev);
     const fromPrompt = part.text === null && part.promptId !== null;

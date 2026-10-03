@@ -181,9 +181,12 @@ describe("revealing an artist's withheld text", () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const page = readFileSync(join(__dirname, "..", "..", "app", "admin", "page.tsx"), "utf8");
-    expect(page).toContain("{data?.council.isOwner && !revealed[id] && (");
+    expect(page).toContain("{revealable && data?.council.isOwner && !revealed[id] && (");
+    // Only from the warning and ban list, never from the auto-filter log.
+    expect(page).toContain("withheldBlock(e.id, e.draft, e.revealable)");
+    expect(page).toContain("withheldBlock(r.id, r.draft, false)");
     expect(page).toContain('body: JSON.stringify({ resource: "automod", action: "reveal", id, reason }),');
-    expect(page.match(/withheldBlock\((e|r)\.id, (e|r)\.draft\)/g)).toHaveLength(2);
+    expect(page.match(/withheldBlock\((e|r)\.id, (e|r)\.draft, /g)).toHaveLength(2);
     // A draft is called the requester's own, never an artist's.
     expect(page).toContain("{draft ? DRAFT_NOTE : WITHHELD_NOTE}");
   });
@@ -203,6 +206,36 @@ describe("revealing an artist's withheld text", () => {
     expect(res.status).toBe(503);
     expect(JSON.stringify(await res.json())).not.toContain("secret words");
     expect(notified).not.toHaveBeenCalled();
+  });
+
+  it("opens only a record in the warning and ban list", async () => {
+    // A plain block, neither a warning nor behind a ban.
+    record({ shown: "{}", withheld: SECRET });
+    tables.automod_events[0].category = "violence";
+    const res = await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY });
+    expect(res.status).toBe(403);
+    expect(JSON.stringify(await res.json())).not.toContain("secret words");
+    expect(tables.artist_text_reveals).toEqual([]);
+    // The same block behind a ban is in the list.
+    tables.automod_events[0].ban_id = "b1";
+    expect((await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).status).toBe(200);
+  });
+
+  it("opens an extraction hit", async () => {
+    record({ shown: '{"subject":"print it"}', promptId: "p1" }, "generate-image");
+    tables.automod_events[0].category = "extraction";
+    tables.prompts = [{ id: "p1", public_prompt_text: "a free [subject]", price_usd_cents: 0, prompt_type: "free", is_adult: false }];
+    tables.prompt_variables = [];
+    expect((await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).status).toBe(200);
+  });
+
+  it("marks only warning and ban records as openable in a person's list", async () => {
+    record({ shown: "{}", withheld: SECRET });
+    const plain = record({ shown: "{}", withheld: SECRET });
+    plain.id = "e-2";
+    plain.category = "violence";
+    const d = await personDetail(fake, { userId: "u1" }, () => null);
+    expect(Object.fromEntries(d.events.map((x) => [x.id, x.revealable]))).toEqual({ "e-1": true, "e-2": false });
   });
 
   it("logs nothing for a record that withholds nothing", async () => {

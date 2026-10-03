@@ -7,13 +7,22 @@
  * functions enforcement uses, so the list shows exactly what suspends.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { ADDRESS_WINDOW_MS, weightSince } from "@/lib/moderation/warnings";
+import { ADDRESS_WINDOW_MS, WARNING_WEIGHT, weightSince } from "@/lib/moderation/warnings";
 import { hitsSince } from "@/lib/moderation/extraction-hits";
 import { activeBanFor } from "@/lib/session-user";
 import { readEvidence } from "@/lib/moderation/evidence";
 
 /** Categories that flag a child-safety case; only an admin may overturn one or lift its ban. */
 export const CHILD_SAFETY = ["minor_sexual", "sexual/minors", "csam"];
+
+/**
+ * The warning and ban list: warnings, extraction hits and any record behind
+ * a ban. The one place an artist's withheld words may be opened, by the
+ * moderation owner (Kev, 2026-10-03).
+ */
+export function inWarningOrBanList(r: { category?: unknown; ban_id?: unknown }): boolean {
+  return Object.keys(WARNING_WEIGHT).includes(String(r.category)) || r.category === "extraction" || r.ban_id != null;
+}
 const PEOPLE_LIMIT = 50;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -112,7 +121,7 @@ export async function listPeople(supabase: SupabaseClient): Promise<Person[]> {
 export interface PersonDetail {
   events: {
     id: string; category: string | null; severity: string; tier: number | null; surface: string;
-    rules: string[]; weight: number; confidence: number | null; prompt: string | null; withheld: boolean; draft: boolean; state: string;
+    rules: string[]; weight: number; confidence: number | null; prompt: string | null; withheld: boolean; draft: boolean; revealable: boolean; state: string;
     reviewedAt: string | null; note: string | null; at: string;
   }[];
   failures: {
@@ -126,7 +135,7 @@ export interface PersonDetail {
 export async function personDetail(supabase: SupabaseClient, who: Who, decrypt: Decrypt): Promise<PersonDetail> {
   const [ev, fl, bans] = await Promise.all([
     scope(supabase.from("automod_events")
-      .select("id, surface, severity, tier, category, matched_rules, scores, evidence_ct, evidence_iv, evidence_tag, evidence_kid, review_state, reviewed_at, review_notes, created_at")
+      .select("id, surface, severity, tier, category, matched_rules, scores, ban_id, evidence_ct, evidence_iv, evidence_tag, evidence_kid, review_state, reviewed_at, review_notes, created_at")
       .eq("decision", "block"), who).order("created_at", { ascending: false }).limit(100),
     scope(supabase.from("generation_failures")
       .select("id, surface, model_id, resolution, quality, boost, aspect_ratio, reference_image_count, error, prompt_ct, prompt_iv, prompt_tag, prompt_kid, image_url, tx_signature, created_at"),
@@ -160,6 +169,7 @@ export async function personDetail(supabase: SupabaseClient, who: Who, decrypt: 
         prompt: evidence.text,
         withheld: evidence.withheld,
         draft: evidence.draft,
+        revealable: evidence.withheld && inWarningOrBanList(r),
         state: String(r.review_state),
         reviewedAt: (r.reviewed_at as string | null) ?? null,
         note: (r.review_notes as string | null) ?? null,

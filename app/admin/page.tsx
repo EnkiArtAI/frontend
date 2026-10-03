@@ -33,7 +33,7 @@ type Automod = { id: string; handle: string | null; surface: string; severity: s
 type GenPolicy = { maxConcurrentPerUser: number | null; canEdit: boolean };
 type Person = { key: string; userId: string | null; ipHash: string | null; handle: string | null; displayName: string | null; warnings: number; extractionHits: number; childSafety: boolean; pending: number; suspension: { until: string | null } | null; failed7d: number; lastActive: string | null };
 type PersonDetail = {
-  events: { id: string; category: string | null; severity: string; surface: string; rules: string[]; weight: number; confidence: number | null; prompt: string | null; withheld: boolean; draft: boolean; state: string; at: string }[];
+  events: { id: string; category: string | null; severity: string; surface: string; rules: string[]; weight: number; confidence: number | null; prompt: string | null; withheld: boolean; draft: boolean; revealable: boolean; state: string; at: string }[];
   failures: { id: string; surface: string; model: string | null; resolution: string | null; quality: string | null; boost: boolean; aspectRatio: string | null; referenceImageCount: number; error: string; prompt: string | null; draft: boolean; imageUrl: string | null; txSignature: string | null; at: string }[];
   bans: { id: string; reason: string | null; expiresAt: string | null; liftedAt: string | null; at: string }[];
 };
@@ -268,11 +268,11 @@ export default function AdminPage() {
       say("Network hiccup — nothing was revealed.");
     }
   };
-  const withheldBlock = (id: string, draft: boolean) => (
+  const withheldBlock = (id: string, draft: boolean, revealable: boolean) => (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <span style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11, fontStyle: "italic", color: "var(--enki-ink-3)" }}>
         {draft ? DRAFT_NOTE : WITHHELD_NOTE}
-        {data?.council.isOwner && !revealed[id] && (
+        {revealable && data?.council.isOwner && !revealed[id] && (
           <Pill kind="plain" label="Reveal (logged)" title="Only for a hard case: your reason is logged and every admin is told" onClick={() => void reveal(id)} />
         )}
       </span>
@@ -826,7 +826,7 @@ export default function AdminPage() {
                                   )}
                                 </div>
                                 {(e.prompt !== null || !e.withheld) && <p style={{ margin: 0, fontFamily: MONO, fontSize: 11, color: "var(--enki-ink-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxWidth: 760 }}>{e.prompt ?? "Not readable."}</p>}
-                                {e.withheld && withheldBlock(e.id, e.draft)}
+                                {e.withheld && withheldBlock(e.id, e.draft, e.revealable)}
                               </div>
                             ))}
                             {detail?.failures.map((x) => (
@@ -898,7 +898,8 @@ export default function AdminPage() {
                           <div style={{ fontFamily: SERIF, fontSize: 13.5, lineHeight: 1.5, color: "var(--enki-ink)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
                             {r.prompt ?? (r.withheld ? null : <em style={{ color: "var(--enki-ink-3)" }}>Not readable — encrypted with a key this server no longer holds.</em>)}
                           </div>
-                          {r.withheld && <div style={{ marginTop: 6 }}>{withheldBlock(r.id, r.draft)}</div>}
+                          {/* Opened only from the warning and ban list (People), never from this log. */}
+                          {r.withheld && <div style={{ marginTop: 6 }}>{withheldBlock(r.id, r.draft, false)}</div>}
                           {r.rules.length > 0 && (
                             <div style={{ marginTop: 10, fontFamily: MONO, fontSize: 10, color: "var(--enki-ink-2)" }}>
                               rules: {r.rules.join(", ")}
