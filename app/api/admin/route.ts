@@ -222,7 +222,7 @@ export async function GET(req: NextRequest) {
       .is("revoked_at", null).order("created_at", { ascending: false }).limit(200),
     supabase.from("bans")
       .select("id, user_id, reason, scope, expires_at, created_at")
-      .is("lifted_at", null).limit(100),
+      .is("lifted_at", null).or(unexpired()).limit(100),
     supabase.from("appeals")
       .select("id, user_id, user_statement, status, created_at")
       .eq("status", "pending").order("created_at", { ascending: false }).limit(100),
