@@ -20,11 +20,13 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { decryptString, encryptString, type EncryptedPayload } from "@/lib/crypto";
 import { notifyAdmins } from "@/lib/admin-notify";
+import { CHILD_SAFETY, listPeople, personDetail } from "@/lib/admin/people";
 
 /** A ban counts while it is not lifted and has not run out, as activeBanFor reads it. */
 const unexpired = () => `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`;
 
 type Supabase = ReturnType<typeof getSupabaseServerClient>;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // The role comes back too: mods and admins share this panel, but not every
 // control in it. Throttling generation is an admin decision — a mod moderates
@@ -201,7 +203,14 @@ export async function GET(req: NextRequest) {
   if (gate instanceof NextResponse) return gate;
   const { userId, role } = gate;
 
-  const [imp, rep, fb, fr, hu, st, ba, ap, rec, council, genPolicy, automod] = await Promise.all([
+  // One person, expanded in the person list: every event with its prompt and settings.
+  const person = req.nextUrl.searchParams.get("person");
+  if (person !== null) {
+    if (!UUID_RE.test(person)) return NextResponse.json({ error: "Bad person id" }, { status: 400 });
+    return NextResponse.json(await personDetail(supabase, person, (ct, iv, tag, kid) => tryDecrypt(ct, iv, tag, kid, [undefined])));
+  }
+
+  const [imp, rep, fb, fr, hu, st, ba, ap, rec, council, genPolicy, automod, people] = await Promise.all([
     supabase.from("hunt_submissions")
       .select("id, hunter_user_id, source_url, suggested_title, suggested_tags, submitted_at")
       .eq("status", "pending").order("submitted_at", { ascending: false }).limit(100),
@@ -238,6 +247,7 @@ export async function GET(req: NextRequest) {
       .select("id, user_id, surface, severity, tier, category, matched_rules, scores, prompt_hash, evidence_ct, evidence_iv, evidence_tag, evidence_kid, review_state, created_at")
       .eq("decision", "block")
       .order("created_at", { ascending: false }).limit(150),
+    listPeople(supabase),
   ]);
 
   // attachments per feedback + evidence per recovery request
@@ -297,6 +307,7 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json({
+    people,
     imports: (imp.data ?? []).map((r) => ({
       id: String(r.id),
       name: (r.suggested_title as string) || "Untitled",
@@ -512,11 +523,24 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── moderation events: review from the person list (Kev, 2026-10-03) ──
+  // Overturning takes a warning or hit out of every count; the event itself
+  // stays, append-only. A child-safety case is an admin's call, never a mod's.
+  if (body.resource === "automod" && body.id && (body.action === "overturn" || body.action === "uphold")) {
+    const { data: ev } = await supabase.from("automod_events")
+      .select("category").eq("id", body.id).eq("decision", "block").maybeSingle();
+    if (!ev) return NextResponse.json({ error: "Event not found" }, { status: 404 });
+    if (CHILD_SAFETY.includes(String(ev.category)) && role !== "admin") {
+      return NextResponse.json({ error: "Only an admin can review a child-safety case" }, { status: 403 });
+    }
+    const { error } = await supabase.from("automod_events").update({
+      review_state: body.action === "overturn" ? "overturned" : "upheld",
+      reviewed_by: userId, reviewed_at: now, review_notes: body.reason?.slice(0, 500) ?? null,
+    }).eq("id", body.id);
+    return error ? fail(error, "review the event") : NextResponse.json({ ok: true });
+  }
+
   // ── strikes ──
-  // No automod write action on purpose (Kev, 2026-08-05): the panel shows the
-  // filter's record, and every change to it happens in Supabase directly. That
-  // keeps the one surface reachable from the internet read-only, so a stolen
-  // admin session can read the evidence but never touch it.
 
   // Generation throttle — ADMIN ONLY. A mod moderates content; slowing the
   // whole product down for every user is not a moderation decision, and the
