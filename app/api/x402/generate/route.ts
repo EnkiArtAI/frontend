@@ -50,7 +50,7 @@ import { loadPromptText, fillVariables, inputsUnmatched, VALUE_MAX } from "@/lib
 import { checkPrompt, textValues } from "@/lib/moderation/prompt-check";
 import { recordGenerationFailure } from "@/lib/generation/record";
 import { addressWarnedOut, addressWarningMessage, byAddress, recordWarning } from "@/lib/moderation/warnings";
-import { childSafetyScore } from "@/lib/moderation-enforcement";
+import { childSafetyScore, recordModerationEvent } from "@/lib/moderation-enforcement";
 import { agentBlocked, recordExtractionHit, silentFailure } from "@/lib/moderation/extraction-hits";
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
@@ -292,18 +292,25 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // keeps its sexual flag for the artist's text, unless the prompt is marked
   // 18+: its save already judged that text 18+ and not explicit.
   const verdict = await moderate({ prompt: promptText, surface: "x402-generate", adultJudged: !input.promptId || promptAdult });
+  // A child-safety hit counts on the requester's ladder, where it stops an
+  // address at once; an agent's own prompt too, since this rail has no
+  // account to ban for good. The warning is the hit's one record.
+  const minors = !verdict.allowed ? childSafetyScore(verdict) : null;
+  if (minors !== null) {
+    await recordWarning(supabase, {
+      surface: "x402-generate", request: asker, category: "minor_sexual", text: JSON.stringify(checked), confidence: minors, scores: verdict.scores,
+      ...(input.promptId ? { promptId: input.promptId } : {}),
+    });
+    return NextResponse.json({ error: addressWarningMessage("minor_sexual") }, { status: 422 });
+  }
+  // Every other decision is recorded as on the human rail, on the address: a
+  // child-safety case below the auto-ban line goes to a human, and the
+  // passes are the control group. A marketplace prompt is named, never quoted.
+  after(recordModerationEvent(verdict, {
+    surface: "x402-generate", request: asker,
+    ...(input.promptId ? { prompt: JSON.stringify(checked), promptId: input.promptId } : { prompt: promptText }),
+  }));
   if (!verdict.allowed) {
-    // A child-safety hit counts on the requester's ladder, where it stops an
-    // address at once; an agent's own prompt too, since this rail has no
-    // account to ban for good.
-    const minors = childSafetyScore(verdict);
-    if (minors !== null) {
-      await recordWarning(supabase, {
-        surface: "x402-generate", request: asker, category: "minor_sexual", text: JSON.stringify(checked), confidence: minors, scores: verdict.scores,
-        ...(input.promptId ? { promptId: input.promptId } : {}),
-      });
-      return NextResponse.json({ error: addressWarningMessage("minor_sexual") }, { status: 422 });
-    }
     return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
   }
 

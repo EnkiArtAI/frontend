@@ -46,8 +46,9 @@ describe("the human rail", () => {
     expect(human).toMatch(/category: "minor_sexual", text: JSON\.stringify\(checked\), confidence: minors, scores: verdict\.scores, \.\.\.about,/);
     expect(human).toMatch(/return NextResponse\.json\(\{ error: warningMessage\("minor_sexual", outcome\) \}, \{ status: 422 \}\);/);
     // The agent rail counts every hit, its own prompts' too: it has no account to ban for good.
-    const agent = AGENT.slice(AGENT.indexOf("if (!verdict.allowed) {"), AGENT.indexOf("return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });", AGENT.indexOf("if (!verdict.allowed) {")));
-    expect(agent).toMatch(/const minors = childSafetyScore\(verdict\);/);
+    const agentDecide = AGENT.indexOf("const minors = !verdict.allowed ? childSafetyScore(verdict) : null;");
+    expect(agentDecide).toBeGreaterThan(-1);
+    const agent = AGENT.slice(agentDecide, AGENT.indexOf("after(recordModerationEvent(verdict, {", agentDecide));
     expect(agent).toMatch(/category: "minor_sexual", text: JSON\.stringify\(checked\), confidence: minors, scores: verdict\.scores,\n\s+\.\.\.\(input\.promptId \? \{ promptId: input\.promptId \} : \{\}\),/);
     expect(agent).toMatch(/return NextResponse\.json\(\{ error: addressWarningMessage\("minor_sexual"\) \}, \{ status: 422 \}\);/);
     // The agent rail never promises an account suspension it cannot give.
@@ -154,6 +155,16 @@ describe("the agent rail", () => {
     const recorders = [...AGENT.matchAll(/(recordWarning|recordExtractionHit)\(supabase, \{\s*surface: "x402-generate", request(: asker)?,/g)];
     expect(recorders).toHaveLength(3);
     for (const r of recorders) expect(r[2]).toBe(": asker");
+  });
+
+  it("records every other moderation decision on the address, a marketplace prompt by its id", () => {
+    const decide = AGENT.indexOf("const minors = !verdict.allowed ? childSafetyScore(verdict) : null;");
+    const record = AGENT.indexOf("after(recordModerationEvent(verdict, {");
+    expect(decide).toBeGreaterThan(-1);
+    // After the warning branch, so one hit is never two records.
+    expect(record).toBeGreaterThan(decide);
+    expect(AGENT.slice(record, record + 260)).toMatch(/surface: "x402-generate", request: asker,\n\s+\.\.\.\(input\.promptId \? \{ prompt: JSON\.stringify\(checked\), promptId: input\.promptId \} : \{ prompt: promptText \}\),/);
+    expect(AGENT.indexOf("return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });")).toBeGreaterThan(record);
   });
 
   it("stops a blocked address before checking", () => {
