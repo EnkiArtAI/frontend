@@ -79,7 +79,7 @@ const bodySchema = z.object({
   resolution: z.enum(["1K", "2K", "4K"]).default("2K"),
   aspectRatio: z.string().trim().max(8).default("1:1"),
   quality: z.enum(["low", "medium", "high"]).optional(),
-}).refine((v) => v.prompt || v.promptId, { message: "Send prompt or promptId" });
+}).refine((v) => Boolean(v.prompt) !== Boolean(v.promptId), { message: "Send prompt or promptId, not both" });
 
 type Input = z.infer<typeof bodySchema>;
 
@@ -227,9 +227,14 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
     if (!inputs.ok) return NextResponse.json({ error: inputs.error }, { status: inputs.status });
     const text = await loadPromptText(supabase, input.promptId);
     if (!text.ok) return NextResponse.json({ error: text.error }, { status: text.status });
-    const filled = fillVariables(text.text, Object.fromEntries(inputs.values), text.variables);
+    const filled = fillVariables(text.text, Object.fromEntries(inputs.values), inputs.variables);
     if (inputsUnmatched(filled)) {
       return NextResponse.json({ error: "This prompt's inputs could not be matched to its text — nothing was charged" }, { status: 422 });
+    }
+    // Every value was checked to be a declared variable's, so one that no
+    // slot takes would be paid for and dropped.
+    if (filled.unused.length > 0) {
+      return NextResponse.json({ error: `This prompt's text has no place for ${filled.unused.join(", ")} — nothing was charged` }, { status: 422 });
     }
     promptText = filled.text;
     promptAdult = text.adult;
@@ -469,9 +474,10 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
 }
 
 export async function GET(req: NextRequest) {
+  const promptId = req.nextUrl.searchParams.get("promptId") ?? undefined;
   const parsed = bodySchema.safeParse({
-    prompt: req.nextUrl.searchParams.get("prompt") ?? "probe",
-    promptId: req.nextUrl.searchParams.get("promptId") ?? undefined,
+    prompt: req.nextUrl.searchParams.get("prompt") ?? (promptId ? undefined : "probe"),
+    promptId,
     modelFamily: req.nextUrl.searchParams.get("modelFamily") ?? undefined,
     resolution: req.nextUrl.searchParams.get("resolution") ?? undefined,
   });

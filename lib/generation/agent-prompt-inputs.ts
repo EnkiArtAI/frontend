@@ -123,6 +123,8 @@ export async function checkAgentPromptInputs(
     if (unreachable(v)) return { ok: false, status: 400, error: `${v.name} cannot be filled through the API` };
     const r = fit(v, raw, paid);
     if ("error" in r) return { ok: false, status: 400, error: r.error };
+    // Two keys for one variable ("Hero Name", "hero_name"): one would be dropped.
+    if (fitted.has(v.name)) return { ok: false, status: 400, error: `${v.name} was given more than once` };
     fitted.set(v.name, r.value);
   }
   return { ok: true, paid, variables, values: fitted };
