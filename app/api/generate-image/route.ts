@@ -19,6 +19,7 @@ import { settingMismatch, type StoredSettings } from "@/lib/payments/generation-
 import { loadPromptText, fillVariables, inputsUnmatched, overLong, VALUE_MAX } from "@/lib/generation/prompt-text";
 import { checkPrompt, textValues } from "@/lib/moderation/prompt-check";
 import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
+import { ADULT_REFUSAL, adultConfirmed } from "@/lib/adult-content";
 import { recordExtractionHit, SILENT_FAILURE, silentFailure } from "@/lib/moderation/extraction-hits";
 import { captureAndBroadcast, voidAndFlush, sweepAndFlush } from "@/lib/payments/settle";
 import { solanaChainKey } from "@/lib/payments/solana";
@@ -235,6 +236,7 @@ export async function POST(request: NextRequest) {
        buyer's own text. The artist's text is never returned to the buyer. */
     const fromArtist = Boolean(paid.prompt_id) && Number(paid.artist_amount_micro) > 0;
     let prompt = typedPrompt;
+    let artistAdult = false;
     if (fromArtist) {
       const text = await loadPromptText(getSupabaseServerClient(), paid.prompt_id as string);
       if (!text.ok) return NextResponse.json({ error: text.error }, { status: text.status });
@@ -253,6 +255,7 @@ export async function POST(request: NextRequest) {
         );
       }
       prompt = filled.text;
+      artistAdult = text.adult;
     }
     if (!prompt) {
       return NextResponse.json({ error: "prompt is required" }, { status: 400 });
@@ -290,6 +293,13 @@ export async function POST(request: NextRequest) {
     // told a caller without a session which inputs were caught.
     const silent = check.verdict !== "clear";
 
+    // 18+ (a suggestive prompt, or a prompt marked 18+) is for confirmed adults
+    // only, refused before anything is charged.
+    const adult = (check.verdict === "clear" && check.adult === true) || artistAdult;
+    if (adult && !(await adultConfirmed(getSupabaseServerClient(), await resolveRecordingUserId(getSupabaseServerClient(), request)))) {
+      return NextResponse.json(ADULT_REFUSAL, { status: 403 });
+    }
+
     // 3. Content moderation — deliberately the FIRST thing after cheap input
     // validation and long before any payment step below. A refused prompt must
     // never be a charged prompt.
@@ -297,7 +307,7 @@ export async function POST(request: NextRequest) {
     // The client only ever learns that it was refused: category, tier, rule ids
     // and scores stay server-side, otherwise this endpoint becomes an oracle an
     // attacker can probe to map the filter.
-    const verdict = await moderate({ prompt, surface: "generate-image", signal: request.signal });
+    const verdict = await moderate({ prompt, surface: "generate-image", signal: request.signal, adultJudged: true });
     // after() and not a bare void: on a block this route returns immediately,
     // and a floating promise can be frozen with the lambda before the insert
     // lands — losing exactly the events we most want recorded.
@@ -751,6 +761,7 @@ export async function POST(request: NextRequest) {
         const stripped = stripWorkflowImages(body.workflow ?? {});
         after(
           recordGeneration(recSupabase, {
+            adult,
             userId: recUserId,
             promptId: paid.prompt_id ?? null,
             finalPrompt: prompt,

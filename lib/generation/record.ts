@@ -35,6 +35,8 @@ export interface GenerationRecord {
   effectivePrompt: string;
   variableValues: unknown;
   model: ResolvedModel;
+  /** 18+: from the prompt check or the prompt's own mark. Shown to other people only when they opted in. */
+  adult?: boolean;
   route: Route;
   boost: boolean;
   aspectRatio: string | null;
@@ -95,6 +97,7 @@ async function ensurePromptRow(
   userId: string,
   prompt: string,
   model: ResolvedModel,
+  adult = false,
 ): Promise<string | null> {
   // The prompts table predates the `_ct` convention: its ciphertext column is
   // plain `encrypted_content`, while iv/tag/kid carry the prefix. Probed live
@@ -119,6 +122,7 @@ async function ensurePromptRow(
       is_listed: false,
       listing_status: "draft",
       price_usd_cents: 0,
+      is_adult: adult,
     })
     .select("id")
     .single();
@@ -139,7 +143,7 @@ export async function recordGeneration(
 ): Promise<string | null> {
   try {
     const promptId =
-      rec.promptId ?? (await ensurePromptRow(supabase, rec.userId, rec.finalPrompt, rec.model));
+      rec.promptId ?? (await ensurePromptRow(supabase, rec.userId, rec.finalPrompt, rec.model, rec.adult === true));
     if (!promptId) return null;
 
     const { data, error } = await supabase
@@ -228,6 +232,7 @@ export async function recordGeneration(
         // Generated, not uploaded — the flag the gallery filters on, and the
         // one chk_upload_consistency checks against generation_id.
         is_uploaded: false,
+        is_adult: rec.adult === true,
         is_watermarked: false,
         visibility: "private",
         accepted: true,

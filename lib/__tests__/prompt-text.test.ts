@@ -100,8 +100,12 @@ describe("fillVariables", () => {
 describe("loadPromptText", () => {
   it("reads a prompt's public text when it has no encrypted body", async () => {
     expect(await loadPromptText(prompts({ public_prompt_text: "a [animal]" }, [{ name: "animal" }]), "p")).toEqual({
-      ok: true, text: "a [animal]", variables: [{ name: "animal" }],
+      ok: true, text: "a [animal]", variables: [{ name: "animal" }], adult: false,
     });
+  });
+
+  it("carries the prompt's 18+ mark", async () => {
+    expect(await loadPromptText(prompts({ public_prompt_text: "a [animal]", is_adult: true }), "p")).toMatchObject({ ok: true, adult: true });
   });
 
   it("never serves a priced prompt from its public excerpt", async () => {

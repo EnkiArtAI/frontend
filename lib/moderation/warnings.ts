@@ -146,12 +146,12 @@ function duration(days: number | null): string {
 }
 
 /** What the user reads. It names the rule and the count, never the score. */
-export function warningMessage(category: WarningCategory, o: WarningOutcome): string {
+export function warningMessage(category: WarningCategory, o: WarningOutcome, refused: "generation" | "save" = "generation"): string {
   const rule =
     category === "minor_sexual"
       ? "Sexual content involving minors is strictly prohibited."
       : "Explicit sexual content isn't allowed on Enki.";
-  const head = `${rule} Nothing was generated and nothing was charged.`;
+  const head = `${rule} ${refused === "save" ? "Nothing was saved." : "Nothing was generated and nothing was charged."}`;
   if (o.suspendedUntil === "forever") return `${head} Your account is suspended for good.`;
   if (o.suspendedUntil) return `${head} Your account is suspended until ${o.suspendedUntil.slice(0, 10)}.`;
   const step = Math.floor(o.nextStepAt / WARNINGS_PER_STEP);

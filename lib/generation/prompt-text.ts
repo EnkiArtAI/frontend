@@ -17,13 +17,13 @@ export interface StoredVariable {
 }
 
 export type PromptTextResult =
-  | { ok: true; text: string; variables: StoredVariable[] }
+  | { ok: true; text: string; variables: StoredVariable[]; adult: boolean }
   | { ok: false; status: 422 | 500; error: string };
 
 export async function loadPromptText(supabase: SupabaseClient, promptId: string): Promise<PromptTextResult> {
   const { data: row, error } = await supabase
     .from("prompts")
-    .select("public_prompt_text, encrypted_content, encrypted_content_iv, encrypted_content_tag, encrypted_content_kid, price_usd_cents, prompt_type, is_free_showcase")
+    .select("public_prompt_text, encrypted_content, encrypted_content_iv, encrypted_content_tag, encrypted_content_kid, price_usd_cents, prompt_type, is_free_showcase, is_adult")
     .eq("id", promptId)
     .maybeSingle();
   if (error || !row) return { ok: false, status: 500, error: "Failed to load prompt" };
@@ -66,7 +66,7 @@ export async function loadPromptText(supabase: SupabaseClient, promptId: string)
   const variables = ((vars ?? []) as Array<{ name?: unknown }>)
     .filter((v) => typeof v.name === "string")
     .map((v) => ({ name: String(v.name) }));
-  return { ok: true, text, variables };
+  return { ok: true, text, variables, adult: row.is_adult === true };
 }
 
 /**

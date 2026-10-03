@@ -5,6 +5,7 @@ import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
 import { checkPrompt } from "@/lib/moderation/prompt-check";
 import { addressWarnedOut, recordWarning, warningMessage } from "@/lib/moderation/warnings";
+import { ADULT_REFUSAL, adultConfirmed } from "@/lib/adult-content";
 import { SILENT_FAILURE, silentFailure } from "@/lib/moderation/extraction-hits";
 import { getSupabaseServerClientSafe } from "@/lib/supabaseServer";
 import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
@@ -125,8 +126,13 @@ export async function POST(request: NextRequest) {
     // Refused silently only where a real generation fails, after the sign-in
     // and quota answers below; earlier, a signed-out caller could tell.
     const silent = warnedOut || check.verdict !== "clear";
+    const suggestive = check.verdict === "clear" && check.adult === true;
+    // 18+ is for confirmed adults only; an anonymous visitor cannot confirm.
+    if (suggestive && !(await adultConfirmed(supabaseForChecks, await resolveRecordingUserId(supabaseForChecks, request)))) {
+      return NextResponse.json(ADULT_REFUSAL, { status: 403 });
+    }
 
-    const verdict = await moderate({ prompt, surface: "generate-free", signal: request.signal });
+    const verdict = await moderate({ prompt, surface: "generate-free", signal: request.signal, adultJudged: true });
     after(recordModerationEvent(verdict, { surface: "generate-free", request, prompt }));
     if (!verdict.allowed) {
       return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
@@ -232,6 +238,7 @@ export async function POST(request: NextRequest) {
         const dims = measured;
         after(
           recordGeneration(supabase, {
+            adult: suggestive,
             userId: recUserId,
             /* Which prompt this came from.
              *

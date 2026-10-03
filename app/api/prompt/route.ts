@@ -3,6 +3,8 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { encryptString, decryptString } from "@/lib/crypto";
 import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
+import { checkPrompt } from "@/lib/moderation/prompt-check";
+import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 
 type VariableType =
   | "text"
@@ -292,7 +294,23 @@ export async function POST(req: Request) {
        a model overwrote the creator's pick with it. Absent on an update now
        leaves the stored value; absent on a new prompt is refused below. */
     const aiModel = typeof body.aiModel === "string" ? body.aiModel.trim() : "";
+    // Judged like a generation before it is stored: explicit and child-safety
+    // text is refused with a warning, and a suggestive prompt is marked 18+ by
+    // itself, so the creator never has to (Kev, 2026-10-03). An outage of the
+    // check saves nothing rather than an unjudged prompt.
+    const check = await checkPrompt({ title: body.title, content: body.content }, { hidden: false, signal: req.signal });
+    if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
+      const outcome = await recordWarning(supabase, {
+        surface: "upload", request: req, category: check.verdict, text: `${body.title}\n${body.content}`, confidence: check.confidence,
+      });
+      return NextResponse.json({ error: warningMessage(check.verdict, outcome, "save") }, { status: 422 });
+    }
+    if (check.verdict !== "clear") {
+      return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 });
+    }
+
     const promptRow = {
+      is_adult: check.adult === true,
       title: body.title,
       encrypted_content: enc.encrypted,
       encrypted_content_iv: enc.iv,
@@ -337,7 +355,7 @@ export async function POST(req: Request) {
       .filter((v): v is string => typeof v === "string" && v.length > 0)
       .join("\n");
     if (moderatedText) {
-      const verdict = await moderate({ prompt: moderatedText, surface: "upload", signal: req.signal });
+      const verdict = await moderate({ prompt: moderatedText, surface: "upload", signal: req.signal, adultJudged: true });
       after(recordModerationEvent(verdict, { surface: "upload", request: req, prompt: moderatedText }));
       if (!verdict.allowed) {
         return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });

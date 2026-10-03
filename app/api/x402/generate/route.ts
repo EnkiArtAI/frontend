@@ -49,6 +49,7 @@ import { loadPromptText, fillVariables, inputsUnmatched, VALUE_MAX } from "@/lib
 import { checkPrompt, textValues } from "@/lib/moderation/prompt-check";
 import { recordGenerationFailure } from "@/lib/generation/record";
 import { addressWarnedOut, recordWarning, warningMessage } from "@/lib/moderation/warnings";
+import { ADULT_REFUSAL } from "@/lib/adult-content";
 import { agentBlocked, recordExtractionHit, silentFailure } from "@/lib/moderation/extraction-hits";
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
@@ -212,6 +213,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // generation, not the text (Kev, 2026-08-24: "i want agents to purchase
   // artists prompts"). Free/showcase prompts read their public text.
   let promptText = input.prompt ?? "";
+  let promptAdult = false;
   if (input.promptId) {
     const text = await loadPromptText(supabase, input.promptId);
     if (!text.ok) return NextResponse.json({ error: text.error }, { status: text.status });
@@ -220,6 +222,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
       return NextResponse.json({ error: "This prompt's inputs could not be matched to its text — nothing was charged" }, { status: 422 });
     }
     promptText = filled.text;
+    promptAdult = text.adult;
   }
 
   // What the request asks for, judged before any payment: for a marketplace
@@ -242,8 +245,10 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   }
   if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
   const silent = blocked || check.verdict !== "clear";
+  // An agent cannot confirm it is an adult, so 18+ is never generated for one.
+  if ((check.verdict === "clear" && check.adult) || promptAdult) return NextResponse.json(ADULT_REFUSAL, { status: 403 });
 
-  const verdict = await moderate({ prompt: promptText, surface: "x402-generate" });
+  const verdict = await moderate({ prompt: promptText, surface: "x402-generate", adultJudged: true });
   if (!verdict.allowed) {
     return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
   }
