@@ -578,7 +578,7 @@ export async function POST(req: NextRequest) {
       .select("id, surface, category, scores, ban_id, evidence_ct, evidence_iv, evidence_tag, evidence_kid").eq("id", body.id).maybeSingle();
     if (!ev) return NextResponse.json({ error: "Event not found" }, { status: 404 });
     if (!inWarningOrBanList(ev)) {
-      return NextResponse.json({ error: "Only a warning, an extraction hit or a record behind a ban can be opened." }, { status: 403 });
+      return NextResponse.json({ error: "Only a warning, an extraction hit, a child-safety case or a record behind a ban can be opened." }, { status: 403 });
     }
     // The record's own copy, or else the named prompt's text as it stands now.
     const part = withheldEvidence(ev);

@@ -72,8 +72,8 @@ export async function recordModerationEvent(
     // Identity is derived server-side from the session, never from a
     // client-supplied wallet field: PR #54 keyed enforcement on a body
     // parameter, so anyone could get someone else's wallet struck, or omit it
-    // and be untraceable. /api/generate-free has no session at all — those
-    // events are attributed by hashed IP only, which is why user_id is nullable.
+    // and be untraceable. A request without a session (a signed-out caller,
+    // an agent) is attributed by hashed IP only, which is why user_id is nullable.
     const token = ctx.request.headers.get("X-Session-Token");
     let userId: string | null = null;
     if (token) {

@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // No session here, so the limit is per IP.
+    // Per IP: it runs before the account is known.
     const limit = checkRequestRateLimit(rateLimitKey(request, "generate-free"), 10, 60_000);
     if (!limit.allowed) return rateLimitResponse(limit.retryAfterSeconds);
 
@@ -164,12 +164,8 @@ export async function POST(request: NextRequest) {
      * than after generating so an account over its limit does not cost a
      * render, and so the answer arrives in a second rather than a minute.
      *
-     * Signed-out callers are deliberately NOT limited here, because they
-     * cannot be counted: this route stays unauthenticated, and the only thing
-     * standing behind an anonymous caller is the per-IP rate limit above.
-     * That is a real gap in the allowance and it is named rather than papered
-     * over — closing it means requiring a session, which is a product
-     * decision, not a patch.
+     * A caller without an account is asked to sign in here: only accounts
+     * generate on this route, and an account is stopped by its own ban.
      */
     const quotaClient = getSupabaseServerClientSafe();
     const quotaUserId = await resolveRecordingUserId(quotaClient, request);
