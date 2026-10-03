@@ -11,6 +11,7 @@ type Row = Record<string, unknown>;
 let ranking: Row[];
 let prompts: Row[];
 let renders: Row[];
+let promptsFail = false;
 
 const chain = (rows: () => Row[]) => {
   const filters: ((r: Row) => boolean)[] = [];
@@ -31,9 +32,14 @@ const chain = (rows: () => Row[]) => {
   };
   return q;
 };
+/** A read that fails, as an unreachable database answers. */
+const failing = () => {
+  const q = { select: () => q, in: () => q, then: (ok: (v: unknown) => unknown) => Promise.resolve({ data: null, error: { message: "fetch failed" } }).then(ok) };
+  return q;
+};
 const fake = {
   rpc: async (name: string) => ({ data: name.startsWith("leaderboard_gen") && !name.includes("series") ? ranking : [], error: null }),
-  from: (t: string) => chain(() => (t === "prompts" ? prompts : t === "generated_images" ? renders : [])),
+  from: (t: string) => (t === "prompts" && promptsFail ? failing() : chain(() => (t === "prompts" ? prompts : t === "generated_images" ? renders : []))),
 };
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => fake }));
 
@@ -46,6 +52,7 @@ beforeEach(() => {
   ranking = [rank(1, "p1"), rank(2, "p2"), rank(3, "p3"), rank(4, "p4"), rank(5, "p5")];
   prompts = ["p1", "p2", "p3", "p4", "p5"].map((id) => ({ id, is_adult: false, is_listed: true, showcase_images: [`https://img/${id}.png`] }));
   renders = [];
+  promptsFail = false;
 });
 
 describe("the Hall of Fame", () => {
@@ -82,5 +89,12 @@ describe("the Hall of Fame", () => {
 
   it("shows images on the podium only", async () => {
     expect((await rows())[3].image).toBeNull();
+  });
+});
+
+describe("when the prompts cannot be read", () => {
+  it("shows no title, link or image at all", async () => {
+    promptsFail = true;
+    for (const r of await rows()) expect(r).toMatchObject({ bestPromptId: null, bestPromptTitle: null, image: null });
   });
 });

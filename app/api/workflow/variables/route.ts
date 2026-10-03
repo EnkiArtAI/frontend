@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
     // variable NAME (unique per prompt, enforced by the table), which is also
     // the key every surface fills its inputs under.
     const supabase = getSupabaseServerClient();
-    const [{ data: rows, error }, { data: prompt }] = await Promise.all([
+    const [{ data: rows, error }, { data: prompt, error: promptError }] = await Promise.all([
       supabase
         .from("prompt_variables")
         .select("name, label, description, data_type, min_value, max_value, options")
@@ -121,8 +121,8 @@ export async function POST(req: NextRequest) {
     if (prompt?.is_adult && !mayShowAdult(await viewer(supabase, req), prompt.creator_id as string | null)) {
       return NextResponse.json({ error: "Could not load the prompt" }, { status: 404 });
     }
-    if (error) {
-      console.error("[dice] could not load prompt variables:", error.message);
+    if (error || promptError) {
+      console.error("[dice] could not load the prompt:", (error ?? promptError)?.message);
       return NextResponse.json({ error: "Could not load the prompt" }, { status: 500 });
     }
     sourceVars = (rows ?? []).map(rowToDiceVariable);

@@ -106,6 +106,8 @@ export async function GET(req: NextRequest) {
   // first words the user typed.
   const images = new Map<string, string>();
   const hidden = new Set<string>();
+  // Unable to tell which prompts are 18+ or unreleased: show none of them.
+  if (showcaseRes.error) bestIds.forEach((id) => hidden.add(id));
   for (const p of (showcaseRes.data ?? []) as { id: string; showcase_images: unknown; is_adult: boolean | null; is_listed: boolean | null }[]) {
     if (p.is_adult || !p.is_listed) { hidden.add(p.id); continue; }
     const u = firstShowcase(p.showcase_images);
