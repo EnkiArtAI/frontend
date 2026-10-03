@@ -52,7 +52,10 @@ vi.mock("@/lib/ip-hash", () => ({
   hashIp: (ip: string | null) => (ip ? `h:${ip}` : null),
 }));
 vi.mock("@/lib/session-user", () => ({
-  resolveSessionUserId: async (_s: unknown, token: string | null) => (token === "buyer-token" ? "buyer-1" : null),
+  resolveSessionUserWithBan: async (_s: unknown, token: string | null) => ({
+    userId: token === "buyer-token" ? "buyer-1" : token === "suspended-token" ? "buyer-2" : null,
+    ban: token === "suspended-token" ? { id: "b1" } : null,
+  }),
   activeBanFor: async (_s: unknown, userId: string) =>
     tables.bans.find((b) => b.user_id === userId && !b.lifted_at && (!b.expires_at || String(b.expires_at) > new Date().toISOString())) ?? null,
 }));
@@ -166,5 +169,12 @@ describe("what the buyer sees", () => {
   it("is not given away later by the ban reason", async () => {
     for (let i = 0; i < EXTRACTION_HITS_TO_BLOCK; i++) await hit(buyer);
     expect(String(tables.bans[0].reason)).not.toMatch(/extract|prompt|check|detect|attempt/i);
+  });
+});
+
+describe("a suspended account", () => {
+  it("still gets its hits, not its address", async () => {
+    await recordExtractionHit(fake, { surface: "generate-image", request: { headers: new Headers({ "X-Session-Token": "suspended-token", "x-forwarded-for": "5.5.5.5" }) }, values: VALUES, confidence: 0.9 });
+    expect(tables.automod_events.at(-1)?.user_id).toBe("buyer-2");
   });
 });

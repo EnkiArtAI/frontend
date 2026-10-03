@@ -18,8 +18,7 @@
  * bans.issued_by is NOT NULL: the schema already assumes a human signs off.
  */
 import { getSupabaseServerClientSafe } from "@/lib/supabaseServer";
-import { activeBanFor } from "@/lib/session-user";
-import { resolveSessionUserId } from "@/lib/session-user";
+import { activeBanFor, resolveSessionUserWithBan } from "@/lib/session-user";
 import { getClientIp, hashIp } from "@/lib/ip-hash";
 import { encryptString } from "@/lib/crypto";
 import type { ModerationVerdict } from "@/lib/moderation";
@@ -71,7 +70,9 @@ export async function recordModerationEvent(
     const token = ctx.request.headers.get("X-Session-Token");
     let userId: string | null = null;
     if (token) {
-      userId = await resolveSessionUserId(supabase, token).catch(() => null);
+      // The account even while it is suspended: a request made during a
+      // suspension still belongs to it.
+      userId = await resolveSessionUserWithBan(supabase, token).then((s) => s.userId).catch(() => null);
     }
 
     // Evidence is encrypted at rest: a blocked CSAM prompt is itself a liability

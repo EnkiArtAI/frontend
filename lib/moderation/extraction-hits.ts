@@ -16,7 +16,7 @@ import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptString } from "@/lib/crypto";
 import { getClientIp, hashIp } from "@/lib/ip-hash";
-import { activeBanFor, resolveSessionUserId } from "@/lib/session-user";
+import { activeBanFor, resolveSessionUserWithBan } from "@/lib/session-user";
 import { notifyAdmins } from "@/lib/admin-notify";
 
 export const EXTRACTION_HITS_TO_BLOCK = 3;
@@ -63,7 +63,8 @@ export async function recordExtractionHit(
 ): Promise<void> {
   try {
     const token = ctx.request.headers.get("X-Session-Token");
-    const userId = token ? await resolveSessionUserId(supabase, token).catch(() => null) : null;
+    // The account even while it is suspended (see recordWarning).
+    const userId = token ? await resolveSessionUserWithBan(supabase, token).then((s) => s.userId).catch(() => null) : null;
     const ipHash = hashIp(getClientIp(ctx.request));
     const sorted = JSON.stringify(Object.fromEntries(Object.entries(ctx.values).sort(([a], [b]) => a.localeCompare(b))));
     let evidence: { encrypted: string; iv: string; authTag: string; kid?: string } | null = null;

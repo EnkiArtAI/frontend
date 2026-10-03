@@ -21,3 +21,10 @@ describe("an expired suspension is not a ban", () => {
     expect(admin).toMatch(/const unexpired = \(\) => `expires_at\.is\.null,expires_at\.gt\.\$\{new Date\(\)\.toISOString\(\)\}`;/);
   });
 });
+
+describe("a request made during a suspension", () => {
+  it("is recorded under the account by the tier-2 event log too", () => {
+    expect(readSource(join(ROOT, "lib", "moderation-enforcement.ts")))
+      .toMatch(/userId = await resolveSessionUserWithBan\(supabase, token\)\.then\(\(s\) => s\.userId\)\.catch\(\(\) => null\);/);
+  });
+});

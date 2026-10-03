@@ -14,7 +14,7 @@ import { createHash } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptString } from "@/lib/crypto";
 import { getClientIp, hashIp } from "@/lib/ip-hash";
-import { resolveSessionUserId } from "@/lib/session-user";
+import { resolveSessionUserWithBan } from "@/lib/session-user";
 import { notifyAdmins } from "@/lib/admin-notify";
 
 export const WARNINGS_PER_STEP = 10;
@@ -60,7 +60,9 @@ export async function recordWarning(
 ): Promise<WarningOutcome> {
   const weight = WARNING_WEIGHT[ctx.category];
   const token = ctx.request.headers.get("X-Session-Token");
-  const userId = token ? await resolveSessionUserId(supabase, token).catch(() => null) : null;
+  // The account even while it is suspended: a request made during a
+  // suspension still belongs to it, child-safety ones above all.
+  const userId = token ? await resolveSessionUserWithBan(supabase, token).then((s) => s.userId).catch(() => null) : null;
   const ipHash = hashIp(getClientIp(ctx.request));
   let evidence: { encrypted: string; iv: string; authTag: string; kid?: string } | null = null;
   try {

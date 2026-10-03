@@ -45,8 +45,14 @@ vi.mock("@/lib/ip-hash", () => ({
   getClientIp: (r: { headers: { get(n: string): string | null } }) => r.headers.get("x-forwarded-for"),
   hashIp: (ip: string | null) => (ip ? `h:${ip}` : null),
 }));
+// "suspended-token" belongs to a suspended account: the plain resolver hides it.
+const SESSIONS: Record<string, { userId: string; ban: { id: string } | null }> = {
+  "user-token": { userId: "user-1", ban: null },
+  "suspended-token": { userId: "user-2", ban: { id: "b1" } },
+};
 vi.mock("@/lib/session-user", () => ({
-  resolveSessionUserId: async (_s: unknown, token: string | null) => (token === "user-token" ? "user-1" : null),
+  resolveSessionUserId: async (_s: unknown, token: string | null) => (SESSIONS[token ?? ""]?.ban ? null : SESSIONS[token ?? ""]?.userId ?? null),
+  resolveSessionUserWithBan: async (_s: unknown, token: string | null) => SESSIONS[token ?? ""] ?? { userId: null, ban: null },
 }));
 
 import { recordWarning, warningMessage, addressWarnedOut, WARNINGS_PER_STEP, SUSPENSION_LADDER_DAYS } from "@/lib/moderation/warnings";
@@ -169,5 +175,15 @@ describe("what the user reads", () => {
 
   it("says when it is for good", () => {
     expect(warningMessage("explicit_sexual", { total: 70, suspendedUntil: "forever", nextStepAt: 80 })).toMatch(/suspended for good\.$/);
+  });
+});
+
+describe("a suspended account", () => {
+  it("still gets its warnings, child-safety ones included, not its address", async () => {
+    await recordWarning(fake, {
+      surface: "generate-image", request: { headers: new Headers({ "X-Session-Token": "suspended-token", "x-forwarded-for": "5.5.5.5" }) },
+      category: "minor_sexual", text: "t", confidence: 0.9,
+    });
+    expect(tables.automod_events.at(-1)?.user_id).toBe("user-2");
   });
 });
