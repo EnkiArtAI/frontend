@@ -226,22 +226,22 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // this), otherwise the whole prompt. An address with enough hits gets no
   // more; explicit and child-safety requests get a warning, everything else
   // that is refused reads like any failure.
-  if (await agentBlocked(supabase, request) || await addressWarnedOut(supabase, request)) {
-    return silentFailure();
-  }
+  // A blocked address, like a caught request, fails silently once its
+  // payment is verified (below); before that, a junk header told them apart.
+  const blocked = (await agentBlocked(supabase, request)) || (await addressWarnedOut(supabase, request));
   const checked = input.promptId ? textValues(input.variableValues) : { prompt: promptText };
-  const check = await checkPrompt(checked, { hidden: reqs.legs.length > 1 });
+  // A blocked address costs no check.
+  const check = blocked
+    ? { verdict: "unavailable" as const, reason: "address blocked" }
+    : await checkPrompt(checked, { hidden: reqs.legs.length > 1 });
   if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
     const outcome = await recordWarning(supabase, {
       surface: "x402-generate", request, category: check.verdict, text: JSON.stringify(checked), confidence: check.confidence,
     });
     return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
   }
-  if (check.verdict === "extraction") {
-    after(recordExtractionHit(supabase, { surface: "x402-generate", request, values: checked, confidence: check.confidence }));
-  }
-  if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
-  if (check.verdict !== "clear") return silentFailure();
+  if (check.verdict === "unavailable" && !blocked) console.warn("[prompt-check] unavailable:", check.reason);
+  const silent = blocked || check.verdict !== "clear";
 
   const verdict = await moderate({ prompt: promptText, surface: "x402-generate" });
   if (!verdict.allowed) {
@@ -280,6 +280,15 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
     feePayer: feePayer.publicKey,
   });
   if (!verified.ok) return rejectPayment(reqs, verified.error);
+  // Refused silently: nothing is settled. A real failure only happens after
+  // settlement, so with a valid payment an agent can still tell; every such
+  // probe is recorded and the third blocks the address (agentBlocked).
+  if (silent) {
+    if (!blocked && check.verdict === "extraction") {
+      after(recordExtractionHit(supabase, { surface: "x402-generate", request, values: checked, confidence: check.confidence }));
+    }
+    return silentFailure();
+  }
 
   // A leg can point at a wallet with no USDC account yet (a new artist).
   // TransferChecked to a missing ATA fails the whole payment, so the fee
@@ -372,7 +381,8 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
     // The payment settled; hiding that would be worse than the failure.
     return NextResponse.json(
       {
-        error: result.error || "Image generation failed after your payment settled.",
+        // A fixed sentence: the provider's own text would differ from case to case.
+        error: "Image generation failed after your payment settled.",
         transaction: signature,
         note: "Keep this transaction signature — support will make it right.",
       },

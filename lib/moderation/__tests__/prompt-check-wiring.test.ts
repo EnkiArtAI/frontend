@@ -13,7 +13,7 @@ const HUMAN = readSource(join(ROOT, "app", "api", "generate-image", "route.ts"))
 const FREE = readSource(join(ROOT, "app", "api", "generate-free", "route.ts"));
 const AGENT = readSource(join(ROOT, "app", "api", "x402", "generate", "route.ts"));
 
-const SILENT = /if \(check\.verdict !== "clear"\) return silentFailure\(\);/;
+const SILENT = /const silent = (blocked \|\| )?check\.verdict !== "clear";/;
 const WARNED = /return NextResponse\.json\(\{ error: warningMessage\(check\.verdict, outcome\) \}, \{ status: 422 \}\);/;
 
 describe("a real generation failure", () => {
@@ -44,6 +44,24 @@ describe("the human rail", () => {
     expect(HUMAN).toMatch(WARNED);
   });
 
+  it("fails a silent refusal only where a real generation fails: after login, slot and claim", () => {
+    const at = HUMAN.indexOf("    if (silent) {");
+    expect(at).toBeGreaterThan(HUMAN.indexOf('return NextResponse.json({ error: "Authentication required" }, { status: 401 });'));
+    expect(at).toBeGreaterThan(HUMAN.indexOf("consumedIntent = { supabase, id: intentId, mode: redemption.mode };"));
+    expect(HUMAN.indexOf("generateImagesWithWaveSpeed(shared)")).toBeGreaterThan(at);
+    expect(HUMAN).toMatch(/if \(silent\) \{\n[\s\S]{0,400}await releaseIfConsumed\(\);\n\s+await releaseHeldSlot\(\);\n\s+return silentFailure\(\);/);
+  });
+
+  it("has no other, earlier silent answer", () => {
+    expect(HUMAN.split("return silentFailure();").length - 1).toBe(1);
+    expect(AGENT.split("return silentFailure();").length - 1).toBe(1);
+    expect(FREE.split("return silentFailure();").length - 1).toBe(1);
+  });
+
+  it("counts a caught attempt only once it got that far", () => {
+    expect(HUMAN.indexOf("recordExtractionHit(")).toBeGreaterThan(HUMAN.indexOf("    if (silent) {"));
+  });
+
   it("answers anything else that is refused with the ordinary failure", () => {
     expect(HUMAN).toMatch(SILENT);
   });
@@ -56,6 +74,16 @@ describe("the free generator", () => {
     expect(check).toBeGreaterThan(-1);
     expect(FREE.indexOf("const verdict = await moderate({ prompt, surface: \"generate-free\"")).toBeGreaterThan(check);
     expect(FREE.indexOf("generateImageWithPollinations(")).toBeGreaterThan(check);
+  });
+
+  it("fails silently only after the sign-in and quota answers", () => {
+    const at = FREE.indexOf("    if (silent) return silentFailure();");
+    expect(at).toBeGreaterThan(FREE.indexOf('error: "Sign in to generate for free."'));
+    expect(FREE.indexOf("await generateImageWithPollinations(")).toBeGreaterThan(at);
+  });
+
+  it("gives a slow silent answer the time it needs", () => {
+    expect(FREE).toMatch(/export const maxDuration = 300;/);
   });
 
   it("stops an address that reached the first step", () => {
@@ -76,9 +104,21 @@ describe("the agent rail", () => {
   });
 
   it("stops a blocked address before checking", () => {
-    const blocked = AGENT.indexOf("await agentBlocked(supabase, request) || await addressWarnedOut(supabase, request)");
+    const blocked = AGENT.indexOf("const blocked = (await agentBlocked(supabase, request)) || (await addressWarnedOut(supabase, request));");
     expect(blocked).toBeGreaterThan(-1);
     expect(check).toBeGreaterThan(blocked);
+    expect(AGENT).toMatch(/const check = blocked\n\s+\? \{ verdict: "unavailable" as const, reason: "address blocked" \}\n\s+: await checkPrompt\(/);
+  });
+
+  it("fails silently only once the payment is verified, and before it settles", () => {
+    const at = AGENT.indexOf("  if (silent) {");
+    expect(at).toBeGreaterThan(AGENT.indexOf("if (!verified.ok) return rejectPayment(reqs, verified.error);"));
+    expect(AGENT.indexOf("submitAndConfirm(")).toBeGreaterThan(at);
+  });
+
+  it("answers a real failure with a fixed sentence, never the provider's", () => {
+    expect(AGENT).not.toMatch(/error: result\.error \|\|/);
+    expect(AGENT).toMatch(/error: "Image generation failed after your payment settled\.",/);
   });
 
   it("checks before any payment is read", () => {

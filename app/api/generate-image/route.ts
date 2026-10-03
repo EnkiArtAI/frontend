@@ -282,11 +282,11 @@ export async function POST(request: NextRequest) {
       });
       return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
     }
-    if (check.verdict === "extraction") {
-      after(recordExtractionHit(getSupabaseServerClient(), { surface: "generate-image", request, values: checked, confidence: check.confidence }));
-    }
     if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
-    if (check.verdict !== "clear") return silentFailure();
+    // Refused silently, but only where a real generation fails: after login,
+    // rate limits, slot and claim (below). Answering here, before those,
+    // told a caller without a session which inputs were caught.
+    const silent = check.verdict !== "clear";
 
     // 3. Content moderation — deliberately the FIRST thing after cheap input
     // validation and long before any payment step below. A refused prompt must
@@ -569,6 +569,18 @@ export async function POST(request: NextRequest) {
       referenceImages: body.referenceImages,
       numImages: 1,
     };
+
+    // The silent refusal fails exactly like a provider failure: the claim goes
+    // back the same way, the answer is the same, and it takes as long. Only a
+    // request that got this far counts as a caught attempt.
+    if (silent) {
+      if (check.verdict === "extraction") {
+        after(recordExtractionHit(getSupabaseServerClient(), { surface: "generate-image", request, values: checked, confidence: check.confidence }));
+      }
+      await releaseIfConsumed();
+      await releaseHeldSlot();
+      return silentFailure();
+    }
 
     // Boost picks WHERE the model runs, never which model. WaveSpeed hosts
     // the same Nano Banana Pro at ~73-78s; going direct costs more and takes

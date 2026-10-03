@@ -15,6 +15,10 @@ import { storeReferenceImages } from "@/lib/generation/reference-images";
 import { readImageDimensions } from "@/backend/services/gemini-image-generation";
 import { freeGenerationDecision } from "@/lib/generation/free-quota";
 
+// A silent refusal waits 3-12 s like a failing generation; a platform default
+// of 10-15 s would turn the slow ones into timeouts, which is a tell of its own.
+export const maxDuration = 300;
+
 /**
  * Free image generation endpoint (dev/testing)
  *
@@ -105,16 +109,19 @@ export async function POST(request: NextRequest) {
     // address without an account that has reached the first step gets no more.
     const supabaseForChecks = getSupabaseServerClientSafe();
     if (!supabaseForChecks) return NextResponse.json(SILENT_FAILURE, { status: 500 });
-    if (await addressWarnedOut(supabaseForChecks, request)) return silentFailure();
-    const check = await checkPrompt({ prompt }, { hidden: false, signal: request.signal });
+    // A warned-out address costs no check; it fails silently further down.
+    const warnedOut = await addressWarnedOut(supabaseForChecks, request);
+    const check = warnedOut ? { verdict: "unavailable" as const, reason: "address warned out" } : await checkPrompt({ prompt }, { hidden: false, signal: request.signal });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
       const outcome = await recordWarning(supabaseForChecks, {
         surface: "generate-free", request, category: check.verdict, text: prompt, confidence: check.confidence,
       });
       return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
     }
-    if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
-    if (check.verdict !== "clear") return silentFailure();
+    if (check.verdict === "unavailable" && !warnedOut) console.warn("[prompt-check] unavailable:", check.reason);
+    // Refused silently only where a real generation fails, after the sign-in
+    // and quota answers below; earlier, a signed-out caller could tell.
+    const silent = check.verdict !== "clear";
 
     const verdict = await moderate({ prompt, surface: "generate-free", signal: request.signal });
     after(recordModerationEvent(verdict, { surface: "generate-free", request, prompt }));
@@ -170,6 +177,8 @@ export async function POST(request: NextRequest) {
       aspectRatio: body.aspectRatio || '1:1',
       resolution,
     });
+
+    if (silent) return silentFailure();
 
     const result = await generateImageWithPollinations(
       prompt,
