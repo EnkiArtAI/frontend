@@ -230,6 +230,21 @@ export async function simulatePayment(
 }
 
 /**
+ * Whether a payment already landed on chain without an error. Simulation says
+ * AlreadyProcessed only while the transaction's blockhash is in the status
+ * cache (about a minute); after that it says BlockhashNotFound, so a retry
+ * after a timeout must look the signature up in the history instead.
+ */
+export async function paymentLanded(connection: Connection, signature: string): Promise<boolean> {
+  try {
+    const { value } = await connection.getSignatureStatuses([signature], { searchTransactionHistory: true });
+    return Boolean(value[0] && !value[0].err);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Submit WITH preflight (unlike the durable-nonce rails): this is a normal
  * recent-blockhash transaction, and preflight simulation is what rejects a
  * forged client signature or an empty payer balance before anything lands.

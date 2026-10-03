@@ -41,7 +41,7 @@ import { usdcMint, feePayerKeypair, solanaConnection, solanaChainKey } from "@/l
 import { effectiveQuality } from "@/lib/pricing";
 import { reportPriceDrift } from "@/lib/generation/price-drift";
 import {
-  parseXPayment, verifyAgentPayment, cosignAsFeePayer, simulatePayment, submitAndConfirm, paymentResponseHeader,
+  parseXPayment, verifyAgentPayment, cosignAsFeePayer, simulatePayment, paymentLanded, submitAndConfirm, paymentResponseHeader,
 } from "@/lib/payments/x402-settle";
 import { checkAndRecordSolanaSignature } from "@/backend/solana-x402-verifier";
 import { isSolanaChain } from "@/shared/payment-config";
@@ -329,9 +329,10 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // is decided, and an unpayable one is refused here, the same way whether or
   // not the request was caught.
   const simulated = await simulatePayment(solanaConnection(), parsed.tx);
-  // A payment that already landed simulates as AlreadyProcessed: answered as
-  // the replay it is, so an agent retrying after a timeout is not told to pay again.
-  if (!simulated.ok && simulated.error.includes("AlreadyProcessed")) {
+  // A payment that already landed is answered as the replay it is, so an
+  // agent retrying after a timeout is not told to pay again: AlreadyProcessed
+  // while its blockhash is fresh, the signature history after that.
+  if (!simulated.ok && (simulated.error.includes("AlreadyProcessed") || (await paymentLanded(solanaConnection(), signature)))) {
     return NextResponse.json({ error: "This payment transaction was already settled", transaction: signature }, { status: 409 });
   }
   if (!simulated.ok) {
