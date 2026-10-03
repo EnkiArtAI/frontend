@@ -49,7 +49,7 @@ import { loadPromptText, fillVariables, inputsUnmatched, VALUE_MAX } from "@/lib
 import { checkPrompt, textValues } from "@/lib/moderation/prompt-check";
 import { recordGenerationFailure } from "@/lib/generation/record";
 import { addressWarnedOut, recordWarning, warningMessage } from "@/lib/moderation/warnings";
-import { ADULT_REFUSAL } from "@/lib/adult-content";
+import { AGENT_ADULT_REFUSAL } from "@/lib/adult-content";
 import { agentBlocked, recordExtractionHit, silentFailure } from "@/lib/moderation/extraction-hits";
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
@@ -246,7 +246,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
   const silent = blocked || check.verdict !== "clear";
   // An agent cannot confirm it is an adult, so 18+ is never generated for one.
-  if ((check.verdict === "clear" && check.adult) || promptAdult) return NextResponse.json(ADULT_REFUSAL, { status: 403 });
+  if ((check.verdict === "clear" && check.adult) || promptAdult) return NextResponse.json(AGENT_ADULT_REFUSAL, { status: 403 });
 
   // For a marketplace prompt the check saw only the agent's values, so tier 2
   // keeps its sexual flag for the artist's text.

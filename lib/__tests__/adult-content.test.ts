@@ -130,7 +130,7 @@ describe("the routes", () => {
   });
 
   it("never generate 18+ for an agent", () => {
-    expect(AGENT).toMatch(/if \(\(check\.verdict === "clear" && check\.adult\) \|\| promptAdult\) return NextResponse\.json\(ADULT_REFUSAL, \{ status: 403 \}\);/);
+    expect(AGENT).toMatch(/if \(\(check\.verdict === "clear" && check\.adult\) \|\| promptAdult\) return NextResponse\.json\(AGENT_ADULT_REFUSAL, \{ status: 403 \}\);/);
   });
 
   it("let tier 2 defer to the prompt check only where it saw the whole text", () => {
@@ -178,3 +178,12 @@ describe("a stored prompt's own mark", () => {
     expect(await promptMarkedAdult(prompts({ is_adult: true }), null)).toBe(false);
   });
 });
+
+describe("an agent's refusal", () => {
+  it("points to no Settings an agent could go to", async () => {
+    const { AGENT_ADULT_REFUSAL } = await import("@/lib/adult-content");
+    expect(AGENT_ADULT_REFUSAL.error).not.toMatch(/settings|confirm/i);
+    expect(AGENT_ADULT_REFUSAL.error).toMatch(/Nothing was generated and nothing was charged\./);
+  });
+});
+

@@ -18,6 +18,12 @@ export const ADULT_REFUSAL = {
   code: "adult_unconfirmed",
 } as const;
 
+/** An agent cannot confirm an age, so the answer names no Settings it could go to. */
+export const AGENT_ADULT_REFUSAL = {
+  error: "This is 18+ content, which the agent API does not generate. Nothing was generated and nothing was charged.",
+  code: "adult_unavailable",
+} as const;
+
 export async function adultConfirmed(supabase: SupabaseClient, userId: string | null): Promise<boolean> {
   if (!userId) return false;
   const { data } = await supabase.from("users").select("adult_confirmed_at").eq("id", userId).maybeSingle();
