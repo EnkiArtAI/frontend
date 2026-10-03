@@ -24,6 +24,13 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
   is(c: string, v: null) { this.filters.push((r) => (r[c] ?? null) === v); return this; }
   gt(c: string, v: string) { this.filters.push((r) => String(r[c]) > v); return this; }
   limit() { return this; }
+  order() { return this; }
+  or(expr: string) {
+    // Only the active-ban shape is used: "expires_at.is.null,expires_at.gt.<iso>".
+    const iso = expr.split("expires_at.gt.")[1];
+    this.filters.push((r) => r.expires_at == null || String(r.expires_at) > iso);
+    return this;
+  }
   maybeSingle() { this.one = true; return this; }
   single() { this.one = true; return this; }
   then<A, B = never>(ok?: ((v: { data: unknown; error: null; count?: number }) => A | PromiseLike<A>) | null, ko?: ((e: unknown) => B | PromiseLike<B>) | null) {
@@ -71,13 +78,20 @@ const BASE = {
   variables: [{ name: "outfit", label: "outfit", type: "text", defaultValue: "a red coat", position: 0 }],
 };
 const future = new Date(Date.now() + 86400_000).toISOString();
+const EMAIL_USER = "3a3a3a3a-1111-4222-8333-444455556666";
 
 beforeEach(() => {
   check.mockReset();
   check.mockResolvedValue({ verdict: "clear" });
   warn.mockClear();
   tables = {
-    auth_sessions: [{ token: "tok", wallet_address: "w1", expires_at: future }, { token: "other", wallet_address: "w2", expires_at: future }],
+    auth_sessions: [
+      { token: "tok", wallet_address: "w1", expires_at: future },
+      { token: "other", wallet_address: "w2", expires_at: future },
+      // An email login carries the users.id until a wallet is attached.
+      { token: "email", wallet_address: EMAIL_USER, wallet_type: "password", expires_at: future },
+    ],
+    users: [], bans: [],
     user_wallets: [{ address: "w1", user_id: "u1", removed_at: null }, { address: "w2", user_id: "u2", removed_at: null }],
     prompts: [], prompt_variables: [], generated_images: [],
   };
@@ -139,5 +153,25 @@ describe("saving a prompt", () => {
     check.mockResolvedValue({ verdict: "clear", adult: true });
     expect((await save({ ...BASE, id: "11111111-1111-4111-8111-111111111111" })).status).toBe(200);
     expect(tables.prompts[0].is_adult).toBe(true);
+  });
+});
+
+describe("who saves", () => {
+  it("an email login saves under its own account, minting no second user", async () => {
+    expect((await save(BASE, "email")).status).toBe(200);
+    expect(tables.prompts[0].creator_id).toBe(EMAIL_USER);
+    expect(tables.users).toEqual([]);
+    expect(tables.user_wallets).toHaveLength(2);
+  });
+
+  it("an email login updates the prompts it owns", async () => {
+    tables.prompts.push({ id: "11111111-1111-4111-8111-111111111111", creator_id: EMAIL_USER, is_adult: false });
+    expect((await save({ ...BASE, id: "11111111-1111-4111-8111-111111111111" }, "email")).status).toBe(200);
+  });
+
+  it("a suspended account saves nothing and costs no check", async () => {
+    tables.bans.push({ user_id: "u1", lifted_at: null, expires_at: null });
+    expect((await save(BASE)).status).toBe(401);
+    expect(check).not.toHaveBeenCalled();
   });
 });

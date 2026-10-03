@@ -6,6 +6,7 @@ import { recordModerationEvent } from "@/lib/moderation-enforcement";
 import { checkPrompt, savedPromptInputs } from "@/lib/moderation/prompt-check";
 import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { showsAdultRender } from "@/lib/adult-content";
+import { resolveSessionUserWithBan } from "@/lib/session-user";
 
 type VariableType =
   | "text"
@@ -185,6 +186,13 @@ async function resolveCreatorId(
   const token = req.headers.get("X-Session-Token");
   if (!token) return null;
 
+  // Every session the rest of the app knows, bans honoured: an email login
+  // carries the users.id itself until a wallet is attached, and looking that
+  // up as a wallet address minted a second, empty user for it.
+  const known = await resolveSessionUserWithBan(supabase, token);
+  if (known.ban) return null;
+  if (known.userId) return known.userId;
+
   const { data: session } = await supabase
     .from("auth_sessions")
     .select("wallet_address, wallet_type")
@@ -236,22 +244,19 @@ async function resolveOwnerIds(
 ): Promise<string[] | null> {
   const token = req.headers.get("X-Session-Token");
   if (!token) return null;
-
+  // The same resolution as everywhere else, so an email session owns the
+  // prompts it created; a banned session owns nothing it may change.
+  const { userId, ban } = await resolveSessionUserWithBan(supabase, token);
+  if (ban) return null;
+  if (userId) return [userId];
+  // A live session whose wallet maps to no user owns no prompts.
   const { data: session } = await supabase
     .from("auth_sessions")
-    .select("wallet_address")
+    .select("token")
     .eq("token", token)
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();
-  if (!session) return null;
-
-  const { data: walletRow } = await supabase
-    .from("user_wallets")
-    .select("user_id")
-    .eq("address", session.wallet_address)
-    .is("removed_at", null)
-    .maybeSingle();
-  return walletRow?.user_id ? [String(walletRow.user_id)] : [];
+  return session ? [] : null;
 }
 
 export async function POST(req: Request) {
