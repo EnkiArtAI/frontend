@@ -29,47 +29,7 @@ vi.mock("@/lib/ip-hash", () => ({ getClientIp: () => "1.2.3.4", hashIp: (ip: str
 vi.mock("@/lib/session-user", () => ({ resolveSessionUserId: async () => "user-1" }));
 vi.mock("@/lib/generation/derivative-store", () => ({ storeGeneratedImage: async () => null }));
 
-import { recordGenerationFailure, holdsSession } from "@/lib/generation/record";
-
-describe("holding a session, for an editor's draft mark", () => {
-  const req = (token?: string) => ({ headers: new Headers(token ? { "X-Session-Token": token } : {}) });
-  // auth_sessions with its filters applied; a ban lives elsewhere and does not matter here.
-  const future = new Date(Date.now() + 86400_000).toISOString();
-  const past = new Date(Date.now() - 86400_000).toISOString();
-  const sessions = (rows: Record<string, unknown>[] | { error: unknown } | "throws") => ({
-    from: () => {
-      const filters: ((r: Record<string, unknown>) => boolean)[] = [];
-      const q: Record<string, unknown> = {
-        select: () => q,
-        eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
-        gt: (c: string, v: string) => { filters.push((r) => String(r[c]) > v); return q; },
-        maybeSingle: async () => {
-          if (rows === "throws") throw new Error("fetch failed");
-          if (!Array.isArray(rows)) return { data: null, error: rows.error };
-          return { data: rows.find((r) => filters.every((f) => f(r))) ?? null, error: null };
-        },
-      };
-      return q;
-    },
-  }) as unknown as SupabaseClient;
-
-  it("holds for a live session, a suspended account's included", async () => {
-    expect(await holdsSession(sessions([{ token: "t", expires_at: future }]), req("t"))).toBe(true);
-  });
-
-  it("holds when the lookup fails, so a draft is withheld rather than shown", async () => {
-    expect(await holdsSession(sessions({ error: { message: "statement timeout" } }), req("t"))).toBe(true);
-    expect(await holdsSession(sessions("throws"), req("t"))).toBe(true);
-    expect(await holdsSession(null, req("t"))).toBe(true);
-  });
-
-  it("does not without a token, or with an unknown or expired one", async () => {
-    // Without a token nothing is even asked, so a failing lookup cannot count for it.
-    expect(await holdsSession({ from: () => { throw new Error("asked"); } } as unknown as SupabaseClient, req())).toBe(false);
-    expect(await holdsSession(sessions([{ token: "other", expires_at: future }]), req("t"))).toBe(false);
-    expect(await holdsSession(sessions([{ token: "t", expires_at: past }]), req("t"))).toBe(false);
-  });
-});
+import { recordGenerationFailure } from "@/lib/generation/record";
 
 const base = {
   request: { headers: new Headers({ "X-Session-Token": "t" }) },

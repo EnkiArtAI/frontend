@@ -268,31 +268,6 @@ export async function resolveRecordingUserId(
   return resolveSessionUserId(supabase, token).catch(() => null);
 }
 
-/**
- * Whether a request holds a live session, banned or not: an editor's draft
- * mark counts only then. A lookup that fails counts as holding one, so a
- * draft is withheld rather than shown; without a token nobody holds one.
- */
-export async function holdsSession(
-  supabase: SupabaseClient | null,
-  request: { headers: { get(name: string): string | null } },
-): Promise<boolean> {
-  const token = request.headers.get("X-Session-Token");
-  if (!token) return false;
-  if (!supabase) return true;
-  try {
-    const { data, error } = await supabase
-      .from("auth_sessions")
-      .select("token")
-      .eq("token", token)
-      .gt("expires_at", new Date().toISOString())
-      .maybeSingle();
-    return Boolean(data) || Boolean(error);
-  } catch {
-    return true;
-  }
-}
-
 /** What a failed generation asked for, so an admin can see what broke for whom (Kev, 2026-10-03). */
 export interface GenerationFailure {
   request: { headers: { get(name: string): string | null } };

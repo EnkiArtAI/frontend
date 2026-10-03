@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { join } from "node:path";
 import { readSource } from "@/lib/__tests__/_read-source";
@@ -231,8 +231,11 @@ describe("the agent route checks the inputs before any payment", () => {
 });
 
 describe("the agent route's request", () => {
+  // The route pulls in the Solana and provider SDKs: loaded once, with time to do it under a busy suite.
+  let POST: typeof import("../../app/api/x402/generate/route").POST;
+  beforeAll(async () => { ({ POST } = await import("../../app/api/x402/generate/route")); }, 60_000);
+
   const send = async (body: Record<string, unknown>) => {
-    const { POST } = await import("../../app/api/x402/generate/route");
     const { NextRequest } = await import("next/server");
     const res = await POST(new NextRequest("http://enki.test/api/x402/generate", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),

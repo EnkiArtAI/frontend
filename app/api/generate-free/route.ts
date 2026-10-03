@@ -8,7 +8,7 @@ import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { ADULT_REFUSAL, adultConfirmed, promptMarkedAdult } from "@/lib/adult-content";
 import { SILENT_FAILURE, silentFailure } from "@/lib/moderation/extraction-hits";
 import { getSupabaseServerClientSafe } from "@/lib/supabaseServer";
-import { recordGeneration, resolveRecordingUserId, holdsSession, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
+import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
 import { resolveModel } from "@/lib/generation/models";
 import { normalizeTier, RESOLUTION_TIERS } from "@/lib/generation/resolution";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
@@ -121,11 +121,12 @@ export async function POST(request: NextRequest) {
     // shared address (an office, a mobile network) for one stranger's warnings.
     const supabaseForChecks = getSupabaseServerClientSafe();
     if (!supabaseForChecks) return NextResponse.json(SILENT_FAILURE, { status: 500 });
-    // A signed-in artist's draft from an editor: no moderator may read it,
-    // marked as withheld on their word (lib/moderation/evidence). Without an
-    // account nobody can save a prompt, so nobody has a draft to keep; a
-    // suspended account still has its drafts, filed under it like the rest.
-    const authoring = body?.authoring === true && (await holdsSession(supabaseForChecks, request));
+    // An artist's draft from an editor: no moderator may read it, marked as
+    // withheld on the requester's word (lib/moderation/evidence). Any session
+    // token counts, live, expired or suspended: a draft must never be shown,
+    // while text withheld by a stranger's token stays labelled as theirs,
+    // counts on the ladder and opens for the owner from the warning list.
+    const authoring = body?.authoring === true && Boolean(request.headers.get("X-Session-Token"));
     const check = await checkPrompt({ prompt }, { hidden: false, signal: request.signal });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
       const outcome = await recordWarning(supabaseForChecks, {
