@@ -363,6 +363,16 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
     // timeout is the one ambiguous case, so the signature travels with the
     // error for the agent to check.
     const timedOut = settled.error.includes("Timed out");
+    if (timedOut) {
+      // The payment may still land with no image for it: recorded with its
+      // signature so support can make it right.
+      after(recordGenerationFailure(supabase, {
+        request, surface: "x402-generate", modelId: model.id, resolution: input.resolution, quality: effQuality, boost: false,
+        aspectRatio: input.aspectRatio ?? null, referenceImageCount: 0,
+        prompt: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
+        error: "Payment confirmation timed out", txSignature: signature,
+      }));
+    }
     return NextResponse.json(
       { error: settled.error, transaction: signature },
       { status: timedOut ? 504 : 402 },

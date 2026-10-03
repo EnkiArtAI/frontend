@@ -93,9 +93,10 @@ describe("every failure point records it", () => {
     expect(count(FREE)).toBe(2);
   });
 
-  it("the agent rail when a paid generation fails, with the payment's signature", () => {
-    expect(count(AGENT)).toBe(1);
+  it("the agent rail when a paid generation fails, and when its payment's confirmation times out, with the signature", () => {
+    expect(count(AGENT)).toBe(2);
     expect(AGENT).toMatch(/error: result\.error \|\| "generation failed", txSignature: signature,/);
+    expect(AGENT).toMatch(/if \(timedOut\) \{\n(\s+\/\/[^\n]*\n)*\s+after\(recordGenerationFailure\([\s\S]{0,400}error: "Payment confirmation timed out", txSignature: signature,/);
   });
 
   it("never stores an artist's text with a failure", () => {
