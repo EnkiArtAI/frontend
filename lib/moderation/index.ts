@@ -64,7 +64,7 @@ export async function moderate(input: ModerationInput): Promise<ModerationVerdic
   }
 
   try {
-    const t2 = await screenTier2(input.prompt, input.signal);
+    const t2 = await screenTier2(input.prompt, input.signal, input.adultJudged === true);
     return {
       ...base,
       allowed: !t2.blocked,

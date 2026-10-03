@@ -15,8 +15,8 @@ function answer(body: unknown, status = 200) {
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
-const scored = (p: { extraction?: number; minor_sexual?: number; explicit_sexual?: number }) =>
-  answer({ choices: [{ message: { content: JSON.stringify({ extraction: 0, minor_sexual: 0, explicit_sexual: 0, ...p }) } }] });
+const scored = (p: { extraction?: number; minor_sexual?: number; explicit_sexual?: number; sexual_suggestive?: number }) =>
+  answer({ choices: [{ message: { content: JSON.stringify({ extraction: 0, minor_sexual: 0, explicit_sexual: 0, sexual_suggestive: 0, ...p }) } }] });
 
 beforeEach(() => vi.stubEnv("OPENAI_API_KEY", "test-key-not-a-real-one"));
 afterEach(() => {
@@ -66,6 +66,21 @@ describe("the prompt check", () => {
     expect(await checkPrompt(INPUT, { hidden: true })).toMatchObject({ verdict: "explicit_sexual" });
   });
 
+  it("marks a suggestive prompt 18+ without refusing it", async () => {
+    scored({ sexual_suggestive: 0.85 });
+    expect(await checkPrompt(INPUT, { hidden: false })).toEqual({ verdict: "clear", adult: true });
+  });
+
+  it("does not mark a doubtfully suggestive prompt 18+", async () => {
+    scored({ sexual_suggestive: 0.6 });
+    expect(await checkPrompt(INPUT, { hidden: false })).toEqual({ verdict: "clear" });
+  });
+
+  it("refuses an explicit prompt even when it is also suggestive", async () => {
+    scored({ explicit_sexual: 0.9, sexual_suggestive: 0.9 });
+    expect(await checkPrompt(INPUT, { hidden: false })).toMatchObject({ verdict: "explicit_sexual" });
+  });
+
   it("lets a doubtful score through", async () => {
     scored({ explicit_sexual: 0.69 });
     expect(await checkPrompt(INPUT, { hidden: false })).toEqual({ verdict: "clear" });
@@ -99,10 +114,10 @@ describe("what the check sends", () => {
     expect(await sent()).toMatchObject({ model: PROMPT_CHECK_MODEL, reasoning_effort: "none", store: false });
   });
 
-  it("forces three probabilities into a strict schema", async () => {
+  it("forces four probabilities into a strict schema", async () => {
     const { response_format } = await sent();
     expect(response_format).toMatchObject({ type: "json_schema", json_schema: { strict: true } });
-    expect(response_format.json_schema.schema.required).toEqual(["extraction", "minor_sexual", "explicit_sexual"]);
+    expect(response_format.json_schema.schema.required).toEqual(["extraction", "minor_sexual", "explicit_sexual", "sexual_suggestive"]);
   });
 
   it("puts the instruction in the system message and the text in the user message as data", async () => {
@@ -113,6 +128,10 @@ describe("what the check sends", () => {
 
   it("tells the model that nudity alone is not explicit", () => {
     expect(PROMPT_CHECK_INSTRUCTION).toMatch(/Nudity on its own, swimwear, lingerie, a provocative pose or a kiss are not explicit/);
+  });
+
+  it("keeps nudity on its own out of 18+", () => {
+    expect(PROMPT_CHECK_INSTRUCTION).toContain("Nudity on its own (art, anatomy, statues, bathing without sexual framing), ordinary swimwear or a kiss is not this");
   });
 
   it("names coded terms for minors", () => {

@@ -52,7 +52,7 @@ export function isTier2Configured(): boolean {
 }
 
 /** Throws on any transport/API failure — the caller decides how to degrade. */
-export async function screenTier2(prompt: string, signal?: AbortSignal): Promise<Tier2Result> {
+export async function screenTier2(prompt: string, signal?: AbortSignal, adultJudged = false): Promise<Tier2Result> {
   const key = apiKey();
   if (!key) throw new Error("moderation tier 2 not configured");
 
@@ -87,7 +87,12 @@ export async function screenTier2(prompt: string, signal?: AbortSignal): Promise
   // Everything else follows OpenAI's own verdict rather than a hand-picked
   // threshold. PR #54 discarded `flagged` entirely and ignored hate, harassment,
   // violence and illicit content.
-  if (result.flagged) {
+  // A text the prompt check already judged keeps everything but the plain
+  // "sexual" flag: suggestive is allowed for adults there, explicit was refused.
+  const flagged = adultJudged
+    ? Object.entries(result.categories ?? {}).some(([k, v]) => v === true && k !== "sexual")
+    : result.flagged;
+  if (flagged) {
     const worst = Object.entries(scores).sort((a, b) => b[1] - a[1])[0];
     return { blocked: true, category: worst?.[0] ?? "flagged", enforcement: "log", priority: "normal", scores };
   }
