@@ -102,6 +102,11 @@ describe("editing a prompt", () => {
     expect(check).not.toHaveBeenCalled();
   });
 
+  it("leaves someone else's prompt alone when no text changes either", async () => {
+    expect((await edit("p2", { category: "Poster" })).status).toBe(404);
+    expect(prompts[1].category).toBeUndefined();
+  });
+
   it("costs no check when no text changes", async () => {
     expect((await edit("p1", { category: "Poster" })).status).toBe(200);
     expect(check).not.toHaveBeenCalled();

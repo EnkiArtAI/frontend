@@ -213,11 +213,10 @@ describe("/api/prompts/[id] specifics", () => {
     expect(src).not.toMatch(/backend\/encryption/);
   });
 
-  it("scopes PATCH ownership to creator_id via user_wallets", () => {
-    // requireAuth hands back the wallet ADDRESS; creator_id is a users.id
-    // uuid, so the address must map through user_wallets — a raw address in
-    // a uuid filter is a Postgres type error on every call.
-    expect(src).toMatch(/\.from\("user_wallets"\)/);
-    expect(src).toMatch(/\.eq\("creator_id"/);
+  it("scopes PATCH ownership to creator_id of the resolved account", () => {
+    // creator_id is a users.id uuid: the session is resolved to the account
+    // (an email login carries the id itself), never used as an address.
+    expect(src).toMatch(/resolveSessionUserWithBan\(supabase, req\.headers\.get\("X-Session-Token"\)\)/);
+    expect(src).toMatch(/\.eq\("creator_id", ownerId\);/);
   });
 });
