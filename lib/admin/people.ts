@@ -52,6 +52,15 @@ function scope<Q extends Filterable<Q>>(q: Q, who: Who): Q {
 
 const count = async (q: PromiseLike<{ count: number | null }>) => (await q).count ?? 0;
 
+/**
+ * The end a running ban gets when another lands on it: the later of the two,
+ * null being for good. A 30-day council ban landing on a 3-day suspension
+ * used to be dropped as "nothing to stack".
+ */
+export function laterEnd(running: string | null, next: string | null): string | null {
+  return running === null || next === null ? null : running > next ? running : next;
+}
+
 /** A child-safety case that was not overturned: lifting this user's ban is an admin's call. */
 export async function hasChildSafetyCase(supabase: SupabaseClient, userId: string): Promise<boolean> {
   return (await count(supabase.from("automod_events").select("id", { count: "exact", head: true })

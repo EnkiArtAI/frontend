@@ -20,7 +20,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { decryptString, encryptString, type EncryptedPayload } from "@/lib/crypto";
 import { notifyAdmins } from "@/lib/admin-notify";
-import { CHILD_SAFETY, hasChildSafetyCase, listPeople, parsePersonKey, personDetail } from "@/lib/admin/people";
+import { CHILD_SAFETY, hasChildSafetyCase, laterEnd, listPeople, parsePersonKey, personDetail } from "@/lib/admin/people";
 
 /** A ban counts while it is not lifted and has not run out, as activeBanFor reads it. */
 const unexpired = () => `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`;
@@ -158,17 +158,19 @@ async function executeProposal(supabase: Supabase, p: ProposalRow, now: string):
     }, { onConflict: "ip_hash", ignoreDuplicates: true });
     if (error) return error;
   } else {
+    const until = p.kind === "ban_perm" ? null : new Date(Date.now() + Number(p.days ?? 7) * 86400_000).toISOString();
     const { data: active } = await supabase.from("bans")
-      .select("id").eq("user_id", String(p.target_user_id)).is("lifted_at", null).or(unexpired()).limit(1);
+      .select("id, expires_at").eq("user_id", String(p.target_user_id)).is("lifted_at", null).or(unexpired()).limit(1);
     if (active?.length) {
-      if (p.kind === "ban_perm") {
-        const { error } = await supabase.from("bans").update({ expires_at: null }).eq("id", active[0].id);
+      // Never a second ban on top: the running one is extended to the later end.
+      const end = laterEnd((active[0].expires_at as string | null) ?? null, until);
+      if (end !== active[0].expires_at) {
+        const { error } = await supabase.from("bans").update({ expires_at: end }).eq("id", active[0].id);
         if (error) return error;
-      } // ban_temp on an already-banned user: nothing to stack
+      }
     } else {
       const { error } = await supabase.from("bans").insert({
-        user_id: String(p.target_user_id), issued_by: String(p.proposed_by), scope: "full", reason,
-        expires_at: p.kind === "ban_perm" ? null : new Date(Date.now() + Number(p.days ?? 7) * 86400_000).toISOString(),
+        user_id: String(p.target_user_id), issued_by: String(p.proposed_by), scope: "full", reason, expires_at: until,
       });
       if (error) return error;
     }
@@ -589,13 +591,18 @@ export async function POST(req: NextRequest) {
       const permanent = body.permanent === true;
       const days = Number.isInteger(body.days) && body.days! >= 1 && body.days! <= 365 ? body.days! : null;
       if (!permanent && !days) return NextResponse.json({ error: "days (1–365) or permanent required" }, { status: 400 });
+      const until = permanent ? null : new Date(Date.now() + days! * 86400_000).toISOString();
       const { data: active } = await supabase.from("bans")
-        .select("id").eq("user_id", targetId).is("lifted_at", null).or(unexpired()).limit(1);
+        .select("id, expires_at").eq("user_id", targetId).is("lifted_at", null).or(unexpired()).limit(1);
       if (active?.length) {
-        if (!permanent) return NextResponse.json({ error: "Already banned" }, { status: 400 });
-        // escalate the active ban instead of stacking a second one
-        const { error } = await supabase.from("bans").update({ expires_at: null }).eq("id", active[0].id);
-        return error ? fail(error, "make the ban permanent") : NextResponse.json({ ok: true });
+        // Extend the running ban to the later end instead of stacking a second one.
+        const running = (active[0].expires_at as string | null) ?? null;
+        const end = laterEnd(running, until);
+        if (end === running) {
+          return NextResponse.json({ error: running ? `Already banned until ${running.slice(0, 10)}` : "Already banned for good" }, { status: 400 });
+        }
+        const { error } = await supabase.from("bans").update({ expires_at: end }).eq("id", active[0].id);
+        return error ? fail(error, "extend the ban") : NextResponse.json({ ok: true });
       }
       const { error } = await supabase.from("bans").insert({
         user_id: targetId, issued_by: userId, scope: "full",

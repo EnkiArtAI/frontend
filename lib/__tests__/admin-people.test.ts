@@ -276,3 +276,52 @@ describe("the admin route", () => {
     expect((await post("nobody", { resource: "bans", action: "lift", userId: "u1" })).status).toBe(401);
   });
 });
+
+describe("a ban landing on a running one", () => {
+  it("extends it to the later end, never shortens it", async () => {
+    const { laterEnd } = await import("@/lib/admin/people");
+    expect(laterEnd("2026-10-06T00:00:00Z", "2026-11-02T00:00:00Z")).toBe("2026-11-02T00:00:00Z");
+    expect(laterEnd("2026-11-02T00:00:00Z", "2026-10-06T00:00:00Z")).toBe("2026-11-02T00:00:00Z");
+    expect(laterEnd("2026-10-06T00:00:00Z", null)).toBeNull();
+    expect(laterEnd(null, "2026-11-02T00:00:00Z")).toBeNull();
+  });
+});
+
+describe("the admin route, more", () => {
+  const post = (token: string, body: unknown) => POST(new NextRequest("http://enki.test/api/admin", {
+    method: "POST", headers: { "X-Session-Token": token, "Content-Type": "application/json" }, body: JSON.stringify(body),
+  }));
+
+  it("extends a running 3-day suspension when a 30-day ban follows", async () => {
+    tables.bans.push({ id: "b1", user_id: "u1", lifted_at: null, expires_at: ago(-3), created_at: ago(0) });
+    expect((await post("admin-tok", { resource: "bans", action: "ban", userId: "u1", days: 30 })).status).toBe(200);
+    expect(tables.bans).toHaveLength(1);
+    expect(String(tables.bans[0].expires_at) > ago(-29)).toBe(true);
+  });
+
+  it("says so when the running ban already lasts longer", async () => {
+    const until = ago(-60);
+    tables.bans.push({ id: "b1", user_id: "u1", lifted_at: null, expires_at: until, created_at: ago(0) });
+    const res = await post("admin-tok", { resource: "bans", action: "ban", userId: "u1", days: 30 });
+    expect(res.status).toBe(400);
+    expect(tables.bans[0].expires_at).toBe(until);
+  });
+
+  it("lets a mod approve the appeal against an ordinary ban", async () => {
+    tables.bans.push({ id: "b1", user_id: "u1", lifted_at: null, expires_at: null, created_at: ago(1) });
+    tables.automod_events.push(ev("u1", "explicit_sexual"));
+    tables.appeals.push({ id: "a1", target_type: "ban", target_uuid: "b1", status: "pending" });
+    expect((await post("mod-tok", { resource: "appeals", action: "approve", id: "a1" })).status).toBe(200);
+    expect(tables.appeals[0].status).toBe("approved");
+    expect(tables.bans[0].lifted_at).toBeTruthy();
+  });
+});
+
+describe("the council's ban", () => {
+  it("goes through the same rule", async () => {
+    const { readSource } = await import("@/lib/__tests__/_read-source");
+    const { join } = await import("node:path");
+    const SRC = readSource(join(__dirname, "..", "..", "app", "api", "admin", "route.ts"));
+    expect(SRC).toMatch(/const end = laterEnd\(\(active\[0\]\.expires_at as string \| null\) \?\? null, until\);\n\s+if \(end !== active\[0\]\.expires_at\) \{/);
+  });
+});
