@@ -129,8 +129,10 @@ describe("the free generator", () => {
     expect(FREE).toMatch(/export const maxDuration = 300;/);
   });
 
-  it("stops an address that reached the first step", () => {
-    expect(FREE.indexOf("await addressWarnedOut(supabaseForChecks, request)")).toBeGreaterThan(-1);
+  it("never silences an account for its address's warnings", () => {
+    // Only accounts generate here, and an account is stopped by its own ban.
+    expect(FREE).not.toMatch(/addressWarnedOut/);
+    expect(FREE.indexOf("decision.reason === \"sign-in\"")).toBeLessThan(FREE.indexOf("if (silent) return silentFailure();"));
   });
 
   it("warns, and fails closed otherwise", () => {
@@ -153,7 +155,7 @@ describe("the agent rail", () => {
     // Judged like everyone else, so nothing before the silent point differs.
     expect(AGENT).toMatch(/const check = await checkPrompt\(checked, \{ hidden \}\);/);
     expect(FREE).toMatch(/const check = await checkPrompt\(\{ prompt \}, \{ hidden: false, signal: request\.signal \}\);/);
-    expect(FREE).toMatch(/const silent = warnedOut \|\| check\.verdict !== "clear";/);
+    expect(FREE).toMatch(/const silent = check\.verdict !== "clear";/);
   });
 
   it("fails silently only once the payment is simulated with its signatures, and before it settles", () => {

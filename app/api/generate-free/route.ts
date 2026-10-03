@@ -4,7 +4,7 @@ import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/ra
 import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
 import { checkPrompt } from "@/lib/moderation/prompt-check";
-import { addressWarnedOut, recordWarning, warningMessage } from "@/lib/moderation/warnings";
+import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { ADULT_REFUSAL, adultConfirmed, promptMarkedAdult } from "@/lib/adult-content";
 import { SILENT_FAILURE, silentFailure } from "@/lib/moderation/extraction-hits";
 import { getSupabaseServerClientSafe } from "@/lib/supabaseServer";
@@ -108,13 +108,12 @@ export async function POST(request: NextRequest) {
     }
 
     // The free generator renders whatever it is given and filters nothing
-    // itself, so the prompt is judged here first, like every paid one. An
-    // address without an account that has reached the first step gets no more.
+    // itself, so the prompt is judged here first, like every paid one. Only
+    // an account generates here, and an account is stopped by its own ban:
+    // the address ladder would only have silenced every other account on a
+    // shared address (an office, a mobile network) for one stranger's warnings.
     const supabaseForChecks = getSupabaseServerClientSafe();
     if (!supabaseForChecks) return NextResponse.json(SILENT_FAILURE, { status: 500 });
-    // A warned-out address is still judged, so its answers and their timing
-    // match everyone else's up to the point where it fails silently.
-    const warnedOut = await addressWarnedOut(supabaseForChecks, request);
     // A signed-in artist's draft from an editor: no moderator may read it,
     // marked as withheld on their word (lib/moderation/evidence). Without an
     // account nobody can save a prompt, so nobody has a draft to keep; a
@@ -131,7 +130,7 @@ export async function POST(request: NextRequest) {
     if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
     // Refused silently only where a real generation fails, after the sign-in
     // and quota answers below; earlier, a signed-out caller could tell.
-    const silent = warnedOut || check.verdict !== "clear";
+    const silent = check.verdict !== "clear";
     // 18+ (a suggestive prompt, or a prompt marked 18+) is for confirmed adults
     // only; an anonymous visitor cannot confirm.
     const marked = await promptMarkedAdult(supabaseForChecks, UUID_RE.test(String(body?.promptId ?? "")) ? String(body.promptId) : null);
