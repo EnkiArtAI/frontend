@@ -109,19 +109,20 @@ export async function POST(request: NextRequest) {
     // address without an account that has reached the first step gets no more.
     const supabaseForChecks = getSupabaseServerClientSafe();
     if (!supabaseForChecks) return NextResponse.json(SILENT_FAILURE, { status: 500 });
-    // A warned-out address costs no check; it fails silently further down.
+    // A warned-out address is still judged, so its answers and their timing
+    // match everyone else's up to the point where it fails silently.
     const warnedOut = await addressWarnedOut(supabaseForChecks, request);
-    const check = warnedOut ? { verdict: "unavailable" as const, reason: "address warned out" } : await checkPrompt({ prompt }, { hidden: false, signal: request.signal });
+    const check = await checkPrompt({ prompt }, { hidden: false, signal: request.signal });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
       const outcome = await recordWarning(supabaseForChecks, {
         surface: "generate-free", request, category: check.verdict, text: prompt, confidence: check.confidence,
       });
       return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
     }
-    if (check.verdict === "unavailable" && !warnedOut) console.warn("[prompt-check] unavailable:", check.reason);
+    if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
     // Refused silently only where a real generation fails, after the sign-in
     // and quota answers below; earlier, a signed-out caller could tell.
-    const silent = check.verdict !== "clear";
+    const silent = warnedOut || check.verdict !== "clear";
 
     const verdict = await moderate({ prompt, surface: "generate-free", signal: request.signal });
     after(recordModerationEvent(verdict, { surface: "generate-free", request, prompt }));

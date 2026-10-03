@@ -13,7 +13,7 @@ const HUMAN = readSource(join(ROOT, "app", "api", "generate-image", "route.ts"))
 const FREE = readSource(join(ROOT, "app", "api", "generate-free", "route.ts"));
 const AGENT = readSource(join(ROOT, "app", "api", "x402", "generate", "route.ts"));
 
-const SILENT = /const silent = (blocked \|\| )?check\.verdict !== "clear";/;
+const SILENT = /const silent = ((blocked|warnedOut) \|\| )?check\.verdict !== "clear";/;
 const WARNED = /return NextResponse\.json\(\{ error: warningMessage\(check\.verdict, outcome\) \}, \{ status: 422 \}\);/;
 
 describe("a real generation failure", () => {
@@ -108,7 +108,10 @@ describe("the agent rail", () => {
     const blocked = AGENT.indexOf("const blocked = (await agentBlocked(supabase, request)) || (await addressWarnedOut(supabase, request));");
     expect(blocked).toBeGreaterThan(-1);
     expect(check).toBeGreaterThan(blocked);
-    expect(AGENT).toMatch(/const check = blocked\n\s+\? \{ verdict: "unavailable" as const, reason: "address blocked" \}\n\s+: await checkPrompt\(/);
+    // Judged like everyone else, so nothing before the silent point differs.
+    expect(AGENT).toMatch(/const check = await checkPrompt\(checked, \{ hidden: reqs\.legs\.length > 1 \}\);/);
+    expect(FREE).toMatch(/const check = await checkPrompt\(\{ prompt \}, \{ hidden: false, signal: request\.signal \}\);/);
+    expect(FREE).toMatch(/const silent = warnedOut \|\| check\.verdict !== "clear";/);
   });
 
   it("fails silently only once the payment is verified, and before it settles", () => {

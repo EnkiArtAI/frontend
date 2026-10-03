@@ -230,17 +230,16 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // payment is verified (below); before that, a junk header told them apart.
   const blocked = (await agentBlocked(supabase, request)) || (await addressWarnedOut(supabase, request));
   const checked = input.promptId ? textValues(input.variableValues) : { prompt: promptText };
-  // A blocked address costs no check.
-  const check = blocked
-    ? { verdict: "unavailable" as const, reason: "address blocked" }
-    : await checkPrompt(checked, { hidden: reqs.legs.length > 1 });
+  // A blocked address is still judged, so its answers and their timing match
+  // everyone else's up to the silent point; only its hits are not recorded.
+  const check = await checkPrompt(checked, { hidden: reqs.legs.length > 1 });
   if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
     const outcome = await recordWarning(supabase, {
       surface: "x402-generate", request, category: check.verdict, text: JSON.stringify(checked), confidence: check.confidence,
     });
     return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
   }
-  if (check.verdict === "unavailable" && !blocked) console.warn("[prompt-check] unavailable:", check.reason);
+  if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
   const silent = blocked || check.verdict !== "clear";
 
   const verdict = await moderate({ prompt: promptText, surface: "x402-generate" });
