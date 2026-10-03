@@ -72,7 +72,7 @@ vi.mock("@/lib/session-user", () => ({
   },
 }));
 
-import { recordWarning, warningMessage, addressWarnedOut, WARNINGS_PER_STEP, SUSPENSION_LADDER_DAYS } from "@/lib/moderation/warnings";
+import { recordWarning, warningMessage, addressWarnedOut, byAddress, WARNINGS_PER_STEP, SUSPENSION_LADDER_DAYS } from "@/lib/moderation/warnings";
 
 const user = { headers: new Headers({ "X-Session-Token": "user-token", "x-forwarded-for": "1.2.3.4" }) };
 const anon = { headers: new Headers({ "x-forwarded-for": "9.9.9.9" }) };
@@ -181,6 +181,14 @@ describe("a request without an account", () => {
     expect(await addressWarnedOut(fake, anon)).toBe(false);
     await warn(anon);
     expect(await addressWarnedOut(fake, anon)).toBe(true);
+  });
+
+  it("counts a request seen by address on the address, whatever session it carries", async () => {
+    // The agent rail never reads an account's ban: a token must not move its warnings off the address.
+    const withToken = { headers: new Headers({ "X-Session-Token": "user-token", "x-forwarded-for": "9.9.9.9" }) };
+    for (let i = 0; i < WARNINGS_PER_STEP; i++) await recordWarning(fake, { surface: "x402-generate", request: byAddress(withToken), category: "explicit_sexual", text: "x", confidence: 0.9 });
+    expect(tables.automod_events.every((r) => r.user_id === null && r.ip_hash === "h:9.9.9.9")).toBe(true);
+    expect(await addressWarnedOut(fake, withToken)).toBe(true);
   });
 
   it("forgets an address's warnings after 30 days", async () => {

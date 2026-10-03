@@ -7,8 +7,9 @@
  * request for sexual content involving minors weighs ten warnings, so the
  * first one already suspends, and it goes to the review queue. Warnings live
  * in automod_events; an admin who overturns one takes it out of the count.
- * Requests without an account (the free generator, agents) count by hashed
- * IP and stop that address at the first step.
+ * Requests without an account count by hashed IP. The agent rail has no
+ * accounts and stops such an address at the first step; the free generator
+ * generates for accounts only, which are stopped by their own bans.
  */
 import { createHash } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -27,6 +28,15 @@ const CATEGORIES = Object.keys(WARNING_WEIGHT);
 export const ADDRESS_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 type Req = { headers: { get(name: string): string | null } };
+
+/**
+ * A request as the address ladder sees it, without its session: on the agent
+ * rail, which never reads an account's ban, a warning filed on an account
+ * would stop nobody there.
+ */
+export function byAddress(request: Req): Req {
+  return { headers: { get: (name) => (name.toLowerCase() === "x-session-token" ? null : request.headers.get(name)) } };
+}
 
 export interface WarningOutcome {
   /** Weighted warnings counted so far, this one included. */

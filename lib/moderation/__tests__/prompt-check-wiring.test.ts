@@ -148,6 +148,13 @@ describe("the agent rail", () => {
     expect(AGENT).toMatch(/const checked = input\.promptId \? textValues\(input\.variableValues\) : \{ prompt: promptText \};/);
   });
 
+  it("files every warning and hit on the address, never on a session's account", () => {
+    expect(AGENT).toMatch(/const asker = byAddress\(request\);/);
+    const recorders = [...AGENT.matchAll(/(recordWarning|recordExtractionHit)\(supabase, \{\s*surface: "x402-generate", request(: asker)?,/g)];
+    expect(recorders).toHaveLength(3);
+    for (const r of recorders) expect(r[2]).toBe(": asker");
+  });
+
   it("stops a blocked address before checking", () => {
     const blocked = AGENT.indexOf("const blocked = (await agentBlocked(supabase, request)) || (await addressWarnedOut(supabase, request));");
     expect(blocked).toBeGreaterThan(-1);

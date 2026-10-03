@@ -49,7 +49,7 @@ import { isSolanaChain } from "@/shared/payment-config";
 import { loadPromptText, fillVariables, inputsUnmatched, VALUE_MAX } from "@/lib/generation/prompt-text";
 import { checkPrompt, textValues } from "@/lib/moderation/prompt-check";
 import { recordGenerationFailure } from "@/lib/generation/record";
-import { addressWarnedOut, recordWarning, warningMessage } from "@/lib/moderation/warnings";
+import { addressWarnedOut, byAddress, recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { childSafetyScore } from "@/lib/moderation-enforcement";
 import { agentBlocked, recordExtractionHit, silentFailure } from "@/lib/moderation/extraction-hits";
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
@@ -230,6 +230,9 @@ function rejectPayment(reqs: Priced, error: string) {
 }
 
 async function settleAndGenerate(input: Input, paymentHeader: string, request: NextRequest): Promise<NextResponse> {
+  // Warnings and hits here count on the address alone: this rail never reads
+  // an account's ban, so one filed on an account would stop nobody.
+  const asker = byAddress(request);
   // ── Everything refusable is refused BEFORE money moves ──────────────────
   let feePayer;
   try {
@@ -277,7 +280,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   const check = await checkPrompt(checked, { hidden });
   if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
     const outcome = await recordWarning(supabase, {
-      surface: "x402-generate", request, category: check.verdict, text: JSON.stringify(checked), confidence: check.confidence,
+      surface: "x402-generate", request: asker, category: check.verdict, text: JSON.stringify(checked), confidence: check.confidence,
       ...(input.promptId ? { promptId: input.promptId } : {}),
     });
     return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
@@ -296,7 +299,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
     const minors = childSafetyScore(verdict);
     if (minors !== null) {
       const outcome = await recordWarning(supabase, {
-        surface: "x402-generate", request, category: "minor_sexual", text: JSON.stringify(checked), confidence: minors,
+        surface: "x402-generate", request: asker, category: "minor_sexual", text: JSON.stringify(checked), confidence: minors,
         ...(input.promptId ? { promptId: input.promptId } : {}),
       });
       return NextResponse.json({ error: warningMessage("minor_sexual", outcome) }, { status: 422 });
@@ -402,7 +405,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // address (agentBlocked).
   if (silent) {
     if (!blocked && check.verdict === "extraction") {
-      after(recordExtractionHit(supabase, { surface: "x402-generate", request, values: checked, confidence: check.confidence, promptId: input.promptId }));
+      after(recordExtractionHit(supabase, { surface: "x402-generate", request: asker, values: checked, confidence: check.confidence, promptId: input.promptId }));
     }
     return silentFailure();
   }
