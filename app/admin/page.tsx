@@ -31,10 +31,16 @@ type Proposal = { id: string; kind: string; target: string; targetUserId: string
 type Council = { ready: boolean; isOwner: boolean; enabled: boolean; quorum: number; ttlDays: number; members: { handle: string; role: string; hasEmail: boolean }[]; myEmail: string | null; proposals: Proposal[] };
 type Automod = { id: string; handle: string | null; surface: string; severity: string; tier: number | null; category: string | null; rules: string[]; topScore: { name: string; value: number } | null; prompt: string | null; state: string; at: string };
 type GenPolicy = { maxConcurrentPerUser: number | null; canEdit: boolean };
-type AdminData = { generation: GenPolicy; imports: Imp[]; reports: Rep[]; feedback: Fb[]; friends: Friend[]; hunters: Hunter[]; strikes: StrikeRow[]; recovery: Rec[]; council: Council; automod: Automod[] };
+type Person = { userId: string; handle: string | null; displayName: string | null; warnings: number; extractionHits: number; childSafety: boolean; pending: number; suspension: { until: string | null } | null; failed7d: number; lastActive: string | null };
+type PersonDetail = {
+  events: { id: string; category: string | null; severity: string; surface: string; rules: string[]; weight: number; confidence: number | null; prompt: string | null; state: string; at: string }[];
+  failures: { id: string; surface: string; model: string | null; resolution: string | null; quality: string | null; boost: boolean; aspectRatio: string | null; referenceImageCount: number; error: string; prompt: string | null; imageUrl: string | null; txSignature: string | null; at: string }[];
+  bans: { id: string; reason: string | null; expiresAt: string | null; liftedAt: string | null; at: string }[];
+};
+type AdminData = { generation: GenPolicy; imports: Imp[]; reports: Rep[]; feedback: Fb[]; friends: Friend[]; hunters: Hunter[]; strikes: StrikeRow[]; recovery: Rec[]; council: Council; automod: Automod[]; people: Person[] };
 const COUNCIL_OFF: Council = { ready: false, isOwner: false, enabled: false, quorum: 3, ttlDays: 7, members: [], myEmail: null, proposals: [] };
 
-type Tab = "imports" | "reports" | "feedback" | "friends" | "hunters" | "strikes" | "automod" | "council" | "recovery" | "settings";
+type Tab = "people" | "imports" | "reports" | "feedback" | "friends" | "hunters" | "strikes" | "automod" | "council" | "recovery" | "settings";
 const REJECT_REASONS = ["Duplicate", "Low quality", "Not a prompt", "Spam", "Policy violation", "Other"];
 
 /* ── the admin sidebar's own palette: inverted warm dark, theme-independent ── */
@@ -92,13 +98,14 @@ function Badge({ pal, label }: { pal: { bg: string; ink: string }; label: string
 }
 
 const TABS: { id: Tab; label: string; icon: string; sub: string; search: boolean }[] = [
+  { id: "people", label: "People", icon: "user", sub: "Everyone who was warned, blocked, suspended or whose generations failed this week. Click a row for every event with its prompt and settings.", search: true },
   { id: "imports", label: "Pending imports", icon: "inbox", sub: "Hunt submissions waiting for review before they hit the marketplace.", search: true },
   { id: "reports", label: "Reports", icon: "flag", sub: "User-flagged prompts and profiles, grouped by target.", search: false },
   { id: "feedback", label: "Feedback", icon: "message", sub: "Submissions from the “Earn $100 for feedback” program. Click a row to read it all.", search: true },
   { id: "friends", label: "Friends (whitelist)", icon: "key", sub: "Wallets and collections with early or elevated access.", search: false },
   { id: "hunters", label: "Hunter trust", icon: "target", sub: "Importers ranked by how often their finds get approved.", search: false },
   { id: "strikes", label: "Strikes & bans", icon: "zap", sub: "Users with active strikes, bans, and open appeals.", search: false },
-  { id: "automod", label: "Auto-filter log", icon: "filetext", sub: "Every prompt the filter blocked, with the reason and the score. Read-only — this record is evidence; edit it in Supabase.", search: true },
+  { id: "automod", label: "Auto-filter log", icon: "filetext", sub: "Every prompt the filter blocked, with the reason and the score. Review and overturn them per person in People.", search: true },
   { id: "council", label: "Council", icon: "hand", sub: "Ban decisions the admin council votes on — quorum executes automatically.", search: false },
   { id: "recovery", label: "Recovery requests", icon: "lifebuoy", sub: "People who lost every sign-in method. Click a row to check their evidence.", search: true },
   { id: "settings", label: "Admin settings", icon: "settings", sub: "Your notification email — and, for the owner, the council policy.", search: false },
@@ -134,6 +141,8 @@ export default function AdminPage() {
   const [appealOpen, setAppealOpen] = useState<string | null>(null);
   const [repStrikeId, setRepStrikeId] = useState<string | null>(null);
   const [amOpen, setAmOpen] = useState<string | null>(null);
+  const [pplOpen, setPplOpen] = useState<string | null>(null);
+  const [pplDetail, setPplDetail] = useState<Record<string, PersonDetail>>({});
   // Empty string IS unlimited here, mirroring the null in the database.
   const [genLimit, setGenLimit] = useState<string>("");
   const [repSev, setRepSev] = useState("1");
@@ -213,9 +222,33 @@ export default function AdminPage() {
     }
   };
 
+  /** One person's events and failures, fetched when the row opens. */
+  const loadPerson = async (id: string) => {
+    try {
+      const res = await fetch(`/api/admin?person=${encodeURIComponent(id)}`, { headers: sessionAuthHeaders() });
+      if (res.ok) {
+        const detail = (await res.json()) as PersonDetail;
+        setPplDetail((cur) => ({ ...cur, [id]: detail }));
+      }
+    } catch { /* keep the current view */ }
+  };
+  const openPerson = async (id: string) => {
+    if (pplOpen === id) { setPplOpen(null); return; }
+    setPplOpen(id);
+    if (!pplDetail[id]) await loadPerson(id);
+  };
+  /** An action changes counts on the server: refresh the list and the open person. */
+  const act = async (payload: Record<string, unknown>, okMsg: string, personId: string) => {
+    if (await post(payload, okMsg, (cur) => cur)) {
+      await reload();
+      await loadPerson(personId);
+    }
+  };
+
   const q = query.trim().toLowerCase();
   const tabDef = TABS.find((t) => t.id === tab)!;
   const counts = useMemo(() => ({
+    people: data?.people.filter((p) => p.pending > 0 || p.childSafety).length ?? 0,
     imports: data?.imports.length ?? 0,
     reports: data?.reports.length ?? 0,
     feedback: data?.feedback.filter((f) => !f.paid).length ?? 0,
@@ -261,7 +294,7 @@ export default function AdminPage() {
     );
   }
 
-  const d: AdminData = data ?? { imports: [], reports: [], feedback: [], friends: [], hunters: [], strikes: [], recovery: [], council: COUNCIL_OFF, automod: [], generation: { maxConcurrentPerUser: null, canEdit: false } };
+  const d: AdminData = data ?? { imports: [], reports: [], feedback: [], friends: [], hunters: [], strikes: [], recovery: [], council: COUNCIL_OFF, automod: [], people: [], generation: { maxConcurrentPerUser: null, canEdit: false } };
   const c = d.council ?? COUNCIL_OFF;
   const filteredImports = d.imports.filter((r) => !q || r.name.toLowerCase().includes(q) || r.hunter.toLowerCase().includes(q));
   const filteredFeedback = d.feedback.filter((r) => !q || r.name.toLowerCase().includes(q) || (r.email ?? "").toLowerCase().includes(q) || r.desc.toLowerCase().includes(q));
@@ -273,6 +306,7 @@ export default function AdminPage() {
     || r.surface.toLowerCase().includes(q)
     || r.rules.some((x) => x.toLowerCase().includes(q))
     || (r.prompt ?? "").toLowerCase().includes(q));
+  const filteredPeople = d.people.filter((p) => !q || (p.handle ?? "").toLowerCase().includes(q) || (p.displayName ?? "").toLowerCase().includes(q) || p.userId.includes(q));
   const filteredRecovery = d.recovery.filter((r) => !q || r.handle.toLowerCase().includes(q) || (r.contact ?? "").toLowerCase().includes(q));
 
   const stats: { label: string; value: number; dot: string; go: Tab }[] = [
@@ -696,7 +730,88 @@ export default function AdminPage() {
                 </div>
               )}
 
-              {/* ── AUTO-FILTER LOG (read-only: this record is evidence) ── */}
+              {/* ── PEOPLE: one row per person, every warning and failure on expanding ── */}
+              {tab === "people" && (
+                <div style={cardStyle}>
+                  {filteredPeople.length === 0 && (
+                    <div style={{ padding: 30, textAlign: "center", fontSize: 12, color: "var(--enki-ink-3)" }}>
+                      {d.people.length === 0 ? "Nobody was warned, blocked or failed this week ✓" : "Nothing matches that search."}
+                    </div>
+                  )}
+                  {filteredPeople.map((p) => {
+                    const detail = pplDetail[p.userId];
+                    const name = p.handle ? `@${p.handle}` : p.displayName ?? p.userId.slice(0, 8);
+                    return (
+                      <div key={p.userId}>
+                        <div style={{ ...rowStyle, cursor: "pointer" }} onClick={() => void openPerson(p.userId)}>
+                          <span style={{ width: 130, fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: "var(--enki-ink)", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</span>
+                          {p.childSafety && <Badge pal={PILL.red} label="child safety" />}
+                          <span style={{ fontFamily: MONO, fontSize: 10, color: p.warnings > 0 ? "var(--enki-danger)" : "var(--enki-ink-3)" }}>{p.warnings} warnings</span>
+                          {p.extractionHits > 0 && <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--enki-ember)" }}>{p.extractionHits} extraction</span>}
+                          {p.failed7d > 0 && <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--enki-ink-2)" }}>{p.failed7d} failed (7d)</span>}
+                          {p.pending > 0 && <Badge pal={PILL.purple} label={`${p.pending} to review`} />}
+                          {p.suspension && <Badge pal={PILL.red} label={p.suspension.until ? `suspended until ${p.suspension.until.slice(0, 10)}` : "suspended for good"} />}
+                          <span style={{ flex: 1 }} />
+                          {p.suspension && (
+                            <Pill kind="green" label="Lift" title="Lift the running suspension"
+                              onClick={() => void act({ resource: "bans", action: "lift", userId: p.userId }, `${name} reinstated.`, p.userId)} />
+                          )}
+                          <span style={{ width: 52, textAlign: "right", fontFamily: MONO, fontSize: 9, color: "var(--enki-ink-3)" }}>{p.lastActive ? timeAgo(p.lastActive) : "—"}</span>
+                        </div>
+                        {pplOpen === p.userId && (
+                          <div style={{ padding: "4px 0 14px 10px", borderLeft: "3px solid var(--enki-rule)", margin: "0 0 8px 4px", display: "flex", flexDirection: "column", gap: 10 }}>
+                            {!detail && <span style={{ fontSize: 11, color: "var(--enki-ink-3)" }}>Loading…</span>}
+                            {detail && detail.events.length === 0 && detail.failures.length === 0 && <span style={{ fontSize: 11, color: "var(--enki-ink-3)" }}>No events.</span>}
+                            {detail?.events.map((e) => (
+                              <div key={e.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                  <Badge pal={e.category && ["minor_sexual", "sexual/minors", "csam"].includes(e.category) ? PILL.red : PILL.purple} label={e.category ?? e.severity} />
+                                  <span style={{ fontFamily: MONO, fontSize: 9.5, color: "var(--enki-ink-3)" }}>
+                                    {e.surface}{e.weight ? ` · weight ${e.weight}` : ""}{e.confidence !== null ? ` · ${e.confidence.toFixed(2)}` : ""}{e.rules.length ? ` · ${e.rules.join(", ")}` : ""} · {e.state} · {timeAgo(e.at)}
+                                  </span>
+                                  {e.state !== "overturned" && e.state !== "upheld" && (
+                                    <>
+                                      <Pill kind="plain" label="Overturn" title="Wrongly caught: take it out of every count"
+                                        onClick={() => void act({ resource: "automod", action: "overturn", id: e.id }, "Overturned.", p.userId)} />
+                                      <Pill kind="plain" label="Mark reviewed" title="Correctly caught"
+                                        onClick={() => void act({ resource: "automod", action: "uphold", id: e.id }, "Marked reviewed.", p.userId)} />
+                                    </>
+                                  )}
+                                </div>
+                                <p style={{ margin: 0, fontFamily: MONO, fontSize: 11, color: "var(--enki-ink-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxWidth: 760 }}>{e.prompt ?? "Not readable."}</p>
+                              </div>
+                            ))}
+                            {detail?.failures.map((x) => (
+                              <div key={x.id} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                                {/* eslint-disable-next-line @next/next/no-img-element -- admin-only thumbnail of a stored image */}
+                                {x.imageUrl && <img src={x.imageUrl} alt="" style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 6 }} />}
+                                <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                    <Badge pal={PILL.red} label="failed" />
+                                    <span style={{ fontFamily: MONO, fontSize: 9.5, color: "var(--enki-ink-3)" }}>
+                                      {x.surface} · {x.model ?? "?"} · {x.resolution ?? "?"}{x.quality ? ` · ${x.quality}` : ""}{x.boost ? " · boost" : ""}{x.aspectRatio ? ` · ${x.aspectRatio}` : ""}{x.referenceImageCount ? ` · ${x.referenceImageCount} refs` : ""} · {timeAgo(x.at)}
+                                    </span>
+                                  </div>
+                                  <span style={{ fontSize: 11, color: "var(--enki-danger)", wordBreak: "break-word" }}>{x.error}</span>
+                                  <p style={{ margin: 0, fontFamily: MONO, fontSize: 11, color: "var(--enki-ink-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxWidth: 760 }}>{x.prompt ?? "Not readable."}</p>
+                                  {x.txSignature && <span style={{ fontFamily: MONO, fontSize: 9, color: "var(--enki-ink-3)" }}>paid: {x.txSignature}</span>}
+                                </div>
+                              </div>
+                            ))}
+                            {detail && detail.bans.length > 0 && (
+                              <span style={{ fontFamily: MONO, fontSize: 9.5, color: "var(--enki-ink-3)" }}>
+                                Bans: {detail.bans.map((b) => `${b.at.slice(0, 10)} ${b.liftedAt ? "lifted" : b.expiresAt ? `until ${b.expiresAt.slice(0, 10)}` : "for good"}`).join(" · ")}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* ── AUTO-FILTER LOG ── */}
               {tab === "automod" && (
                 <div style={cardStyle}>
                   {filteredAutomod.length === 0 && (
@@ -741,7 +856,7 @@ export default function AdminPage() {
                             </div>
                           )}
                           <div style={{ marginTop: 10, fontSize: 11, color: "var(--enki-ink-3)" }}>
-                            Read-only. This row is evidence and cannot be changed or deleted from here — use Supabase.
+                            This row is evidence and is never deleted. Overturn or confirm it per person in People.
                           </div>
                         </div>
                       )}
