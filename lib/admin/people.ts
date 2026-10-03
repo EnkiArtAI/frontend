@@ -112,7 +112,7 @@ export async function listPeople(supabase: SupabaseClient): Promise<Person[]> {
 export interface PersonDetail {
   events: {
     id: string; category: string | null; severity: string; tier: number | null; surface: string;
-    rules: string[]; weight: number; confidence: number | null; prompt: string | null; withheld: boolean; state: string;
+    rules: string[]; weight: number; confidence: number | null; prompt: string | null; withheld: boolean; draft: boolean; state: string;
     reviewedAt: string | null; note: string | null; at: string;
   }[];
   failures: {
@@ -159,6 +159,7 @@ export async function personDetail(supabase: SupabaseClient, who: Who, decrypt: 
         confidence: typeof scores.confidence === "number" ? scores.confidence : typeof scores.extraction === "number" ? scores.extraction : null,
         prompt: evidence.text,
         withheld: evidence.withheld,
+        draft: evidence.draft,
         state: String(r.review_state),
         reviewedAt: (r.reviewed_at as string | null) ?? null,
         note: (r.review_notes as string | null) ?? null,
@@ -176,7 +177,7 @@ export async function personDetail(supabase: SupabaseClient, who: Who, decrypt: 
       referenceImageCount: Number(r.reference_image_count) || 0,
       error: String(r.error ?? ""),
       prompt: decrypt(r.prompt_ct, r.prompt_iv, r.prompt_tag, r.prompt_kid),
-      // An artist's draft from an editor is stored without its text.
+      // A signed-in requester's editor draft is stored without its text.
       draft: r.prompt_ct == null,
       imageUrl: (r.image_url as string | null) ?? null,
       txSignature: (r.tx_signature as string | null) ?? null,

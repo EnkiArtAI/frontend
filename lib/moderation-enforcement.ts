@@ -39,6 +39,8 @@ export interface RecordContext {
   withheld?: string;
   /** The marketplace prompt whose text was moderated together with the buyer's values. */
   promptId?: string;
+  /** withheld is the requester's own editor draft, by their word (lib/moderation/evidence). */
+  draft?: boolean;
 }
 
 /**
@@ -84,7 +86,7 @@ export async function recordModerationEvent(
     // in plaintext. The hash (in lib/moderation) carries repeat-offender
     // detection without holding the text readable.
     // A crypto config problem stores the event without it rather than lose it.
-    const evidence = verdict.allowed ? null : sealEvidence({ shown: ctx.prompt, withheld: ctx.withheld, promptId: ctx.promptId });
+    const evidence = verdict.allowed ? null : sealEvidence({ shown: ctx.prompt, withheld: ctx.withheld, promptId: ctx.promptId, draft: ctx.draft });
 
     const { data: event } = await supabase.from("automod_events").insert({
       user_id: userId,

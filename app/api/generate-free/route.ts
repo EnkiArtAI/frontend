@@ -115,13 +115,15 @@ export async function POST(request: NextRequest) {
     // A warned-out address is still judged, so its answers and their timing
     // match everyone else's up to the point where it fails silently.
     const warnedOut = await addressWarnedOut(supabaseForChecks, request);
-    // An artist's draft from an editor: no moderator may read it (lib/moderation/evidence).
-    const authoring = body?.authoring === true;
+    // A signed-in artist's draft from an editor: no moderator may read it,
+    // marked as withheld on their word (lib/moderation/evidence). Without an
+    // account nobody can save a prompt, so nobody has a draft to keep.
+    const authoring = body?.authoring === true && (await resolveRecordingUserId(supabaseForChecks, request)) !== null;
     const check = await checkPrompt({ prompt }, { hidden: false, signal: request.signal });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
       const outcome = await recordWarning(supabaseForChecks, {
         surface: "generate-free", request, category: check.verdict, confidence: check.confidence,
-        ...(authoring ? { text: "", withheld: prompt } : { text: prompt }),
+        ...(authoring ? { text: "", withheld: prompt, draft: true } : { text: prompt }),
       });
       return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
     }
@@ -141,7 +143,7 @@ export async function POST(request: NextRequest) {
     }
 
     const verdict = await moderate({ prompt, surface: "generate-free", signal: request.signal, adultJudged: true });
-    after(recordModerationEvent(verdict, { surface: "generate-free", request, ...(authoring ? { prompt: "", withheld: prompt } : { prompt }) }));
+    after(recordModerationEvent(verdict, { surface: "generate-free", request, ...(authoring ? { prompt: "", withheld: prompt, draft: true } : { prompt }) }));
     if (!verdict.allowed) {
       return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
     }

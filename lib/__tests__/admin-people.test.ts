@@ -183,7 +183,9 @@ describe("revealing an artist's withheld text", () => {
     const page = readFileSync(join(__dirname, "..", "..", "app", "admin", "page.tsx"), "utf8");
     expect(page).toContain("{data?.council.isOwner && !revealed[id] && (");
     expect(page).toContain('body: JSON.stringify({ resource: "automod", action: "reveal", id, reason }),');
-    expect(page.match(/withheldBlock\((e|r)\.id\)/g)).toHaveLength(2);
+    expect(page.match(/withheldBlock\((e|r)\.id, (e|r)\.draft\)/g)).toHaveLength(2);
+    // A draft is called the requester's own, never an artist's.
+    expect(page).toContain("{draft ? DRAFT_NOTE : WITHHELD_NOTE}");
   });
 
   it("asks for a reason", async () => {

@@ -30,12 +30,14 @@ export interface Evidence {
   withheld?: string;
   /** The marketplace prompt whose text the moderated request carried. */
   promptId?: string;
+  /** Withheld because the requester marked it as their own editor draft, which the server cannot verify. */
+  draft?: boolean;
 }
 
 /** The record to store, or null when encryption is unavailable (the event is kept without it). */
 export function sealEvidence(e: Evidence): EncryptedPayload | null {
   try {
-    return encryptString(JSON.stringify({ shown: e.shown.slice(0, MAX), withheld: e.withheld?.slice(0, MAX), promptId: e.promptId }), AAD);
+    return encryptString(JSON.stringify({ shown: e.shown.slice(0, MAX), withheld: e.withheld?.slice(0, MAX), promptId: e.promptId, draft: e.draft || undefined }), AAD);
   } catch {
     return null;
   }
@@ -63,7 +65,7 @@ function sealed(r: StoredEvidence): Evidence | null {
   const raw = open(r, AAD);
   if (raw === null) return null;
   const e = JSON.parse(raw) as Evidence;
-  return { shown: String(e.shown ?? ""), withheld: e.withheld || undefined, promptId: e.promptId || undefined };
+  return { shown: String(e.shown ?? ""), withheld: e.withheld || undefined, promptId: e.promptId || undefined, draft: e.draft === true || undefined };
 }
 
 export interface EvidenceView {
@@ -71,15 +73,17 @@ export interface EvidenceView {
   text: string | null;
   /** An artist's words belong to this record and are not shown. */
   withheld: boolean;
+  /** What is withheld is a draft by the requester's own word. */
+  draft: boolean;
 }
 
 /** A record as every moderator sees it. */
 export function readEvidence(r: StoredEvidence): EvidenceView {
   const e = sealed(r);
-  if (e) return { text: e.shown || null, withheld: Boolean(e.withheld || e.promptId) };
+  if (e) return { text: e.shown || null, withheld: Boolean(e.withheld || e.promptId), draft: Boolean(e.withheld && e.draft) };
   const legacy = open(r);
-  if (legacy === null) return { text: null, withheld: false };
-  return mayHoldArtistText(r) ? { text: null, withheld: true } : { text: legacy, withheld: false };
+  if (legacy === null) return { text: null, withheld: false, draft: false };
+  return mayHoldArtistText(r) ? { text: null, withheld: true, draft: false } : { text: legacy, withheld: false, draft: false };
 }
 
 /** The withheld part of a record, for the owner's logged reveal and nothing else. */

@@ -24,38 +24,44 @@ afterEach(() => resetKeyringCache());
 describe("what a moderator reads", () => {
   it("is the shown part, never the withheld one", () => {
     const view = readEvidence(stored(sealEvidence({ shown: '{"title":"Moody"}', withheld: ARTIST }), "upload"));
-    expect(view).toEqual({ text: '{"title":"Moody"}', withheld: true });
+    expect(view).toEqual({ text: '{"title":"Moody"}', withheld: true, draft: false });
     expect(JSON.stringify(view)).not.toContain("secret words");
   });
 
   it("says when a record names a marketplace prompt instead of quoting it", () => {
-    expect(readEvidence(stored(sealEvidence({ shown: '{"subject":"fox"}', promptId: "p1" })))).toEqual({ text: '{"subject":"fox"}', withheld: true });
+    expect(readEvidence(stored(sealEvidence({ shown: '{"subject":"fox"}', promptId: "p1" })))).toEqual({ text: '{"subject":"fox"}', withheld: true, draft: false });
+  });
+
+  it("says when what is withheld is a draft by the requester's own word", () => {
+    expect(readEvidence(stored(sealEvidence({ shown: "", withheld: "my draft", draft: true }), "generate-free"))).toEqual({ text: null, withheld: true, draft: true });
+    // A mark without anything withheld claims nothing.
+    expect(readEvidence(stored(sealEvidence({ shown: "a red fox", draft: true })))).toEqual({ text: "a red fox", withheld: false, draft: false });
   });
 
   it("is a user's own text as written", () => {
-    expect(readEvidence(stored(sealEvidence({ shown: "a red fox" })))).toEqual({ text: "a red fox", withheld: false });
+    expect(readEvidence(stored(sealEvidence({ shown: "a red fox" })))).toEqual({ text: "a red fox", withheld: false, draft: false });
   });
 
   it("cannot be steered by text that looks like a record", () => {
     // Typed by a user to hide part of their own prompt from moderators.
     const forged = JSON.stringify({ shown: "a red fox", withheld: "the part they want hidden" });
-    expect(readEvidence(stored(sealEvidence({ shown: forged })))).toEqual({ text: forged, withheld: false });
-    expect(readEvidence(stored(encryptString(forged), "x402-generate"))).toEqual({ text: forged, withheld: false });
+    expect(readEvidence(stored(sealEvidence({ shown: forged })))).toEqual({ text: forged, withheld: false, draft: false });
+    expect(readEvidence(stored(encryptString(forged), "x402-generate"))).toEqual({ text: forged, withheld: false, draft: false });
   });
 
   it("withholds a save's or a generation's record from before the rule whole, since it may hold an artist's words", () => {
     // A body, an editor's draft, a paid prompt's filled text.
     for (const surface of ["upload", "generate-image", "generate-free"]) {
-      expect(readEvidence(stored(encryptString(`Moody\n${ARTIST}`), surface))).toEqual({ text: null, withheld: true });
+      expect(readEvidence(stored(encryptString(`Moody\n${ARTIST}`), surface))).toEqual({ text: null, withheld: true, draft: false });
     }
   });
 
   it("shows a record from before the rule as written where no artist's words could be", () => {
-    expect(readEvidence(stored(encryptString('{"subject":"fox"}'), "x402-generate"))).toEqual({ text: '{"subject":"fox"}', withheld: false });
+    expect(readEvidence(stored(encryptString('{"subject":"fox"}'), "x402-generate"))).toEqual({ text: '{"subject":"fox"}', withheld: false, draft: false });
   });
 
   it("shows nothing it cannot read, and claims nothing withheld", () => {
-    expect(readEvidence(stored(null))).toEqual({ text: null, withheld: false });
+    expect(readEvidence(stored(null))).toEqual({ text: null, withheld: false, draft: false });
   });
 });
 

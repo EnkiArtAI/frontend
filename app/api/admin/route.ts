@@ -405,6 +405,7 @@ export async function GET(req: NextRequest) {
         // text and a buyer's values, never an artist's words.
         prompt: evidence.text,
         withheld: evidence.withheld,
+        draft: evidence.draft,
         state: (r.review_state as string) ?? "none",
         at: r.created_at,
       };
@@ -583,9 +584,9 @@ export async function POST(req: NextRequest) {
     const { data: me } = await supabase.from("users").select("handle").eq("id", userId).maybeSingle();
     await notifyAdmins(supabase, {
       exceptUserId: userId,
-      subject: "[Enki Admin] An artist's prompt text was revealed",
+      subject: "[Enki Admin] Withheld moderation text was revealed",
       text: [
-        `@${(me?.handle as string) ?? "the moderation owner"} revealed the artist text of moderation record ${ev.id}${part.promptId ? ` (prompt ${part.promptId})` : ""}.`,
+        `@${(me?.handle as string) ?? "the moderation owner"} revealed the withheld text of moderation record ${ev.id}${part.promptId ? ` (prompt ${part.promptId})` : ""}.`,
         "",
         `Reason: ${reason}`,
       ].join("\n"),

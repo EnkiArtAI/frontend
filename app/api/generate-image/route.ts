@@ -289,10 +289,10 @@ export async function POST(request: NextRequest) {
     // failed generation.
     const checked = fromArtist ? textValues(body.variableValues) : { prompt };
     // A record of an artist's prompt names it and shows the buyer's values,
-    // never its text; an artist's draft from an editor shows nothing
-    // (lib/moderation/evidence).
-    const authoring = !fromArtist && body.authoring === true;
-    const about = fromArtist ? { promptId: String(paid.prompt_id) } : authoring ? { withheld: prompt } : {};
+    // never its text; a signed-in artist's draft from an editor shows nothing,
+    // marked as withheld on their word (lib/moderation/evidence).
+    const authoring = !fromArtist && body.authoring === true && (await resolveRecordingUserId(getSupabaseServerClient(), request)) !== null;
+    const about = fromArtist ? { promptId: String(paid.prompt_id) } : authoring ? { withheld: prompt, draft: true } : {};
     const check = await checkPrompt(checked, { hidden: fromArtist, signal: request.signal });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
       const outcome = await recordWarning(getSupabaseServerClient(), {

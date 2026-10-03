@@ -71,7 +71,7 @@ export async function recordWarning(
   ctx: {
     surface: string; request: Req; category: WarningCategory; confidence: number;
     /** What a moderator may read; withheld and promptId as in lib/moderation/evidence. */
-    text: string; withheld?: string; promptId?: string;
+    text: string; withheld?: string; promptId?: string; draft?: boolean;
   },
 ): Promise<WarningOutcome> {
   const weight = WARNING_WEIGHT[ctx.category];
@@ -81,7 +81,7 @@ export async function recordWarning(
   const userId = token ? await resolveSessionUserWithBan(supabase, token).then((s) => s.userId).catch(() => null) : null;
   const ipHash = hashIp(getClientIp(ctx.request));
   // A crypto config problem stores the warning without it rather than lose it.
-  const evidence = sealEvidence({ shown: ctx.text, withheld: ctx.withheld, promptId: ctx.promptId });
+  const evidence = sealEvidence({ shown: ctx.text, withheld: ctx.withheld, promptId: ctx.promptId, draft: ctx.draft });
 
   await supabase.from("automod_events").insert({
     user_id: userId,
