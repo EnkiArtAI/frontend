@@ -19,7 +19,7 @@ import { settingMismatch, type StoredSettings } from "@/lib/payments/generation-
 import { loadPromptText, fillVariables, inputsUnmatched, overLong, VALUE_MAX } from "@/lib/generation/prompt-text";
 import { checkPrompt, textValues } from "@/lib/moderation/prompt-check";
 import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
-import { recordExtractionHit, SILENT_FAILURE } from "@/lib/moderation/extraction-hits";
+import { recordExtractionHit, SILENT_FAILURE, silentFailure } from "@/lib/moderation/extraction-hits";
 import { captureAndBroadcast, voidAndFlush, sweepAndFlush } from "@/lib/payments/settle";
 import { solanaChainKey } from "@/lib/payments/solana";
 import type { VoidReason } from "@/lib/payments/authorization";
@@ -286,7 +286,7 @@ export async function POST(request: NextRequest) {
       after(recordExtractionHit(getSupabaseServerClient(), { surface: "generate-image", request, values: checked, confidence: check.confidence }));
     }
     if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
-    if (check.verdict !== "clear") return NextResponse.json(SILENT_FAILURE, { status: 500 });
+    if (check.verdict !== "clear") return silentFailure();
 
     // 3. Content moderation — deliberately the FIRST thing after cheap input
     // validation and long before any payment step below. A refused prompt must
@@ -607,10 +607,9 @@ export async function POST(request: NextRequest) {
       }
       await releaseIfConsumed();
       await releaseHeldSlot();
-      return NextResponse.json(
-        { error: geminiResult.error || 'Gemini image generation failed', retryable: geminiResult.retryable ?? true },
-        { status: 500 }
-      );
+      // The provider's own text stays in the logs and the failure record; the
+      // buyer gets the answer a caught request gets, so the two cannot be told apart.
+      return NextResponse.json(SILENT_FAILURE, { status: 500 });
     }
 
     // A delivered image resets the count, so three unrelated blips spread
@@ -635,7 +634,7 @@ export async function POST(request: NextRequest) {
     if (!generatedImageBuffer) {
       await releaseIfConsumed();
       await releaseHeldSlot();
-      return NextResponse.json({ error: 'No generated image buffer returned', retryable: true }, { status: 500 });
+      return NextResponse.json(SILENT_FAILURE, { status: 500 });
     }
 
     // Upload image buffer to Vercel Blob storage
@@ -790,7 +789,7 @@ export async function POST(request: NextRequest) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("Generate image error:", message);
     await releaseIfConsumed();
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(SILENT_FAILURE, { status: 500 });
   } finally {
     // Unavoidable, because the early returns between taking the slot and
     // answering are the ones that matter: a refused claim leaking its slot

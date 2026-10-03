@@ -57,7 +57,7 @@ vi.mock("@/lib/session-user", () => ({
     tables.bans.find((b) => b.user_id === userId && !b.lifted_at && (!b.expires_at || String(b.expires_at) > new Date().toISOString())) ?? null,
 }));
 
-import { recordExtractionHit, agentBlocked, EXTRACTION_HITS_TO_BLOCK, SILENT_FAILURE } from "@/lib/moderation/extraction-hits";
+import { recordExtractionHit, agentBlocked, EXTRACTION_HITS_TO_BLOCK, SILENT_FAILURE, SILENT_DELAY_MS, silentFailure } from "@/lib/moderation/extraction-hits";
 
 const buyer = { headers: new Headers({ "X-Session-Token": "buyer-token", "x-forwarded-for": "1.2.3.4" }) };
 const agent = { headers: new Headers({ "x-forwarded-for": "9.9.9.9" }) };
@@ -145,5 +145,26 @@ describe("an agent", () => {
 describe("what the buyer sees", () => {
   it("is an ordinary failure that names no check", () => {
     expect(JSON.stringify(SILENT_FAILURE)).not.toMatch(/extract|check|detect|policy|moderat/i);
+  });
+
+  it("takes as long as a generation that fails", async () => {
+    vi.useFakeTimers();
+    try {
+      let done = false;
+      const answer = silentFailure().then((r) => { done = true; return r; });
+      await vi.advanceTimersByTimeAsync(SILENT_DELAY_MS.min - 1);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(SILENT_DELAY_MS.max);
+      const res = await answer;
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual(SILENT_FAILURE);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("is not given away later by the ban reason", async () => {
+    for (let i = 0; i < EXTRACTION_HITS_TO_BLOCK; i++) await hit(buyer);
+    expect(String(tables.bans[0].reason)).not.toMatch(/extract|prompt|check|detect|attempt/i);
   });
 });

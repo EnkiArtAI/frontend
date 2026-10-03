@@ -12,6 +12,7 @@
  * third one stops paid-prompt generations from that address.
  */
 import { createHash } from "crypto";
+import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptString } from "@/lib/crypto";
 import { getClientIp, hashIp } from "@/lib/ip-hash";
@@ -25,6 +26,19 @@ type Req = { headers: { get(name: string): string | null } };
 
 /** The same answer as any failed generation: no hint that a check exists, let alone what it caught. */
 export const SILENT_FAILURE = { error: "Image generation failed. Nothing was charged.", retryable: true } as const;
+
+export const SILENT_DELAY_MS = { min: 3000, max: 12000 } as const;
+
+/**
+ * The silent answer, after a pause in the range a real generation takes to
+ * fail: an instant failure would tell a buyer that something judged the
+ * request before any generator ran. Every real generation failure answers
+ * with the same SILENT_FAILURE body, so neither text nor timing differs.
+ */
+export async function silentFailure(): Promise<NextResponse> {
+  await new Promise((done) => setTimeout(done, SILENT_DELAY_MS.min + Math.random() * (SILENT_DELAY_MS.max - SILENT_DELAY_MS.min)));
+  return NextResponse.json(SILENT_FAILURE, { status: 500 });
+}
 
 async function hitsSince(supabase: SupabaseClient, who: { userId: string | null; ipHash: string | null }): Promise<number> {
   const since = new Date(Date.now() - WINDOW_MS).toISOString();
@@ -112,7 +126,10 @@ async function ban(supabase: SupabaseClient, userId: string, eventId: string | u
       user_id: userId,
       issued_by: issuedBy,
       scope: "full",
-      reason: `Automated: ${EXTRACTION_HITS_TO_BLOCK} attempts within 30 days to extract a paid prompt's text`,
+      // The reason is shown to the user on /banned, so it names nothing that
+      // would tell them which of their requests were caught; the events linked
+      // through ban_id say what happened.
+      reason: "Automated: repeated violations of the Terms of Service",
     })
     .select("id")
     .single();

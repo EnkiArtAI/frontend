@@ -48,7 +48,7 @@ import { isSolanaChain } from "@/shared/payment-config";
 import { loadPromptText, fillVariables, inputsUnmatched, VALUE_MAX } from "@/lib/generation/prompt-text";
 import { checkPrompt, textValues } from "@/lib/moderation/prompt-check";
 import { addressWarnedOut, recordWarning, warningMessage } from "@/lib/moderation/warnings";
-import { agentBlocked, recordExtractionHit, SILENT_FAILURE } from "@/lib/moderation/extraction-hits";
+import { agentBlocked, recordExtractionHit, silentFailure } from "@/lib/moderation/extraction-hits";
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 import { TransactionMessage, VersionedTransaction } from "@solana/web3.js";
@@ -227,7 +227,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // more; explicit and child-safety requests get a warning, everything else
   // that is refused reads like any failure.
   if (await agentBlocked(supabase, request) || await addressWarnedOut(supabase, request)) {
-    return NextResponse.json(SILENT_FAILURE, { status: 500 });
+    return silentFailure();
   }
   const checked = input.promptId ? textValues(input.variableValues) : { prompt: promptText };
   const check = await checkPrompt(checked, { hidden: reqs.legs.length > 1 });
@@ -241,7 +241,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
     after(recordExtractionHit(supabase, { surface: "x402-generate", request, values: checked, confidence: check.confidence }));
   }
   if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
-  if (check.verdict !== "clear") return NextResponse.json(SILENT_FAILURE, { status: 500 });
+  if (check.verdict !== "clear") return silentFailure();
 
   const verdict = await moderate({ prompt: promptText, surface: "x402-generate" });
   if (!verdict.allowed) {

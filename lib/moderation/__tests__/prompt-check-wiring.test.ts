@@ -13,8 +13,19 @@ const HUMAN = readSource(join(ROOT, "app", "api", "generate-image", "route.ts"))
 const FREE = readSource(join(ROOT, "app", "api", "generate-free", "route.ts"));
 const AGENT = readSource(join(ROOT, "app", "api", "x402", "generate", "route.ts"));
 
-const SILENT = /if \(check\.verdict !== "clear"\) return NextResponse\.json\(SILENT_FAILURE, \{ status: 500 \}\);/;
+const SILENT = /if \(check\.verdict !== "clear"\) return silentFailure\(\);/;
 const WARNED = /return NextResponse\.json\(\{ error: warningMessage\(check\.verdict, outcome\) \}, \{ status: 422 \}\);/;
+
+describe("a real generation failure", () => {
+  it("answers exactly like a caught request", () => {
+    for (const src of [HUMAN, FREE]) {
+      expect(src).not.toMatch(/NextResponse\.json\(\s*\{ error: (geminiResult|result)\.error/);
+      expect(src).not.toMatch(/return NextResponse\.json\(\{ error: message \}, \{ status: 500 \}\);/);
+    }
+    expect(HUMAN.split("return NextResponse.json(SILENT_FAILURE, { status: 500 });").length - 1).toBe(3);
+    expect(FREE.split("return NextResponse.json(SILENT_FAILURE, { status: 500 });").length - 1).toBe(3);
+  });
+});
 
 describe("the human rail", () => {
   const check = HUMAN.indexOf("await checkPrompt(checked, { hidden: fromArtist, signal: request.signal })");

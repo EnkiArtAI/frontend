@@ -5,7 +5,7 @@ import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
 import { checkPrompt } from "@/lib/moderation/prompt-check";
 import { addressWarnedOut, recordWarning, warningMessage } from "@/lib/moderation/warnings";
-import { SILENT_FAILURE } from "@/lib/moderation/extraction-hits";
+import { SILENT_FAILURE, silentFailure } from "@/lib/moderation/extraction-hits";
 import { getSupabaseServerClientSafe } from "@/lib/supabaseServer";
 import { recordGeneration, resolveRecordingUserId } from "@/lib/generation/record";
 import { resolveModel } from "@/lib/generation/models";
@@ -105,7 +105,7 @@ export async function POST(request: NextRequest) {
     // address without an account that has reached the first step gets no more.
     const supabaseForChecks = getSupabaseServerClientSafe();
     if (!supabaseForChecks) return NextResponse.json(SILENT_FAILURE, { status: 500 });
-    if (await addressWarnedOut(supabaseForChecks, request)) return NextResponse.json(SILENT_FAILURE, { status: 500 });
+    if (await addressWarnedOut(supabaseForChecks, request)) return silentFailure();
     const check = await checkPrompt({ prompt }, { hidden: false, signal: request.signal });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
       const outcome = await recordWarning(supabaseForChecks, {
@@ -114,7 +114,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
     }
     if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
-    if (check.verdict !== "clear") return NextResponse.json(SILENT_FAILURE, { status: 500 });
+    if (check.verdict !== "clear") return silentFailure();
 
     const verdict = await moderate({ prompt, surface: "generate-free", signal: request.signal });
     after(recordModerationEvent(verdict, { surface: "generate-free", request, prompt }));
@@ -180,10 +180,8 @@ export async function POST(request: NextRequest) {
 
     if (!result.success || !result.imageBuffers || result.imageBuffers.length === 0) {
       console.error('❌ Image generation failed:', result.error);
-      return NextResponse.json(
-        { error: result.error || 'Image generation failed' },
-        { status: 500 }
-      );
+      // Same answer as a caught request, so the two cannot be told apart.
+      return NextResponse.json(SILENT_FAILURE, { status: 500 });
     }
 
     // Convert to base64 data URL (no blob storage needed).
@@ -287,6 +285,6 @@ export async function POST(request: NextRequest) {
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("Generate free image error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(SILENT_FAILURE, { status: 500 });
   }
 }
