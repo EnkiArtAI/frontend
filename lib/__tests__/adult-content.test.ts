@@ -138,7 +138,7 @@ describe("the routes", () => {
   it("let tier 2 defer to the prompt check only where it saw the whole text", () => {
     for (const src of [FREE, SAVE]) expect(src).toMatch(/adultJudged: true/);
     expect(HUMAN).toMatch(/moderate\(\{ prompt, surface: "generate-image", signal: request\.signal, adultJudged: !fromArtist \|\| promptAdult \}\)/);
-    expect(AGENT).toMatch(/moderate\(\{ prompt: promptText, surface: "x402-generate", adultJudged: !input\.promptId \}\)/);
+    expect(AGENT).toMatch(/moderate\(\{ prompt: promptText, surface: "x402-generate", adultJudged: !input\.promptId \|\| promptAdult \}\)/);
   });
 
   it("count a stored prompt's own 18+ mark on every path", () => {

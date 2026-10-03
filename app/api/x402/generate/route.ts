@@ -245,11 +245,11 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   }
   if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
   const silent = blocked || check.verdict !== "clear";
-  // An agent cannot confirm it is an adult, so 18+ is never generated for one.
 
   // For a marketplace prompt the check saw only the agent's values, so tier 2
-  // keeps its sexual flag for the artist's text.
-  const verdict = await moderate({ prompt: promptText, surface: "x402-generate", adultJudged: !input.promptId });
+  // keeps its sexual flag for the artist's text, unless the prompt is marked
+  // 18+: then the agent gets the 18+ refusal below, not a content block.
+  const verdict = await moderate({ prompt: promptText, surface: "x402-generate", adultJudged: !input.promptId || promptAdult });
   if (!verdict.allowed) {
     return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
   }
