@@ -260,3 +260,52 @@ export async function resolveRecordingUserId(
   const { resolveSessionUserId } = await import("@/lib/session-user");
   return resolveSessionUserId(supabase, token).catch(() => null);
 }
+
+/** What a failed generation asked for, so an admin can see what broke for whom (Kev, 2026-10-03). */
+export interface GenerationFailure {
+  request: { headers: { get(name: string): string | null } };
+  surface: "generate-image" | "generate-free" | "x402-generate";
+  modelId: string | null;
+  resolution: string | null;
+  quality: string | null;
+  boost: boolean;
+  aspectRatio: string | null;
+  referenceImageCount: number;
+  /** The prompt as the user wrote it; for an artist's prompt only the buyer's values. Stored encrypted. */
+  prompt: string;
+  error: string;
+  imageUrl?: string | null;
+  intentId?: string | null;
+  txSignature?: string | null;
+}
+
+/**
+ * The other half of recordGeneration: a generation that was accepted and then
+ * broke. Called from after(), and a failure to record never changes what the
+ * user saw.
+ */
+export async function recordGenerationFailure(supabase: SupabaseClient | null, f: GenerationFailure): Promise<void> {
+  if (!supabase) return;
+  try {
+    const userId = await resolveRecordingUserId(supabase, f.request);
+    const { getClientIp, hashIp } = await import("@/lib/ip-hash");
+    await supabase.from("generation_failures").insert({
+      user_id: userId,
+      ip_hash: hashIp(getClientIp(f.request)),
+      surface: f.surface,
+      model_id: f.modelId,
+      resolution: f.resolution,
+      quality: f.quality,
+      boost: f.boost,
+      aspect_ratio: f.aspectRatio,
+      reference_image_count: f.referenceImageCount,
+      error: f.error.slice(0, 1000),
+      ...envelope("prompt", f.prompt.slice(0, 4000)),
+      image_url: f.imageUrl ?? null,
+      intent_id: f.intentId ?? null,
+      tx_signature: f.txSignature ?? null,
+    });
+  } catch {
+    /* recording is best-effort by design */
+  }
+}

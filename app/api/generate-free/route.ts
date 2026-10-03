@@ -7,7 +7,7 @@ import { checkPrompt } from "@/lib/moderation/prompt-check";
 import { addressWarnedOut, recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { SILENT_FAILURE, silentFailure } from "@/lib/moderation/extraction-hits";
 import { getSupabaseServerClientSafe } from "@/lib/supabaseServer";
-import { recordGeneration, resolveRecordingUserId } from "@/lib/generation/record";
+import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
 import { resolveModel } from "@/lib/generation/models";
 import { normalizeTier, RESOLUTION_TIERS } from "@/lib/generation/resolution";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
@@ -43,6 +43,8 @@ export const maxDuration = 300;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(request: NextRequest) {
+  // What a failure from the render on is recorded with, for the admin person list.
+  let failCtx: Omit<GenerationFailure, "error"> | null = null;
   try {
     const body = await request.json();
     const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
@@ -181,6 +183,10 @@ export async function POST(request: NextRequest) {
 
     if (silent) return silentFailure();
 
+    failCtx = {
+      request, surface: "generate-free", modelId: model.id, resolution, quality: null, boost: false,
+      aspectRatio: body.aspectRatio || "1:1", referenceImageCount: 0, prompt,
+    };
     const result = await generateImageWithPollinations(
       prompt,
       body.aspectRatio || '1:1',
@@ -190,6 +196,7 @@ export async function POST(request: NextRequest) {
 
     if (!result.success || !result.imageBuffers || result.imageBuffers.length === 0) {
       console.error('❌ Image generation failed:', result.error);
+      after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: result.error || "Image generation failed" }));
       // Same answer as a caught request, so the two cannot be told apart.
       return NextResponse.json(SILENT_FAILURE, { status: 500 });
     }
@@ -295,6 +302,7 @@ export async function POST(request: NextRequest) {
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("Generate free image error:", message);
+    if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: message }));
     return NextResponse.json(SILENT_FAILURE, { status: 500 });
   }
 }

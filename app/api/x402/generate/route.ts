@@ -47,6 +47,7 @@ import { checkAndRecordSolanaSignature } from "@/backend/solana-x402-verifier";
 import { isSolanaChain } from "@/shared/payment-config";
 import { loadPromptText, fillVariables, inputsUnmatched, VALUE_MAX } from "@/lib/generation/prompt-text";
 import { checkPrompt, textValues } from "@/lib/moderation/prompt-check";
+import { recordGenerationFailure } from "@/lib/generation/record";
 import { addressWarnedOut, recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { agentBlocked, recordExtractionHit, silentFailure } from "@/lib/moderation/extraction-hits";
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
@@ -392,6 +393,14 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
     if (route.modelProviderId && route.providerId) {
       after(reportFailure(getSupabaseServerClient(), route.modelProviderId, route.providerId, result.error || "generation failed"));
     }
+    // The agent paid and got nothing: recorded with the signature so support can make it right.
+    after(recordGenerationFailure(supabase, {
+      request, surface: "x402-generate", modelId: model.id, resolution: input.resolution, quality: effQuality, boost: false,
+      aspectRatio: ratio, referenceImageCount: 0,
+      // For a marketplace prompt only the agent's values: an artist's text is never stored with a failure.
+      prompt: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
+      error: result.error || "generation failed", txSignature: signature,
+    }));
     // The payment settled; hiding that would be worse than the failure.
     return NextResponse.json(
       {

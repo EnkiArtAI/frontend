@@ -25,7 +25,7 @@ import { solanaChainKey } from "@/lib/payments/solana";
 import type { VoidReason } from "@/lib/payments/authorization";
 import { reportSuccess, reportFailure } from "@/lib/generation/provider-health";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
-import { recordGeneration, resolveRecordingUserId } from "@/lib/generation/record";
+import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
 import { storeReferenceImages } from "@/lib/generation/reference-images";
 import { acquireSlot, releaseSlot } from "@/lib/generation/concurrency";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
@@ -112,6 +112,8 @@ export async function POST(request: NextRequest) {
   // catch-all below — must release it so the buyer retries without paying
   // again.
   let consumedIntent: { supabase: SupabaseClient; id: string; mode: ClaimMode } | null = null;
+  // What a failure from the concurrency cap on is recorded with, for the admin person list.
+  let failCtx: Omit<GenerationFailure, "error"> | null = null;
   /**
    * Give the payment back. What that MEANS depends on the model, and the two
    * are not interchangeable:
@@ -428,6 +430,12 @@ export async function POST(request: NextRequest) {
     // never a charged one. Unlimited unless an admin sets a number.
     const slotSupabase = getSupabaseServerClientSafe();
     const slotUserId = await resolveRecordingUserId(slotSupabase, request);
+    failCtx = {
+      request, surface: "generate-image", modelId: paid.model_id ?? null, resolution: paidTier ?? null, quality: effQuality,
+      boost: paid.boost === true, aspectRatio: body.aspectRatio || body.ratio || null, referenceImageCount: attachedRefs,
+      // For an artist's prompt only the buyer's values: the artist's text is never stored with a failure.
+      prompt: fromArtist ? JSON.stringify(textValues(body.variableValues)) : prompt, intentId,
+    };
     const slot = await acquireSlot(slotSupabase, slotUserId);
     if (slot.slotId) heldSlot = { supabase: slotSupabase, id: slot.slotId };
     if (!slot.allowed) {
@@ -620,6 +628,7 @@ export async function POST(request: NextRequest) {
           ),
         );
       }
+      if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: geminiResult.error || "generation failed" }));
       await releaseIfConsumed();
       await releaseHeldSlot();
       // The provider's own text stays in the logs and the failure record; the
@@ -647,6 +656,7 @@ export async function POST(request: NextRequest) {
 
     const generatedImageBuffer = geminiResult.imageBuffers?.[0];
     if (!generatedImageBuffer) {
+      if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: "No generated image buffer returned" }));
       await releaseIfConsumed();
       await releaseHeldSlot();
       return NextResponse.json(SILENT_FAILURE, { status: 500 });
@@ -803,6 +813,7 @@ export async function POST(request: NextRequest) {
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("Generate image error:", message);
+    if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: message }));
     await releaseIfConsumed();
     return NextResponse.json(SILENT_FAILURE, { status: 500 });
   } finally {
