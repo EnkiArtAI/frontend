@@ -41,7 +41,7 @@ import { usdcMint, feePayerKeypair, solanaConnection, solanaChainKey } from "@/l
 import { effectiveQuality } from "@/lib/pricing";
 import { reportPriceDrift } from "@/lib/generation/price-drift";
 import {
-  parseXPayment, verifyAgentPayment, cosignAsFeePayer, submitAndConfirm, paymentResponseHeader,
+  parseXPayment, verifyAgentPayment, cosignAsFeePayer, simulatePayment, submitAndConfirm, paymentResponseHeader,
 } from "@/lib/payments/x402-settle";
 import { checkAndRecordSolanaSignature } from "@/backend/solana-x402-verifier";
 import { isSolanaChain } from "@/shared/payment-config";
@@ -279,15 +279,6 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
     feePayer: feePayer.publicKey,
   });
   if (!verified.ok) return rejectPayment(reqs, verified.error);
-  // Refused silently: nothing is settled. A real failure only happens after
-  // settlement, so with a valid payment an agent can still tell; every such
-  // probe is recorded and the third blocks the address (agentBlocked).
-  if (silent) {
-    if (!blocked && check.verdict === "extraction") {
-      after(recordExtractionHit(supabase, { surface: "x402-generate", request, values: checked, confidence: check.confidence }));
-    }
-    return silentFailure();
-  }
 
   // A leg can point at a wallet with no USDC account yet (a new artist).
   // TransferChecked to a missing ATA fails the whole payment, so the fee
@@ -333,6 +324,23 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   const chainKey = solanaChainKey();
   if (!isSolanaChain(chainKey)) {
     return NextResponse.json({ error: "Deployment chain is not Solana" }, { status: 503 });
+  }
+  // Every payment is simulated with signature checks before anything else
+  // is decided, and an unpayable one is refused here, the same way whether or
+  // not the request was caught.
+  const simulated = await simulatePayment(solanaConnection(), parsed.tx);
+  if (!simulated.ok) {
+    return NextResponse.json({ error: simulated.error, transaction: signature }, { status: 402 });
+  }
+  // Refused silently: nothing is settled. A real failure only happens after
+  // settlement, so a paying agent can still tell a failure from an image, as
+  // with any check; every caught probe is recorded and the third blocks the
+  // address (agentBlocked).
+  if (silent) {
+    if (!blocked && check.verdict === "extraction") {
+      after(recordExtractionHit(supabase, { surface: "x402-generate", request, values: checked, confidence: check.confidence }));
+    }
+    return silentFailure();
   }
   const replay = await checkAndRecordSolanaSignature(signature, chainKey, "x402-agent-generate");
   if (!replay.isNew) {

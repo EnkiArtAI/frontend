@@ -211,6 +211,25 @@ export function cosignAsFeePayer(tx: VersionedTransaction, feePayer: Keypair): s
 }
 
 /**
+ * Simulate the co-signed payment with signature checks, before anything about
+ * the request is decided. verifyAgentPayment checks the transaction's shape
+ * only, so a forged signature or an empty payer would otherwise first fail at
+ * submission, which a refused request never reaches: the answer to an
+ * unpayable payment told a refused request from a clean one, for free.
+ */
+export async function simulatePayment(
+  connection: Connection,
+  tx: VersionedTransaction,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const { value } = await connection.simulateTransaction(tx, { sigVerify: true, commitment: "confirmed" });
+    return value.err ? { ok: false, error: `Transaction simulation failed: ${JSON.stringify(value.err)}` } : { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Transaction simulation failed" };
+  }
+}
+
+/**
  * Submit WITH preflight (unlike the durable-nonce rails): this is a normal
  * recent-blockhash transaction, and preflight simulation is what rejects a
  * forged client signature or an empty payer balance before anything lands.

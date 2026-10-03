@@ -114,9 +114,11 @@ describe("the agent rail", () => {
     expect(FREE).toMatch(/const silent = warnedOut \|\| check\.verdict !== "clear";/);
   });
 
-  it("fails silently only once the payment is verified, and before it settles", () => {
+  it("fails silently only once the payment is simulated with its signatures, and before it settles", () => {
     const at = AGENT.indexOf("  if (silent) {");
-    expect(at).toBeGreaterThan(AGENT.indexOf("if (!verified.ok) return rejectPayment(reqs, verified.error);"));
+    const sim = AGENT.indexOf("const simulated = await simulatePayment(solanaConnection(), parsed.tx);");
+    expect(sim).toBeGreaterThan(AGENT.indexOf("const signature = cosignAsFeePayer(parsed.tx, feePayer);"));
+    expect(at).toBeGreaterThan(AGENT.indexOf("if (!simulated.ok) {", sim));
     expect(AGENT.indexOf("submitAndConfirm(")).toBeGreaterThan(at);
   });
 
