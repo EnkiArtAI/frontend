@@ -73,6 +73,8 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
       else localStorage.removeItem(SHOW_ADULT_KEY);
     } catch { /* not kept */ }
     setAdultPillState(on && Boolean(meId));
+    // Set before anything renders again, so every read after the flip carries it.
+    setPillActive(on && Boolean(meId) && adultConfirmed);
     void queryClient.invalidateQueries();
   };
   /** A change in Settings: the pill starts off after it, either way. */
@@ -82,8 +84,6 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
     setProfile((p) => (p ? { ...p, handle: h } : p));
   };
   const [tick, setTick] = useState(0);
-  // What every other read sends follows what this gate decided, nothing else.
-  useEffect(() => { setPillActive(adultConfirmed && adultPill); }, [adultConfirmed, adultPill]);
 
   // Re-verify when a login/logout happens in this or another tab.
   useEffect(() => {
@@ -104,6 +104,7 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
     const forgetPill = () => { try { localStorage.removeItem(SHOW_ADULT_KEY); } catch { /* none */ } };
     setAdultConfirmedState(false);
     setAdultPillState(false);
+    setPillActive(false);
     /* No session (or a denied one): a valid TEAM-CODE cookie still opens the
        UI for browsing — team members enter with the code alone (Kev,
        2026-08-23). Server APIs keep requiring a real session for anything
@@ -145,6 +146,9 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
         // Another account's pill, or one without a confirmation, is switched off.
         if (stored && !pillSurvives(stored, data)) { forgetPill(); stored = null; }
         setMeId(data.id ?? null);
+        // Set here, before the page below mounts in the same render: its first
+        // reads go out before any effect of this gate would run.
+        setPillActive(confirmed && Boolean(stored));
         setAdultConfirmedState(confirmed);
         setAdultPillState(Boolean(stored));
         if (BETA_ROLES.has(data.role ?? "user")) setAccess("ok");

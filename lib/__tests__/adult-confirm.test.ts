@@ -134,11 +134,15 @@ describe("the screens", () => {
   });
 
   it("hands every other read exactly what it decided", () => {
-    expect(GATE).toMatch(/useEffect\(\(\) => \{ setPillActive\(adultConfirmed && adultPill\); \}, \[adultConfirmed, adultPill\]\);/);
+    // Synchronously, before the page mounts: not in an effect, which runs after the page's first reads.
+    expect(GATE).not.toMatch(/useEffect\(\(\) => \{ setPillActive/);
+    expect(GATE).toMatch(/setPillActive\(confirmed && Boolean\(stored\)\);\n\s+setAdultConfirmedState\(confirmed\);/);
+    expect(GATE).toMatch(/setAdultPillState\(false\);\n\s+setPillActive\(false\);/);
+    expect(GATE).toMatch(/setPillActive\(on && Boolean\(meId\) && adultConfirmed\);/);
   });
 
   it("refetches every cached read when it flips", () => {
-    expect(GATE).toMatch(/setAdultPillState\(on && Boolean\(meId\)\);\n\s+void queryClient\.invalidateQueries\(\);/);
+    expect(GATE).toMatch(/setPillActive\(on && Boolean\(meId\) && adultConfirmed\);\n\s+void queryClient\.invalidateQueries\(\);/);
   });
 
   it("a change in Settings turns it off, either way", () => {
