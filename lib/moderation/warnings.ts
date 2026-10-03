@@ -158,15 +158,25 @@ function duration(days: number | null): string {
 }
 
 /** What the user reads. It names the rule and the count, never the score. */
+const RULE: Record<WarningCategory, string> = {
+  minor_sexual: "Sexual content involving minors is strictly prohibited.",
+  explicit_sexual: "Explicit sexual content isn't allowed on Enki.",
+};
+
 export function warningMessage(category: WarningCategory, o: WarningOutcome, refused: "generation" | "save" = "generation"): string {
-  const rule =
-    category === "minor_sexual"
-      ? "Sexual content involving minors is strictly prohibited."
-      : "Explicit sexual content isn't allowed on Enki.";
-  const head = `${rule} ${refused === "save" ? "Nothing was saved." : "Nothing was generated and nothing was charged."}`;
+  const head = `${RULE[category]} ${refused === "save" ? "Nothing was saved." : "Nothing was generated and nothing was charged."}`;
   if (o.suspendedUntil === "forever") return `${head} Your account is suspended for good.`;
   if (o.suspendedUntil) return `${head} Your account is suspended until ${o.suspendedUntil.slice(0, 10)}.`;
   const step = Math.floor(o.nextStepAt / WARNINGS_PER_STEP);
   const next = duration(SUSPENSION_LADDER_DAYS[Math.min(step, SUSPENSION_LADDER_DAYS.length) - 1]);
   return `${head} This is warning ${o.total} of ${o.nextStepAt}; at ${o.nextStepAt} your account is suspended ${next === "for good" ? "for good" : `for ${next}`}.`;
+}
+
+/**
+ * The agent rail's warning. It counts on the address, which repeated warnings
+ * stop; there is no account to suspend, and where the address stands is not
+ * said, since a stopped address fails silently.
+ */
+export function addressWarningMessage(category: WarningCategory): string {
+  return `${RULE[category]} Nothing was generated and nothing was charged. Repeated warnings stop requests from this address.`;
 }

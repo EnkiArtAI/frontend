@@ -49,7 +49,7 @@ import { isSolanaChain } from "@/shared/payment-config";
 import { loadPromptText, fillVariables, inputsUnmatched, VALUE_MAX } from "@/lib/generation/prompt-text";
 import { checkPrompt, textValues } from "@/lib/moderation/prompt-check";
 import { recordGenerationFailure } from "@/lib/generation/record";
-import { addressWarnedOut, byAddress, recordWarning, warningMessage } from "@/lib/moderation/warnings";
+import { addressWarnedOut, addressWarningMessage, byAddress, recordWarning } from "@/lib/moderation/warnings";
 import { childSafetyScore } from "@/lib/moderation-enforcement";
 import { agentBlocked, recordExtractionHit, silentFailure } from "@/lib/moderation/extraction-hits";
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
@@ -279,11 +279,11 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // everyone else's up to the silent point; only its hits are not recorded.
   const check = await checkPrompt(checked, { hidden });
   if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
-    const outcome = await recordWarning(supabase, {
+    await recordWarning(supabase, {
       surface: "x402-generate", request: asker, category: check.verdict, text: JSON.stringify(checked), confidence: check.confidence,
       ...(input.promptId ? { promptId: input.promptId } : {}),
     });
-    return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
+    return NextResponse.json({ error: addressWarningMessage(check.verdict) }, { status: 422 });
   }
   if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
   const silent = blocked || check.verdict !== "clear";
@@ -298,11 +298,11 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
     // account to ban for good.
     const minors = childSafetyScore(verdict);
     if (minors !== null) {
-      const outcome = await recordWarning(supabase, {
+      await recordWarning(supabase, {
         surface: "x402-generate", request: asker, category: "minor_sexual", text: JSON.stringify(checked), confidence: minors, scores: verdict.scores,
         ...(input.promptId ? { promptId: input.promptId } : {}),
       });
-      return NextResponse.json({ error: warningMessage("minor_sexual", outcome) }, { status: 422 });
+      return NextResponse.json({ error: addressWarningMessage("minor_sexual") }, { status: 422 });
     }
     return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
   }

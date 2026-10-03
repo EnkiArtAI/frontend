@@ -49,7 +49,9 @@ describe("the human rail", () => {
     const agent = AGENT.slice(AGENT.indexOf("if (!verdict.allowed) {"), AGENT.indexOf("return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });", AGENT.indexOf("if (!verdict.allowed) {")));
     expect(agent).toMatch(/const minors = childSafetyScore\(verdict\);/);
     expect(agent).toMatch(/category: "minor_sexual", text: JSON\.stringify\(checked\), confidence: minors, scores: verdict\.scores,\n\s+\.\.\.\(input\.promptId \? \{ promptId: input\.promptId \} : \{\}\),/);
-    expect(agent).toMatch(/return NextResponse\.json\(\{ error: warningMessage\("minor_sexual", outcome\) \}, \{ status: 422 \}\);/);
+    expect(agent).toMatch(/return NextResponse\.json\(\{ error: addressWarningMessage\("minor_sexual"\) \}, \{ status: 422 \}\);/);
+    // The agent rail never promises an account suspension it cannot give.
+    expect(AGENT).not.toMatch(/warningMessage\(/);
   });
 
   it("withholds an artist's draft from an editor in every record", () => {
@@ -185,7 +187,8 @@ describe("the agent rail", () => {
   });
 
   it("warns, and fails closed otherwise", () => {
-    expect(AGENT).toMatch(WARNED);
+    // On the address: the agent rail has no account to suspend.
+    expect(AGENT).toMatch(/return NextResponse\.json\(\{ error: addressWarningMessage\(check\.verdict\) \}, \{ status: 422 \}\);/);
     expect(AGENT).toMatch(SILENT);
   });
 });

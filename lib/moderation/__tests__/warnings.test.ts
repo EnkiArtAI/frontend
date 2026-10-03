@@ -72,7 +72,7 @@ vi.mock("@/lib/session-user", () => ({
   },
 }));
 
-import { recordWarning, warningMessage, addressWarnedOut, byAddress, WARNINGS_PER_STEP, SUSPENSION_LADDER_DAYS } from "@/lib/moderation/warnings";
+import { recordWarning, warningMessage, addressWarningMessage, addressWarnedOut, byAddress, WARNINGS_PER_STEP, SUSPENSION_LADDER_DAYS } from "@/lib/moderation/warnings";
 
 const user = { headers: new Headers({ "X-Session-Token": "user-token", "x-forwarded-for": "1.2.3.4" }) };
 const anon = { headers: new Headers({ "x-forwarded-for": "9.9.9.9" }) };
@@ -199,6 +199,14 @@ describe("a request without an account", () => {
     for (let i = 0; i < WARNINGS_PER_STEP; i++) await recordWarning(fake, { surface: "x402-generate", request: byAddress(withToken), category: "explicit_sexual", text: "x", confidence: 0.9 });
     expect(tables.automod_events.every((r) => r.user_id === null && r.ip_hash === "h:9.9.9.9")).toBe(true);
     expect(await addressWarnedOut(fake, withToken)).toBe(true);
+  });
+
+  it("tells an agent its address is what counts, not an account it does not have", () => {
+    for (const category of ["explicit_sexual", "minor_sexual"] as const) {
+      const text = addressWarningMessage(category);
+      expect(text).toMatch(/Repeated warnings stop requests from this address\.$/);
+      expect(text).not.toMatch(/account|warning \d|suspended/i);
+    }
   });
 
   it("forgets an address's warnings after 30 days", async () => {
