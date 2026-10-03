@@ -128,8 +128,11 @@ export async function POST(request: NextRequest) {
     const silent = warnedOut || check.verdict !== "clear";
     // 18+ (a suggestive prompt, or a prompt marked 18+) is for confirmed adults
     // only; an anonymous visitor cannot confirm.
-    const adult = (check.verdict === "clear" && check.adult === true)
-      || (await promptMarkedAdult(supabaseForChecks, UUID_RE.test(String(body?.promptId ?? "")) ? String(body.promptId) : null));
+    const marked = await promptMarkedAdult(supabaseForChecks, UUID_RE.test(String(body?.promptId ?? "")) ? String(body.promptId) : null);
+    if (marked === null) {
+      return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was generated." }, { status: 503 });
+    }
+    const adult = (check.verdict === "clear" && check.adult === true) || marked;
     if (adult && !(await adultConfirmed(supabaseForChecks, await resolveRecordingUserId(supabaseForChecks, request)))) {
       return NextResponse.json(ADULT_REFUSAL, { status: 403 });
     }

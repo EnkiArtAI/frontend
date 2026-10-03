@@ -385,7 +385,11 @@ export async function POST(req: Request) {
     if (check.verdict !== "clear") {
       return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 });
     }
-    const adult = check.adult === true || (await showsAdultRender(supabase, uploadedPhotos));
+    const shownAdult = await showsAdultRender(supabase, uploadedPhotos);
+    if (shownAdult === null) {
+      return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 });
+    }
+    const adult = check.adult === true || shownAdult;
 
     // Moderation. This route had none: a listed prompt is the one piece of
     // user text we hand to a model on someone else's behalf AND show publicly

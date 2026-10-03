@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 type Row = Record<string, unknown>;
 let tables: Record<string, Row[]>;
+let failingTable: string | null = null;
 
 class Query implements PromiseLike<{ data: unknown; error: null; count?: number }> {
   private filters: ((r: Row) => boolean)[] = [];
@@ -33,7 +34,9 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
   }
   maybeSingle() { this.one = true; return this; }
   single() { this.one = true; return this; }
+  // failingTable: reads of that table fail as an unreachable database's would.
   then<A, B = never>(ok?: ((v: { data: unknown; error: null; count?: number }) => A | PromiseLike<A>) | null, ko?: ((e: unknown) => B | PromiseLike<B>) | null) {
+    if (this.table === failingTable && this.op === "select") return Promise.resolve({ data: null, error: { message: "fetch failed" } as unknown as null }).then(ok, ko);
     const rows = (tables[this.table] ??= []);
     const hits = rows.filter((r) => this.filters.every((f) => f(r)));
     let res: { data: unknown; error: null; count?: number };
@@ -82,6 +85,7 @@ const future = new Date(Date.now() + 86400_000).toISOString();
 const EMAIL_USER = "3a3a3a3a-1111-4222-8333-444455556666";
 
 beforeEach(() => {
+  failingTable = null;
   check.mockReset();
   check.mockResolvedValue({ verdict: "clear" });
   warn.mockClear();
@@ -207,5 +211,13 @@ describe("variables sharing a name", () => {
     const judged = check.mock.calls[0][0] as Record<string, string>;
     expect(judged["variable 1"]).toContain("sheer lingerie");
     expect(judged["variable 2"]).toContain("a red coat");
+  });
+});
+
+describe("a showcase lookup that fails", () => {
+  it("saves nothing rather than a guessed 18+ mark", async () => {
+    failingTable = "generated_images";
+    expect((await save({ ...BASE, uploadedPhotos: ["https://blob/x.png"] })).status).toBe(503);
+    expect(tables.prompts).toEqual([]);
   });
 });

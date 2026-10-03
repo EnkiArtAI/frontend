@@ -127,7 +127,7 @@ describe("the routes", () => {
   });
 
   it("refuse 18+ on the free generator to anyone unconfirmed", () => {
-    expect(FREE).toMatch(/const adult = \(check\.verdict === "clear" && check\.adult === true\)\n/);
+    expect(FREE).toMatch(/const adult = \(check\.verdict === "clear" && check\.adult === true\) \|\| marked;/);
     expect(FREE).toMatch(/if \(adult && !\(await adultConfirmed\(supabaseForChecks, await resolveRecordingUserId\(supabaseForChecks, request\)\)\)\) \{/);
   });
 
@@ -142,8 +142,11 @@ describe("the routes", () => {
   });
 
   it("count a stored prompt's own 18+ mark on every path", () => {
-    expect(HUMAN).toMatch(/\} else if \(paid\.prompt_id\) \{\n\s+promptAdult = await promptMarkedAdult\(getSupabaseServerClient\(\), paid\.prompt_id as string\);/);
-    expect(FREE).toMatch(/\|\| \(await promptMarkedAdult\(supabaseForChecks, UUID_RE\.test\(String\(body\?\.promptId \?\? ""\)\) \? String\(body\.promptId\) : null\)\);/);
+    expect(HUMAN).toMatch(/\} else if \(paid\.prompt_id\) \{\n\s+const marked = await promptMarkedAdult\(getSupabaseServerClient\(\), paid\.prompt_id as string\);/);
+    expect(FREE).toMatch(/const marked = await promptMarkedAdult\(supabaseForChecks, UUID_RE\.test\(String\(body\?\.promptId \?\? ""\)\) \? String\(body\.promptId\) : null\);/);
+    // A mark that cannot be read refuses the request rather than guessing either way.
+    expect(HUMAN).toMatch(/if \(marked === null\) \{\n\s+return NextResponse\.json\(\{ error: "This prompt could not be checked right now\. Nothing was generated and nothing was charged\." \}, \{ status: 503 \}\);/);
+    expect(FREE).toMatch(/if \(marked === null\) \{\n\s+return NextResponse\.json\(\{ error: "This prompt could not be checked right now\. Nothing was generated\." \}, \{ status: 503 \}\);/);
   });
 
   it("mark the images they record", () => {
@@ -155,7 +158,8 @@ describe("the routes", () => {
     const check = SAVE.indexOf("const check = await checkPrompt(judged, { hidden: false, signal: req.signal });");
     expect(check).toBeGreaterThan(-1);
     expect(SAVE.indexOf("const promptRow = {")).toBeGreaterThan(check);
-    expect(SAVE).toMatch(/const adult = check\.adult === true \|\| \(await showsAdultRender\(supabase, uploadedPhotos\)\);/);
+    expect(SAVE).toMatch(/const shownAdult = await showsAdultRender\(supabase, uploadedPhotos\);\n\s+if \(shownAdult === null\) \{/);
+    expect(SAVE).toMatch(/const adult = check\.adult === true \|\| shownAdult;/);
     expect(SAVE).toMatch(/const promptRow = \{\n\s+is_adult: adult,/);
   });
 

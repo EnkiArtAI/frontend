@@ -72,15 +72,15 @@ describe("an 18+ showcase render", () => {
     for (const urls of asked) expect(urls).toEqual(["https://store/c.png"]);
   });
 
-  it("counts a failed lookup as 18+", async () => {
+  it("reports a failed lookup as unknown, never as a mark", async () => {
     const { fake } = lookup({ fail: true });
-    expect(await showsAdultRender(fake, ["https://store/d.png"])).toBe(true);
+    expect(await showsAdultRender(fake, ["https://store/d.png"])).toBeNull();
   });
 });
 
 describe("a stored prompt's mark", () => {
-  it("counts a failed read as 18+", async () => {
+  it("reports a failed read as unknown, never as a mark", async () => {
     const fake = { from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: { message: "fetch failed" } }) }) }) }) } as unknown as SupabaseClient;
-    expect(await promptMarkedAdult(fake, "p1")).toBe(true);
+    expect(await promptMarkedAdult(fake, "p1")).toBeNull();
   });
 });

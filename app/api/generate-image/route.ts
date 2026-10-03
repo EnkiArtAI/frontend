@@ -257,7 +257,11 @@ export async function POST(request: NextRequest) {
       prompt = filled.text;
       promptAdult = text.adult;
     } else if (paid.prompt_id) {
-      promptAdult = await promptMarkedAdult(getSupabaseServerClient(), paid.prompt_id as string);
+      const marked = await promptMarkedAdult(getSupabaseServerClient(), paid.prompt_id as string);
+      if (marked === null) {
+        return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was generated and nothing was charged." }, { status: 503 });
+      }
+      promptAdult = marked;
     }
     if (!prompt) {
       return NextResponse.json({ error: "prompt is required" }, { status: 400 });
