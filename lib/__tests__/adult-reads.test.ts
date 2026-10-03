@@ -88,7 +88,9 @@ describe("the routes", () => {
   it("one prompt answers not found", () => {
     const one = src("app", "api", "prompts", "[id]", "route.ts");
     expect(one).toMatch(/,is_adult"/);
-    expect(one).toMatch(/if \(!prompt \|\| \(prompt\.is_adult && !mayShowAdult\(await viewer\(supabase, req\), prompt\.creator_id\)\)\) \{/);
+    // Its creator, recognised like a save recognises them, still sees it.
+    expect(one).toMatch(/if \(!prompt \|\| \(prompt\.is_adult && !mayShowAdult\(await viewer\(supabase, req\), prompt\.creator_id\) && !\(await owns\(prompt\.creator_id\)\)\)\) \{/);
+    expect(one).toMatch(/const owns = async \(creatorId: unknown\) => \(\(await resolveOwnerIds\(supabase, token\)\) \?\? \[\]\)\.includes\(String\(creatorId\)\);/);
   });
 
   it("a creator's profile, open to its owner", () => {

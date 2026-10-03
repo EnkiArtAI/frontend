@@ -30,6 +30,11 @@ vi.mock("@/lib/session-user", async (orig) => ({
   ...(await orig<typeof import("@/lib/session-user")>()),
   resolveSessionUserId: async (_s: unknown, token: string | null) =>
     ({ "owner-token": "owner-1", "email-token": "email-user" } as Record<string, string>)[token ?? ""] ?? null,
+  // The account, plus the user its address was first mapped to (user_wallets).
+  resolveOwnerIds: async (_s: unknown, token: string | null) =>
+    token === "owner-token" ? ["owner-1"]
+    : token === "email-token" ? ["email-user", ...(tables.user_wallets ?? []).map((w) => String(w.user_id))]
+    : null,
 }));
 
 import { GET as feed } from "../../app/api/marketplace/prompts/route";
@@ -91,6 +96,13 @@ describe("the prompt detail route", () => {
     tables.user_wallets = [{ user_id: "phantom-1" }];
     const draft = { ...showcase, creator_id: "phantom-1", is_listed: false, listing_status: "draft" };
     expect((await detailOf(draft, "email-token")).publicPromptText).toBe("the full free text");
+  });
+
+  it("shows an email creator their own 18+ prompt owned through their first address mapping", async () => {
+    tables.user_wallets = [{ user_id: "phantom-1" }];
+    const adult = { ...showcase, creator_id: "phantom-1", is_adult: true };
+    expect((await detailOf(adult, "email-token"))?.title).toBe("Free");
+    expect(await detailOf(adult, "owner-token")).toBeUndefined();
   });
 
   it("never sends the text of an unlisted free prompt", async () => {

@@ -213,10 +213,10 @@ describe("/api/prompts/[id] specifics", () => {
     expect(src).not.toMatch(/backend\/encryption/);
   });
 
-  it("scopes PATCH ownership to creator_id of the resolved account", () => {
-    // creator_id is a users.id uuid: the session is resolved to the account
-    // (an email login carries the id itself), never used as an address.
-    expect(src).toMatch(/resolveSessionUserWithBan\(supabase, req\.headers\.get\("X-Session-Token"\)\)/);
-    expect(src).toMatch(/\.eq\("creator_id", ownerId\);/);
+  it("scopes PATCH ownership to creator_id of the resolved owners", () => {
+    // creator_id is a users.id uuid: the session is resolved to its owners
+    // the way a save resolves them, never used as an address.
+    expect(src).toMatch(/const ids = await resolveOwnerIds\(supabase, req\.headers\.get\("X-Session-Token"\)\);/);
+    expect(src).toMatch(/\.eq\("id", id\)\s*\.in\("creator_id", owners\);/);
   });
 });

@@ -17,6 +17,7 @@ const query = (table: string) => {
     select: () => q,
     update: (p: Row) => { patch = p; return q; },
     eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
+    in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return q; },
     is: () => q,
     maybeSingle: async () => ({ data: prompts.find((r) => filters.every((f) => f(r))) ?? null, error: null }),
     then: (ok: (v: unknown) => unknown) => {
@@ -33,12 +34,11 @@ const warn = vi.fn(async () => ({ total: 1, suspendedUntil: null, nextStepAt: 10
 const tier2 = vi.fn(async () => ({ allowed: true }));
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), after: () => {} }));
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => ({ from: query }) }));
-// "tok" is u1; "email" is an email login (users.id in the session); "banned" is suspended.
-const SESSIONS: Record<string, { userId: string; ban: { id: string } | null }> = {
-  tok: { userId: "u1", ban: null }, email: { userId: "u3", ban: null }, banned: { userId: "u1", ban: { id: "b1" } },
-};
+// "tok" owns as u1; "email" is an email login (users.id u3 in the session)
+// whose address was first mapped to ph3; "banned" is suspended and owns nothing.
+const OWNERS: Record<string, string[] | null> = { tok: ["u1"], email: ["u3", "ph3"], banned: null };
 vi.mock("@/lib/session-user", () => ({
-  resolveSessionUserWithBan: async (_s: unknown, t: string | null) => SESSIONS[t ?? ""] ?? { userId: null, ban: null },
+  resolveOwnerIds: async (_s: unknown, t: string | null) => OWNERS[t ?? ""] ?? null,
 }));
 vi.mock("@/lib/moderation", () => ({ moderate: (...a: unknown[]) => tier2(...(a as [])), CLIENT_BLOCK_MESSAGE: "blocked" }));
 vi.mock("@/lib/moderation-enforcement", () => ({ recordModerationEvent: async () => {} }));
@@ -118,6 +118,12 @@ describe("who edits", () => {
     prompts.push({ id: "p3", creator_id: "u3", title: "Mine" });
     expect((await edit("p3", { published: true }, "email")).status).toBe(200);
     expect(prompts.find((p) => p.id === "p3")?.published_at).toBeTruthy();
+  });
+
+  it("an email login edits a prompt owned through its first address mapping", async () => {
+    prompts.push({ id: "p4", creator_id: "ph3", title: "Old save" });
+    expect((await edit("p4", { title: "Renamed" }, "email")).status).toBe(200);
+    expect(prompts.find((p) => p.id === "p4")?.title).toBe("Renamed");
   });
 
   it("a suspended account edits nothing", async () => {
