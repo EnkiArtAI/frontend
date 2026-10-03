@@ -24,3 +24,20 @@ export function sessionAuthHeaders(): Record<string, string> {
   }
   return {};
 }
+
+/** Where the feed's 18+ pill is kept. */
+export const SHOW_ADULT_KEY = "enki:show-adult";
+
+/**
+ * For reads that show other people's work: the session plus the 18+ pill.
+ * The server still checks the age confirmation behind the pill.
+ */
+export function viewerHeaders(): Record<string, string> {
+  const headers = sessionAuthHeaders();
+  try {
+    if (localStorage.getItem(SHOW_ADULT_KEY) === "1") headers["X-Show-Adult"] = "1";
+  } catch {
+    /* no storage: the safe view */
+  }
+  return headers;
+}

@@ -20,6 +20,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
       .from("prompts")
       .select("title, description, public_prompt_text, is_free_showcase, price_usd_cents")
       .eq("id", id)
+      .eq("is_adult", false) // link previews are public: 18+ gets the brand card
       .maybeSingle();
     if (p?.title) {
       title = `${p.title} · Enki Art`;

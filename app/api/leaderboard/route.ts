@@ -68,11 +68,11 @@ export async function GET(req: NextRequest) {
       ? supabase.rpc(isEarn ? "leaderboard_earn_series" : "leaderboard_gen_series", { p_creators: ids, p_since: since14 })
       : Promise.resolve({ data: [], error: null }),
     podiumIds.length
-      ? supabase.from("prompts").select("id, showcase_images").in("id", podiumIds)
+      ? supabase.from("prompts").select("id, showcase_images, is_adult").in("id", podiumIds)
       : Promise.resolve({ data: [], error: null }),
     podiumIds.length
       ? supabase.from("generated_images").select("prompt_id, thumbnail_url, storage_url, created_at")
-          .in("prompt_id", podiumIds).is("deleted_at", null).order("created_at", { ascending: false }).limit(30)
+          .in("prompt_id", podiumIds).is("deleted_at", null).eq("is_adult", false).order("created_at", { ascending: false }).limit(30)
       : Promise.resolve({ data: [], error: null }),
     isEarn && ids.length
       ? (() => {
@@ -98,14 +98,18 @@ export async function GET(req: NextRequest) {
   }
   const trendReady = !seriesRes.error;
 
+  // The Hall of Fame is public: an 18+ prompt keeps its rank but shows no
+  // image, not even one of its renders.
   const images = new Map<string, string>();
-  for (const p of (showcaseRes.data ?? []) as { id: string; showcase_images: unknown }[]) {
+  const adult = new Set<string>();
+  for (const p of (showcaseRes.data ?? []) as { id: string; showcase_images: unknown; is_adult: boolean | null }[]) {
+    if (p.is_adult) { adult.add(p.id); continue; }
     const u = firstShowcase(p.showcase_images);
     if (u) images.set(p.id, u);
   }
   for (const g of (genImgRes.data ?? []) as { prompt_id: string; thumbnail_url: string | null; storage_url: string | null }[]) {
     const u = g.thumbnail_url || g.storage_url;
-    if (u && !images.has(g.prompt_id)) images.set(g.prompt_id, u);
+    if (u && !images.has(g.prompt_id) && !adult.has(g.prompt_id)) images.set(g.prompt_id, u);
   }
 
   const promptCounts = new Map<string, Set<string>>();

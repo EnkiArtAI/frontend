@@ -1,6 +1,6 @@
 "use client";
 
-import { sessionAuthHeaders } from "@/lib/session-headers";
+import { sessionAuthHeaders, viewerHeaders } from "@/lib/session-headers";
 import { fetchGenerationQuote, toModelFamily } from "@/lib/generation-checkout";
 import { runGeneration } from "@/lib/generation/run-generation";
 import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
@@ -606,7 +606,7 @@ export default function PromptGeneratorView({
     queryKey: genQueryKey,
     queryFn: async () => {
       if (!userKey) return {};
-      const res = await fetch(`/api/generations?userId=${encodeURIComponent(userKey)}&limit=20`);
+      const res = await fetch(`/api/generations?userId=${encodeURIComponent(userKey)}&limit=20`, { headers: viewerHeaders() });
       return res.ok ? res.json() : {};
     },
     enabled: !!userKey,

@@ -28,6 +28,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       .from("prompts")
       .select("title, showcase_images, price_usd_cents, is_free_showcase, creator_id, aspect_ratio")
       .eq("id", id)
+      .eq("is_adult", false) // link previews are public: 18+ gets the brand card
       .maybeSingle();
     p = (data as Row | null) ?? null;
     if (p?.creator_id) {

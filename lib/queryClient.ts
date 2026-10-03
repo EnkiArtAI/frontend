@@ -1,4 +1,5 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { viewerHeaders } from "@/lib/session-headers";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -53,6 +54,7 @@ export const getQueryFn: <T>(options: {
       try {
         const url = queryKey[0] as string;
         const res = await fetch(url, {
+          headers: viewerHeaders(),
           credentials: "include",
         });
 

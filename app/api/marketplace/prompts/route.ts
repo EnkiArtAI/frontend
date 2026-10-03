@@ -6,6 +6,7 @@ import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { hideAdult, viewer } from "@/lib/adult-content";
 import { z } from "zod";
 
 const marketplaceFiltersSchema = z.object({
@@ -207,9 +208,10 @@ export async function GET(request: NextRequest) {
          reads its Released tab through the SAME query and mapping as the
          feed, so the two can never drift. Unknown handle → empty list. */
       const creator = searchParams.get("creator");
+      let creatorId: string | null = null;
       if (creator) {
         const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        let creatorId = creator;
+        creatorId = creator;
         if (!UUID.test(creator)) {
           const { data: u } = await supabase
             .from("users").select("id").eq("handle", creator).maybeSingle();
@@ -217,6 +219,9 @@ export async function GET(request: NextRequest) {
         }
         dbQuery = dbQuery.eq("creator_id", creatorId);
       }
+      // 18+ only for a confirmed adult with the pill on; an artist's own shelf
+      // always shows it.
+      dbQuery = hideAdult(dbQuery, await viewer(supabase, request), creatorId);
 
       if (category) {
         dbQuery = dbQuery.eq("category", category);

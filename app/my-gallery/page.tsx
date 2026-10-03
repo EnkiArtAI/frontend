@@ -1,5 +1,5 @@
 "use client";
-import { sessionAuthHeaders } from "@/lib/session-headers";
+import { sessionAuthHeaders, viewerHeaders } from "@/lib/session-headers";
 import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useEffect, useMemo, useState } from "react";
@@ -71,7 +71,7 @@ export default function MyGalleryPage() {
       const local = listCreations(userKey);
 
       try {
-        const res = await fetch(`/api/generations?userId=${encodeURIComponent(userKey)}&limit=100`);
+        const res = await fetch(`/api/generations?userId=${encodeURIComponent(userKey)}&limit=100`, { headers: viewerHeaders() });
         if (!res.ok) {
           const errBody = await res.json().catch(() => ({}));
           throw new Error(errBody.error || `Server responded with ${res.status}`);

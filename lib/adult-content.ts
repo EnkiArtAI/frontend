@@ -24,13 +24,25 @@ export async function adultConfirmed(supabase: SupabaseClient, userId: string | 
   return Boolean(data?.adult_confirmed_at);
 }
 
+type Viewer = { userId: string | null; showAdult: boolean };
+
 /** Who is looking, and whether they may see 18+. A lookup that fails shows the safe view. */
 export async function viewer(
   supabase: SupabaseClient,
   req: { headers: { get(name: string): string | null } },
-): Promise<{ userId: string | null; showAdult: boolean }> {
+): Promise<Viewer> {
   const token = req.headers.get("X-Session-Token");
   const userId = token ? await resolveSessionUserId(supabase, token).catch(() => null) : null;
   const wants = req.headers.get(SHOW_ADULT_HEADER) === "1";
   return { userId, showAdult: wants && (await adultConfirmed(supabase, userId).catch(() => false)) };
+}
+
+/** 18+ shows to a viewer who may see it, and to its owner. */
+export function mayShowAdult(v: Viewer, ownerId?: string | null): boolean {
+  return v.showAdult || (ownerId != null && ownerId === v.userId);
+}
+
+/** Leaves 18+ rows out of a read unless `mayShowAdult`. */
+export function hideAdult<Q extends { eq(column: string, value: boolean): Q }>(query: Q, v: Viewer, ownerId?: string | null): Q {
+  return mayShowAdult(v, ownerId) ? query : query.eq("is_adult", false);
 }

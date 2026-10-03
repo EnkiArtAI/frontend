@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { decryptString } from "@/lib/crypto";
 import { requireAuth } from "@/lib/auth";
+import { mayShowAdult, viewer } from "@/lib/adult-content";
 
 type PatchBody = {
   title?: string;
@@ -38,7 +39,7 @@ const VAR_TYPE_FROM_DB: Record<string, string> = {
 };
 
 export async function GET(
-  _: Request,
+  req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params;
@@ -53,14 +54,15 @@ export async function GET(
     const { data: prompt, error } = await supabase
       .from("prompts")
       .select(
-        "id,title,encrypted_content,encrypted_content_iv,encrypted_content_tag,encrypted_content_kid,creator_id,category,tags,ai_model,ai_settings,price_usd_cents,aspect_ratio,photo_count,prompt_type,showcase_images,resolution,is_free_showcase,is_listed,listing_status,public_prompt_text,description,published_at,created_at,updated_at"
+        "id,title,encrypted_content,encrypted_content_iv,encrypted_content_tag,encrypted_content_kid,creator_id,category,tags,ai_model,ai_settings,price_usd_cents,aspect_ratio,photo_count,prompt_type,showcase_images,resolution,is_free_showcase,is_listed,listing_status,public_prompt_text,description,published_at,created_at,updated_at,is_adult"
       )
       .eq("id", id)
       .maybeSingle();
 
     if (error) throw error;
 
-    if (!prompt) {
+    // 18+ answers like a missing prompt to anyone who may not see it.
+    if (!prompt || (prompt.is_adult && !mayShowAdult(await viewer(supabase, req), prompt.creator_id))) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
 
