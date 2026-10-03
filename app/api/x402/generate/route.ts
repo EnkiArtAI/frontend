@@ -34,6 +34,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { computeQuote } from "@/lib/payments/generation-quote";
+import { checkAgentPromptInputs } from "@/lib/generation/agent-prompt-inputs";
 import {
   getModelCostMicro, computeGenerationSplit, UnknownModelError,
 } from "@/lib/payments/generation-pricing";
@@ -116,6 +117,10 @@ async function requirementsFor(input: Input): Promise<Requirements> {
   let description: string;
   if (input.promptId) {
     const supabase = getSupabaseServerClient();
+    // Refused here, so the 402 probe already says no, and no payment is ever
+    // asked for a draft or for inputs a paid prompt does not take.
+    const inputs = await checkAgentPromptInputs(supabase, input.promptId, input.variableValues);
+    if (!inputs.ok) return { status: inputs.status, body: { error: inputs.error } };
     const quote = await computeQuote(supabase, {
       promptId: input.promptId,
       modelFamily: input.modelFamily,
@@ -215,9 +220,15 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   let promptText = input.prompt ?? "";
   let promptAdult = false;
   if (input.promptId) {
+    // Only a live prompt is for sale, and every value must belong to a
+    // declared variable and fit it, so an agent never pays for an input that
+    // is ignored (agent-prompt-inputs). The fitted values then fill the
+    // artist's text exactly as the human rail fills it.
+    const inputs = await checkAgentPromptInputs(supabase, input.promptId, input.variableValues);
+    if (!inputs.ok) return NextResponse.json({ error: inputs.error }, { status: inputs.status });
     const text = await loadPromptText(supabase, input.promptId);
     if (!text.ok) return NextResponse.json({ error: text.error }, { status: text.status });
-    const filled = fillVariables(text.text, input.variableValues, text.variables);
+    const filled = fillVariables(text.text, Object.fromEntries(inputs.values), text.variables);
     if (inputsUnmatched(filled)) {
       return NextResponse.json({ error: "This prompt's inputs could not be matched to its text — nothing was charged" }, { status: 422 });
     }

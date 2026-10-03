@@ -1,3 +1,5 @@
+import { isPublicText } from "@/lib/prompt-visibility";
+
 export type EnkiArtwork = {
   url: string;
   width: number;
@@ -182,7 +184,16 @@ export function mapMarketplacePromptToEnkiPrompt(prompt: unknown, index = 0): En
     rating: Number(readNumber(record.avgRating) ?? readNumber(record.rating) ?? readNumber(reviews.averageRating) ?? 0),
     likes: Number(readNumber(record.likes) ?? 0),
     isVideo: String(readString(record.category) || readString(record.promptType) || "").toLowerCase().includes("video") || Boolean(record.isVideo),
-    visibility: record.visibility === "vars-only" || record.type === "premium" ? "vars-only" : "full",
+    // "full" shows the prompt's words, lets the viewer copy and edit them, and
+    // composes the generation from them; only a free prompt may. Feed records
+    // never carried visibility or type, so every paid prompt opened as free,
+    // with its stored excerpt on screen.
+    visibility:
+      record.visibility !== "vars-only" &&
+      record.type !== "premium" &&
+      isPublicText({ prompt_type: record.promptType, is_free_showcase: record.isFreeShowcase })
+        ? "full"
+        : "vars-only",
     art,
     versions: [1, 2, 3, 4].map((offset) => imageFromUnknown(previewImages[offset] || showcaseImages[offset])),
     variables,

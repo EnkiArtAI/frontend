@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { decryptString } from "@/lib/crypto";
-import { resolveSessionUserWithBan } from "@/lib/session-user";
+import { isListed, isPublicText } from "@/lib/prompt-visibility";
+import { resolveOwnerIds, resolveSessionUserId, resolveSessionUserWithBan } from "@/lib/session-user";
 import { mayShowAdult, viewer } from "@/lib/adult-content";
 import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
@@ -58,7 +59,7 @@ export async function GET(
     const { data: prompt, error } = await supabase
       .from("prompts")
       .select(
-        "id,title,encrypted_content,encrypted_content_iv,encrypted_content_tag,encrypted_content_kid,creator_id,category,tags,ai_model,ai_settings,price_usd_cents,aspect_ratio,photo_count,prompt_type,showcase_images,resolution,is_free_showcase,is_listed,listing_status,public_prompt_text,description,published_at,created_at,updated_at,is_adult"
+        "id,title,encrypted_content,encrypted_content_iv,encrypted_content_tag,encrypted_content_kid,creator_id,category,tags,ai_model,ai_settings,price_usd_cents,aspect_ratio,photo_count,prompt_type,showcase_images,resolution,is_free_showcase,is_listed,listing_status,deleted_at,public_prompt_text,description,published_at,created_at,updated_at,is_adult"
       )
       .eq("id", id)
       .maybeSingle();
@@ -117,30 +118,36 @@ export async function GET(
     });
 
     const dbPromptType = String(prompt.prompt_type ?? "");
-    const isFree =
-      dbPromptType === "showcase" ||
-      dbPromptType === "free" ||
-      prompt.is_free_showcase === true;
 
-    // Free/showcase prompts show their full text; decryption goes through
-    // lib/crypto's keyring (the kid names the key that wrote the row). Paid
-    // prompts only ever expose the stored public excerpt.
-    let publicPromptText: string | undefined =
-      typeof prompt.public_prompt_text === "string"
-        ? prompt.public_prompt_text
-        : undefined;
-    if (isFree && prompt.encrypted_content) {
-      try {
-        publicPromptText = decryptString({
-          encrypted: String(prompt.encrypted_content),
-          iv: String(prompt.encrypted_content_iv),
-          authTag: String(prompt.encrypted_content_tag),
-          kid: prompt.encrypted_content_kid
-            ? String(prompt.encrypted_content_kid)
-            : undefined,
-        });
-      } catch (decryptError) {
-        console.warn("Failed to decrypt free prompt content:", decryptError);
+    // Text only for a free prompt, and then in full (decrypted through
+    // lib/crypto's keyring). A paid prompt's body is the artist's secret: its
+    // buyers see the variables, never the words. An unlisted prompt's text is
+    // nobody's business but its creator's yet, who may preview it. Ownership
+    // is checked the way a save checks it: an email creator's prompt may sit
+    // with the user their address was first mapped to.
+    const token = req.headers.get("X-Session-Token");
+    const viewerId = isPublicText(prompt) && !isListed(prompt) ? await resolveSessionUserId(supabase, token) : null;
+    const isOwner =
+      viewerId !== null &&
+      (prompt.creator_id === viewerId ||
+        ((await resolveOwnerIds(supabase, token)) ?? []).includes(String(prompt.creator_id)));
+    let publicPromptText: string | undefined;
+    if (isPublicText(prompt) && (isListed(prompt) || isOwner)) {
+      publicPromptText =
+        typeof prompt.public_prompt_text === "string" ? prompt.public_prompt_text : undefined;
+      if (prompt.encrypted_content) {
+        try {
+          publicPromptText = decryptString({
+            encrypted: String(prompt.encrypted_content),
+            iv: String(prompt.encrypted_content_iv),
+            authTag: String(prompt.encrypted_content_tag),
+            kid: prompt.encrypted_content_kid
+              ? String(prompt.encrypted_content_kid)
+              : undefined,
+          });
+        } catch (decryptError) {
+          console.warn("Failed to decrypt free prompt content:", decryptError);
+        }
       }
     }
 

@@ -136,6 +136,9 @@ export async function generateImageWithPollinations(
       seed: String(seed),
       enhance: 'true',
       model,
+      // Kept out of Pollinations' public feed: the prompt is in the URL, and
+      // a paid prompt's text is the artist's secret.
+      private: 'true',
     });
     // nologo is a paid-tier feature; asking for it anonymously is noise.
     if (token) params.set('nologo', 'true');
@@ -147,6 +150,8 @@ export async function generateImageWithPollinations(
     const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?${params.toString()}`;
 
     console.log(`[Pollinations] Generating image: ${width}x${height}${token ? ' (token)' : ' (anonymous)'}`);
+    // Length only: a paid prompt's text is the artist's secret, and logs are
+    // read by everyone with access to the deployment.
     console.log(`[Pollinations] Prompt: ${prompt.length} chars`);
 
     // Fetch the image to get the buffer (Pollinations returns the image directly)

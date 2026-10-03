@@ -17,6 +17,7 @@ import { z } from "zod";
 import { requireAuth, checkRateLimit } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { mayShowAdult, viewer } from "@/lib/adult-content";
+import { isPublicText } from "@/lib/prompt-visibility";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import {
   buildDiceMessages,
@@ -52,7 +53,7 @@ const variableSchema = z.object({
 const bodySchema = z.object({
   /**
    * A SAVED prompt: the server loads its variables from prompt_variables and
-   * its context from public_prompt_text, and whatever the client sent as
+   * its context from its public words (see below), and whatever the client sent as
    * `variables` is ignored. The stored definitions are the authoritative ones
    * — options, ranges and types with full fidelity — and a client cannot
    * widen a select or drop a range by editing its copy.
@@ -113,7 +114,7 @@ export async function POST(req: NextRequest) {
         .order("position"),
       supabase
         .from("prompts")
-        .select("public_prompt_text, is_adult, creator_id")
+        .select("public_prompt_text, prompt_type, is_free_showcase, title, description, is_adult, creator_id")
         .eq("id", parsed.data.promptId)
         .maybeSingle(),
     ]);
@@ -126,9 +127,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Could not load the prompt" }, { status: 500 });
     }
     sourceVars = (rows ?? []).map(rowToDiceVariable);
-    // The stored PUBLIC excerpt, never the encrypted content: a buyer's dice
-    // roll must not carry the artist's secret to a third party.
-    context = (prompt?.public_prompt_text as string | undefined) ?? undefined;
+    // Public words only, never the encrypted content: a buyer's dice roll must
+    // not carry the artist's secret to a third party. A free prompt lends its
+    // excerpt; a paid one only what its card shows, the title and description.
+    context =
+      (prompt && isPublicText(prompt) ? (prompt.public_prompt_text as string | null) : null) ||
+      [prompt?.title, prompt?.description].filter((v): v is string => typeof v === "string" && v.trim() !== "").join(" - ") ||
+      undefined;
   } else if (parsed.data.variables) {
     sourceVars = parsed.data.variables as DiceVariable[];
   } else {

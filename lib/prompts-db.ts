@@ -13,7 +13,6 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { decryptPrompt } from "@/backend/encryption";
 
 export interface DbPrompt {
   id: string;
@@ -76,32 +75,6 @@ export async function getPromptById(
   if (error) throw error;
   if (!data) return undefined;
   return mapPromptRow(data as Record<string, unknown>);
-}
-
-/**
- * Fetch a prompt plus its decrypted content. Undefined when not found.
- */
-export async function getPromptDecrypted(
-  supabase: SupabaseClient,
-  id: string
-): Promise<(DbPrompt & { decryptedContent: string }) | undefined> {
-  const { data, error } = await supabase
-    .from("prompts")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
-
-  if (error) throw error;
-  if (!data) return undefined;
-
-  const row = data as Record<string, unknown>;
-  const decryptedContent = decryptPrompt({
-    encryptedContent: String(row.encrypted_content ?? ""),
-    iv: String(row.iv ?? ""),
-    authTag: String(row.auth_tag ?? ""),
-  });
-
-  return { ...mapPromptRow(row), decryptedContent };
 }
 
 /**

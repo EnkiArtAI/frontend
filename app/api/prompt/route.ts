@@ -6,7 +6,8 @@ import { recordModerationEvent } from "@/lib/moderation-enforcement";
 import { checkPrompt, savedPromptInputs } from "@/lib/moderation/prompt-check";
 import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { showsAdultRender } from "@/lib/adult-content";
-import { resolveSessionUserWithBan } from "@/lib/session-user";
+import { resolveOwnerIds, resolveSessionUserId, resolveSessionUserWithBan } from "@/lib/session-user";
+import { isPublicText } from "@/lib/prompt-visibility";
 
 type VariableType =
   | "text"
@@ -231,34 +232,6 @@ async function resolveCreatorId(
   return created.id;
 }
 
-// Ownership scope for updates: the users.id mapped via user_wallets.
-// creator_id is a uuid column, so the raw wallet address (which the dead
-// user_id column historically also held) can never belong in the filter —
-// a non-uuid value in .in() is a Postgres type error, not a miss. Unlike
-// resolveCreatorId this never creates rows: an update on a prompt you don't
-// own must fail, not mint a user. null = no valid session; [] = a session
-// with no user row, which owns nothing.
-async function resolveOwnerIds(
-  supabase: ReturnType<typeof getSupabaseServerClient>,
-  req: Request,
-): Promise<string[] | null> {
-  const token = req.headers.get("X-Session-Token");
-  if (!token) return null;
-  // The same resolution as everywhere else, so an email session owns the
-  // prompts it created; a banned session owns nothing it may change.
-  const { userId, ban } = await resolveSessionUserWithBan(supabase, token);
-  if (ban) return null;
-  if (userId) return [userId];
-  // A live session whose wallet maps to no user owns no prompts.
-  const { data: session } = await supabase
-    .from("auth_sessions")
-    .select("token")
-    .eq("token", token)
-    .gt("expires_at", new Date().toISOString())
-    .maybeSingle();
-  return session ? [] : null;
-}
-
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as SaveBody;
@@ -300,6 +273,8 @@ export async function POST(req: Request) {
        a model overwrote the creator's pick with it. Absent on an update now
        leaves the stored value; absent on a new prompt is refused below. */
     const aiModel = typeof body.aiModel === "string" ? body.aiModel.trim() : "";
+    const dbPromptType = PROMPT_TYPE_TO_DB[clientPromptType] ?? clientPromptType;
+    const isFreeShowcase = Boolean(body.isFreeShowcase ?? false);
     /* Every [slot] in the text must be a DEFINED variable WITH a value.
        The showcase image is generated from those values, and a prompt whose
        slots have none shows buyers raw brackets next to an image that
@@ -349,7 +324,7 @@ export async function POST(req: Request) {
     // PATCH route) but is shown with the prompt, so an update judges it too.
     let storedDescription: string | null = null;
     if (body.id) {
-      const owners = await resolveOwnerIds(supabase, req);
+      const owners = await resolveOwnerIds(supabase, req.headers.get("X-Session-Token"));
       if (!owners) {
         return NextResponse.json({ error: "Authentication required" }, { status: 401 });
       }
@@ -428,11 +403,16 @@ export async function POST(req: Request) {
         typeof body.price === "number" ? Math.round(body.price * 100) : 100,
       aspect_ratio: body.aspectRatio ?? null,
       photo_count: typeof body.photoCount === "number" ? body.photoCount : 1,
-      prompt_type: PROMPT_TYPE_TO_DB[clientPromptType] ?? clientPromptType,
+      prompt_type: dbPromptType,
       showcase_images: uploadedPhotos,
       resolution: body.resolution ?? null,
-      is_free_showcase: Boolean(body.isFreeShowcase ?? false),
-      public_prompt_text: body.content.slice(0, 220),
+      is_free_showcase: isFreeShowcase,
+      // The first 220 characters, verbatim: only a free prompt may carry its
+      // text in the clear. A paid prompt's body is the artist's secret, and a
+      // draft's is nobody else's business.
+      public_prompt_text: isPublicText({ prompt_type: dbPromptType, is_free_showcase: isFreeShowcase })
+        ? body.content.slice(0, 220)
+        : null,
       updated_at: nowIso,
       /* Lineage (Kev, 2026-08-24): a prompt built via "put prompt to
          editor" records its parent. The key is added only when a valid
@@ -562,6 +542,14 @@ export async function GET(req: Request) {
 
     const supabase = getSupabaseServerClient();
 
+    // Owner only: this returns the decrypted body, which is the creator's
+    // secret (a paid prompt's buyers see its variables, never its text). It
+    // answered anyone who knew an id, and listed ids are public.
+    const userId = await resolveSessionUserId(supabase, req.headers.get("X-Session-Token"));
+    if (!userId) {
+      return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+    }
+
     const { data: prompt, error: promptError } = await supabase
       .from("prompts")
       .select(
@@ -574,7 +562,13 @@ export async function GET(req: Request) {
       throw promptError;
     }
 
-    if (!prompt) {
+    // Someone else's prompt answers like a missing one: no decrypt, and no
+    // confirmation that the id exists. Ownership is also checked the way a
+    // save checks it (resolveOwnerIds): a prompt an email session saved before
+    // its wallet was attached is owned through that session's own mapping.
+    const owners =
+      prompt && prompt.creator_id !== userId ? ((await resolveOwnerIds(supabase, req.headers.get("X-Session-Token"))) ?? []) : [];
+    if (!prompt || (prompt.creator_id !== userId && !owners.includes(String(prompt.creator_id)))) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
 

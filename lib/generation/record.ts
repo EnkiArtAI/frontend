@@ -113,7 +113,9 @@ async function ensurePromptRow(
     .from("prompts")
     .insert({
       creator_id: userId,
-      title: prompt.slice(0, 60).trim() || "Untitled",
+      // Never derived from the prompt: the body is encrypted at rest, and a
+      // title made of its first words would carry them in the clear.
+      title: "Untitled",
       tags: [],
       ...sealed,
       ai_model: model.name,

@@ -13,6 +13,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { isListed } from "@/lib/prompt-visibility";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TREND_DAYS = 14;
@@ -63,13 +64,13 @@ export async function GET(req: NextRequest) {
   // ── best-effort extras, fetched in parallel ──
   const since14 = new Date(Date.now() - TREND_DAYS * DAY_MS).toISOString();
   const podiumIds = raw.slice(0, 3).map((r) => r.best_prompt_id).filter(Boolean) as string[];
-  const bestIds = raw.map((r) => r.best_prompt_id).filter(Boolean) as string[];
+  const bestIds = [...new Set(raw.map((r) => r.best_prompt_id).filter(Boolean))] as string[];
   const [seriesRes, showcaseRes, genImgRes, purchRes] = await Promise.all([
     ids.length
       ? supabase.rpc(isEarn ? "leaderboard_earn_series" : "leaderboard_gen_series", { p_creators: ids, p_since: since14 })
       : Promise.resolve({ data: [], error: null }),
     bestIds.length
-      ? supabase.from("prompts").select("id, showcase_images, is_adult, is_listed").in("id", bestIds)
+      ? supabase.from("prompts").select("id, showcase_images, is_adult, is_listed, listing_status, deleted_at").in("id", bestIds)
       : Promise.resolve({ data: [], error: null }),
     podiumIds.length
       ? supabase.from("generated_images").select("prompt_id, thumbnail_url, storage_url, created_at")
@@ -108,8 +109,8 @@ export async function GET(req: NextRequest) {
   const hidden = new Set<string>();
   // Unable to tell which prompts are 18+ or unreleased: show none of them.
   if (showcaseRes.error) bestIds.forEach((id) => hidden.add(id));
-  for (const p of (showcaseRes.data ?? []) as { id: string; showcase_images: unknown; is_adult: boolean | null; is_listed: boolean | null }[]) {
-    if (p.is_adult || !p.is_listed) { hidden.add(p.id); continue; }
+  for (const p of (showcaseRes.data ?? []) as { id: string; showcase_images: unknown; is_adult: boolean | null; is_listed: boolean | null; listing_status: string | null; deleted_at: string | null }[]) {
+    if (p.is_adult || !isListed(p)) { hidden.add(p.id); continue; }
     const u = firstShowcase(p.showcase_images);
     if (u && podiumIds.includes(p.id)) images.set(p.id, u);
   }
