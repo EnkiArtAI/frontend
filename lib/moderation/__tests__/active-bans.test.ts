@@ -12,7 +12,9 @@ const ROOT = join(__dirname, "..", "..", "..");
 describe("an expired suspension is not a ban", () => {
   it("for the child-safety auto-ban", () => {
     const src = readSource(join(ROOT, "lib", "moderation-enforcement.ts"));
-    expect(src).toMatch(/await banUntil\(supabase, \{\n\s+userId, issuedBy, expiresAt: null,/);
+    expect(src).toMatch(/await banUntil\(supabase, \{ userId, issuedBy, expiresAt: null, reason: "Automated: child-safety classifier" \}\);/);
+    // The event that caused it is linked, its evidence with it.
+    expect(src).toMatch(/if \(issued\?\.id && eventId\) await supabase\.from\("automod_events"\)\.update\(\{ ban_id: issued\.id \}\)\.eq\("id", eventId\);/);
     expect(src).not.toMatch(/if \(await activeBanFor\(supabase, userId\)\) return;/);
   });
 

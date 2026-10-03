@@ -25,6 +25,14 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
   is(c: string, v: null) { this.filters.push((r) => (r[c] ?? null) === v); return this; }
   gte(c: string, v: string) { this.filters.push((r) => String(r[c]) >= v); return this; }
   maybeSingle() { return this; }
+  limit() { return this; }
+  order() { return this; }
+  or(expr: string) {
+    // Only the active-ban shape is used: "expires_at.is.null,expires_at.gt.<iso>".
+    const iso = expr.split("expires_at.gt.")[1];
+    this.filters.push((r) => r.expires_at == null || String(r.expires_at) > iso);
+    return this;
+  }
   then<A, B = never>(ok?: ((v: { data: unknown; error: null }) => A | PromiseLike<A>) | null, ko?: ((e: unknown) => B | PromiseLike<B>) | null) {
     return Promise.resolve(this.run()).then(ok, ko);
   }
@@ -229,5 +237,15 @@ describe("a suspension that cannot be written", () => {
       outcome = await recordWarning(failing, { surface: "generate-image", request: user, category: "explicit_sexual", text: "t", confidence: 0.9 });
     }
     expect(outcome).toMatchObject({ total: WARNINGS_PER_STEP, suspendedUntil: null });
+  });
+});
+
+describe("a banned account that keeps going", () => {
+  it("collects at most one row per ladder step, however long it goes on", async () => {
+    for (let i = 0; i < 30; i++) {
+      await recordWarning(fake, { surface: "generate-free", request: user, category: "minor_sexual", text: "t", confidence: 0.9 });
+    }
+    expect(tables.bans.length).toBeLessThanOrEqual(SUSPENSION_LADDER_DAYS.length);
+    expect(new Set(tables.bans.map((b) => b.reason)).size).toBe(tables.bans.length);
   });
 });

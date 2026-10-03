@@ -2,8 +2,9 @@
  * One rule for every ban that lands on a running one: each sanction is its
  * own row, never merged into another, so each keeps its reason and its
  * appeal, and lifting one (an approved appeal) leaves the others in force.
- * Only the same sanction again (same reason) while one already lasts as long
- * adds nothing. activeBanFor reports the ban that lasts longest, so a shorter
+ * Only the same sanction again (an active ban with the same reason, which is
+ * why automated reasons carry no counters) that lasts as long adds nothing:
+ * the rows a user can collect stay bounded. activeBanFor reports the ban that lasts longest, so a shorter
  * row never hides a longer one. Dropping a ban that ended no later let it
  * vanish with the one it was dropped for, on that one's appeal.
  */
@@ -26,8 +27,21 @@ export async function banUntil(
   ban: { userId: string; issuedBy: string; reason: string; expiresAt: string | null },
 ): Promise<{ id: string | null; until: string | null; issued: boolean } | null> {
   const running = await activeBanFor(supabase, ban.userId);
-  if (running && running.reason === ban.reason && laterEnd(running.expiresAt, ban.expiresAt) === running.expiresAt) {
-    return { id: running.id, until: running.expiresAt, issued: false };
+  // Any active row of this sanction, not only the longest ban: several
+  // sources take turns being the newest row.
+  const { data: same, error: sameErr } = await supabase
+    .from("bans")
+    .select("id, expires_at")
+    .eq("user_id", ban.userId)
+    .eq("reason", ban.reason)
+    .is("lifted_at", null)
+    .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+    .order("expires_at", { ascending: false, nullsFirst: true })
+    .limit(1);
+  if (sameErr) return null;
+  const covering = (same ?? [])[0] as { id: string; expires_at: string | null } | undefined;
+  if (covering && laterEnd(covering.expires_at ?? null, ban.expiresAt) === (covering.expires_at ?? null)) {
+    return { id: String(covering.id), until: running?.expiresAt ?? covering.expires_at ?? null, issued: false };
   }
   const until = running ? laterEnd(running.expiresAt, ban.expiresAt) : ban.expiresAt;
   const { data, error } = await supabase

@@ -24,6 +24,13 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
   is(c: string, v: null) { this.filters.push((r) => (r[c] ?? null) === v); return this; }
   gte(c: string, v: string) { this.filters.push((r) => String(r[c]) >= v); return this; }
   limit() { return this; }
+  order() { return this; }
+  or(expr: string) {
+    // Only the active-ban shape is used: "expires_at.is.null,expires_at.gt.<iso>".
+    const iso = expr.split("expires_at.gt.")[1];
+    this.filters.push((r) => r.expires_at == null || String(r.expires_at) > iso);
+    return this;
+  }
   maybeSingle() { return this; }
   single() { return this; }
   then<A, B = never>(ok?: ((v: { data: unknown; error: null; count?: number }) => A | PromiseLike<A>) | null, ko?: ((e: unknown) => B | PromiseLike<B>) | null) {
@@ -193,11 +200,20 @@ describe("a ban on top of a running suspension", () => {
     expect(tables.bans[1].expires_at ?? null).toBeNull();
   });
 
-  it("adds nothing when the same ban already runs, and links the event only to a ban it issued", async () => {
+  it("adds nothing when the same ban already runs, and links the event to it", async () => {
     tables.bans.push({ id: "perm", user_id: "buyer-1", lifted_at: null, expires_at: null, reason: "Automated: repeated violations of the Terms of Service" });
     for (let i = 0; i < EXTRACTION_HITS_TO_BLOCK; i++) await hit(buyer);
     expect(tables.bans).toHaveLength(1);
-    expect(tables.automod_events.every((e) => e.ban_id == null)).toBe(true);
+    expect(tables.automod_events.some((e) => e.ban_id === "perm")).toBe(true);
+  });
+
+  it("adds nothing for the same ban even when another source's row is newer", async () => {
+    tables.bans.push(
+      { id: "perm", user_id: "buyer-1", lifted_at: null, expires_at: null, reason: "Automated: repeated violations of the Terms of Service", created_at: "2026-10-01" },
+      { id: "council", user_id: "buyer-1", lifted_at: null, expires_at: null, reason: "Council: spam", created_at: "2026-10-03" },
+    );
+    for (let i = 0; i < EXTRACTION_HITS_TO_BLOCK + 3; i++) await hit(buyer);
+    expect(tables.bans).toHaveLength(2);
   });
 
   it("is its own row beside a different permanent ban, so that one's appeal cannot lift it", async () => {

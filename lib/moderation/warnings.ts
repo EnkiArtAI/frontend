@@ -98,7 +98,9 @@ export async function recordWarning(
   if (userId && stepNow > stepBefore) {
     const days = SUSPENSION_LADDER_DAYS[Math.min(stepNow, SUSPENSION_LADDER_DAYS.length) - 1];
     const expiresAt = days === null ? null : new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
-    const suspended = await suspend(supabase, userId, expiresAt, `Automated: ${total} warnings (${ctx.category}), step ${stepNow}`);
+    // A stable reason per step: past the last step every one is the same
+    // sanction, so a banned account cannot pile up rows (lib/moderation/bans.ts).
+    const suspended = await suspend(supabase, userId, expiresAt, `Automated: warnings, step ${Math.min(stepNow, SUSPENSION_LADDER_DAYS.length)}`);
     // A running longer ban stays as it is; the outcome reports the real end.
     if (suspended) outcome.suspendedUntil = suspended.until ?? "forever";
   }

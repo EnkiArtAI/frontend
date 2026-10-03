@@ -88,7 +88,7 @@ export async function recordModerationEvent(
       }
     }
 
-    await supabase.from("automod_events").insert({
+    const { data: event } = await supabase.from("automod_events").insert({
       user_id: userId,
       ip_hash: hashIp(getClientIp(ctx.request)),
       surface: ctx.surface,
@@ -111,9 +111,9 @@ export async function recordModerationEvent(
       // Only the ambiguous band reaches a human. Everything else is recorded
       // and forgotten unless a pattern shows up in the numbers.
       review_state: verdict.enforcement === "review" ? "pending" : "none",
-    });
+    }).select("id").single();
 
-    if (userId) await maybeAutoBan(supabase, userId, verdict);
+    if (userId) await maybeAutoBan(supabase, userId, verdict, (event?.id as string | undefined) ?? null);
   } catch {
     /* recording is best-effort by design */
   }
@@ -138,6 +138,7 @@ async function maybeAutoBan(
   supabase: NonNullable<ReturnType<typeof getSupabaseServerClientSafe>>,
   userId: string,
   verdict: ModerationVerdict,
+  eventId: string | null,
 ): Promise<void> {
   const minors = verdict.scores?.["sexual/minors"] ?? 0;
   if (verdict.tier !== 2 || minors < AUTO_BAN_MINORS_SCORE) return;
@@ -156,9 +157,9 @@ async function maybeAutoBan(
 
   // For good, as its own row beside any running ban (lib/moderation/bans.ts):
   // skipping it let this ban vanish when a 3-day suspension ended.
-  await banUntil(supabase, {
-    userId, issuedBy, expiresAt: null,
-    reason: `Automated: sexual/minors ${minors.toFixed(2)} (automod ${verdict.promptHash.slice(0, 12)})`,
-  });
+  // A stable reason, so a repeat adds no row; the event that caused it is
+  // linked through ban_id, its evidence with it.
+  const issued = await banUntil(supabase, { userId, issuedBy, expiresAt: null, reason: "Automated: child-safety classifier" });
+  if (issued?.id && eventId) await supabase.from("automod_events").update({ ban_id: issued.id }).eq("id", eventId);
   console.warn("[automod] auto-ban issued", { userId, minors });
 }
