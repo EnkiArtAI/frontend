@@ -49,11 +49,12 @@ describe("the human rail", () => {
     expect(at).toBeGreaterThan(HUMAN.indexOf('return NextResponse.json({ error: "Authentication required" }, { status: 401 });'));
     expect(at).toBeGreaterThan(HUMAN.indexOf("consumedIntent = { supabase, id: intentId, mode: redemption.mode };"));
     expect(HUMAN.indexOf("generateImagesWithWaveSpeed(shared)")).toBeGreaterThan(at);
-    expect(HUMAN).toMatch(/if \(silent\) \{\n[\s\S]{0,400}await releaseIfConsumed\(\);\n\s+await releaseHeldSlot\(\);\n\s+return silentFailure\(\);/);
+    expect(HUMAN).toMatch(/if \(silent\) \{\n[\s\S]{0,600}const answer = await silentFailure\(\);\n\s+await releaseIfConsumed\(\);\n\s+await releaseHeldSlot\(\);\n\s+return answer;/);
   });
 
   it("has no other, earlier silent answer", () => {
-    expect(HUMAN.split("return silentFailure();").length - 1).toBe(1);
+    expect(HUMAN.split("await silentFailure()").length - 1).toBe(1);
+    expect(HUMAN.split("return silentFailure();").length - 1).toBe(0);
     expect(AGENT.split("return silentFailure();").length - 1).toBe(1);
     expect(FREE.split("return silentFailure();").length - 1).toBe(1);
   });

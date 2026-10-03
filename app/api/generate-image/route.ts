@@ -577,9 +577,12 @@ export async function POST(request: NextRequest) {
       if (check.verdict === "extraction") {
         after(recordExtractionHit(getSupabaseServerClient(), { surface: "generate-image", request, values: checked, confidence: check.confidence }));
       }
+      // The wait comes first: a provider failure holds the claim and the slot
+      // until it answers, so a second request meanwhile must see them taken.
+      const answer = await silentFailure();
       await releaseIfConsumed();
       await releaseHeldSlot();
-      return silentFailure();
+      return answer;
     }
 
     // Boost picks WHERE the model runs, never which model. WaveSpeed hosts
