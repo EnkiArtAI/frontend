@@ -71,6 +71,11 @@ describe("the prompt check", () => {
     expect(await checkPrompt(INPUT, { hidden: false })).toEqual({ verdict: "clear", adult: true });
   });
 
+  it("marks 18+ alongside a caught extraction too, so the 18+ refusal cannot tell them apart", async () => {
+    scored({ extraction: 0.9, sexual_suggestive: 0.85 });
+    expect(await checkPrompt(INPUT, { hidden: true })).toEqual({ verdict: "extraction", confidence: 0.9, adult: true });
+  });
+
   it("does not mark a doubtfully suggestive prompt 18+", async () => {
     scored({ sexual_suggestive: 0.6 });
     expect(await checkPrompt(INPUT, { hidden: false })).toEqual({ verdict: "clear" });

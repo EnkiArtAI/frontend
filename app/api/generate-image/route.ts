@@ -297,8 +297,12 @@ export async function POST(request: NextRequest) {
 
     // 18+ (a suggestive prompt, or a prompt marked 18+) is for confirmed adults
     // only, refused before anything is charged.
-    const adult = (check.verdict === "clear" && check.adult === true) || promptAdult;
+    // Whatever else the check found, so the refusal never depends on it.
+    const adult = ("adult" in check && check.adult === true) || promptAdult;
     if (adult && !(await adultConfirmed(getSupabaseServerClient(), await resolveRecordingUserId(getSupabaseServerClient(), request)))) {
+      if (check.verdict === "extraction") {
+        after(recordExtractionHit(getSupabaseServerClient(), { surface: "generate-image", request, values: checked, confidence: check.confidence }));
+      }
       return NextResponse.json(ADULT_REFUSAL, { status: 403 });
     }
 

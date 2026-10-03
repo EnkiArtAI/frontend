@@ -60,7 +60,7 @@ describe("the human rail", () => {
   });
 
   it("counts a caught attempt only once it got that far", () => {
-    expect(HUMAN.indexOf("recordExtractionHit(")).toBeGreaterThan(HUMAN.indexOf("    if (silent) {"));
+    expect(HUMAN.lastIndexOf("recordExtractionHit(")).toBeGreaterThan(HUMAN.indexOf("    if (silent) {"));
   });
 
   it("answers anything else that is refused with the ordinary failure", () => {

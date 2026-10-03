@@ -246,7 +246,13 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
   const silent = blocked || check.verdict !== "clear";
   // An agent cannot confirm it is an adult, so 18+ is never generated for one.
-  if ((check.verdict === "clear" && check.adult) || promptAdult) return NextResponse.json(AGENT_ADULT_REFUSAL, { status: 403 });
+  // Whatever else the check found, so the refusal never depends on it.
+  if (("adult" in check && check.adult) || promptAdult) {
+    if (!blocked && check.verdict === "extraction") {
+      after(recordExtractionHit(supabase, { surface: "x402-generate", request, values: checked, confidence: check.confidence }));
+    }
+    return NextResponse.json(AGENT_ADULT_REFUSAL, { status: 403 });
+  }
 
   // For a marketplace prompt the check saw only the agent's values, so tier 2
   // keeps its sexual flag for the artist's text.

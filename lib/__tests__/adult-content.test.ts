@@ -119,7 +119,9 @@ describe("the routes", () => {
 
   it("refuse 18+ to an unconfirmed buyer before the charge", () => {
     const refuse = HUMAN.indexOf("return NextResponse.json(ADULT_REFUSAL, { status: 403 });");
-    expect(HUMAN).toMatch(/const adult = \(check\.verdict === "clear" && check\.adult === true\) \|\| promptAdult;/);
+    expect(HUMAN).toMatch(/const adult = \("adult" in check && check\.adult === true\) \|\| promptAdult;/);
+    // A refusal on 18+ still counts the extraction attempt it refuses.
+    expect(HUMAN).toMatch(/if \(check\.verdict === "extraction"\) \{\n\s+after\(recordExtractionHit\([^\n]+\n\s+\}\n\s+return NextResponse\.json\(ADULT_REFUSAL, \{ status: 403 \}\);/);
     expect(refuse).toBeGreaterThan(-1);
     expect(HUMAN.indexOf("await claimForGeneration(")).toBeGreaterThan(refuse);
   });
@@ -130,7 +132,7 @@ describe("the routes", () => {
   });
 
   it("never generate 18+ for an agent", () => {
-    expect(AGENT).toMatch(/if \(\(check\.verdict === "clear" && check\.adult\) \|\| promptAdult\) return NextResponse\.json\(AGENT_ADULT_REFUSAL, \{ status: 403 \}\);/);
+    expect(AGENT).toMatch(/if \(\("adult" in check && check\.adult\) \|\| promptAdult\) \{\n\s+if \(!blocked && check\.verdict === "extraction"\) \{\n\s+after\(recordExtractionHit\([^\n]+\n\s+\}\n\s+return NextResponse\.json\(AGENT_ADULT_REFUSAL, \{ status: 403 \}\);/);
   });
 
   it("let tier 2 defer to the prompt check only where it saw the whole text", () => {

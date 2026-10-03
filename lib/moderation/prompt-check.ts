@@ -40,7 +40,10 @@ export const PROMPT_CHECK_INSTRUCTION = [
 
 export type PromptCheckVerdict =
   | { verdict: "clear"; adult?: true }
-  | { verdict: "minor_sexual" | "explicit_sexual" | "extraction"; confidence: number }
+  // adult travels with an extraction verdict too: an 18+ refusal that came
+  // only when nothing else was caught would tell the caller that it was.
+  | { verdict: "extraction"; confidence: number; adult?: true }
+  | { verdict: "minor_sexual" | "explicit_sexual"; confidence: number }
   | { verdict: "unavailable"; reason: string };
 
 function apiKey(): string | null {
@@ -136,9 +139,10 @@ export async function checkPrompt(
     // The gravest finding wins: a child-safety hit is never reported as anything else.
     if (p.minor_sexual >= PROMPT_CHECK_MIN_CONFIDENCE) return { verdict: "minor_sexual", confidence: p.minor_sexual };
     if (p.explicit_sexual >= PROMPT_CHECK_MIN_CONFIDENCE) return { verdict: "explicit_sexual", confidence: p.explicit_sexual };
-    if (hidden && p.extraction >= PROMPT_CHECK_MIN_CONFIDENCE) return { verdict: "extraction", confidence: p.extraction };
+    const adult = p.sexual_suggestive >= PROMPT_CHECK_MIN_CONFIDENCE ? { adult: true as const } : {};
+    if (hidden && p.extraction >= PROMPT_CHECK_MIN_CONFIDENCE) return { verdict: "extraction", confidence: p.extraction, ...adult };
     // Suggestive is allowed, for adults: the image is marked 18+.
-    return p.sexual_suggestive >= PROMPT_CHECK_MIN_CONFIDENCE ? { verdict: "clear", adult: true } : { verdict: "clear" };
+    return { verdict: "clear", ...adult };
   } catch (e) {
     return { verdict: "unavailable", reason: e instanceof Error ? e.name : "error" };
   }
