@@ -7,7 +7,7 @@
  * functions enforcement uses, so the list shows exactly what suspends.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { weightSince } from "@/lib/moderation/warnings";
+import { ADDRESS_WINDOW_MS, weightSince } from "@/lib/moderation/warnings";
 import { hitsSince } from "@/lib/moderation/extraction-hits";
 import { activeBanFor } from "@/lib/session-user";
 
@@ -63,8 +63,10 @@ export function laterEnd(running: string | null, next: string | null): string | 
 
 /** A child-safety case that was not overturned: lifting this user's ban is an admin's call. */
 export async function hasChildSafetyCase(supabase: SupabaseClient, userId: string): Promise<boolean> {
-  return (await count(supabase.from("automod_events").select("id", { count: "exact", head: true })
-    .eq("user_id", userId).in("category", CHILD_SAFETY).neq("review_state", "overturned"))) > 0;
+  const { count: n, error } = await supabase.from("automod_events").select("id", { count: "exact", head: true })
+    .eq("user_id", userId).in("category", CHILD_SAFETY).neq("review_state", "overturned");
+  // A read that failed counts as a case: lifting is refused, never allowed blind.
+  return Boolean(error) || (n ?? 0) > 0;
 }
 
 export async function listPeople(supabase: SupabaseClient): Promise<Person[]> {
@@ -88,12 +90,14 @@ export async function listPeople(supabase: SupabaseClient): Promise<Person[]> {
     const id = "userId" in who ? { userId: who.userId, ipHash: null } : { userId: null, ipHash: who.ipHash };
     const events = () => scope(supabase.from("automod_events").select("id", { count: "exact", head: true }).eq("decision", "block"), who);
     const [warnings, extractionHits, pending, childSafety, failed7d, ban] = await Promise.all([
-      weightSince(supabase, id),
+      // An address is judged over 30 days, as addressWarnedOut judges it.
+      weightSince(supabase, id, id.userId ? undefined : new Date(Date.now() - ADDRESS_WINDOW_MS).toISOString()),
       hitsSince(supabase, id),
       count(events().eq("review_state", "pending")),
       count(events().in("category", CHILD_SAFETY).neq("review_state", "overturned")),
       count(scope(supabase.from("generation_failures").select("id", { count: "exact", head: true }).gte("created_at", weekAgo), who)),
-      id.userId ? activeBanFor(supabase, id.userId) : Promise.resolve(null),
+      // One unreachable read must not take the whole admin panel down with it.
+      id.userId ? activeBanFor(supabase, id.userId).catch(() => null) : Promise.resolve(null),
     ]);
     const user = ((users ?? []) as Row[]).find((u) => u.id === id.userId);
     return {

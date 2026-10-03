@@ -12,6 +12,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 type Row = Record<string, unknown>;
 let tables: Record<string, Row[]>;
+/** Tables whose reads fail as an unreachable database would. */
+let failing = new Set<string>();
 const WEEK = 7 * 86400_000;
 
 /** The view moderation_people, as migrations/2026-10-03-generation-failures.sql defines it. */
@@ -62,6 +64,9 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
   limit(n: number) { this.cap = n; return this; }
   maybeSingle() { this.one = true; return this; }
   then<A, B = never>(ok?: ((v: { data: unknown; error: null; count?: number }) => A | PromiseLike<A>) | null, ko?: ((e: unknown) => B | PromiseLike<B>) | null) {
+    if (failing.has(this.table)) {
+      return Promise.resolve({ data: null, error: { message: "TypeError: fetch failed" } as unknown as null, count: undefined }).then(ok, ko);
+    }
     const source = this.table === "moderation_people" ? moderationPeople() : (tables[this.table] ??= []);
     let rows = source.filter((r) => this.filters.every((f) => f(r)));
     if (this.patch) { rows.forEach((r) => Object.assign(r, this.patch)); return Promise.resolve({ data: null, error: null }).then(ok, ko); }
@@ -92,6 +97,7 @@ const ev = (user: string | null, category: string, extra: Row = {}): Row => ({
 });
 
 beforeEach(() => {
+  failing = new Set();
   tables = {
     automod_events: [], generation_failures: [], bans: [], appeals: [], models: [{ id: "m1", name: "GPT Image 2" }],
     users: [
@@ -323,5 +329,44 @@ describe("the council's ban", () => {
     const { join } = await import("node:path");
     const SRC = readSource(join(__dirname, "..", "..", "app", "api", "admin", "route.ts"));
     expect(SRC).toMatch(/const end = laterEnd\(\(active\[0\]\.expires_at as string \| null\) \?\? null, until\);\n\s+if \(end !== active\[0\]\.expires_at\) \{/);
+  });
+});
+
+describe("when the database fails", () => {
+  const post = (token: string, body: unknown) => POST(new NextRequest("http://enki.test/api/admin", {
+    method: "POST", headers: { "X-Session-Token": token, "Content-Type": "application/json" }, body: JSON.stringify(body),
+  }));
+
+  it("the list still answers, without the suspension it could not read", async () => {
+    tables.automod_events.push(ev("u1", "explicit_sexual"));
+    failing.add("bans");
+    expect((await listPeople(fake))[0]).toMatchObject({ key: "u1", warnings: 1, suspension: null });
+  });
+
+  it("a child-safety check that cannot read counts as a case", async () => {
+    failing.add("automod_events");
+    expect(await hasChildSafetyCase(fake, "u1")).toBe(true);
+  });
+
+  it("an appeal whose ban cannot be read is not approved", async () => {
+    tables.appeals.push({ id: "a1", target_type: "ban", target_uuid: "b1", status: "pending" });
+    failing.add("bans");
+    expect((await post("mod-tok", { resource: "appeals", action: "approve", id: "a1" })).status).toBe(500);
+    expect(tables.appeals[0].status).toBe("pending");
+  });
+});
+
+describe("someone without an account", () => {
+  it("is counted over the last 30 days, as enforcement counts them", async () => {
+    tables.automod_events.push(
+      ev(null, "explicit_sexual", { ip_hash: HASH, created_at: ago(40) }),
+      ev(null, "explicit_sexual", { ip_hash: HASH, created_at: ago(2) }),
+    );
+    expect((await listPeople(fake)).find((p) => p.key === `ip:${HASH}`)?.warnings).toBe(1);
+  });
+
+  it("while an account keeps every warning it ever got", async () => {
+    tables.automod_events.push(ev("u1", "explicit_sexual", { created_at: ago(40) }), ev("u1", "explicit_sexual", { created_at: ago(2) }));
+    expect((await listPeople(fake))[0].warnings).toBe(2);
   });
 });

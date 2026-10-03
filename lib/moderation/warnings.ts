@@ -24,7 +24,7 @@ export const SUSPENSION_LADDER_DAYS: readonly (number | null)[] = [3, 7, 30, 60,
 export const WARNING_WEIGHT = { explicit_sexual: 1, minor_sexual: 10 } as const;
 export type WarningCategory = keyof typeof WARNING_WEIGHT;
 const CATEGORIES = Object.keys(WARNING_WEIGHT);
-const ADDRESS_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+export const ADDRESS_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 type Req = { headers: { get(name: string): string | null } };
 

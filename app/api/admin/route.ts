@@ -632,7 +632,8 @@ export async function POST(req: NextRequest) {
     }
     const approve = body.action === "approve";
     if (approve && ap.target_type !== "strike" && role !== "admin") {
-      const { data: ban } = await supabase.from("bans").select("user_id").eq("id", ap.target_uuid).maybeSingle();
+      const { data: ban, error: banErr } = await supabase.from("bans").select("user_id").eq("id", ap.target_uuid).maybeSingle();
+      if (banErr) return fail(banErr, "check the appealed ban");
       if (ban && (await hasChildSafetyCase(supabase, String(ban.user_id)))) {
         return NextResponse.json({ error: "Only an admin can lift a ban after a child-safety case" }, { status: 403 });
       }
