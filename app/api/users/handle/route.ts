@@ -47,10 +47,11 @@ export async function GET(req: NextRequest) {
         : Promise.resolve({ count: null as number | null }),
     ]);
     if (res.error) {
-      // users.role doesn't exist until the roles migration ran — degrade to
-      // handle-only rather than misreporting handle=null (would re-trigger the
-      // first-login name picker for everyone).
-      const fb = await supabase.from("users").select("handle").eq("id", userId).maybeSingle();
+      // A column the full read names may be missing (a migration not run yet,
+      // a stale schema cache). Keep handle and role, which exist: dropping the
+      // role locked every beta user out at the gate, and a null handle would
+      // re-trigger the first-login name picker for everyone.
+      const fb = await supabase.from("users").select("handle, role").eq("id", userId).maybeSingle();
       row = fb.data;
     } else {
       row = res.data;

@@ -10,15 +10,22 @@ import { readSource } from "@/lib/__tests__/_read-source";
  */
 
 let row: Record<string, unknown> | null;
+let missingColumn = false;
 const updates: Record<string, unknown>[] = [];
 
 function chain() {
+  let cols = "";
   const q: Record<string, unknown> = {
-    maybeSingle: async () => ({ data: row, error: null }),
+    // missingColumn: the full read names a column the live table lacks (42703).
+    maybeSingle: async () => (missingColumn && cols.includes("adult_confirmed_at")
+      ? { data: null, error: { code: "42703", message: "column does not exist" } }
+      // Only the selected columns come back, as from PostgREST.
+      : { data: row && cols ? Object.fromEntries(cols.split(",").map((c) => c.trim()).map((c) => [c, row![c]])) : row, error: null }),
+    select: (c: string) => { cols = c ?? ""; return q; },
     update: (u: Record<string, unknown>) => { updates.push(u); return q; },
     then: (ok: (v: unknown) => unknown) => Promise.resolve({ data: null, error: null, count: 0 }).then(ok),
   };
-  for (const m of ["select", "eq"]) q[m] = () => q;
+  q.eq = () => q;
   return q;
 }
 
@@ -33,6 +40,7 @@ const patch = (body: unknown) => PATCH(new NextRequest("http://enki.test/api/use
 
 beforeEach(() => {
   row = { handle: "kev", role: "user", adult_confirmed_at: null };
+  missingColumn = false;
   updates.length = 0;
 });
 
@@ -46,6 +54,15 @@ describe("the own account", () => {
   it("reads as unconfirmed before that", async () => {
     const res = await GET(new NextRequest("http://enki.test/api/users/handle", { headers: { "X-Session-Token": "tok" } }));
     expect((await res.json()).adultConfirmed).toBe(false);
+  });
+});
+
+describe("a profile read that fails on a missing column", () => {
+  it("keeps the role, so beta users are not locked out", async () => {
+    row = { handle: "kev", role: "beta" };
+    missingColumn = true;
+    const res = await GET(new NextRequest("http://enki.test/api/users/handle", { headers: { "X-Session-Token": "tok" } }));
+    expect(await res.json()).toMatchObject({ handle: "kev", role: "beta" });
   });
 });
 
