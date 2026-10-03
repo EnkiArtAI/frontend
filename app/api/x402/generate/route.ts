@@ -330,9 +330,10 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // not the request was caught.
   const simulated = await simulatePayment(solanaConnection(), parsed.tx);
   // A payment that already landed is answered as the replay it is, so an
-  // agent retrying after a timeout is not told to pay again: AlreadyProcessed
-  // while its blockhash is fresh, the signature history after that.
-  if (!simulated.ok && (simulated.error.includes("AlreadyProcessed") || (await paymentLanded(solanaConnection(), signature)))) {
+  // agent retrying after a timeout is not told to pay again. One lookup, the
+  // signature history, which also covers the recent cache, and which counts
+  // only a payment that landed without an error.
+  if (!simulated.ok && (await paymentLanded(solanaConnection(), signature))) {
     return NextResponse.json({ error: "This payment transaction was already settled", transaction: signature }, { status: 409 });
   }
   if (!simulated.ok) {
