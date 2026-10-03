@@ -16,6 +16,7 @@ describe("the admin panel's idea of an active ban", () => {
   });
 
   it("lets a new ban follow an expired one", () => {
-    expect(SRC).toMatch(/\.eq\("user_id", targetId\)\.is\("lifted_at", null\)\.or\(unexpired\(\)\)\.limit\(1\);/);
+    // banUntil reads the running ban through activeBanFor, which skips run-out ones.
+    expect(SRC).toMatch(/const issued = await banUntil\(supabase, \{\n\s+userId: targetId, issuedBy: userId,/);
   });
 });

@@ -20,8 +20,9 @@ describe("an expired suspension is not a ban", () => {
 
   it("for a council decision and a manual ban", () => {
     const admin = readSource(join(ROOT, "app", "api", "admin", "route.ts"));
-    expect(admin).toMatch(/\.eq\("user_id", String\(p\.target_user_id\)\)\.is\("lifted_at", null\)\.or\(unexpired\(\)\)/);
-    expect(admin).toMatch(/\.eq\("user_id", targetId\)\.is\("lifted_at", null\)\.or\(unexpired\(\)\)/);
+    // Both go through banUntil, which reads the running ban with activeBanFor.
+    expect(admin).toMatch(/await banUntil\(supabase, \{\n\s+userId: String\(p\.target_user_id\),/);
+    expect(admin).toMatch(/await banUntil\(supabase, \{\n\s+userId: targetId,/);
     expect(admin).toMatch(/const unexpired = \(\) => `expires_at\.is\.null,expires_at\.gt\.\$\{new Date\(\)\.toISOString\(\)\}`;/);
   });
 });

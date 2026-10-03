@@ -21,7 +21,7 @@ import { resolveSessionUserId } from "@/lib/session-user";
 import { decryptString, encryptString, type EncryptedPayload } from "@/lib/crypto";
 import { notifyAdmins } from "@/lib/admin-notify";
 import { CHILD_SAFETY, hasChildSafetyCase, listPeople, parsePersonKey, personDetail } from "@/lib/admin/people";
-import { laterEnd } from "@/lib/moderation/bans";
+import { banUntil } from "@/lib/moderation/bans";
 
 /** A ban counts while it is not lifted and has not run out, as activeBanFor reads it. */
 const unexpired = () => `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`;
@@ -160,21 +160,12 @@ async function executeProposal(supabase: Supabase, p: ProposalRow, now: string):
     if (error) return error;
   } else {
     const until = p.kind === "ban_perm" ? null : new Date(Date.now() + Number(p.days ?? 7) * 86400_000).toISOString();
-    const { data: active } = await supabase.from("bans")
-      .select("id, expires_at").eq("user_id", String(p.target_user_id)).is("lifted_at", null).or(unexpired()).limit(1);
-    if (active?.length) {
-      // Never a second ban on top: the running one is extended to the later end.
-      const end = laterEnd((active[0].expires_at as string | null) ?? null, until);
-      if (end !== active[0].expires_at) {
-        const { error } = await supabase.from("bans").update({ expires_at: end }).eq("id", active[0].id);
-        if (error) return error;
-      }
-    } else {
-      const { error } = await supabase.from("bans").insert({
-        user_id: String(p.target_user_id), issued_by: String(p.proposed_by), scope: "full", reason, expires_at: until,
-      });
-      if (error) return error;
-    }
+    // Its own row when it ends later than a running ban (lib/moderation/bans.ts),
+    // so each keeps its reason and appeal; nothing new when it ends no later.
+    const issued = await banUntil(supabase, {
+      userId: String(p.target_user_id), issuedBy: String(p.proposed_by), reason, expiresAt: until,
+    }).catch(() => null);
+    if (!issued) return { message: "the ban could not be issued" };
   }
   const { error } = await supabase.from("mod_proposals")
     .update({ status: "approved", decided_at: now, executed_at: now }).eq("id", String(p.id));
@@ -593,24 +584,16 @@ export async function POST(req: NextRequest) {
       const days = Number.isInteger(body.days) && body.days! >= 1 && body.days! <= 365 ? body.days! : null;
       if (!permanent && !days) return NextResponse.json({ error: "days (1–365) or permanent required" }, { status: 400 });
       const until = permanent ? null : new Date(Date.now() + days! * 86400_000).toISOString();
-      const { data: active } = await supabase.from("bans")
-        .select("id, expires_at").eq("user_id", targetId).is("lifted_at", null).or(unexpired()).limit(1);
-      if (active?.length) {
-        // Extend the running ban to the later end instead of stacking a second one.
-        const running = (active[0].expires_at as string | null) ?? null;
-        const end = laterEnd(running, until);
-        if (end === running) {
-          return NextResponse.json({ error: running ? `Already banned until ${running.slice(0, 10)}` : "Already banned for good" }, { status: 400 });
-        }
-        const { error } = await supabase.from("bans").update({ expires_at: end }).eq("id", active[0].id);
-        return error ? fail(error, "extend the ban") : NextResponse.json({ ok: true });
+      // Its own row when it ends later than a running ban, so each keeps its
+      // reason and appeal; refused when a running ban already lasts as long.
+      const issued = await banUntil(supabase, {
+        userId: targetId, issuedBy: userId, reason: (body.reason ?? "Banned from the admin panel").slice(0, 200), expiresAt: until,
+      }).catch(() => null);
+      if (!issued) return fail(null, "ban the user");
+      if (!issued.issued) {
+        return NextResponse.json({ error: issued.until ? `Already banned until ${issued.until.slice(0, 10)}` : "Already banned for good" }, { status: 400 });
       }
-      const { error } = await supabase.from("bans").insert({
-        user_id: targetId, issued_by: userId, scope: "full",
-        reason: (body.reason ?? "Banned from the admin panel").slice(0, 200),
-        expires_at: permanent ? null : new Date(Date.now() + days! * 86400_000).toISOString(),
-      });
-      return error ? fail(error, "ban the user") : NextResponse.json({ ok: true });
+      return NextResponse.json({ ok: true });
     }
     if (body.action === "lift") {
       // A ban that follows a child-safety case is an admin's to lift, like the case itself.

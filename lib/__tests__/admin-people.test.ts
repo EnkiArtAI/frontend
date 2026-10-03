@@ -48,6 +48,9 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
   constructor(private table: string) {}
   select(_c?: string, o?: { head?: boolean }) { if (o?.head) this.countOnly = true; return this; }
   update(p: Row) { this.patch = p; return this; }
+  private added: Row | null = null;
+  insert(p: Row) { this.added = p; return this; }
+  single() { this.one = true; return this; }
   filter(c: string, op: string, v: unknown) { return op === "is" ? this.is(c, v as null) : this.eq(c, v); }
   eq(c: string, v: unknown) { this.filters.push((r) => r[c] === v); return this; }
   neq(c: string, v: unknown) { this.filters.push((r) => r[c] !== v); return this; }
@@ -69,6 +72,11 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
     }
     const source = this.table === "moderation_people" ? moderationPeople() : (tables[this.table] ??= []);
     let rows = source.filter((r) => this.filters.every((f) => f(r)));
+    if (this.added) {
+      const row = { id: `${this.table}-${(tables[this.table] ??= []).length + 1}`, created_at: new Date().toISOString(), ...this.added };
+      tables[this.table].push(row);
+      return Promise.resolve({ data: this.one ? { id: row.id } : [row], error: null }).then(ok, ko);
+    }
     if (this.patch) { rows.forEach((r) => Object.assign(r, this.patch)); return Promise.resolve({ data: null, error: null }).then(ok, ko); }
     for (const [c, asc] of [...this.sorts].reverse()) {
       rows = [...rows].sort((a, b) => (asc ? 1 : -1) * (String(a[c]) < String(b[c]) ? -1 : String(a[c]) > String(b[c]) ? 1 : 0));
@@ -298,11 +306,13 @@ describe("the admin route, more", () => {
     method: "POST", headers: { "X-Session-Token": token, "Content-Type": "application/json" }, body: JSON.stringify(body),
   }));
 
-  it("extends a running 3-day suspension when a 30-day ban follows", async () => {
-    tables.bans.push({ id: "b1", user_id: "u1", lifted_at: null, expires_at: ago(-3), created_at: ago(0) });
+  it("lands a 30-day ban beside a running 3-day suspension, each keeping its own row", async () => {
+    const short = ago(-3);
+    tables.bans.push({ id: "b1", user_id: "u1", lifted_at: null, expires_at: short, created_at: ago(0), reason: "ladder" });
     expect((await post("admin-tok", { resource: "bans", action: "ban", userId: "u1", days: 30 })).status).toBe(200);
-    expect(tables.bans).toHaveLength(1);
-    expect(String(tables.bans[0].expires_at) > ago(-29)).toBe(true);
+    expect(tables.bans).toHaveLength(2);
+    expect(tables.bans[0]).toMatchObject({ expires_at: short, reason: "ladder" });
+    expect(String(tables.bans[1].expires_at) > ago(-29)).toBe(true);
   });
 
   it("says so when the running ban already lasts longer", async () => {
@@ -328,7 +338,9 @@ describe("the council's ban", () => {
     const { readSource } = await import("@/lib/__tests__/_read-source");
     const { join } = await import("node:path");
     const SRC = readSource(join(__dirname, "..", "..", "app", "api", "admin", "route.ts"));
-    expect(SRC).toMatch(/const end = laterEnd\(\(active\[0\]\.expires_at as string \| null\) \?\? null, until\);\n\s+if \(end !== active\[0\]\.expires_at\) \{/);
+    expect(SRC).toMatch(/const issued = await banUntil\(supabase, \{\n\s+userId: String\(p\.target_user_id\), issuedBy: String\(p\.proposed_by\), reason, expiresAt: until,/);
+    // A ban that could not be issued leaves the proposal unexecuted.
+    expect(SRC).toMatch(/\}\)\.catch\(\(\) => null\);\n\s+if \(!issued\) return \{ message: "the ban could not be issued" \};/);
   });
 });
 
