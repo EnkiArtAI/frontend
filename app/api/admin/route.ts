@@ -572,7 +572,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Only the moderation owner can reveal an artist's text." }, { status: 403 });
     }
     const { data: ev } = await supabase.from("automod_events")
-      .select("id, surface, category, ban_id, evidence_ct, evidence_iv, evidence_tag, evidence_kid").eq("id", body.id).maybeSingle();
+      .select("id, surface, category, scores, ban_id, evidence_ct, evidence_iv, evidence_tag, evidence_kid").eq("id", body.id).maybeSingle();
     if (!ev) return NextResponse.json({ error: "Event not found" }, { status: 404 });
     if (!inWarningOrBanList(ev)) {
       return NextResponse.json({ error: "Only a warning, an extraction hit or a record behind a ban can be opened." }, { status: 403 });

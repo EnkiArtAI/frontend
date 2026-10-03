@@ -18,10 +18,13 @@ export const CHILD_SAFETY = ["minor_sexual", "sexual/minors", "csam"];
 /**
  * The warning and ban list: warnings, extraction hits and any record behind
  * a ban. The one place an artist's withheld words may be opened, by the
- * moderation owner (Kev, 2026-10-03).
+ * moderation owner (Kev, 2026-10-03). A warning is a record with weight,
+ * which only recordWarning writes: the word list files its plain blocks
+ * under the same category names and punishes nobody.
  */
-export function inWarningOrBanList(r: { category?: unknown; ban_id?: unknown }): boolean {
-  return Object.keys(WARNING_WEIGHT).includes(String(r.category)) || r.category === "extraction" || r.ban_id != null;
+export function inWarningOrBanList(r: { category?: unknown; scores?: unknown; ban_id?: unknown }): boolean {
+  const weight = Number((r.scores as { weight?: unknown } | null)?.weight) || 0;
+  return (Object.keys(WARNING_WEIGHT).includes(String(r.category)) && weight > 0) || r.category === "extraction" || r.ban_id != null;
 }
 const PEOPLE_LIMIT = 50;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;

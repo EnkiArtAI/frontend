@@ -46,7 +46,13 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
   private one = false;
   private patch: Row | null = null;
   constructor(private table: string) {}
-  select(_c?: string, o?: { head?: boolean }) { if (o?.head) this.countOnly = true; return this; }
+  // Only the selected columns come back, as from PostgREST (joins and "*" pass whole rows).
+  private cols: string[] | null = null;
+  select(c?: string, o?: { head?: boolean }) {
+    if (o?.head) this.countOnly = true;
+    if (c && c !== "*" && !c.includes("(")) this.cols = c.split(",").map((x) => x.trim());
+    return this;
+  }
   update(p: Row) { this.patch = p; return this; }
   private added: Row | null = null;
   insert(p: Row) { this.added = p; return this; }
@@ -82,6 +88,8 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
       rows = [...rows].sort((a, b) => (asc ? 1 : -1) * (String(a[c]) < String(b[c]) ? -1 : String(a[c]) > String(b[c]) ? 1 : 0));
     }
     rows = rows.slice(0, this.cap);
+    const cols = this.cols;
+    if (cols) rows = rows.map((r) => Object.fromEntries(cols.map((c) => [c, r[c]])));
     const res = this.countOnly ? { data: null, error: null as null, count: rows.length } : { data: this.one ? rows[0] ?? null : rows, error: null as null };
     return Promise.resolve(res).then(ok, ko);
   }
@@ -134,7 +142,8 @@ describe("revealing an artist's withheld text", () => {
   }));
   const record = (e: Parameters<typeof sealEvidence>[0], surface = "upload") => {
     const s = sealEvidence(e)!;
-    const row = ev("u1", "explicit_sexual", { id: "e-1", surface, evidence_ct: s.encrypted, evidence_iv: s.iv, evidence_tag: s.authTag, evidence_kid: s.kid });
+    // A warning as recordWarning writes it: a strike with weight.
+    const row = ev("u1", "explicit_sexual", { id: "e-1", surface, severity: "strike", evidence_ct: s.encrypted, evidence_iv: s.iv, evidence_tag: s.authTag, evidence_kid: s.kid });
     tables.automod_events.push(row);
     return row;
   };
@@ -219,6 +228,18 @@ describe("revealing an artist's withheld text", () => {
     // The same block behind a ban is in the list.
     tables.automod_events[0].ban_id = "b1";
     expect((await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).status).toBe(200);
+  });
+
+  it("never opens a word-list block filed under a warning's category", async () => {
+    // Tier 1 records "explicit_sexual" with severity log and no weight: a block, not a warning.
+    const row = record({ shown: "{}", withheld: SECRET });
+    Object.assign(row, { severity: "log", scores: null });
+    expect((await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).status).toBe(403);
+    expect(tables.artist_text_reveals).toEqual([]);
+    expect((await personDetail(fake, { userId: "u1" }, () => null)).events[0].revealable).toBe(false);
+    // Nor any record without weight.
+    Object.assign(row, { severity: "strike", scores: null });
+    expect((await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).status).toBe(403);
   });
 
   it("opens an extraction hit", async () => {
