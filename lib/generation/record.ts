@@ -289,7 +289,7 @@ export async function recordGenerationFailure(supabase: SupabaseClient | null, f
   try {
     const userId = await resolveRecordingUserId(supabase, f.request);
     const { getClientIp, hashIp } = await import("@/lib/ip-hash");
-    await supabase.from("generation_failures").insert({
+    const { error } = await supabase.from("generation_failures").insert({
       user_id: userId,
       ip_hash: hashIp(getClientIp(f.request)),
       surface: f.surface,
@@ -305,6 +305,9 @@ export async function recordGenerationFailure(supabase: SupabaseClient | null, f
       intent_id: f.intentId ?? null,
       tx_signature: f.txSignature ?? null,
     });
+    // Best effort, but never silent: a missing table or a bad value would
+    // otherwise lose every row without a trace.
+    if (error) console.warn("[generation-failures] not recorded:", error.message);
   } catch {
     /* recording is best-effort by design */
   }

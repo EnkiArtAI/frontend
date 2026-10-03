@@ -12,10 +12,12 @@ import { readSource } from "@/lib/__tests__/_read-source";
 
 let inserted: Record<string, unknown>[];
 let failInsert = false;
+let rejectInsert = false;
 const fake = {
   from: () => ({
     insert: async (row: Record<string, unknown>) => {
       if (failInsert) throw new Error("db down");
+      if (rejectInsert) return { error: { message: "relation does not exist" } };
       inserted.push(row);
       return { error: null };
     },
@@ -39,9 +41,18 @@ const base = {
 beforeEach(() => {
   inserted = [];
   failInsert = false;
+  rejectInsert = false;
 });
 
 describe("recording a failed generation", () => {
+  it("says so in the log when the database refuses the row", async () => {
+    rejectInsert = true;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await recordGenerationFailure(fake, base);
+    expect(warn).toHaveBeenCalledWith("[generation-failures] not recorded:", "relation does not exist");
+    warn.mockRestore();
+  });
+
   it("keeps who, where and with which settings", async () => {
     await recordGenerationFailure(fake, base);
     expect(inserted[0]).toMatchObject({
