@@ -46,7 +46,8 @@ import {
 import { checkAndRecordSolanaSignature } from "@/backend/solana-x402-verifier";
 import { isSolanaChain } from "@/shared/payment-config";
 import { loadPromptText, fillVariables, inputsUnmatched, VALUE_MAX } from "@/lib/generation/prompt-text";
-import { checkExtraction, textValues } from "@/lib/moderation/prompt-check";
+import { checkPrompt, textValues } from "@/lib/moderation/prompt-check";
+import { addressWarnedOut, recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { agentBlocked, recordExtractionHit, SILENT_FAILURE } from "@/lib/moderation/extraction-hits";
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
@@ -218,21 +219,29 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
       return NextResponse.json({ error: "This prompt's inputs could not be matched to its text — nothing was charged" }, { status: 422 });
     }
     promptText = filled.text;
-
-    // An artist's prompt: the agent's values may try to get its words shown.
-    // Judged on the values alone, before any payment. An address with enough
-    // hits gets no more generations, and every refusal reads like any failure.
-    if (reqs.legs.length > 1) {
-      if (await agentBlocked(supabase, request)) return NextResponse.json(SILENT_FAILURE, { status: 500 });
-      const values = textValues(input.variableValues);
-      const check = await checkExtraction(values);
-      if (check.verdict === "extraction") {
-        after(recordExtractionHit(supabase, { surface: "x402-generate", request, values, confidence: check.confidence }));
-      }
-      if (check.verdict === "unavailable") console.warn("[extraction] check unavailable:", check.reason);
-      if (check.verdict !== "clear") return NextResponse.json(SILENT_FAILURE, { status: 500 });
-    }
   }
+
+  // What the request asks for, judged before any payment: for a marketplace
+  // prompt the agent's values only (an artist's text never goes out for
+  // this), otherwise the whole prompt. An address with enough hits gets no
+  // more; explicit and child-safety requests get a warning, everything else
+  // that is refused reads like any failure.
+  if (await agentBlocked(supabase, request) || await addressWarnedOut(supabase, request)) {
+    return NextResponse.json(SILENT_FAILURE, { status: 500 });
+  }
+  const checked = input.promptId ? textValues(input.variableValues) : { prompt: promptText };
+  const check = await checkPrompt(checked, { hidden: reqs.legs.length > 1 });
+  if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
+    const outcome = await recordWarning(supabase, {
+      surface: "x402-generate", request, category: check.verdict, text: JSON.stringify(checked), confidence: check.confidence,
+    });
+    return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
+  }
+  if (check.verdict === "extraction") {
+    after(recordExtractionHit(supabase, { surface: "x402-generate", request, values: checked, confidence: check.confidence }));
+  }
+  if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
+  if (check.verdict !== "clear") return NextResponse.json(SILENT_FAILURE, { status: 500 });
 
   const verdict = await moderate({ prompt: promptText, surface: "x402-generate" });
   if (!verdict.allowed) {

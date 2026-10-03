@@ -17,7 +17,8 @@ import { toModelFamily } from "@/lib/generation/model-family";
 import { claimForGeneration, type ClaimMode } from "@/lib/payments/generation-claim";
 import { settingMismatch, type StoredSettings } from "@/lib/payments/generation-settings";
 import { loadPromptText, fillVariables, inputsUnmatched, overLong, VALUE_MAX } from "@/lib/generation/prompt-text";
-import { checkExtraction, textValues } from "@/lib/moderation/prompt-check";
+import { checkPrompt, textValues } from "@/lib/moderation/prompt-check";
+import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { recordExtractionHit, SILENT_FAILURE } from "@/lib/moderation/extraction-hits";
 import { captureAndBroadcast, voidAndFlush, sweepAndFlush } from "@/lib/payments/settle";
 import { solanaChainKey } from "@/lib/payments/solana";
@@ -250,17 +251,6 @@ export async function POST(request: NextRequest) {
         );
       }
       prompt = filled.text;
-
-      // The buyer's values may try to get the artist's words shown. Judged on
-      // the values alone, before anything is charged. A hit and an outage of
-      // the check both answer like any failed generation.
-      const values = textValues(body.variableValues);
-      const check = await checkExtraction(values, request.signal);
-      if (check.verdict === "extraction") {
-        after(recordExtractionHit(getSupabaseServerClient(), { surface: "generate-image", request, values, confidence: check.confidence }));
-      }
-      if (check.verdict === "unavailable") console.warn("[extraction] check unavailable:", check.reason);
-      if (check.verdict !== "clear") return NextResponse.json(SILENT_FAILURE, { status: 500 });
     }
     if (!prompt) {
       return NextResponse.json({ error: "prompt is required" }, { status: 400 });
@@ -277,6 +267,26 @@ export async function POST(request: NextRequest) {
     if (!fromArtist && bracketCount > 20) {
       return NextResponse.json({ error: "Too many variables" }, { status: 400 });
     }
+
+    // What the prompt asks for, judged before anything is generated or
+    // charged: for an artist's prompt the buyer's values only (the artist's
+    // text never goes out for this), otherwise the whole prompt. An explicit
+    // or child-safety request is refused with a warning the user sees; an
+    // extraction attempt and an outage of the check both answer like any
+    // failed generation.
+    const checked = fromArtist ? textValues(body.variableValues) : { prompt };
+    const check = await checkPrompt(checked, { hidden: fromArtist, signal: request.signal });
+    if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
+      const outcome = await recordWarning(getSupabaseServerClient(), {
+        surface: "generate-image", request, category: check.verdict, text: JSON.stringify(checked), confidence: check.confidence,
+      });
+      return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
+    }
+    if (check.verdict === "extraction") {
+      after(recordExtractionHit(getSupabaseServerClient(), { surface: "generate-image", request, values: checked, confidence: check.confidence }));
+    }
+    if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
+    if (check.verdict !== "clear") return NextResponse.json(SILENT_FAILURE, { status: 500 });
 
     // 3. Content moderation — deliberately the FIRST thing after cheap input
     // validation and long before any payment step below. A refused prompt must

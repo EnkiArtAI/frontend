@@ -3,41 +3,71 @@ import { join } from "node:path";
 import { readSource } from "@/lib/__tests__/_read-source";
 
 /**
- * Where the extraction check sits: on both paid rails, on the buyer's values,
- * before moderation and before any money moves.
+ * Where the prompt check sits: on every generation route, before moderation
+ * and before any money moves; an artist's prompt is judged on the buyer's
+ * values only.
  */
 
 const ROOT = join(__dirname, "..", "..", "..");
 const HUMAN = readSource(join(ROOT, "app", "api", "generate-image", "route.ts"));
+const FREE = readSource(join(ROOT, "app", "api", "generate-free", "route.ts"));
 const AGENT = readSource(join(ROOT, "app", "api", "x402", "generate", "route.ts"));
 
-describe("the human rail", () => {
-  const check = HUMAN.indexOf("await checkExtraction(values, request.signal)");
+const SILENT = /if \(check\.verdict !== "clear"\) return NextResponse\.json\(SILENT_FAILURE, \{ status: 500 \}\);/;
+const WARNED = /return NextResponse\.json\(\{ error: warningMessage\(check\.verdict, outcome\) \}, \{ status: 422 \}\);/;
 
-  it("checks an artist's prompt after composing it", () => {
-    expect(check).toBeGreaterThan(HUMAN.indexOf("const filled = fillVariables("));
+describe("the human rail", () => {
+  const check = HUMAN.indexOf("await checkPrompt(checked, { hidden: fromArtist, signal: request.signal })");
+
+  it("judges an artist's prompt on the buyer's values and an own prompt whole", () => {
+    expect(HUMAN).toMatch(/const checked = fromArtist \? textValues\(body\.variableValues\) : \{ prompt \};/);
   });
 
-  it("checks before moderation and before the charge", () => {
+  it("checks after composing, before moderation and before the charge", () => {
+    expect(check).toBeGreaterThan(HUMAN.indexOf("const filled = fillVariables("));
     expect(HUMAN.indexOf("const verdict = await moderate({ prompt,")).toBeGreaterThan(check);
     expect(HUMAN.indexOf("await claimForGeneration(")).toBeGreaterThan(check);
   });
 
-  it("answers anything but a clear verdict with the ordinary failure", () => {
-    expect(HUMAN).toMatch(/if \(check\.verdict !== "clear"\) return NextResponse\.json\(SILENT_FAILURE, \{ status: 500 \}\);/);
+  it("warns on an explicit or child-safety request", () => {
+    expect(HUMAN).toMatch(WARNED);
   });
 
-  it("checks only the buyer's values", () => {
-    expect(HUMAN).toMatch(/const values = textValues\(body\.variableValues\);/);
+  it("answers anything else that is refused with the ordinary failure", () => {
+    expect(HUMAN).toMatch(SILENT);
+  });
+});
+
+describe("the free generator", () => {
+  const check = FREE.indexOf("await checkPrompt({ prompt }, { hidden: false, signal: request.signal })");
+
+  it("checks the whole prompt before moderation and before rendering", () => {
+    expect(check).toBeGreaterThan(-1);
+    expect(FREE.indexOf("const verdict = await moderate({ prompt, surface: \"generate-free\"")).toBeGreaterThan(check);
+    expect(FREE.indexOf("generateImageWithPollinations(")).toBeGreaterThan(check);
+  });
+
+  it("stops an address that reached the first step", () => {
+    expect(FREE.indexOf("await addressWarnedOut(supabaseForChecks, request)")).toBeGreaterThan(-1);
+  });
+
+  it("warns, and fails closed otherwise", () => {
+    expect(FREE).toMatch(WARNED);
+    expect(FREE).toMatch(SILENT);
   });
 });
 
 describe("the agent rail", () => {
-  const check = AGENT.indexOf("await checkExtraction(values)");
+  const check = AGENT.indexOf("await checkPrompt(checked, { hidden: reqs.legs.length > 1 })");
+
+  it("judges a marketplace prompt on the agent's values and an own prompt whole", () => {
+    expect(AGENT).toMatch(/const checked = input\.promptId \? textValues\(input\.variableValues\) : \{ prompt: promptText \};/);
+  });
 
   it("stops a blocked address before checking", () => {
-    expect(AGENT.indexOf("await agentBlocked(supabase, request)")).toBeGreaterThan(-1);
-    expect(check).toBeGreaterThan(AGENT.indexOf("await agentBlocked(supabase, request)"));
+    const blocked = AGENT.indexOf("await agentBlocked(supabase, request) || await addressWarnedOut(supabase, request)");
+    expect(blocked).toBeGreaterThan(-1);
+    expect(check).toBeGreaterThan(blocked);
   });
 
   it("checks before any payment is read", () => {
@@ -45,8 +75,9 @@ describe("the agent rail", () => {
     expect(AGENT.indexOf("parseXPayment(paymentHeader)")).toBeGreaterThan(check);
   });
 
-  it("answers anything but a clear verdict with the ordinary failure", () => {
-    expect(AGENT).toMatch(/if \(check\.verdict !== "clear"\) return NextResponse\.json\(SILENT_FAILURE, \{ status: 500 \}\);/);
+  it("warns, and fails closed otherwise", () => {
+    expect(AGENT).toMatch(WARNED);
+    expect(AGENT).toMatch(SILENT);
   });
 });
 

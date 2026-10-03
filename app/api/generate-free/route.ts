@@ -3,6 +3,9 @@ import { generateImageWithPollinations } from "@/backend/services/pollinations-i
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
+import { checkPrompt } from "@/lib/moderation/prompt-check";
+import { addressWarnedOut, recordWarning, warningMessage } from "@/lib/moderation/warnings";
+import { SILENT_FAILURE } from "@/lib/moderation/extraction-hits";
 import { getSupabaseServerClientSafe } from "@/lib/supabaseServer";
 import { recordGeneration, resolveRecordingUserId } from "@/lib/generation/record";
 import { resolveModel } from "@/lib/generation/models";
@@ -96,6 +99,22 @@ export async function POST(request: NextRequest) {
     if (body.boost === true) {
       return NextResponse.json({ error: `${model.name} has no boost. Nothing was generated.` }, { status: 422 });
     }
+
+    // The free generator renders whatever it is given and filters nothing
+    // itself, so the prompt is judged here first, like every paid one. An
+    // address without an account that has reached the first step gets no more.
+    const supabaseForChecks = getSupabaseServerClientSafe();
+    if (!supabaseForChecks) return NextResponse.json(SILENT_FAILURE, { status: 500 });
+    if (await addressWarnedOut(supabaseForChecks, request)) return NextResponse.json(SILENT_FAILURE, { status: 500 });
+    const check = await checkPrompt({ prompt }, { hidden: false, signal: request.signal });
+    if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
+      const outcome = await recordWarning(supabaseForChecks, {
+        surface: "generate-free", request, category: check.verdict, text: prompt, confidence: check.confidence,
+      });
+      return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
+    }
+    if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
+    if (check.verdict !== "clear") return NextResponse.json(SILENT_FAILURE, { status: 500 });
 
     const verdict = await moderate({ prompt, surface: "generate-free", signal: request.signal });
     after(recordModerationEvent(verdict, { surface: "generate-free", request, prompt }));
