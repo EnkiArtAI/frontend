@@ -106,6 +106,8 @@ interface Priced {
    * settle with, so the artist is paid by the buyer's own transaction.
    */
   legs: Array<{ recipient: string; amountMicro: number }>;
+  /** A marketplace prompt's filled text, for settlement; it never goes into the 402 body. */
+  prompt?: { text: string; adult: boolean; paid: boolean };
 }
 type Requirements = Priced | { status: 400 | 404 | 422 | 500 | 503; body: { error: string } };
 
@@ -144,12 +146,14 @@ async function requirementsFor(input: Input): Promise<Requirements> {
   let amountMicro: number;
   let legs: Priced["legs"];
   let description: string;
+  let prompt: Priced["prompt"];
   if (input.promptId) {
     const supabase = getSupabaseServerClient();
     // Refused here, so the 402 probe already says no, and no payment is ever
     // asked for a draft or for inputs a paid prompt does not take.
     const filled = await agentPrompt(supabase, input.promptId, input.variableValues);
     if (!filled.ok) return { status: filled.status, body: { error: filled.error } };
+    prompt = { text: filled.text, adult: filled.adult, paid: filled.paid };
     const quote = await computeQuote(supabase, {
       promptId: input.promptId,
       modelFamily: input.modelFamily,
@@ -186,6 +190,7 @@ async function requirementsFor(input: Input): Promise<Requirements> {
     status: 402,
     amountMicro,
     legs,
+    prompt,
     body: {
       x402Version: 1,
       error: "X-PAYMENT header is required",
@@ -251,13 +256,11 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // Whether the text the values fill is one the agent must not see, whatever
   // the artist charges for it: a paid prompt at 0 cents is still secret.
   let hidden = false;
-  if (input.promptId) {
-    // Checked again at settlement: the prompt may have changed since the 402.
-    const filled = await agentPrompt(supabase, input.promptId, input.variableValues);
-    if (!filled.ok) return NextResponse.json({ error: filled.error }, { status: filled.status });
-    promptText = filled.text;
-    promptAdult = filled.adult;
-    hidden = filled.paid;
+  // Filled and checked by requirementsFor above, in this same request.
+  if (reqs.prompt) {
+    promptText = reqs.prompt.text;
+    promptAdult = reqs.prompt.adult;
+    hidden = reqs.prompt.paid;
   }
 
   // What the request asks for, judged before any payment: for a marketplace

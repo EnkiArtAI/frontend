@@ -192,21 +192,30 @@ describe("the agent route checks the inputs before any payment", () => {
   it("composes a prompt only through the checked values", () => {
     // The checked variables, read with an error check, not a second unchecked read.
     expect(helper).toMatch(/const filled = fillVariables\(text\.text, Object\.fromEntries\(inputs\.values\), inputs\.variables\);/);
-    expect(src.indexOf("const filled = await agentPrompt(supabase, input.promptId, input.variableValues);", src.indexOf("async function settleAndGenerate("))).toBeGreaterThan(-1);
+    // Settlement uses the text requirementsFor filled and checked in the same request.
+    const settle = src.slice(src.indexOf("async function settleAndGenerate("));
+    expect(settle.indexOf("const reqs = await requirementsFor(input);")).toBeGreaterThan(-1);
+    expect(settle).toMatch(/if \(reqs\.prompt\) \{\n\s+promptText = reqs\.prompt\.text;/);
     expect(src).not.toMatch(/input\.variableValues\?\.\[name\]/);
   });
 
   it("looks for extraction whenever the text is secret, not only when the artist charges", () => {
-    expect(src).toMatch(/hidden = filled\.paid;/);
+    expect(src).toMatch(/hidden = reqs\.prompt\.paid;/);
     expect(helper).toMatch(/return \{ ok: true, text: filled\.text, adult: text\.adult, paid: inputs\.paid \};/);
     expect(src).toMatch(/const check = await checkPrompt\(checked, \{ hidden \}\);/);
     expect(src).not.toMatch(/hidden: reqs\.legs/);
   });
 
+  it("never puts the filled text into a response, only the 402 body", () => {
+    const answers = [...src.matchAll(/NextResponse\.json\(\{?\s*(?:\.\.\.)?(reqs|r)\b(\.\w+)?/g)];
+    expect(answers.length).toBeGreaterThan(2);
+    for (const m of answers) expect(m[2]).toBe(".body");
+  });
+
   it("refuses a value no slot takes before the payment is settled", () => {
     expect(helper).toContain("if (filled.unused.length > 0) {\n    return { ok: false, status: 422, error: `This prompt's text has no place for ${filled.unused.join(\", \")} — nothing was charged` };");
     expect(helper).toContain("if (inputsUnmatched(filled)) {");
-    expect(src.indexOf("await submitAndConfirm(")).toBeGreaterThan(src.indexOf("const filled = await agentPrompt(supabase, input.promptId, input.variableValues);", src.indexOf("async function settleAndGenerate(")));
+    expect(src.indexOf("await submitAndConfirm(")).toBeGreaterThan(src.indexOf("const reqs = await requirementsFor(input);", src.indexOf("async function settleAndGenerate(")));
   });
 
   it("refuses a prompt sent alongside a promptId, which would be ignored", () => {

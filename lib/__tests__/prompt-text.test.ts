@@ -140,7 +140,7 @@ describe("/api/generate-image builds a paid prompt from the artist's text", () =
     // The agent rail refuses in agentPrompt, which settlement calls before reading the payment.
     const helper = AGENT.slice(AGENT.indexOf("async function agentPrompt("), AGENT.indexOf("async function requirementsFor("));
     expect(helper).toMatch(/if \(inputsUnmatched\(filled\)\) \{\n\s+return \{ ok: false, status: 422,/);
-    const settle = AGENT.indexOf("const filled = await agentPrompt(supabase, input.promptId, input.variableValues);", AGENT.indexOf("async function settleAndGenerate("));
+    const settle = AGENT.indexOf("const reqs = await requirementsFor(input);", AGENT.indexOf("async function settleAndGenerate("));
     expect(settle).toBeGreaterThan(-1);
     expect(AGENT.indexOf("parseXPayment(paymentHeader)")).toBeGreaterThan(settle);
   });
