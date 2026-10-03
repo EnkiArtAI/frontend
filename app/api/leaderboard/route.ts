@@ -74,7 +74,8 @@ export async function GET(req: NextRequest) {
       : Promise.resolve({ data: [], error: null }),
     podiumIds.length
       ? supabase.from("generated_images").select("prompt_id, thumbnail_url, storage_url, created_at")
-          .in("prompt_id", podiumIds).is("deleted_at", null).eq("is_adult", false).order("created_at", { ascending: false }).limit(30)
+          .in("prompt_id", podiumIds).is("deleted_at", null).eq("is_adult", false).eq("visibility", "public")
+          .order("created_at", { ascending: false }).limit(30)
       : Promise.resolve({ data: [], error: null }),
     isEarn && ids.length
       ? (() => {

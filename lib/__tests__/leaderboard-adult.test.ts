@@ -78,8 +78,20 @@ describe("the Hall of Fame", () => {
 
   it("shows no 18+ render even for an ordinary prompt", async () => {
     prompts[0] = { id: "p1", is_adult: false, is_listed: true, listing_status: "active", deleted_at: null, showcase_images: [] };
-    renders.push({ prompt_id: "p1", storage_url: "https://img/adult-render.png", deleted_at: null, is_adult: true });
+    renders.push({ prompt_id: "p1", storage_url: "https://img/adult-render.png", deleted_at: null, is_adult: true, visibility: "public" });
     expect((await rows())[0].image).toBeNull();
+  });
+
+  it("shows nobody's private render in place of a showcase", async () => {
+    prompts[0] = { id: "p1", is_adult: false, is_listed: true, listing_status: "active", deleted_at: null, showcase_images: [] };
+    renders.push({ prompt_id: "p1", storage_url: "https://img/buyer-render.png", deleted_at: null, is_adult: false, visibility: "private" });
+    expect((await rows())[0].image).toBeNull();
+  });
+
+  it("falls back to a published render", async () => {
+    prompts[0] = { id: "p1", is_adult: false, is_listed: true, listing_status: "active", deleted_at: null, showcase_images: [] };
+    renders.push({ prompt_id: "p1", storage_url: "https://img/published.png", deleted_at: null, is_adult: false, visibility: "public" });
+    expect((await rows())[0].image).toBe("https://img/published.png");
   });
 
   it("shows no title of a prompt that was never released", async () => {
