@@ -132,6 +132,9 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
           bio?: string | null; avatarUrl?: string | null; coverUrl?: string | null;
           adultConfirmed?: boolean;
         };
+        // A logout or switch during the read superseded this check: its answer
+        // must not set anything, the pill flag least of all.
+        if (dead) return;
         setHandleState(data.handle ?? null);
         setProfile({
           handle: data.handle ?? null,

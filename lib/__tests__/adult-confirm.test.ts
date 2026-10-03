@@ -133,6 +133,10 @@ describe("the screens", () => {
     expect(GATE).not.toMatch(/const teamFallback = async \(\) => \{\n\s+forgetPill\(\);/);
   });
 
+  it("drops a check that a logout or switch superseded while it read", () => {
+    expect(GATE).toMatch(/adultConfirmed\?: boolean;\n\s+\};\n(\s+\/\/[^\n]*\n)*\s+if \(dead\) return;\n\s+setHandleState/);
+  });
+
   it("hands every other read exactly what it decided", () => {
     // Synchronously, before the page mounts: not in an effect, which runs after the page's first reads.
     expect(GATE).not.toMatch(/useEffect\(\(\) => \{ setPillActive/);
