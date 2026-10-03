@@ -25,7 +25,7 @@ import { captureAndBroadcast, voidAndFlush, sweepAndFlush } from "@/lib/payments
 import { solanaChainKey } from "@/lib/payments/solana";
 import type { VoidReason } from "@/lib/payments/authorization";
 import { reportSuccess, reportFailure } from "@/lib/generation/provider-health";
-import { recordModerationEvent } from "@/lib/moderation-enforcement";
+import { childSafetyScore, recordModerationEvent } from "@/lib/moderation-enforcement";
 import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
 import { storeReferenceImages } from "@/lib/generation/reference-images";
 import { acquireSlot, releaseSlot } from "@/lib/generation/concurrency";
@@ -336,6 +336,16 @@ export async function POST(request: NextRequest) {
     // lands — losing exactly the events we most want recorded.
     after(recordModerationEvent(verdict, { surface: "generate-image", request, prompt: fromArtist ? JSON.stringify(checked) : authoring ? "" : prompt, ...about }));
     if (!verdict.allowed) {
+      // A child-safety hit on a marketplace prompt is a warning on the buyer's
+      // ladder: it weighs ten, so it suspends at once, and a repeat ends in a
+      // ban for good (Kev, 2026-10-03: whoever keeps at it is banned).
+      const minors = fromArtist ? childSafetyScore(verdict) : null;
+      if (minors !== null) {
+        const outcome = await recordWarning(getSupabaseServerClient(), {
+          surface: "generate-image", request, category: "minor_sexual", text: JSON.stringify(checked), confidence: minors, ...about,
+        });
+        return NextResponse.json({ error: warningMessage("minor_sexual", outcome) }, { status: 422 });
+      }
       return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
     }
 

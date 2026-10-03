@@ -36,6 +36,18 @@ describe("the human rail", () => {
     expect(HUMAN).toMatch(/text: authoring \? "" : JSON\.stringify\(checked\), confidence: check\.confidence, \.\.\.about,/);
   });
 
+  it("counts a child-safety hit on a marketplace prompt on the requester's ladder", () => {
+    // Kev, 2026-10-03: whoever keeps at it is banned, a buyer of an artist's prompt too.
+    const human = HUMAN.slice(HUMAN.indexOf("if (!verdict.allowed) {"), HUMAN.indexOf("return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });", HUMAN.indexOf("if (!verdict.allowed) {")));
+    expect(human).toMatch(/const minors = fromArtist \? childSafetyScore\(verdict\) : null;/);
+    expect(human).toMatch(/category: "minor_sexual", text: JSON\.stringify\(checked\), confidence: minors, \.\.\.about,/);
+    expect(human).toMatch(/return NextResponse\.json\(\{ error: warningMessage\("minor_sexual", outcome\) \}, \{ status: 422 \}\);/);
+    const agent = AGENT.slice(AGENT.indexOf("if (!verdict.allowed) {"), AGENT.indexOf("return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });", AGENT.indexOf("if (!verdict.allowed) {")));
+    expect(agent).toMatch(/const minors = input\.promptId \? childSafetyScore\(verdict\) : null;/);
+    expect(agent).toMatch(/category: "minor_sexual", text: JSON\.stringify\(checked\), confidence: minors, promptId: input\.promptId,/);
+    expect(agent).toMatch(/return NextResponse\.json\(\{ error: warningMessage\("minor_sexual", outcome\) \}, \{ status: 422 \}\);/);
+  });
+
   it("withholds an artist's draft from an editor in every record", () => {
     // Only for the requester's own text: an artist's prompt keeps its values shown.
     expect(HUMAN).toMatch(/const authoring = !fromArtist && body\.authoring === true;/);

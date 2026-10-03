@@ -112,8 +112,9 @@ export async function recordModerationEvent(
     }).select("id").single();
 
     // On a marketplace prompt the classifier read the artist's words with the
-    // buyer's values, so its score is not the buyer's alone: the event waits
-    // for a human, who can have the owner reveal the prompt.
+    // buyer's values, so one score is not grounds to ban the buyer for good:
+    // the route counts it on the buyer's warnings ladder instead, where a
+    // repeat ends in a ban all the same (Kev, 2026-10-03).
     if (userId && !ctx.promptId) await maybeAutoBan(supabase, userId, verdict, (event?.id as string | undefined) ?? null);
   } catch {
     /* recording is best-effort by design */
@@ -135,14 +136,20 @@ export async function recordModerationEvent(
  */
 const AUTO_BAN_MINORS_SCORE = 0.9;
 
+/** The classifier's sexual/minors score when it is high enough to act on without a human, else null. */
+export function childSafetyScore(verdict: ModerationVerdict): number | null {
+  const minors = verdict.scores?.["sexual/minors"] ?? 0;
+  return verdict.tier === 2 && minors >= AUTO_BAN_MINORS_SCORE ? minors : null;
+}
+
 async function maybeAutoBan(
   supabase: NonNullable<ReturnType<typeof getSupabaseServerClientSafe>>,
   userId: string,
   verdict: ModerationVerdict,
   eventId: string | null,
 ): Promise<void> {
-  const minors = verdict.scores?.["sexual/minors"] ?? 0;
-  if (verdict.tier !== 2 || minors < AUTO_BAN_MINORS_SCORE) return;
+  const minors = childSafetyScore(verdict);
+  if (minors === null) return;
 
   // bans.issued_by is NOT NULL: the schema assumes a human signs off. An
   // automated ban is issued in the name of the moderation owner, who is

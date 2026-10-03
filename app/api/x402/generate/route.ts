@@ -50,6 +50,7 @@ import { loadPromptText, fillVariables, inputsUnmatched, VALUE_MAX } from "@/lib
 import { checkPrompt, textValues } from "@/lib/moderation/prompt-check";
 import { recordGenerationFailure } from "@/lib/generation/record";
 import { addressWarnedOut, recordWarning, warningMessage } from "@/lib/moderation/warnings";
+import { childSafetyScore } from "@/lib/moderation-enforcement";
 import { agentBlocked, recordExtractionHit, silentFailure } from "@/lib/moderation/extraction-hits";
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
@@ -271,6 +272,15 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // 18+: its save already judged that text 18+ and not explicit.
   const verdict = await moderate({ prompt: promptText, surface: "x402-generate", adultJudged: !input.promptId || promptAdult });
   if (!verdict.allowed) {
+    // A child-safety hit on a marketplace prompt counts on the address's
+    // ladder like the human rail's, where it stops the address at once.
+    const minors = input.promptId ? childSafetyScore(verdict) : null;
+    if (minors !== null) {
+      const outcome = await recordWarning(supabase, {
+        surface: "x402-generate", request, category: "minor_sexual", text: JSON.stringify(checked), confidence: minors, promptId: input.promptId,
+      });
+      return NextResponse.json({ error: warningMessage("minor_sexual", outcome) }, { status: 422 });
+    }
     return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
   }
 

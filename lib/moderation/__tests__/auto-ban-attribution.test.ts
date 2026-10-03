@@ -25,7 +25,7 @@ vi.mock("@/lib/session-user", () => ({ resolveSessionUserWithBan: async () => ({
 vi.mock("@/lib/moderation/bans", () => ({ banUntil: (...a: unknown[]) => banUntil(...(a as [])) }));
 vi.mock("@/lib/crypto", () => ({ encryptString: () => ({ encrypted: "ct", iv: "iv", authTag: "tag", kid: "k1" }) }));
 
-import { recordModerationEvent } from "@/lib/moderation-enforcement";
+import { childSafetyScore, recordModerationEvent } from "@/lib/moderation-enforcement";
 import type { ModerationVerdict } from "@/lib/moderation";
 
 const MINORS: ModerationVerdict = {
@@ -45,7 +45,14 @@ describe("the child-safety auto-ban", () => {
     expect(banUntil).toHaveBeenCalledOnce();
   });
 
-  it("never bans a buyer for an artist's words, and keeps the event for a human", async () => {
+  it("acts only on the classifier's own score at 0.9 and above", () => {
+    expect(childSafetyScore(MINORS)).toBe(0.95);
+    expect(childSafetyScore({ ...MINORS, scores: { "sexual/minors": 0.89 } })).toBeNull();
+    // The word list reads letters, never meaning: it never acts on its own.
+    expect(childSafetyScore({ ...MINORS, tier: 1 } as ModerationVerdict)).toBeNull();
+  });
+
+  it("never bans a buyer for good for one hit on an artist's words, and keeps the event for a human", async () => {
     await recordModerationEvent(MINORS, { surface: "generate-image", request, prompt: '{"subject":"a girl"}', promptId: "p1" });
     expect(banUntil).not.toHaveBeenCalled();
     expect(events).toHaveLength(1);
