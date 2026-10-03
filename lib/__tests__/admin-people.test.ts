@@ -629,7 +629,8 @@ describe("the auto-filter log's score", () => {
   const automod = async () => ((await (await GET(new NextRequest("http://enki.test/api/admin", { headers: { "X-Session-Token": "admin-tok" } }))).json()).automod as Record<string, unknown>[]);
 
   it("is the classifier's own score, never a warning's weight", async () => {
-    tables.automod_events.push(ev("u1", "minor_sexual", { id: "w-cls", severity: "strike", scores: { "sexual/minors": 0.97, sexual: 0.5, confidence: 0.97, weight: 10 } }));
+    // In the order jsonb returns the keys (shortest first): confidence ties with sexual/minors and comes first.
+    tables.automod_events.push(ev("u1", "minor_sexual", { id: "w-cls", severity: "strike", scores: { sexual: 0.5, weight: 10, confidence: 0.97, "sexual/minors": 0.97 } }));
     expect((await automod()).find((r) => r.id === "w-cls")?.topScore).toEqual({ name: "sexual/minors", value: 0.97 });
   });
 

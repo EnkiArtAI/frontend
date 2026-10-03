@@ -389,8 +389,12 @@ export async function GET(req: NextRequest) {
       const evidence = readEvidence(r);
       // The single number a moderator needs: what the classifier was most
       // sure about. Everything else is in `scores` if they open the row. A
-      // warning's weight is no score.
-      const worst = Object.entries(scores ?? {}).filter(([k]) => k !== "weight").sort((a, b) => b[1] - a[1])[0] ?? null;
+      // warning's weight is no score, and its confidence stands in only when
+      // no classifier score came with it: jsonb returns keys shortest first,
+      // so a tie must not decide which one shows.
+      const ranked = Object.entries(scores ?? {}).filter(([k]) => k !== "weight");
+      const classifier = ranked.filter(([k]) => k !== "confidence");
+      const worst = (classifier.length ? classifier : ranked).sort((a, b) => b[1] - a[1])[0] ?? null;
       return {
         id: String(r.id),
         handle: r.user_id ? (handles.get(String(r.user_id)) ?? "unknown") : null,
