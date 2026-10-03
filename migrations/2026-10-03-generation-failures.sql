@@ -78,10 +78,10 @@ NOTIFY pgrst, 'reload schema';
 -- review_state, created_at) and bans (user_id, lifted_at, expires_at,
 -- created_at) exist.
 CREATE OR REPLACE VIEW moderation_people AS
-SELECT user_id, ip_hash, max(at) AS last_at, bool_or(open) AS pending
+SELECT user_id, ip_hash, max(happened_at) AS last_at, bool_or(is_open) AS pending
 FROM (
   SELECT user_id, CASE WHEN user_id IS NULL THEN ip_hash END AS ip_hash,
-         created_at AS at, review_state = 'pending' AS open
+         created_at AS happened_at, review_state = 'pending' AS is_open
   FROM automod_events
   WHERE decision = 'block' AND (user_id IS NOT NULL OR ip_hash IS NOT NULL)
   UNION ALL
