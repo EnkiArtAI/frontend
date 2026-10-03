@@ -54,3 +54,10 @@ export async function showsAdultRender(supabase: SupabaseClient, urls: string[])
     supabase.from("generated_images").select("id").eq("is_adult", true).in(column, urls).limit(1)));
   return hits.some((r) => (r.data ?? []).length > 0);
 }
+
+/** A stored prompt's own 18+ mark; its title or showcase can make it 18+ when the text alone does not. */
+export async function promptMarkedAdult(supabase: SupabaseClient, promptId: string | null): Promise<boolean> {
+  if (!promptId) return false;
+  const { data } = await supabase.from("prompts").select("is_adult").eq("id", promptId).maybeSingle();
+  return data?.is_adult === true;
+}

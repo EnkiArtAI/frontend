@@ -248,7 +248,9 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // An agent cannot confirm it is an adult, so 18+ is never generated for one.
   if ((check.verdict === "clear" && check.adult) || promptAdult) return NextResponse.json(ADULT_REFUSAL, { status: 403 });
 
-  const verdict = await moderate({ prompt: promptText, surface: "x402-generate", adultJudged: true });
+  // For a marketplace prompt the check saw only the agent's values, so tier 2
+  // keeps its sexual flag for the artist's text.
+  const verdict = await moderate({ prompt: promptText, surface: "x402-generate", adultJudged: !input.promptId });
   if (!verdict.allowed) {
     return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
   }

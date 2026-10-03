@@ -19,7 +19,7 @@ import { settingMismatch, type StoredSettings } from "@/lib/payments/generation-
 import { loadPromptText, fillVariables, inputsUnmatched, overLong, VALUE_MAX } from "@/lib/generation/prompt-text";
 import { checkPrompt, textValues } from "@/lib/moderation/prompt-check";
 import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
-import { ADULT_REFUSAL, adultConfirmed } from "@/lib/adult-content";
+import { ADULT_REFUSAL, adultConfirmed, promptMarkedAdult } from "@/lib/adult-content";
 import { recordExtractionHit, SILENT_FAILURE, silentFailure } from "@/lib/moderation/extraction-hits";
 import { captureAndBroadcast, voidAndFlush, sweepAndFlush } from "@/lib/payments/settle";
 import { solanaChainKey } from "@/lib/payments/solana";
@@ -236,7 +236,7 @@ export async function POST(request: NextRequest) {
        buyer's own text. The artist's text is never returned to the buyer. */
     const fromArtist = Boolean(paid.prompt_id) && Number(paid.artist_amount_micro) > 0;
     let prompt = typedPrompt;
-    let artistAdult = false;
+    let promptAdult = false;
     if (fromArtist) {
       const text = await loadPromptText(getSupabaseServerClient(), paid.prompt_id as string);
       if (!text.ok) return NextResponse.json({ error: text.error }, { status: text.status });
@@ -255,7 +255,9 @@ export async function POST(request: NextRequest) {
         );
       }
       prompt = filled.text;
-      artistAdult = text.adult;
+      promptAdult = text.adult;
+    } else if (paid.prompt_id) {
+      promptAdult = await promptMarkedAdult(getSupabaseServerClient(), paid.prompt_id as string);
     }
     if (!prompt) {
       return NextResponse.json({ error: "prompt is required" }, { status: 400 });
@@ -295,7 +297,7 @@ export async function POST(request: NextRequest) {
 
     // 18+ (a suggestive prompt, or a prompt marked 18+) is for confirmed adults
     // only, refused before anything is charged.
-    const adult = (check.verdict === "clear" && check.adult === true) || artistAdult;
+    const adult = (check.verdict === "clear" && check.adult === true) || promptAdult;
     if (adult && !(await adultConfirmed(getSupabaseServerClient(), await resolveRecordingUserId(getSupabaseServerClient(), request)))) {
       return NextResponse.json(ADULT_REFUSAL, { status: 403 });
     }
@@ -307,7 +309,10 @@ export async function POST(request: NextRequest) {
     // The client only ever learns that it was refused: category, tier, rule ids
     // and scores stay server-side, otherwise this endpoint becomes an oracle an
     // attacker can probe to map the filter.
-    const verdict = await moderate({ prompt, surface: "generate-image", signal: request.signal, adultJudged: true });
+    // The prompt check saw only the buyer's values of an artist's prompt, so
+    // tier 2 keeps its sexual flag for the artist's text unless the prompt is
+    // marked 18+ (legacy prompts were never judged at save).
+    const verdict = await moderate({ prompt, surface: "generate-image", signal: request.signal, adultJudged: !fromArtist || promptAdult });
     // after() and not a bare void: on a block this route returns immediately,
     // and a floating promise can be frozen with the lambda before the insert
     // lands — losing exactly the events we most want recorded.
