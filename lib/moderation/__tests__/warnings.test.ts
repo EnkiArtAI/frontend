@@ -1,0 +1,173 @@
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+/**
+ * Visible warnings and the suspension ladder (Kev, 2026-10-03): every tenth
+ * warning suspends for the next step, 3 days, 7 days, 1 month, 2 months,
+ * 6 months, 1 year, for good. A child-safety request weighs ten warnings.
+ */
+
+type Row = Record<string, unknown>;
+let tables: Record<string, Row[]>;
+
+class Query implements PromiseLike<{ data: unknown; error: null }> {
+  private filters: ((r: Row) => boolean)[] = [];
+  private op: "select" | "insert" = "select";
+  private payload: Row | null = null;
+  constructor(private table: string) {}
+  select() { return this; }
+  insert(row: Row) { this.op = "insert"; this.payload = row; return this; }
+  eq(c: string, v: unknown) { this.filters.push((r) => r[c] === v); return this; }
+  neq(c: string, v: unknown) { this.filters.push((r) => r[c] !== v); return this; }
+  in(c: string, vs: unknown[]) { this.filters.push((r) => vs.includes(r[c])); return this; }
+  is(c: string, v: null) { this.filters.push((r) => (r[c] ?? null) === v); return this; }
+  gte(c: string, v: string) { this.filters.push((r) => String(r[c]) >= v); return this; }
+  maybeSingle() { return this; }
+  then<A, B = never>(ok?: ((v: { data: unknown; error: null }) => A | PromiseLike<A>) | null, ko?: ((e: unknown) => B | PromiseLike<B>) | null) {
+    return Promise.resolve(this.run()).then(ok, ko);
+  }
+  private run() {
+    const rows = (tables[this.table] ??= []);
+    if (this.op === "insert") {
+      rows.push({ id: `${this.table}-${rows.length + 1}`, created_at: new Date().toISOString(), ...this.payload });
+      return { data: null, error: null };
+    }
+    const hits = rows.filter((r) => this.filters.every((f) => f(r)));
+    return { data: this.table === "moderation_policy" ? hits[0] ?? null : hits, error: null };
+  }
+}
+const fake = { from: (t: string) => new Query(t) } as unknown as SupabaseClient;
+
+const notify = vi.fn(async () => {});
+vi.mock("@/lib/admin-notify", () => ({ notifyAdmins: () => notify() }));
+vi.mock("@/lib/crypto", () => ({ encryptString: () => ({ encrypted: "ct", iv: "iv", authTag: "tag", kid: "k1" }) }));
+vi.mock("@/lib/ip-hash", () => ({
+  getClientIp: (r: { headers: { get(n: string): string | null } }) => r.headers.get("x-forwarded-for"),
+  hashIp: (ip: string | null) => (ip ? `h:${ip}` : null),
+}));
+vi.mock("@/lib/session-user", () => ({
+  resolveSessionUserId: async (_s: unknown, token: string | null) => (token === "user-token" ? "user-1" : null),
+}));
+
+import { recordWarning, warningMessage, addressWarnedOut, WARNINGS_PER_STEP, SUSPENSION_LADDER_DAYS } from "@/lib/moderation/warnings";
+
+const user = { headers: new Headers({ "X-Session-Token": "user-token", "x-forwarded-for": "1.2.3.4" }) };
+const anon = { headers: new Headers({ "x-forwarded-for": "9.9.9.9" }) };
+const DAY = 24 * 60 * 60 * 1000;
+const warn = (request: { headers: Headers }, category: "explicit_sexual" | "minor_sexual" = "explicit_sexual") =>
+  recordWarning(fake, { surface: "generate-image", request, category, text: "an explicit request", confidence: 0.9 });
+const daysOf = (ban: Row) => Math.round((Date.parse(String(ban.expires_at)) - Date.now()) / DAY);
+
+beforeEach(() => {
+  notify.mockClear();
+  tables = { moderation_policy: [{ id: 1, owner_user_id: "owner-1" }], bans: [], automod_events: [] };
+});
+
+describe("a warning", () => {
+  it("is recorded with its weight and the text encrypted", async () => {
+    await warn(user);
+    expect(tables.automod_events[0]).toMatchObject({ user_id: "user-1", category: "explicit_sexual", decision: "block", scores: { weight: 1 } });
+    expect(JSON.stringify(tables.automod_events[0])).not.toContain("an explicit request");
+  });
+
+  it("does not suspend before the tenth", async () => {
+    for (let i = 1; i < WARNINGS_PER_STEP; i++) await warn(user);
+    expect(tables.bans).toEqual([]);
+  });
+
+  it("does not mail the team for a plain warning", async () => {
+    await warn(user);
+    expect(notify).not.toHaveBeenCalled();
+  });
+});
+
+describe("the suspension ladder", () => {
+  it("pins the decided steps", () => {
+    expect(SUSPENSION_LADDER_DAYS).toEqual([3, 7, 30, 60, 180, 365, null]);
+  });
+
+  it("suspends for 3 days at the tenth warning", async () => {
+    for (let i = 0; i < 10; i++) await warn(user);
+    expect(tables.bans).toHaveLength(1);
+    expect(daysOf(tables.bans[0])).toBe(3);
+  });
+
+  it("suspends for 7 days at the twentieth", async () => {
+    for (let i = 0; i < 20; i++) await warn(user);
+    expect(daysOf(tables.bans[1])).toBe(7);
+  });
+
+  it("suspends for good at the seventieth", async () => {
+    for (let i = 0; i < 70; i++) await warn(user);
+    expect(tables.bans[6]).toMatchObject({ expires_at: null });
+  });
+
+  it("issues each suspension in the moderation owner's name", async () => {
+    for (let i = 0; i < 10; i++) await warn(user);
+    expect(tables.bans[0]).toMatchObject({ user_id: "user-1", issued_by: "owner-1", scope: "full" });
+  });
+
+  it("mails the team when it suspends", async () => {
+    for (let i = 0; i < 10; i++) await warn(user);
+    expect(notify).toHaveBeenCalledOnce();
+  });
+
+  it("leaves an overturned warning out of the count", async () => {
+    for (let i = 0; i < 9; i++) await warn(user);
+    tables.automod_events[0].review_state = "overturned";
+    await warn(user);
+    expect(tables.bans).toEqual([]);
+  });
+});
+
+describe("a child-safety request", () => {
+  it("weighs ten warnings, so the first one suspends", async () => {
+    await warn(user, "minor_sexual");
+    expect(daysOf(tables.bans[0])).toBe(3);
+  });
+
+  it("goes to the review queue", async () => {
+    await warn(user, "minor_sexual");
+    expect(tables.automod_events[0]).toMatchObject({ review_state: "pending", scores: { weight: 10 } });
+  });
+});
+
+describe("a request without an account", () => {
+  it("never creates a ban", async () => {
+    for (let i = 0; i < 10; i++) await warn(anon);
+    expect(tables.bans).toEqual([]);
+  });
+
+  it("stops the address at the first step", async () => {
+    for (let i = 0; i < 9; i++) await warn(anon);
+    expect(await addressWarnedOut(fake, anon)).toBe(false);
+    await warn(anon);
+    expect(await addressWarnedOut(fake, anon)).toBe(true);
+  });
+
+  it("forgets an address's warnings after 30 days", async () => {
+    const old = new Date(Date.now() - 31 * DAY).toISOString();
+    for (let i = 0; i < 10; i++) tables.automod_events.push({ ip_hash: "h:9.9.9.9", category: "explicit_sexual", review_state: "none", scores: { weight: 1 }, created_at: old });
+    expect(await addressWarnedOut(fake, anon)).toBe(false);
+  });
+});
+
+describe("what the user reads", () => {
+  it("counts down to the next suspension", () => {
+    expect(warningMessage("explicit_sexual", { total: 3, suspendedUntil: null, nextStepAt: 10 }))
+      .toBe("Explicit sexual content isn't allowed on Enki. Nothing was generated and nothing was charged. This is warning 3 of 10; at 10 your account is suspended for 3 days.");
+  });
+
+  it("names the next step's length after a suspension", () => {
+    expect(warningMessage("explicit_sexual", { total: 12, suspendedUntil: null, nextStepAt: 20 })).toMatch(/at 20 your account is suspended for 7 days\.$/);
+  });
+
+  it("says when a suspension ends", () => {
+    expect(warningMessage("minor_sexual", { total: 10, suspendedUntil: "2026-10-06T12:00:00.000Z", nextStepAt: 20 }))
+      .toBe("Sexual content involving minors is strictly prohibited. Nothing was generated and nothing was charged. Your account is suspended until 2026-10-06.");
+  });
+
+  it("says when it is for good", () => {
+    expect(warningMessage("explicit_sexual", { total: 70, suspendedUntil: "forever", nextStepAt: 80 })).toMatch(/suspended for good\.$/);
+  });
+});
