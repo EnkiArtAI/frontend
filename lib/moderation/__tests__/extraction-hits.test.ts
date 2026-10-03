@@ -53,6 +53,8 @@ vi.mock("@/lib/ip-hash", () => ({
 }));
 vi.mock("@/lib/session-user", () => ({
   resolveSessionUserId: async (_s: unknown, token: string | null) => (token === "buyer-token" ? "buyer-1" : null),
+  activeBanFor: async (_s: unknown, userId: string) =>
+    tables.bans.find((b) => b.user_id === userId && !b.lifted_at && (!b.expires_at || String(b.expires_at) > new Date().toISOString())) ?? null,
 }));
 
 import { recordExtractionHit, agentBlocked, EXTRACTION_HITS_TO_BLOCK, SILENT_FAILURE } from "@/lib/moderation/extraction-hits";
@@ -105,6 +107,12 @@ describe("a caught attempt", () => {
   it("never stacks a second ban", async () => {
     for (let i = 0; i < EXTRACTION_HITS_TO_BLOCK + 2; i++) await hit(buyer);
     expect(tables.bans).toHaveLength(1);
+  });
+
+  it("is not prevented by a suspension that has run out", async () => {
+    tables.bans.push({ user_id: "buyer-1", lifted_at: null, expires_at: new Date(Date.now() - 60_000).toISOString() });
+    for (let i = 0; i < EXTRACTION_HITS_TO_BLOCK; i++) await hit(buyer);
+    expect(tables.bans).toHaveLength(2);
   });
 
   it("does not count hits older than 30 days", async () => {

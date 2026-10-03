@@ -21,6 +21,9 @@ import { resolveSessionUserId } from "@/lib/session-user";
 import { decryptString, encryptString, type EncryptedPayload } from "@/lib/crypto";
 import { notifyAdmins } from "@/lib/admin-notify";
 
+/** A ban counts while it is not lifted and has not run out, as activeBanFor reads it. */
+const unexpired = () => `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`;
+
 type Supabase = ReturnType<typeof getSupabaseServerClient>;
 
 // The role comes back too: mods and admins share this panel, but not every
@@ -154,7 +157,7 @@ async function executeProposal(supabase: Supabase, p: ProposalRow, now: string):
     if (error) return error;
   } else {
     const { data: active } = await supabase.from("bans")
-      .select("id").eq("user_id", String(p.target_user_id)).is("lifted_at", null).limit(1);
+      .select("id").eq("user_id", String(p.target_user_id)).is("lifted_at", null).or(unexpired()).limit(1);
     if (active?.length) {
       if (p.kind === "ban_perm") {
         const { error } = await supabase.from("bans").update({ expires_at: null }).eq("id", active[0].id);
@@ -562,7 +565,7 @@ export async function POST(req: NextRequest) {
       const days = Number.isInteger(body.days) && body.days! >= 1 && body.days! <= 365 ? body.days! : null;
       if (!permanent && !days) return NextResponse.json({ error: "days (1–365) or permanent required" }, { status: 400 });
       const { data: active } = await supabase.from("bans")
-        .select("id").eq("user_id", targetId).is("lifted_at", null).limit(1);
+        .select("id").eq("user_id", targetId).is("lifted_at", null).or(unexpired()).limit(1);
       if (active?.length) {
         if (!permanent) return NextResponse.json({ error: "Already banned" }, { status: 400 });
         // escalate the active ban instead of stacking a second one

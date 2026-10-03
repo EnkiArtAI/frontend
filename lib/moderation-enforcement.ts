@@ -18,6 +18,7 @@
  * bans.issued_by is NOT NULL: the schema already assumes a human signs off.
  */
 import { getSupabaseServerClientSafe } from "@/lib/supabaseServer";
+import { activeBanFor } from "@/lib/session-user";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { getClientIp, hashIp } from "@/lib/ip-hash";
 import { encryptString } from "@/lib/crypto";
@@ -151,14 +152,9 @@ async function maybeAutoBan(
   const issuedBy = policy?.owner_user_id as string | undefined;
   if (!issuedBy) return; // no owner configured — leave it to human review
 
-  // Never stack a second ban on someone already banned.
-  const { data: existing } = await supabase
-    .from("bans")
-    .select("id")
-    .eq("user_id", userId)
-    .is("lifted_at", null)
-    .limit(1);
-  if (existing?.length) return;
+  // Never stack a second ban on someone already banned. An expired
+  // suspension (the warnings ladder issues many) is not a ban any more.
+  if (await activeBanFor(supabase, userId)) return;
 
   await supabase.from("bans").insert({
     user_id: userId,

@@ -15,7 +15,7 @@ import { createHash } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptString } from "@/lib/crypto";
 import { getClientIp, hashIp } from "@/lib/ip-hash";
-import { resolveSessionUserId } from "@/lib/session-user";
+import { activeBanFor, resolveSessionUserId } from "@/lib/session-user";
 import { notifyAdmins } from "@/lib/admin-notify";
 
 export const EXTRACTION_HITS_TO_BLOCK = 3;
@@ -103,8 +103,8 @@ async function ban(supabase: SupabaseClient, userId: string, eventId: string | u
   const issuedBy = policy?.owner_user_id as string | undefined;
   if (!issuedBy) return; // no owner configured: the team decides from the queue
 
-  const { data: existing } = await supabase.from("bans").select("id").eq("user_id", userId).is("lifted_at", null).limit(1);
-  if (existing?.length) return;
+  // An expired suspension from the warnings ladder is not a ban any more.
+  if (await activeBanFor(supabase, userId)) return;
 
   const { data: issued } = await supabase
     .from("bans")
