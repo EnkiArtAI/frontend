@@ -55,17 +55,22 @@ export function hideAdult<Q extends { eq(column: string, value: boolean): Q }>(q
 
 /** Whether any of these URLs is one of our renders marked 18+: a prompt showing one is 18+ itself. */
 export async function showsAdultRender(supabase: SupabaseClient, urls: string[]): Promise<boolean> {
-  if (urls.length === 0) return false;
+  // Only web URLs can be looked up; a multi-megabyte data: URL in a query
+  // string fails the request. Those are left to the image check (stage 2).
+  const web = urls.filter((u) => /^https:\/\//.test(u));
+  if (web.length === 0) return false;
   const hits = await Promise.all(["storage_url", "preview_url", "thumbnail_url"].map((column) =>
-    supabase.from("generated_images").select("id").eq("is_adult", true).in(column, urls).limit(1)));
-  return hits.some((r) => (r.data ?? []).length > 0);
+    supabase.from("generated_images").select("id").eq("is_adult", true).in(column, web).limit(1)));
+  // A lookup that failed counts as 18+: the safe side, never the open one.
+  return hits.some((r) => Boolean(r.error) || (r.data ?? []).length > 0);
 }
 
 /** A stored prompt's own 18+ mark; its title or showcase can make it 18+ when the text alone does not. */
 export async function promptMarkedAdult(supabase: SupabaseClient, promptId: string | null): Promise<boolean> {
   if (!promptId) return false;
-  const { data } = await supabase.from("prompts").select("is_adult").eq("id", promptId).maybeSingle();
-  return data?.is_adult === true;
+  const { data, error } = await supabase.from("prompts").select("is_adult").eq("id", promptId).maybeSingle();
+  // A failed read counts as 18+: an unconfirmed user is refused rather than served blind.
+  return Boolean(error) || data?.is_adult === true;
 }
 
 /** Of these prompts, the 18+ ones this viewer may not see (their own never are); null when the lookup failed. */
