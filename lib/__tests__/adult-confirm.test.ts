@@ -122,13 +122,19 @@ describe("the screens", () => {
     expect(GATE).toMatch(/setAdultConfirmedState\(confirmed\);\n\s+setAdultPillState\(Boolean\(stored\)\);/);
   });
 
-  it("the pill belongs to the account that turned it on", () => {
+  it("the pill is decided by pillSurvives and stored as the account's id", () => {
     expect(GATE).toMatch(/if \(on && meId\) localStorage\.setItem\(SHOW_ADULT_KEY, meId\);/);
-    expect(GATE).toMatch(/if \(stored && \(!confirmed \|\| stored !== data\.id\)\) \{ forgetPill\(\); stored = null; \}/);
+    expect(GATE).toMatch(/if \(stored && !pillSurvives\(stored, data\)\) \{ forgetPill\(\); stored = null; \}/);
   });
 
-  it("logging out forgets it", () => {
-    expect(GATE).toMatch(/const teamFallback = async \(\) => \{\n\s+forgetPill\(\);/);
+  it("is forgotten when signed out or the session is dead, kept through a passing error", () => {
+    expect(GATE).toMatch(/if \(Object\.keys\(headers\)\.length === 0\) \{ forgetPill\(\); void teamFallback\(\);/);
+    expect(GATE).toMatch(/if \(!res\.ok\) \{ if \(res\.status === 401\) forgetPill\(\); void teamFallback\(\); return; \}/);
+    expect(GATE).not.toMatch(/const teamFallback = async \(\) => \{\n\s+forgetPill\(\);/);
+  });
+
+  it("refetches every cached read when it flips", () => {
+    expect(GATE).toMatch(/setAdultPillState\(on && Boolean\(meId\)\);\n\s+void queryClient\.invalidateQueries\(\);/);
   });
 
   it("a change in Settings turns it off, either way", () => {
@@ -150,5 +156,15 @@ describe("the request headers", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("a stored pill", () => {
+  it("survives only for the confirmed account that turned it on", async () => {
+    const { pillSurvives } = await import("@/lib/session-headers");
+    expect(pillSurvives("u1", { id: "u1", adultConfirmed: true })).toBe(true);
+    expect(pillSurvives("u1", { id: "u2", adultConfirmed: true })).toBe(false);
+    expect(pillSurvives("u1", { id: "u1", adultConfirmed: false })).toBe(false);
+    expect(pillSurvives(null, { id: "u1", adultConfirmed: true })).toBe(false);
   });
 });

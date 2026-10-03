@@ -13,7 +13,8 @@
 import { CDP_ADDRESS_EVENT } from "@/lib/cdp-bridge";
 import { createContext, useContext, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
-import { SHOW_ADULT_KEY, sessionAuthHeaders } from "@/lib/session-headers";
+import { SHOW_ADULT_KEY, pillSurvives, sessionAuthHeaders } from "@/lib/session-headers";
+import { useQueryClient } from "@tanstack/react-query";
 import AccessGate from "@/components/enki-shell/AccessGate";
 
 const PUBLIC_PATHS = new Set(["/", "/landing", "/gate", "/guardian", "/reset-password"]);
@@ -61,6 +62,8 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
   const [adultConfirmed, setAdultConfirmedState] = useState(false);
   const [adultPill, setAdultPillState] = useState(false);
   const [meId, setMeId] = useState<string | null>(null);
+  // Every cached read was made with the old pill; a change refetches them all.
+  const queryClient = useQueryClient();
   /* The 18+ pill belongs to the account that turned it on: the stored value
      is that account's id, so another account in this browser starts with it
      off, and logging out forgets it. viewerHeaders reads the same key. */
@@ -70,6 +73,7 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
       else localStorage.removeItem(SHOW_ADULT_KEY);
     } catch { /* not kept */ }
     setAdultPillState(on && Boolean(meId));
+    void queryClient.invalidateQueries();
   };
   /** A change in Settings: the pill starts off after it, either way. */
   const setAdultConfirmed = (v: boolean) => { setAdultConfirmedState(v); setAdultPill(false); };
@@ -103,7 +107,6 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
        2026-08-23). Server APIs keep requiring a real session for anything
        user-bound; this wall is only the client half of the pair. */
     const teamFallback = async () => {
-      forgetPill();
       try {
         const r = await fetch("/api/gate");
         const d = await r.json().catch(() => ({}));
@@ -113,12 +116,14 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
       if (!dead) setAccess("denied");
     };
     const headers = sessionAuthHeaders();
-    if (Object.keys(headers).length === 0) { void teamFallback(); return () => { dead = true; }; }
+    // Signed out: the pill goes with the session.
+    if (Object.keys(headers).length === 0) { forgetPill(); void teamFallback(); return () => { dead = true; }; }
     (async () => {
       try {
         const res = await fetch("/api/users/handle", { headers });
         if (dead) return;
-        if (!res.ok) { void teamFallback(); return; }
+        // A dead session forgets the pill; a passing error keeps it for later.
+        if (!res.ok) { if (res.status === 401) forgetPill(); void teamFallback(); return; }
         const data = (await res.json()) as {
           id?: string; handle: string | null; role?: string;
           bio?: string | null; avatarUrl?: string | null; coverUrl?: string | null;
@@ -136,7 +141,7 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
         let stored: string | null = null;
         try { stored = localStorage.getItem(SHOW_ADULT_KEY); } catch { /* none */ }
         // Another account's pill, or one without a confirmation, is switched off.
-        if (stored && (!confirmed || stored !== data.id)) { forgetPill(); stored = null; }
+        if (stored && !pillSurvives(stored, data)) { forgetPill(); stored = null; }
         setMeId(data.id ?? null);
         setAdultConfirmedState(confirmed);
         setAdultPillState(Boolean(stored));

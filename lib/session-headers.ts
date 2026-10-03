@@ -28,6 +28,11 @@ export function sessionAuthHeaders(): Record<string, string> {
 /** Where the feed's 18+ pill is kept: the id of the account that turned it on (BetaGate). */
 export const SHOW_ADULT_KEY = "enki:show-adult";
 
+/** Whether a stored pill survives the sign-in check: only for the confirmed account that turned it on. */
+export function pillSurvives(stored: string | null, account: { id?: string; adultConfirmed?: boolean }): boolean {
+  return Boolean(stored) && account.adultConfirmed === true && stored === account.id;
+}
+
 /** The session, plus the 18+ pill when it is on. The server still checks the age confirmation behind it. */
 export function sessionHeadersWith(showAdult: boolean): Record<string, string> {
   return showAdult ? { ...sessionAuthHeaders(), "X-Show-Adult": "1" } : sessionAuthHeaders();
