@@ -110,6 +110,12 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
 }
 
 export async function POST(request: NextRequest) {
+  // JSON only, before anything runs, like the free route: a page elsewhere
+  // must not post here in a visitor's name as a form or plain text, which
+  // browsers send unasked.
+  if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+    return NextResponse.json({ error: "Send the request as JSON." }, { status: 415 });
+  }
   // Set after a successful intent redemption (client captured then, so this
   // helper can never throw); every generation-failure path — including the
   // catch-all below — must release it so the buyer retries without paying
