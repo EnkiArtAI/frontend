@@ -31,7 +31,7 @@ type Proposal = { id: string; kind: string; target: string; targetUserId: string
 type Council = { ready: boolean; isOwner: boolean; enabled: boolean; quorum: number; ttlDays: number; members: { handle: string; role: string; hasEmail: boolean }[]; myEmail: string | null; proposals: Proposal[] };
 type Automod = { id: string; handle: string | null; surface: string; severity: string; tier: number | null; category: string | null; rules: string[]; topScore: { name: string; value: number } | null; prompt: string | null; state: string; at: string };
 type GenPolicy = { maxConcurrentPerUser: number | null; canEdit: boolean };
-type Person = { userId: string; handle: string | null; displayName: string | null; warnings: number; extractionHits: number; childSafety: boolean; pending: number; suspension: { until: string | null } | null; failed7d: number; lastActive: string | null };
+type Person = { key: string; userId: string | null; ipHash: string | null; handle: string | null; displayName: string | null; warnings: number; extractionHits: number; childSafety: boolean; pending: number; suspension: { until: string | null } | null; failed7d: number; lastActive: string | null };
 type PersonDetail = {
   events: { id: string; category: string | null; severity: string; surface: string; rules: string[]; weight: number; confidence: number | null; prompt: string | null; state: string; at: string }[];
   failures: { id: string; surface: string; model: string | null; resolution: string | null; quality: string | null; boost: boolean; aspectRatio: string | null; referenceImageCount: number; error: string; prompt: string | null; imageUrl: string | null; txSignature: string | null; at: string }[];
@@ -248,7 +248,8 @@ export default function AdminPage() {
   const q = query.trim().toLowerCase();
   const tabDef = TABS.find((t) => t.id === tab)!;
   const counts = useMemo(() => ({
-    people: data?.people.filter((p) => p.pending > 0 || p.childSafety).length ?? 0,
+    // Needs attention: open cases only. A reviewed child-safety case keeps its flag on the row.
+    people: data?.people.filter((p) => p.pending > 0).length ?? 0,
     imports: data?.imports.length ?? 0,
     reports: data?.reports.length ?? 0,
     feedback: data?.feedback.filter((f) => !f.paid).length ?? 0,
@@ -306,7 +307,7 @@ export default function AdminPage() {
     || r.surface.toLowerCase().includes(q)
     || r.rules.some((x) => x.toLowerCase().includes(q))
     || (r.prompt ?? "").toLowerCase().includes(q));
-  const filteredPeople = d.people.filter((p) => !q || (p.handle ?? "").toLowerCase().includes(q) || (p.displayName ?? "").toLowerCase().includes(q) || p.userId.includes(q));
+  const filteredPeople = d.people.filter((p) => !q || (p.handle ?? "").toLowerCase().includes(q) || (p.displayName ?? "").toLowerCase().includes(q) || p.key.includes(q));
   const filteredRecovery = d.recovery.filter((r) => !q || r.handle.toLowerCase().includes(q) || (r.contact ?? "").toLowerCase().includes(q));
 
   const stats: { label: string; value: number; dot: string; go: Tab }[] = [
@@ -739,11 +740,11 @@ export default function AdminPage() {
                     </div>
                   )}
                   {filteredPeople.map((p) => {
-                    const detail = pplDetail[p.userId];
-                    const name = p.handle ? `@${p.handle}` : p.displayName ?? p.userId.slice(0, 8);
+                    const detail = pplDetail[p.key];
+                    const name = p.handle ? `@${p.handle}` : p.displayName ?? (p.userId ? p.userId.slice(0, 8) : `no account · ${p.ipHash?.slice(0, 8)}`);
                     return (
-                      <div key={p.userId}>
-                        <div style={{ ...rowStyle, cursor: "pointer" }} onClick={() => void openPerson(p.userId)}>
+                      <div key={p.key}>
+                        <div style={{ ...rowStyle, cursor: "pointer" }} onClick={() => void openPerson(p.key)}>
                           <span style={{ width: 130, fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: "var(--enki-ink)", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</span>
                           {p.childSafety && <Badge pal={PILL.red} label="child safety" />}
                           <span style={{ fontFamily: MONO, fontSize: 10, color: p.warnings > 0 ? "var(--enki-danger)" : "var(--enki-ink-3)" }}>{p.warnings} warnings</span>
@@ -752,13 +753,15 @@ export default function AdminPage() {
                           {p.pending > 0 && <Badge pal={PILL.purple} label={`${p.pending} to review`} />}
                           {p.suspension && <Badge pal={PILL.red} label={p.suspension.until ? `suspended until ${p.suspension.until.slice(0, 10)}` : "suspended for good"} />}
                           <span style={{ flex: 1 }} />
-                          {p.suspension && (
-                            <Pill kind="green" label="Lift" title="Lift the running suspension"
-                              onClick={() => void act({ resource: "bans", action: "lift", userId: p.userId }, `${name} reinstated.`, p.userId)} />
+                          {p.suspension && p.userId && (
+                            <span onClick={(e) => e.stopPropagation()}>
+                              <Pill kind="green" label="Lift" title="Lift the running suspension"
+                                onClick={() => void act({ resource: "bans", action: "lift", userId: p.userId }, `${name} reinstated.`, p.key)} />
+                            </span>
                           )}
                           <span style={{ width: 52, textAlign: "right", fontFamily: MONO, fontSize: 9, color: "var(--enki-ink-3)" }}>{p.lastActive ? timeAgo(p.lastActive) : "—"}</span>
                         </div>
-                        {pplOpen === p.userId && (
+                        {pplOpen === p.key && (
                           <div style={{ padding: "4px 0 14px 10px", borderLeft: "3px solid var(--enki-rule)", margin: "0 0 8px 4px", display: "flex", flexDirection: "column", gap: 10 }}>
                             {!detail && <span style={{ fontSize: 11, color: "var(--enki-ink-3)" }}>Loading…</span>}
                             {detail && detail.events.length === 0 && detail.failures.length === 0 && <span style={{ fontSize: 11, color: "var(--enki-ink-3)" }}>No events.</span>}
@@ -772,9 +775,9 @@ export default function AdminPage() {
                                   {e.state !== "overturned" && e.state !== "upheld" && (
                                     <>
                                       <Pill kind="plain" label="Overturn" title="Wrongly caught: take it out of every count"
-                                        onClick={() => void act({ resource: "automod", action: "overturn", id: e.id }, "Overturned.", p.userId)} />
+                                        onClick={() => void act({ resource: "automod", action: "overturn", id: e.id }, "Overturned.", p.key)} />
                                       <Pill kind="plain" label="Mark reviewed" title="Correctly caught"
-                                        onClick={() => void act({ resource: "automod", action: "uphold", id: e.id }, "Marked reviewed.", p.userId)} />
+                                        onClick={() => void act({ resource: "automod", action: "uphold", id: e.id }, "Marked reviewed.", p.key)} />
                                     </>
                                   )}
                                 </div>

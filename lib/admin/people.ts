@@ -2,23 +2,31 @@
  * The admin person list (Kev, 2026-10-03): one row per person who was warned,
  * blocked, suspended or whose generations failed this week, and on expanding a
  * row every event with its prompt and settings, to see who is failing on what
- * and fix it fast. Counts come from the same rules enforcement uses, so the
- * list shows exactly what suspends.
+ * and fix it fast. Someone without an account (the free generator, an agent)
+ * is a person too, named by their hashed address. Counts come from the very
+ * functions enforcement uses, so the list shows exactly what suspends.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { warningWeight } from "@/lib/moderation/warnings";
-import { EXTRACTION_WINDOW_MS } from "@/lib/moderation/extraction-hits";
+import { weightSince } from "@/lib/moderation/warnings";
+import { hitsSince } from "@/lib/moderation/extraction-hits";
+import { activeBanFor } from "@/lib/session-user";
 
-/** Categories that flag a child-safety case; only an admin may overturn one. */
+/** Categories that flag a child-safety case; only an admin may overturn one or lift its ban. */
 export const CHILD_SAFETY = ["minor_sexual", "sexual/minors", "csam"];
 const PEOPLE_LIMIT = 50;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Decrypt = (ct: unknown, iv: unknown, tag: unknown, kid: unknown) => string | null;
 type Row = Record<string, unknown>;
+type Who = { userId: string } | { ipHash: string };
+type Filterable<Q> = { filter(column: string, operator: string, value: unknown): Q };
 
 export interface Person {
-  userId: string;
+  /** The account id, or "ip:<hash>" for someone without an account. */
+  key: string;
+  userId: string | null;
+  ipHash: string | null;
   handle: string | null;
   displayName: string | null;
   warnings: number;
@@ -30,60 +38,69 @@ export interface Person {
   lastActive: string | null;
 }
 
-const activeBan = () => `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`;
-const latest = (a: string | null, b: unknown) => (typeof b === "string" && (!a || b > a) ? b : a);
+/** An account id, or "ip:<hash>" for someone without an account; anything else is no person. */
+export function parsePersonKey(key: string): Who | null {
+  if (UUID_RE.test(key)) return { userId: key };
+  const m = /^ip:([0-9a-f]{16,128})$/.exec(key);
+  return m ? { ipHash: m[1] } : null;
+}
+
+/** One person's rows: an account's own, or an address's rows that carry no account. */
+function scope<Q extends Filterable<Q>>(q: Q, who: Who): Q {
+  return "userId" in who ? q.filter("user_id", "eq", who.userId) : q.filter("user_id", "is", null).filter("ip_hash", "eq", who.ipHash);
+}
+
+const count = async (q: PromiseLike<{ count: number | null }>) => (await q).count ?? 0;
+
+/** A child-safety case that was not overturned: lifting this user's ban is an admin's call. */
+export async function hasChildSafetyCase(supabase: SupabaseClient, userId: string): Promise<boolean> {
+  return (await count(supabase.from("automod_events").select("id", { count: "exact", head: true })
+    .eq("user_id", userId).in("category", CHILD_SAFETY).neq("review_state", "overturned"))) > 0;
+}
 
 export async function listPeople(supabase: SupabaseClient): Promise<Person[]> {
+  // Open cases first, then whoever was active last. The grouping happens in
+  // SQL (view moderation_people, migrations/2026-10-03-generation-failures.sql),
+  // so one busy account can never push anyone else off the list.
+  const { data } = await supabase.from("moderation_people")
+    .select("user_id, ip_hash, last_at, pending")
+    .order("pending", { ascending: false }).order("last_at", { ascending: false }).limit(PEOPLE_LIMIT);
+  const rows = (data ?? []) as Row[];
+  if (rows.length === 0) return [];
+
+  const userIds = rows.map((r) => r.user_id).filter((id): id is string => typeof id === "string");
+  const { data: users } = userIds.length
+    ? await supabase.from("users").select("id, handle, display_name").in("id", userIds)
+    : { data: [] as Row[] };
   const weekAgo = new Date(Date.now() - WEEK_MS).toISOString();
-  const [events, failures, bans] = await Promise.all([
-    supabase.from("automod_events").select("user_id, created_at").eq("decision", "block")
-      .not("user_id", "is", null).order("created_at", { ascending: false }).limit(1000),
-    supabase.from("generation_failures").select("user_id, created_at").gte("created_at", weekAgo)
-      .not("user_id", "is", null).order("created_at", { ascending: false }).limit(1000),
-    supabase.from("bans").select("user_id, created_at").is("lifted_at", null).or(activeBan()).limit(200),
-  ]);
 
-  // The people with the most recent reason to look at them.
-  const seen = new Map<string, string | null>();
-  for (const r of [...(events.data ?? []), ...(failures.data ?? []), ...(bans.data ?? [])] as Row[]) {
-    const id = String(r.user_id ?? "");
-    if (id) seen.set(id, latest(seen.get(id) ?? null, r.created_at));
-  }
-  const ids = [...seen.entries()].sort((a, b) => String(b[1]).localeCompare(String(a[1]))).slice(0, PEOPLE_LIMIT).map(([id]) => id);
-  if (ids.length === 0) return [];
-
-  const [ev, fl, gen, users, active] = await Promise.all([
-    supabase.from("automod_events").select("user_id, category, scores, review_state, created_at")
-      .in("user_id", ids).eq("decision", "block").limit(5000),
-    supabase.from("generation_failures").select("user_id, created_at").in("user_id", ids).gte("created_at", weekAgo).limit(5000),
-    supabase.from("generations").select("user_id, created_at").in("user_id", ids).order("created_at", { ascending: false }).limit(500),
-    supabase.from("users").select("id, handle, display_name").in("id", ids),
-    supabase.from("bans").select("user_id, expires_at").in("user_id", ids).is("lifted_at", null).or(activeBan()),
-  ]);
-
-  const extractionSince = new Date(Date.now() - EXTRACTION_WINDOW_MS).toISOString();
-  const by = <T extends Row>(rows: T[] | null, id: string) => (rows ?? []).filter((r) => String(r.user_id) === id);
-  const people = ids.map((id): Person => {
-    const rows = by(ev.data as Row[] | null, id);
-    const user = ((users.data ?? []) as Row[]).find((u) => String(u.id) === id);
-    const ban = by(active.data as Row[] | null, id)[0];
-    const live = rows.filter((r) => r.review_state !== "overturned");
-    let lastActive: string | null = null;
-    for (const r of [...rows, ...by(fl.data as Row[] | null, id), ...by(gen.data as Row[] | null, id)]) lastActive = latest(lastActive, r.created_at);
+  return Promise.all(rows.map(async (r): Promise<Person> => {
+    const who: Who = typeof r.user_id === "string" ? { userId: r.user_id } : { ipHash: String(r.ip_hash) };
+    const id = "userId" in who ? { userId: who.userId, ipHash: null } : { userId: null, ipHash: who.ipHash };
+    const events = () => scope(supabase.from("automod_events").select("id", { count: "exact", head: true }).eq("decision", "block"), who);
+    const [warnings, extractionHits, pending, childSafety, failed7d, ban] = await Promise.all([
+      weightSince(supabase, id),
+      hitsSince(supabase, id),
+      count(events().eq("review_state", "pending")),
+      count(events().in("category", CHILD_SAFETY).neq("review_state", "overturned")),
+      count(scope(supabase.from("generation_failures").select("id", { count: "exact", head: true }).gte("created_at", weekAgo), who)),
+      id.userId ? activeBanFor(supabase, id.userId) : Promise.resolve(null),
+    ]);
+    const user = ((users ?? []) as Row[]).find((u) => u.id === id.userId);
     return {
-      userId: id,
+      key: id.userId ?? `ip:${id.ipHash}`,
+      ...id,
       handle: (user?.handle as string | null) ?? null,
       displayName: (user?.display_name as string | null) ?? null,
-      warnings: warningWeight(rows as Parameters<typeof warningWeight>[0]),
-      extractionHits: live.filter((r) => r.category === "extraction" && String(r.created_at) >= extractionSince).length,
-      childSafety: live.some((r) => CHILD_SAFETY.includes(String(r.category))),
-      pending: rows.filter((r) => r.review_state === "pending").length,
-      suspension: ban ? { until: (ban.expires_at as string | null) ?? null } : null,
-      failed7d: by(fl.data as Row[] | null, id).length,
-      lastActive,
+      warnings,
+      extractionHits,
+      childSafety: childSafety > 0,
+      pending,
+      suspension: ban ? { until: ban.expiresAt } : null,
+      failed7d,
+      lastActive: (r.last_at as string | null) ?? null,
     };
-  });
-  return people.sort((a, b) => String(b.lastActive ?? "").localeCompare(String(a.lastActive ?? "")));
+  }));
 }
 
 export interface PersonDetail {
@@ -100,16 +117,18 @@ export interface PersonDetail {
   bans: { id: string; reason: string | null; expiresAt: string | null; liftedAt: string | null; at: string }[];
 }
 
-export async function personDetail(supabase: SupabaseClient, userId: string, decrypt: Decrypt): Promise<PersonDetail> {
+export async function personDetail(supabase: SupabaseClient, who: Who, decrypt: Decrypt): Promise<PersonDetail> {
   const [ev, fl, bans] = await Promise.all([
-    supabase.from("automod_events")
+    scope(supabase.from("automod_events")
       .select("id, surface, severity, tier, category, matched_rules, scores, evidence_ct, evidence_iv, evidence_tag, evidence_kid, review_state, reviewed_at, review_notes, created_at")
-      .eq("user_id", userId).eq("decision", "block").order("created_at", { ascending: false }).limit(100),
-    supabase.from("generation_failures")
-      .select("id, surface, model_id, resolution, quality, boost, aspect_ratio, reference_image_count, error, prompt_ct, prompt_iv, prompt_tag, prompt_kid, image_url, tx_signature, created_at")
-      .eq("user_id", userId).order("created_at", { ascending: false }).limit(50),
-    supabase.from("bans").select("id, reason, expires_at, lifted_at, created_at")
-      .eq("user_id", userId).order("created_at", { ascending: false }).limit(20),
+      .eq("decision", "block"), who).order("created_at", { ascending: false }).limit(100),
+    scope(supabase.from("generation_failures")
+      .select("id, surface, model_id, resolution, quality, boost, aspect_ratio, reference_image_count, error, prompt_ct, prompt_iv, prompt_tag, prompt_kid, image_url, tx_signature, created_at"),
+    who).order("created_at", { ascending: false }).limit(50),
+    "userId" in who
+      ? supabase.from("bans").select("id, reason, expires_at, lifted_at, created_at")
+        .eq("user_id", who.userId).order("created_at", { ascending: false }).limit(20)
+      : Promise.resolve({ data: [] as Row[] }),
   ]);
   const failures = (fl.data ?? []) as Row[];
   const modelIds = [...new Set(failures.map((f) => f.model_id).filter((m): m is string => typeof m === "string"))];

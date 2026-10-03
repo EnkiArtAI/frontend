@@ -20,7 +20,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { decryptString, encryptString, type EncryptedPayload } from "@/lib/crypto";
 import { notifyAdmins } from "@/lib/admin-notify";
-import { CHILD_SAFETY, listPeople, personDetail } from "@/lib/admin/people";
+import { CHILD_SAFETY, hasChildSafetyCase, listPeople, parsePersonKey, personDetail } from "@/lib/admin/people";
 
 /** A ban counts while it is not lifted and has not run out, as activeBanFor reads it. */
 const unexpired = () => `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`;
@@ -206,8 +206,9 @@ export async function GET(req: NextRequest) {
   // One person, expanded in the person list: every event with its prompt and settings.
   const person = req.nextUrl.searchParams.get("person");
   if (person !== null) {
-    if (!UUID_RE.test(person)) return NextResponse.json({ error: "Bad person id" }, { status: 400 });
-    return NextResponse.json(await personDetail(supabase, person, (ct, iv, tag, kid) => tryDecrypt(ct, iv, tag, kid, [undefined])));
+    const who = parsePersonKey(person);
+    if (!who) return NextResponse.json({ error: "Bad person id" }, { status: 400 });
+    return NextResponse.json(await personDetail(supabase, who, (ct, iv, tag, kid) => tryDecrypt(ct, iv, tag, kid, [undefined])));
   }
 
   const [imp, rep, fb, fr, hu, st, ba, ap, rec, council, genPolicy, automod, people] = await Promise.all([
@@ -604,6 +605,10 @@ export async function POST(req: NextRequest) {
       return error ? fail(error, "ban the user") : NextResponse.json({ ok: true });
     }
     if (body.action === "lift") {
+      // A ban that follows a child-safety case is an admin's to lift, like the case itself.
+      if (role !== "admin" && (await hasChildSafetyCase(supabase, targetId))) {
+        return NextResponse.json({ error: "Only an admin can lift a ban after a child-safety case" }, { status: 403 });
+      }
       const { error } = await supabase.from("bans")
         .update({ lifted_at: now, lifted_by: userId, lifted_reason: "Reinstated from the admin panel" })
         .eq("user_id", targetId).is("lifted_at", null);
@@ -619,6 +624,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Appeal not found or already decided" }, { status: 400 });
     }
     const approve = body.action === "approve";
+    if (approve && ap.target_type !== "strike" && role !== "admin") {
+      const { data: ban } = await supabase.from("bans").select("user_id").eq("id", ap.target_uuid).maybeSingle();
+      if (ban && (await hasChildSafetyCase(supabase, String(ban.user_id)))) {
+        return NextResponse.json({ error: "Only an admin can lift a ban after a child-safety case" }, { status: 403 });
+      }
+    }
     const { error } = await supabase.from("appeals")
       .update({ status: approve ? "approved" : "denied", decided_by: userId, decided_at: now })
       .eq("id", body.id).eq("status", "pending");

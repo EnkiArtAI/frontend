@@ -68,3 +68,34 @@ END $$;
 REVOKE ALL ON public.generation_failures FROM anon, authenticated;
 
 NOTIFY pgrst, 'reload schema';
+
+-- The admin People list: one row per person with a reason to look at them,
+-- open cases flagged. Grouping happens here, so one busy account cannot push
+-- everyone else out of a row-capped read. Someone without an account is keyed
+-- by their hashed address. Read only by /api/admin (lib/admin/people.ts); the
+-- counts per person come from the enforcement code, not from this view.
+-- Verified live 2026-10-03: automod_events (decision, user_id, ip_hash,
+-- review_state, created_at) and bans (user_id, lifted_at, expires_at,
+-- created_at) exist.
+CREATE OR REPLACE VIEW moderation_people AS
+SELECT user_id, ip_hash, max(at) AS last_at, bool_or(open) AS pending
+FROM (
+  SELECT user_id, CASE WHEN user_id IS NULL THEN ip_hash END AS ip_hash,
+         created_at AS at, review_state = 'pending' AS open
+  FROM automod_events
+  WHERE decision = 'block' AND (user_id IS NOT NULL OR ip_hash IS NOT NULL)
+  UNION ALL
+  SELECT user_id, CASE WHEN user_id IS NULL THEN ip_hash END, created_at, false
+  FROM generation_failures
+  WHERE created_at > now() - interval '7 days' AND (user_id IS NOT NULL OR ip_hash IS NOT NULL)
+  UNION ALL
+  SELECT user_id, NULL, created_at, false
+  FROM bans
+  WHERE lifted_at IS NULL AND (expires_at IS NULL OR expires_at > now())
+) AS reasons
+GROUP BY user_id, ip_hash;
+
+-- A view runs with its owner's rights, so the public roles must not reach it.
+REVOKE ALL ON public.moderation_people FROM anon, authenticated;
+
+NOTIFY pgrst, 'reload schema';

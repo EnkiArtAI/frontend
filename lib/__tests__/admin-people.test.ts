@@ -1,28 +1,56 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { join } from "node:path";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { NextRequest } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { readSource } from "@/lib/__tests__/_read-source";
-import { listPeople, personDetail } from "@/lib/admin/people";
 
 /**
  * The admin person list (Kev, 2026-10-03): one row per person with what
  * enforcement counts, and every event with its prompt and settings on
- * expanding, so whoever is failing on what can be fixed fast.
+ * expanding, so whoever is failing on what can be fixed fast. Someone without
+ * an account is a person too, by hashed address. A child-safety case is an
+ * admin's call, its ban included.
  */
 
 type Row = Record<string, unknown>;
 let tables: Record<string, Row[]>;
+const WEEK = 7 * 86400_000;
 
-class Query implements PromiseLike<{ data: unknown; error: null }> {
+/** The view moderation_people, as migrations/2026-10-03-generation-failures.sql defines it. */
+function moderationPeople(): Row[] {
+  const now = new Date().toISOString();
+  const reasons = [
+    ...tables.automod_events.filter((r) => r.decision === "block" && (r.user_id || r.ip_hash))
+      .map((r) => ({ user_id: r.user_id ?? null, ip_hash: r.user_id ? null : r.ip_hash, at: r.created_at, open: r.review_state === "pending" })),
+    ...tables.generation_failures.filter((r) => String(r.created_at) > new Date(Date.now() - WEEK).toISOString() && (r.user_id || r.ip_hash))
+      .map((r) => ({ user_id: r.user_id ?? null, ip_hash: r.user_id ? null : r.ip_hash, at: r.created_at, open: false })),
+    ...tables.bans.filter((b) => !b.lifted_at && (!b.expires_at || String(b.expires_at) > now))
+      .map((b) => ({ user_id: b.user_id, ip_hash: null, at: b.created_at, open: false })),
+  ];
+  const groups = new Map<string, Row>();
+  for (const r of reasons) {
+    const k = `${r.user_id}|${r.ip_hash}`;
+    const g = groups.get(k) ?? { user_id: r.user_id, ip_hash: r.ip_hash, last_at: r.at, pending: false };
+    if (String(r.at) > String(g.last_at)) g.last_at = r.at;
+    g.pending = g.pending || r.open;
+    groups.set(k, g);
+  }
+  return [...groups.values()];
+}
+
+class Query implements PromiseLike<{ data: unknown; error: null; count?: number }> {
   private filters: ((r: Row) => boolean)[] = [];
+  private sorts: [string, boolean][] = [];
   private cap = Infinity;
-  private desc = false;
+  private countOnly = false;
+  private one = false;
+  private patch: Row | null = null;
   constructor(private table: string) {}
-  select() { return this; }
+  select(_c?: string, o?: { head?: boolean }) { if (o?.head) this.countOnly = true; return this; }
+  update(p: Row) { this.patch = p; return this; }
+  filter(c: string, op: string, v: unknown) { return op === "is" ? this.is(c, v as null) : this.eq(c, v); }
   eq(c: string, v: unknown) { this.filters.push((r) => r[c] === v); return this; }
+  neq(c: string, v: unknown) { this.filters.push((r) => r[c] !== v); return this; }
   in(c: string, vs: unknown[]) { this.filters.push((r) => vs.includes(r[c])); return this; }
   is(c: string, v: null) { this.filters.push((r) => (r[c] ?? null) === v); return this; }
-  not(c: string, _op: string, v: null) { this.filters.push((r) => (r[c] ?? null) !== v); return this; }
   gte(c: string, v: string) { this.filters.push((r) => String(r[c]) >= v); return this; }
   or(expr: string) {
     // Only the active-ban shape is used: "expires_at.is.null,expires_at.gt.<iso>".
@@ -30,25 +58,46 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
     this.filters.push((r) => r.expires_at == null || String(r.expires_at) > iso);
     return this;
   }
-  order(_c: string, o: { ascending: boolean }) { this.desc = !o.ascending; return this; }
+  order(c: string, o: { ascending: boolean }) { this.sorts.push([c, o.ascending]); return this; }
   limit(n: number) { this.cap = n; return this; }
-  then<A, B = never>(ok?: ((v: { data: unknown; error: null }) => A | PromiseLike<A>) | null, ko?: ((e: unknown) => B | PromiseLike<B>) | null) {
-    let rows = (tables[this.table] ?? []).filter((r) => this.filters.every((f) => f(r)));
-    if (this.desc) rows = [...rows].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
-    return Promise.resolve({ data: rows.slice(0, this.cap), error: null }).then(ok, ko);
+  maybeSingle() { this.one = true; return this; }
+  then<A, B = never>(ok?: ((v: { data: unknown; error: null; count?: number }) => A | PromiseLike<A>) | null, ko?: ((e: unknown) => B | PromiseLike<B>) | null) {
+    const source = this.table === "moderation_people" ? moderationPeople() : (tables[this.table] ??= []);
+    let rows = source.filter((r) => this.filters.every((f) => f(r)));
+    if (this.patch) { rows.forEach((r) => Object.assign(r, this.patch)); return Promise.resolve({ data: null, error: null }).then(ok, ko); }
+    for (const [c, asc] of [...this.sorts].reverse()) {
+      rows = [...rows].sort((a, b) => (asc ? 1 : -1) * (String(a[c]) < String(b[c]) ? -1 : String(a[c]) > String(b[c]) ? 1 : 0));
+    }
+    rows = rows.slice(0, this.cap);
+    const res = this.countOnly ? { data: null, error: null as null, count: rows.length } : { data: this.one ? rows[0] ?? null : rows, error: null as null };
+    return Promise.resolve(res).then(ok, ko);
   }
 }
 const fake = { from: (t: string) => new Query(t) } as unknown as SupabaseClient;
 
+vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => fake }));
+vi.mock("@/lib/session-user", async (original) => ({
+  ...(await original<typeof import("@/lib/session-user")>()),
+  resolveSessionUserId: async (_s: unknown, t: string | null) => ({ "mod-tok": "mod-1", "admin-tok": "admin-1" } as Record<string, string>)[t ?? ""] ?? null,
+}));
+
+import { listPeople, personDetail, parsePersonKey, hasChildSafetyCase } from "@/lib/admin/people";
+import { POST } from "../../app/api/admin/route";
+
+const HASH = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const ago = (days: number) => new Date(Date.now() - days * 86400_000).toISOString();
-const ev = (user: string, category: string, extra: Row = {}): Row => ({
-  id: `e${Math.random()}`, user_id: user, decision: "block", category, review_state: "none", scores: { weight: category === "minor_sexual" ? 10 : 1 }, created_at: ago(1), ...extra,
+const ev = (user: string | null, category: string, extra: Row = {}): Row => ({
+  id: `e${Math.random()}`, user_id: user, ip_hash: null, decision: "block", category, review_state: "none",
+  scores: { weight: category === "minor_sexual" ? 10 : 1 }, created_at: ago(1), ...extra,
 });
 
 beforeEach(() => {
   tables = {
-    automod_events: [], generation_failures: [], bans: [], generations: [], models: [{ id: "m1", name: "GPT Image 2" }],
-    users: [{ id: "u1", handle: "anna", display_name: "Anna" }, { id: "u2", handle: "ben", display_name: null }],
+    automod_events: [], generation_failures: [], bans: [], appeals: [], models: [{ id: "m1", name: "GPT Image 2" }],
+    users: [
+      { id: "u1", handle: "anna", display_name: "Anna" }, { id: "u2", handle: "ben", display_name: null },
+      { id: "mod-1", role: "mod" }, { id: "admin-1", role: "admin" },
+    ],
   };
 });
 
@@ -56,13 +105,13 @@ describe("the person list", () => {
   it("counts warnings the way enforcement does", async () => {
     tables.automod_events.push(ev("u1", "explicit_sexual"), ev("u1", "explicit_sexual"), ev("u1", "explicit_sexual", { review_state: "overturned" }));
     const [anna] = await listPeople(fake);
-    expect(anna).toMatchObject({ userId: "u1", handle: "anna", warnings: 2 });
+    expect(anna).toMatchObject({ key: "u1", userId: "u1", handle: "anna", warnings: 2 });
   });
 
   it("flags a child-safety case that was not overturned", async () => {
-    tables.automod_events.push(ev("u1", "minor_sexual", { review_state: "pending" }));
+    tables.automod_events.push(ev("u1", "minor_sexual", { review_state: "pending" }), ev("u1", "explicit_sexual"));
     const [anna] = await listPeople(fake);
-    expect(anna).toMatchObject({ childSafety: true, pending: 1, warnings: 10 });
+    expect(anna).toMatchObject({ childSafety: true, pending: 1, warnings: 11 });
   });
 
   it("drops the flag once the case is overturned", async () => {
@@ -70,8 +119,8 @@ describe("the person list", () => {
     expect((await listPeople(fake))[0].childSafety).toBe(false);
   });
 
-  it("counts extraction hits of the last 30 days only", async () => {
-    tables.automod_events.push(ev("u1", "extraction"), ev("u1", "extraction", { created_at: ago(40) }));
+  it("counts extraction hits of the last 30 days only, overturned ones out", async () => {
+    tables.automod_events.push(ev("u1", "extraction"), ev("u1", "extraction", { created_at: ago(40) }), ev("u1", "extraction", { review_state: "overturned" }));
     expect((await listPeople(fake))[0].extractionHits).toBe(1);
   });
 
@@ -91,19 +140,45 @@ describe("the person list", () => {
     expect(ben).toMatchObject({ userId: "u2", failed7d: 2 });
   });
 
-  it("puts the most recently active person first", async () => {
-    tables.automod_events.push(ev("u1", "explicit_sexual", { created_at: ago(5) }), ev("u2", "explicit_sexual", { created_at: ago(1) }));
-    expect((await listPeople(fake)).map((p) => p.userId)).toEqual(["u2", "u1"]);
+  it("puts open cases first, then the most recently active", async () => {
+    tables.automod_events.push(
+      ev("u1", "explicit_sexual", { created_at: ago(1) }),
+      ev("u2", "minor_sexual", { created_at: ago(20), review_state: "pending" }),
+    );
+    expect((await listPeople(fake)).map((p) => p.key)).toEqual(["u2", "u1"]);
   });
 
-  it("counts a recent generation as activity", async () => {
-    tables.automod_events.push(ev("u1", "explicit_sexual", { created_at: ago(5) }), ev("u2", "explicit_sexual", { created_at: ago(2) }));
-    tables.generations.push({ user_id: "u1", created_at: ago(0) });
-    expect((await listPeople(fake)).map((p) => p.userId)).toEqual(["u1", "u2"]);
+  it("orders by recency when nothing is open", async () => {
+    tables.automod_events.push(ev("u1", "explicit_sexual", { created_at: ago(5) }), ev("u2", "explicit_sexual", { created_at: ago(1) }));
+    expect((await listPeople(fake)).map((p) => p.key)).toEqual(["u2", "u1"]);
+  });
+
+  it("is not taken over by one busy account", async () => {
+    for (let i = 0; i < 1500; i++) tables.automod_events.push(ev("u1", "violence", { created_at: ago(0) }));
+    tables.automod_events.push(ev("u2", "explicit_sexual", { created_at: ago(3) }));
+    expect((await listPeople(fake)).map((p) => p.key)).toEqual(["u1", "u2"]);
+  });
+
+  it("lists someone without an account by hashed address, apart from accounts on it", async () => {
+    tables.automod_events.push(
+      ev(null, "minor_sexual", { ip_hash: HASH, review_state: "pending" }),
+      ev("u1", "explicit_sexual", { ip_hash: HASH }),
+    );
+    tables.generation_failures.push({ user_id: null, ip_hash: HASH, created_at: ago(1) });
+    const anon = (await listPeople(fake)).find((p) => p.key === `ip:${HASH}`);
+    expect(anon).toMatchObject({ userId: null, ipHash: HASH, warnings: 10, childSafety: true, pending: 1, failed7d: 1, suspension: null });
   });
 
   it("is empty when nobody needs looking at", async () => {
     expect(await listPeople(fake)).toEqual([]);
+  });
+});
+
+describe("a person key", () => {
+  it("is an account id or a hashed address, nothing else", () => {
+    expect(parsePersonKey("0b5f2c1e-1111-4222-8333-444455556666")).toEqual({ userId: "0b5f2c1e-1111-4222-8333-444455556666" });
+    expect(parsePersonKey(`ip:${HASH}`)).toEqual({ ipHash: HASH });
+    for (const bad of ["u1", "ip:", "ip:xyz", `ip:${HASH}'`, "1;drop"]) expect(parsePersonKey(bad)).toBeNull();
   });
 });
 
@@ -112,7 +187,7 @@ describe("one person, expanded", () => {
 
   it("shows every event with its prompt, weight and state", async () => {
     tables.automod_events.push(ev("u1", "explicit_sexual", { evidence_ct: "secret", surface: "generate-image", severity: "strike", tier: 2, scores: { weight: 1, confidence: 0.92 } }));
-    const d = await personDetail(fake, "u1", decrypt);
+    const d = await personDetail(fake, { userId: "u1" }, decrypt);
     expect(d.events[0]).toMatchObject({ category: "explicit_sexual", prompt: "the decrypted prompt", weight: 1, confidence: 0.92, state: "none" });
   });
 
@@ -121,7 +196,7 @@ describe("one person, expanded", () => {
       id: "f1", user_id: "u1", surface: "generate-image", model_id: "m1", resolution: "2K", quality: "high", boost: false,
       aspect_ratio: "16:9", reference_image_count: 2, error: "provider said no", prompt_ct: "secret", created_at: ago(1),
     });
-    const d = await personDetail(fake, "u1", decrypt);
+    const d = await personDetail(fake, { userId: "u1" }, decrypt);
     expect(d.failures[0]).toMatchObject({
       model: "GPT Image 2", resolution: "2K", quality: "high", aspectRatio: "16:9", referenceImageCount: 2, error: "provider said no", prompt: "the decrypted prompt",
     });
@@ -129,28 +204,75 @@ describe("one person, expanded", () => {
 
   it("shows only that person's events", async () => {
     tables.automod_events.push(ev("u2", "explicit_sexual"));
-    expect((await personDetail(fake, "u1", decrypt)).events).toEqual([]);
+    expect((await personDetail(fake, { userId: "u1" }, decrypt)).events).toEqual([]);
+  });
+
+  it("shows an address's own events, not those of accounts on it", async () => {
+    tables.automod_events.push(ev(null, "minor_sexual", { ip_hash: HASH }), ev("u1", "explicit_sexual", { ip_hash: HASH }));
+    const d = await personDetail(fake, { ipHash: HASH }, decrypt);
+    expect(d.events.map((e) => e.category)).toEqual(["minor_sexual"]);
+    expect(d.bans).toEqual([]);
+  });
+});
+
+describe("a child-safety case", () => {
+  it("is open until overturned", async () => {
+    tables.automod_events.push(ev("u1", "sexual/minors", { review_state: "upheld" }));
+    expect(await hasChildSafetyCase(fake, "u1")).toBe(true);
+    tables.automod_events[0].review_state = "overturned";
+    expect(await hasChildSafetyCase(fake, "u1")).toBe(false);
   });
 });
 
 describe("the admin route", () => {
-  const SRC = readSource(join(__dirname, "..", "..", "app", "api", "admin", "route.ts"));
+  const post = (token: string, body: unknown) => POST(new NextRequest("http://enki.test/api/admin", {
+    method: "POST", headers: { "X-Session-Token": token, "Content-Type": "application/json" }, body: JSON.stringify(body),
+  }));
+  const banU1 = () => tables.bans.push({ id: "b1", user_id: "u1", lifted_at: null, expires_at: null, created_at: ago(1) });
 
-  it("answers one person's detail for a valid id only", () => {
-    expect(SRC).toMatch(/if \(!UUID_RE\.test\(person\)\) return NextResponse\.json\(\{ error: "Bad person id" \}, \{ status: 400 \}\);/);
+  it("lets a mod lift an ordinary suspension", async () => {
+    banU1();
+    tables.automod_events.push(ev("u1", "explicit_sexual"));
+    expect((await post("mod-tok", { resource: "bans", action: "lift", userId: "u1" })).status).toBe(200);
+    expect(tables.bans[0].lifted_at).toBeTruthy();
   });
 
-  it("sends the person list with the panel's data", () => {
-    expect(SRC).toMatch(/listPeople\(supabase\),\n {2}\]\);/);
-    expect(SRC).toMatch(/return NextResponse\.json\(\{\n {4}people,/);
+  it("does not let a mod lift a ban after a child-safety case", async () => {
+    banU1();
+    tables.automod_events.push(ev("u1", "minor_sexual"));
+    expect((await post("mod-tok", { resource: "bans", action: "lift", userId: "u1" })).status).toBe(403);
+    expect(tables.bans[0].lifted_at).toBeNull();
   });
 
-  it("lets only an admin review a child-safety case", () => {
-    expect(SRC).toMatch(/if \(CHILD_SAFETY\.includes\(String\(ev\.category\)\) && role !== "admin"\) \{/);
+  it("lets an admin lift it", async () => {
+    banU1();
+    tables.automod_events.push(ev("u1", "minor_sexual"));
+    expect((await post("admin-tok", { resource: "bans", action: "lift", userId: "u1" })).status).toBe(200);
   });
 
-  it("overturns or upholds without deleting the event", () => {
-    expect(SRC).toMatch(/review_state: body\.action === "overturn" \? "overturned" : "upheld",/);
-    expect(SRC).not.toMatch(/from\("automod_events"\)\s*\.delete\(/);
+  it("does not let a mod approve the appeal against such a ban", async () => {
+    banU1();
+    tables.automod_events.push(ev("u1", "csam"));
+    tables.appeals.push({ id: "a1", target_type: "ban", target_uuid: "b1", status: "pending" });
+    expect((await post("mod-tok", { resource: "appeals", action: "approve", id: "a1" })).status).toBe(403);
+    expect(tables.appeals[0].status).toBe("pending");
+    expect(tables.bans[0].lifted_at).toBeNull();
+  });
+
+  it("does not let a mod overturn a child-safety case", async () => {
+    tables.automod_events.push(ev("u1", "minor_sexual", { id: "e1" }));
+    expect((await post("mod-tok", { resource: "automod", action: "overturn", id: "e1" })).status).toBe(403);
+    expect(tables.automod_events[0].review_state).toBe("none");
+  });
+
+  it("lets a mod overturn an ordinary warning, without deleting it", async () => {
+    tables.automod_events.push(ev("u1", "explicit_sexual", { id: "e1" }));
+    expect((await post("mod-tok", { resource: "automod", action: "overturn", id: "e1" })).status).toBe(200);
+    expect(tables.automod_events).toHaveLength(1);
+    expect(tables.automod_events[0].review_state).toBe("overturned");
+  });
+
+  it("is closed to everyone else", async () => {
+    expect((await post("nobody", { resource: "bans", action: "lift", userId: "u1" })).status).toBe(401);
   });
 });

@@ -41,7 +41,7 @@ export async function silentFailure(): Promise<NextResponse> {
   return NextResponse.json(SILENT_FAILURE, { status: 500 });
 }
 
-async function hitsSince(supabase: SupabaseClient, who: { userId: string | null; ipHash: string | null }): Promise<number> {
+export async function hitsSince(supabase: SupabaseClient, who: { userId: string | null; ipHash: string | null }): Promise<number> {
   const since = new Date(Date.now() - EXTRACTION_WINDOW_MS).toISOString();
   // An admin who overturns a hit takes it out of the count.
   let q = supabase.from("automod_events").select("id", { count: "exact", head: true }).eq("category", "extraction")

@@ -48,7 +48,7 @@ export function warningWeight(rows: { category?: unknown; review_state?: unknown
     .reduce((s, r) => s + (Number(r.scores?.weight) || 0), 0);
 }
 
-async function weightSince(supabase: SupabaseClient, who: { userId: string | null; ipHash: string | null }, since?: string): Promise<number> {
+export async function weightSince(supabase: SupabaseClient, who: { userId: string | null; ipHash: string | null }, since?: string): Promise<number> {
   let q = supabase.from("automod_events").select("category, review_state, scores").in("category", CATEGORIES).neq("review_state", "overturned");
   if (since) q = q.gte("created_at", since);
   if (who.userId) q = q.eq("user_id", who.userId);
