@@ -46,6 +46,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export async function POST(request: NextRequest) {
   // What a failure from the render on is recorded with, for the admin person list.
   let failCtx: Omit<GenerationFailure, "error"> | null = null;
+  // JSON only. A page elsewhere may send a form or plain text here in a
+  // visitor's name without asking first; every request costs a check and can
+  // earn the visitor's address a warning. JSON from another site has to ask,
+  // and is refused.
+  if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+    return NextResponse.json({ error: "Send the request as JSON." }, { status: 415 });
+  }
   try {
     const body = await request.json();
     const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
