@@ -25,7 +25,7 @@ function chain() {
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => ({ from: chain }) }));
 vi.mock("@/lib/session-user", () => ({ resolveSessionUserId: async (_s: unknown, t: string | null) => (t === "tok" ? "user-1" : null) }));
 
-import { GET, PATCH } from "@/app/api/users/handle/route";
+import { GET, PATCH } from "../../app/api/users/handle/route";
 
 const patch = (body: unknown) => PATCH(new NextRequest("http://enki.test/api/users/handle", {
   method: "PATCH", headers: { "X-Session-Token": "tok", "Content-Type": "application/json" }, body: JSON.stringify(body),
