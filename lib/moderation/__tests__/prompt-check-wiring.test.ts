@@ -107,7 +107,7 @@ describe("the free generator", () => {
 });
 
 describe("the agent rail", () => {
-  const check = AGENT.indexOf("await checkPrompt(checked, { hidden: reqs.legs.length > 1 })");
+  const check = AGENT.indexOf("await checkPrompt(checked, { hidden })");
 
   it("judges a marketplace prompt on the agent's values and an own prompt whole", () => {
     expect(AGENT).toMatch(/const checked = input\.promptId \? textValues\(input\.variableValues\) : \{ prompt: promptText \};/);
@@ -118,7 +118,7 @@ describe("the agent rail", () => {
     expect(blocked).toBeGreaterThan(-1);
     expect(check).toBeGreaterThan(blocked);
     // Judged like everyone else, so nothing before the silent point differs.
-    expect(AGENT).toMatch(/const check = await checkPrompt\(checked, \{ hidden: reqs\.legs\.length > 1 \}\);/);
+    expect(AGENT).toMatch(/const check = await checkPrompt\(checked, \{ hidden \}\);/);
     expect(FREE).toMatch(/const check = await checkPrompt\(\{ prompt \}, \{ hidden: false, signal: request\.signal \}\);/);
     expect(FREE).toMatch(/const silent = warnedOut \|\| check\.verdict !== "clear";/);
   });

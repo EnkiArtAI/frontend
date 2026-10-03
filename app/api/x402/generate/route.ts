@@ -218,6 +218,9 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // artists prompts"). Free/showcase prompts read their public text.
   let promptText = input.prompt ?? "";
   let promptAdult = false;
+  // Whether the text the values fill is one the agent must not see, whatever
+  // the artist charges for it: a paid prompt at 0 cents is still secret.
+  let hidden = false;
   if (input.promptId) {
     // Only a live prompt is for sale, and every value must belong to a
     // declared variable and fit it, so an agent never pays for an input that
@@ -238,6 +241,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
     }
     promptText = filled.text;
     promptAdult = text.adult;
+    hidden = inputs.paid;
   }
 
   // What the request asks for, judged before any payment: for a marketplace
@@ -251,7 +255,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   const checked = input.promptId ? textValues(input.variableValues) : { prompt: promptText };
   // A blocked address is still judged, so its answers and their timing match
   // everyone else's up to the silent point; only its hits are not recorded.
-  const check = await checkPrompt(checked, { hidden: reqs.legs.length > 1 });
+  const check = await checkPrompt(checked, { hidden });
   if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
     const outcome = await recordWarning(supabase, {
       surface: "x402-generate", request, category: check.verdict, text: JSON.stringify(checked), confidence: check.confidence,

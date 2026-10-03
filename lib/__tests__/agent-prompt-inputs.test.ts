@@ -157,6 +157,11 @@ describe("a paid prompt takes only values that fit its variables", () => {
     expect(await check({ "Character Design": "knight", character_design: "dragon" })).toMatchObject({ ok: false, status: 400 });
   });
 
+  it("treats a paid prompt's text as secret at any price", async () => {
+    prompt = { ...prompt, price_usd_cents: 0 };
+    expect(await check({ character_design: "knight" })).toMatchObject({ ok: true, paid: true });
+  });
+
   it("finds the value no slot takes, which the route refuses before payment", async () => {
     const inputs = await check({ character_design: "knight", mood: "calm" });
     if (!inputs.ok) throw new Error("expected inputs");
@@ -185,6 +190,12 @@ describe("the agent route checks the inputs before any payment", () => {
     expect(src).toMatch(/const filled = fillVariables\(text\.text, Object\.fromEntries\(inputs\.values\), inputs\.variables\);/);
     expect(src.indexOf("await checkAgentPromptInputs(supabase, input.promptId, input.variableValues);", src.indexOf("async function settleAndGenerate("))).toBeGreaterThan(-1);
     expect(src).not.toMatch(/input\.variableValues\?\.\[name\]/);
+  });
+
+  it("looks for extraction whenever the text is secret, not only when the artist charges", () => {
+    expect(src).toMatch(/hidden = inputs\.paid;/);
+    expect(src).toMatch(/const check = await checkPrompt\(checked, \{ hidden \}\);/);
+    expect(src).not.toMatch(/hidden: reqs\.legs/);
   });
 
   it("refuses a value no slot takes before the payment is settled", () => {
