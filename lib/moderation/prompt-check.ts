@@ -75,11 +75,14 @@ export function savedPromptInputs(p: { title: string; content: string; tags: str
   const inputs: Record<string, string> = { title: p.title, content: p.content };
   if (p.description?.trim()) inputs.description = p.description;
   if (p.tags.length) inputs.tags = p.tags.join(", ");
-  for (const v of p.variables ?? []) {
-    const values = [v.label, v.description, v.defaultValue, ...(v.options ?? []).flatMap((o) => [o.visibleName, o.label, o.promptValue])]
+  // Keyed by position: two variables may share a name, and a later one must
+  // not hide an earlier one from the check. The name itself is shown when a
+  // variable has no label, so it is judged too.
+  for (const [i, v] of (p.variables ?? []).entries()) {
+    const values = [v.name, v.label, v.description, v.defaultValue, ...(v.options ?? []).flatMap((o) => [o.visibleName, o.label, o.promptValue])]
       .flat()
       .filter((x): x is string => typeof x === "string" && x.trim() !== "");
-    if (values.length) inputs[`variable ${v.name}`] = [...new Set(values)].join(" | ");
+    if (values.length) inputs[`variable ${i + 1}`] = [...new Set(values)].join(" | ");
   }
   return inputs;
 }

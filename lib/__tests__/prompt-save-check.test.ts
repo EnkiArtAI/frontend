@@ -103,7 +103,7 @@ describe("saving a prompt", () => {
     await save({ ...BASE, variables: [{ ...BASE.variables[0], options: [{ visibleName: "Coat", promptValue: "a long coat" }] }] });
     expect(check).toHaveBeenCalledOnce();
     expect(check.mock.calls[0][0]).toEqual({
-      title: "Portrait", content: "Portrait of a woman, [outfit]", tags: "portrait", "variable outfit": "outfit | a red coat | Coat | a long coat",
+      title: "Portrait", content: "Portrait of a woman, [outfit]", tags: "portrait", "variable 1": "outfit | a red coat | Coat | a long coat",
     });
   });
 
@@ -180,7 +180,7 @@ describe("who saves", () => {
 describe("judged whole", () => {
   it("includes a variable's label and description, which buyers see", async () => {
     await save({ ...BASE, variables: [{ ...BASE.variables[0], label: "Lingerie style", description: "how revealing" }] });
-    expect(check.mock.calls[0][0]["variable outfit"]).toBe("Lingerie style | how revealing | a red coat");
+    expect(check.mock.calls[0][0]["variable 1"]).toBe("outfit | Lingerie style | how revealing | a red coat");
   });
 
   it("includes the stored description on an update, so a re-save cannot lower its 18+ mark", async () => {
@@ -195,5 +195,17 @@ describe("judged whole", () => {
     tier2.mockClear();
     await save({ ...BASE, variables: [{ ...BASE.variables[0], defaultValue: "sheer lingerie" }] });
     expect(tier2.mock.calls[0][0].prompt).toContain("sheer lingerie");
+  });
+});
+
+describe("variables sharing a name", () => {
+  it("are each judged, none hiding another", async () => {
+    await save({ ...BASE, variables: [
+      { name: "outfit", label: "outfit", type: "text", defaultValue: "sheer lingerie", position: 0 },
+      { name: "outfit", label: "outfit", type: "text", defaultValue: "a red coat", position: 1 },
+    ] });
+    const judged = check.mock.calls[0][0] as Record<string, string>;
+    expect(judged["variable 1"]).toContain("sheer lingerie");
+    expect(judged["variable 2"]).toContain("a red coat");
   });
 });
