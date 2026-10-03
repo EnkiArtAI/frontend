@@ -26,24 +26,48 @@ const fake = {
 
 vi.mock("@/lib/crypto", () => ({ encryptString: () => ({ encrypted: "ct", iv: "iv", authTag: "tag", kid: "k1" }) }));
 vi.mock("@/lib/ip-hash", () => ({ getClientIp: () => "1.2.3.4", hashIp: (ip: string | null) => (ip ? `h:${ip}` : null) }));
-vi.mock("@/lib/session-user", () => ({
-  resolveSessionUserId: async () => "user-1",
-  // "suspended" is an account with a running ban; "gone" is no session at all.
-  resolveSessionUserWithBan: async (_s: unknown, t: string) =>
-    t === "suspended" ? { userId: "user-2", ban: { id: "b1" } } : t === "gone" ? { userId: null, ban: null } : { userId: "user-1", ban: null },
-}));
+vi.mock("@/lib/session-user", () => ({ resolveSessionUserId: async () => "user-1" }));
 vi.mock("@/lib/generation/derivative-store", () => ({ storeGeneratedImage: async () => null }));
 
-import { recordGenerationFailure, resolveRequesterId } from "@/lib/generation/record";
+import { recordGenerationFailure, holdsSession } from "@/lib/generation/record";
 
-describe("the requester behind a request", () => {
+describe("holding a session, for an editor's draft mark", () => {
   const req = (token?: string) => ({ headers: new Headers(token ? { "X-Session-Token": token } : {}) });
-  it("is the account even while it is suspended, as the moderation records file it", async () => {
-    expect(await resolveRequesterId(fake, req("suspended"))).toBe("user-2");
+  // auth_sessions with its filters applied; a ban lives elsewhere and does not matter here.
+  const future = new Date(Date.now() + 86400_000).toISOString();
+  const past = new Date(Date.now() - 86400_000).toISOString();
+  const sessions = (rows: Record<string, unknown>[] | { error: unknown } | "throws") => ({
+    from: () => {
+      const filters: ((r: Record<string, unknown>) => boolean)[] = [];
+      const q: Record<string, unknown> = {
+        select: () => q,
+        eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
+        gt: (c: string, v: string) => { filters.push((r) => String(r[c]) > v); return q; },
+        maybeSingle: async () => {
+          if (rows === "throws") throw new Error("fetch failed");
+          if (!Array.isArray(rows)) return { data: null, error: rows.error };
+          return { data: rows.find((r) => filters.every((f) => f(r))) ?? null, error: null };
+        },
+      };
+      return q;
+    },
+  }) as unknown as SupabaseClient;
+
+  it("holds for a live session, a suspended account's included", async () => {
+    expect(await holdsSession(sessions([{ token: "t", expires_at: future }]), req("t"))).toBe(true);
   });
-  it("is nobody without a valid session", async () => {
-    expect(await resolveRequesterId(fake, req())).toBeNull();
-    expect(await resolveRequesterId(fake, req("gone"))).toBeNull();
+
+  it("holds when the lookup fails, so a draft is withheld rather than shown", async () => {
+    expect(await holdsSession(sessions({ error: { message: "statement timeout" } }), req("t"))).toBe(true);
+    expect(await holdsSession(sessions("throws"), req("t"))).toBe(true);
+    expect(await holdsSession(null, req("t"))).toBe(true);
+  });
+
+  it("does not without a token, or with an unknown or expired one", async () => {
+    // Without a token nothing is even asked, so a failing lookup cannot count for it.
+    expect(await holdsSession({ from: () => { throw new Error("asked"); } } as unknown as SupabaseClient, req())).toBe(false);
+    expect(await holdsSession(sessions([{ token: "other", expires_at: future }]), req("t"))).toBe(false);
+    expect(await holdsSession(sessions([{ token: "t", expires_at: past }]), req("t"))).toBe(false);
   });
 });
 

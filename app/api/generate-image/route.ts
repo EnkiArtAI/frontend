@@ -26,7 +26,7 @@ import { solanaChainKey } from "@/lib/payments/solana";
 import type { VoidReason } from "@/lib/payments/authorization";
 import { reportSuccess, reportFailure } from "@/lib/generation/provider-health";
 import { childSafetyScore, recordModerationEvent } from "@/lib/moderation-enforcement";
-import { recordGeneration, resolveRecordingUserId, resolveRequesterId, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
+import { recordGeneration, resolveRecordingUserId, holdsSession, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
 import { storeReferenceImages } from "@/lib/generation/reference-images";
 import { acquireSlot, releaseSlot } from "@/lib/generation/concurrency";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
@@ -291,7 +291,7 @@ export async function POST(request: NextRequest) {
     // A record of an artist's prompt names it and shows the buyer's values,
     // never its text; a signed-in artist's draft from an editor shows nothing,
     // marked as withheld on their word (lib/moderation/evidence).
-    const authoring = !fromArtist && body.authoring === true && (await resolveRequesterId(getSupabaseServerClient(), request)) !== null;
+    const authoring = !fromArtist && body.authoring === true && (await holdsSession(getSupabaseServerClient(), request));
     const about = fromArtist ? { promptId: String(paid.prompt_id) } : authoring ? { withheld: prompt, draft: true } : {};
     const check = await checkPrompt(checked, { hidden: fromArtist, signal: request.signal });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {

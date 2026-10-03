@@ -269,17 +269,28 @@ export async function resolveRecordingUserId(
 }
 
 /**
- * The account behind the request even while it is suspended, the one the
- * moderation records file it under; null without a valid session.
+ * Whether a request holds a live session, banned or not: an editor's draft
+ * mark counts only then. A lookup that fails counts as holding one, so a
+ * draft is withheld rather than shown; without a token nobody holds one.
  */
-export async function resolveRequesterId(
+export async function holdsSession(
   supabase: SupabaseClient | null,
   request: { headers: { get(name: string): string | null } },
-): Promise<string | null> {
+): Promise<boolean> {
   const token = request.headers.get("X-Session-Token");
-  if (!supabase || !token) return null;
-  const { resolveSessionUserWithBan } = await import("@/lib/session-user");
-  return resolveSessionUserWithBan(supabase, token).then((s) => s.userId).catch(() => null);
+  if (!token) return false;
+  if (!supabase) return true;
+  try {
+    const { data, error } = await supabase
+      .from("auth_sessions")
+      .select("token")
+      .eq("token", token)
+      .gt("expires_at", new Date().toISOString())
+      .maybeSingle();
+    return Boolean(data) || Boolean(error);
+  } catch {
+    return true;
+  }
 }
 
 /** What a failed generation asked for, so an admin can see what broke for whom (Kev, 2026-10-03). */
