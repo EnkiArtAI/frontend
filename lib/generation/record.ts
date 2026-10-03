@@ -268,6 +268,20 @@ export async function resolveRecordingUserId(
   return resolveSessionUserId(supabase, token).catch(() => null);
 }
 
+/**
+ * The account behind the request even while it is suspended, the one the
+ * moderation records file it under; null without a valid session.
+ */
+export async function resolveRequesterId(
+  supabase: SupabaseClient | null,
+  request: { headers: { get(name: string): string | null } },
+): Promise<string | null> {
+  const token = request.headers.get("X-Session-Token");
+  if (!supabase || !token) return null;
+  const { resolveSessionUserWithBan } = await import("@/lib/session-user");
+  return resolveSessionUserWithBan(supabase, token).then((s) => s.userId).catch(() => null);
+}
+
 /** What a failed generation asked for, so an admin can see what broke for whom (Kev, 2026-10-03). */
 export interface GenerationFailure {
   request: { headers: { get(name: string): string | null } };

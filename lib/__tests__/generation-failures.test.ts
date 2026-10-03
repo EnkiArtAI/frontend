@@ -26,10 +26,26 @@ const fake = {
 
 vi.mock("@/lib/crypto", () => ({ encryptString: () => ({ encrypted: "ct", iv: "iv", authTag: "tag", kid: "k1" }) }));
 vi.mock("@/lib/ip-hash", () => ({ getClientIp: () => "1.2.3.4", hashIp: (ip: string | null) => (ip ? `h:${ip}` : null) }));
-vi.mock("@/lib/session-user", () => ({ resolveSessionUserId: async () => "user-1" }));
+vi.mock("@/lib/session-user", () => ({
+  resolveSessionUserId: async () => "user-1",
+  // "suspended" is an account with a running ban; "gone" is no session at all.
+  resolveSessionUserWithBan: async (_s: unknown, t: string) =>
+    t === "suspended" ? { userId: "user-2", ban: { id: "b1" } } : t === "gone" ? { userId: null, ban: null } : { userId: "user-1", ban: null },
+}));
 vi.mock("@/lib/generation/derivative-store", () => ({ storeGeneratedImage: async () => null }));
 
-import { recordGenerationFailure } from "@/lib/generation/record";
+import { recordGenerationFailure, resolveRequesterId } from "@/lib/generation/record";
+
+describe("the requester behind a request", () => {
+  const req = (token?: string) => ({ headers: new Headers(token ? { "X-Session-Token": token } : {}) });
+  it("is the account even while it is suspended, as the moderation records file it", async () => {
+    expect(await resolveRequesterId(fake, req("suspended"))).toBe("user-2");
+  });
+  it("is nobody without a valid session", async () => {
+    expect(await resolveRequesterId(fake, req())).toBeNull();
+    expect(await resolveRequesterId(fake, req("gone"))).toBeNull();
+  });
+});
 
 const base = {
   request: { headers: new Headers({ "X-Session-Token": "t" }) },

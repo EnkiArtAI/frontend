@@ -8,7 +8,7 @@ import { addressWarnedOut, recordWarning, warningMessage } from "@/lib/moderatio
 import { ADULT_REFUSAL, adultConfirmed, promptMarkedAdult } from "@/lib/adult-content";
 import { SILENT_FAILURE, silentFailure } from "@/lib/moderation/extraction-hits";
 import { getSupabaseServerClientSafe } from "@/lib/supabaseServer";
-import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
+import { recordGeneration, resolveRecordingUserId, resolveRequesterId, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
 import { resolveModel } from "@/lib/generation/models";
 import { normalizeTier, RESOLUTION_TIERS } from "@/lib/generation/resolution";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
@@ -117,8 +117,9 @@ export async function POST(request: NextRequest) {
     const warnedOut = await addressWarnedOut(supabaseForChecks, request);
     // A signed-in artist's draft from an editor: no moderator may read it,
     // marked as withheld on their word (lib/moderation/evidence). Without an
-    // account nobody can save a prompt, so nobody has a draft to keep.
-    const authoring = body?.authoring === true && (await resolveRecordingUserId(supabaseForChecks, request)) !== null;
+    // account nobody can save a prompt, so nobody has a draft to keep; a
+    // suspended account still has its drafts, filed under it like the rest.
+    const authoring = body?.authoring === true && (await resolveRequesterId(supabaseForChecks, request)) !== null;
     const check = await checkPrompt({ prompt }, { hidden: false, signal: request.signal });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
       const outcome = await recordWarning(supabaseForChecks, {

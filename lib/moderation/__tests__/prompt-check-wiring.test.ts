@@ -51,8 +51,9 @@ describe("the human rail", () => {
   it("withholds an artist's draft from an editor in every record", () => {
     // Only for the requester's own text: an artist's prompt keeps its values shown.
     // Only a signed-in requester has a draft to keep; an anonymous caller cannot hide its own text.
-    expect(HUMAN).toMatch(/const authoring = !fromArtist && body\.authoring === true && \(await resolveRecordingUserId\(getSupabaseServerClient\(\), request\)\) !== null;/);
-    expect(FREE).toMatch(/const authoring = body\?\.authoring === true && \(await resolveRecordingUserId\(supabaseForChecks, request\)\) !== null;/);
+    // A suspended account keeps its drafts: the resolver is the records' own, which sees through a ban.
+    expect(HUMAN).toMatch(/const authoring = !fromArtist && body\.authoring === true && \(await resolveRequesterId\(getSupabaseServerClient\(\), request\)\) !== null;/);
+    expect(FREE).toMatch(/const authoring = body\?\.authoring === true && \(await resolveRequesterId\(supabaseForChecks, request\)\) !== null;/);
     expect(FREE).toMatch(/\.\.\.\(authoring \? \{ text: "", withheld: prompt, draft: true \} : \{ text: prompt \}\),/);
     expect(FREE).toMatch(/after\(recordModerationEvent\(verdict, \{ surface: "generate-free", request, \.\.\.\(authoring \? \{ prompt: "", withheld: prompt, draft: true \} : \{ prompt \}\) \}\)\);/);
     expect(HUMAN.match(/recordModerationEvent\(/g)).toHaveLength(1);
