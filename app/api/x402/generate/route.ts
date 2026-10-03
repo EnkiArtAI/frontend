@@ -46,7 +46,7 @@ import {
 import { checkAndRecordSolanaSignature } from "@/backend/solana-x402-verifier";
 import { isSolanaChain } from "@/shared/payment-config";
 import { loadPromptText, fillVariables, inputsUnmatched, VALUE_MAX } from "@/lib/generation/prompt-text";
-import { checkExtraction, textValues } from "@/lib/moderation/extraction-check";
+import { checkExtraction, textValues } from "@/lib/moderation/prompt-check";
 import { agentBlocked, recordExtractionHit, SILENT_FAILURE } from "@/lib/moderation/extraction-hits";
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";

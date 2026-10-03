@@ -17,7 +17,7 @@ import { toModelFamily } from "@/lib/generation/model-family";
 import { claimForGeneration, type ClaimMode } from "@/lib/payments/generation-claim";
 import { settingMismatch, type StoredSettings } from "@/lib/payments/generation-settings";
 import { loadPromptText, fillVariables, inputsUnmatched, overLong, VALUE_MAX } from "@/lib/generation/prompt-text";
-import { checkExtraction, textValues } from "@/lib/moderation/extraction-check";
+import { checkExtraction, textValues } from "@/lib/moderation/prompt-check";
 import { recordExtractionHit, SILENT_FAILURE } from "@/lib/moderation/extraction-hits";
 import { captureAndBroadcast, voidAndFlush, sweepAndFlush } from "@/lib/payments/settle";
 import { solanaChainKey } from "@/lib/payments/solana";

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { checkExtraction, textValues, EXTRACTION_MODEL, EXTRACTION_INSTRUCTION } from "@/lib/moderation/extraction-check";
+import { checkExtraction, textValues, EXTRACTION_MODEL, EXTRACTION_INSTRUCTION } from "@/lib/moderation/prompt-check";
 
 /**
  * The extraction checker judges a buyer's values for a paid prompt: does an
