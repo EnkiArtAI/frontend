@@ -1727,7 +1727,7 @@ export default function PromptGeneratorView({
               promptId={promptId}
               context={promptText ? promptText.slice(0, DICE_LIMITS.maxContextLen) : undefined}
               onValues={applyDiceValues}
-              headers={sessionAuthHeaders()}
+              headers={viewerHeaders()}
               disabled={generating}
               title="Roll the dice — fill the fields you left empty"
             />

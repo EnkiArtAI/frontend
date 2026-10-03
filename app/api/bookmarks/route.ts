@@ -17,7 +17,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
-import { viewer } from "@/lib/adult-content";
+import { hiddenAdultPrompts, viewer } from "@/lib/adult-content";
 
 const PAGE = 30;
 
@@ -46,14 +46,10 @@ export async function GET(req: NextRequest) {
   const { data, error } = await q;
   if (error) return NextResponse.json({ error: "Bookmarks unavailable" }, { status: 503 });
   const page = (data ?? []).slice(0, limit);
-  // 18+ stays out while the pill is off; the cursor still walks the full page.
-  let hidden = new Set<string>();
-  if (!showAdult && page.length) {
-    const { data: adult, error: e2 } = await supabase
-      .from("prompts").select("id").in("id", page.map((b) => b.prompt_id)).eq("is_adult", true);
-    if (e2) return NextResponse.json({ error: "Bookmarks unavailable" }, { status: 503 });
-    hidden = new Set((adult ?? []).map((p) => String(p.id)));
-  }
+  // 18+ stays out while the pill is off, unless it is the viewer's own; the
+  // cursor still walks the full page.
+  const hidden = await hiddenAdultPrompts(supabase, { userId, showAdult }, page.map((b) => String(b.prompt_id)));
+  if (!hidden) return NextResponse.json({ error: "Bookmarks unavailable" }, { status: 503 });
   return NextResponse.json({
     bookmarks: page.filter((b) => !hidden.has(String(b.prompt_id))).map((b) => ({ id: b.id, promptId: b.prompt_id, imageUrl: b.image_url, position: b.position })),
     nextCursor: (data ?? []).length > limit ? page[page.length - 1]?.position ?? null : null,

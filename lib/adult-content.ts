@@ -61,3 +61,12 @@ export async function promptMarkedAdult(supabase: SupabaseClient, promptId: stri
   const { data } = await supabase.from("prompts").select("is_adult").eq("id", promptId).maybeSingle();
   return data?.is_adult === true;
 }
+
+/** Of these prompts, the 18+ ones this viewer may not see (their own never are); null when the lookup failed. */
+export async function hiddenAdultPrompts(supabase: SupabaseClient, v: Viewer, promptIds: string[]): Promise<Set<string> | null> {
+  if (v.showAdult || promptIds.length === 0) return new Set();
+  let q = supabase.from("prompts").select("id").in("id", promptIds).eq("is_adult", true);
+  if (v.userId) q = q.neq("creator_id", v.userId);
+  const { data, error } = await q;
+  return error ? null : new Set((data ?? []).map((p) => String(p.id)));
+}

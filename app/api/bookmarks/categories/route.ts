@@ -12,10 +12,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
+import { hiddenAdultPrompts, viewer } from "@/lib/adult-content";
 
 export async function GET(req: NextRequest) {
   const supabase = getSupabaseServerClient();
-  const userId = await resolveSessionUserId(supabase, req.headers.get("X-Session-Token"));
+  const { userId, showAdult } = await viewer(supabase, req);
   if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
   const { data: cats, error } = await supabase
@@ -29,13 +30,16 @@ export async function GET(req: NextRequest) {
   // per-category queries would be N round-trips for a sidebar panel.
   const { data: marks, error: e2 } = await supabase
     .from("bookmarks")
-    .select("category_id, image_url, position")
+    .select("category_id, prompt_id, image_url, position")
     .eq("user_id", userId)
     .order("position", { ascending: true });
   if (e2) return NextResponse.json({ error: "Bookmarks unavailable" }, { status: 503 });
 
+  // 18+ counts and shows as a logo only while the pill is on, or as the viewer's own.
+  const hidden = await hiddenAdultPrompts(supabase, { userId, showAdult }, [...new Set((marks ?? []).map((m) => String(m.prompt_id)))]);
+  if (!hidden) return NextResponse.json({ error: "Bookmarks unavailable" }, { status: 503 });
   const byCat = new Map<string, { count: number; logoUrl: string | null }>();
-  for (const m of marks ?? []) {
+  for (const m of (marks ?? []).filter((m) => !hidden.has(String(m.prompt_id)))) {
     const cur = byCat.get(m.category_id) ?? { count: 0, logoUrl: null };
     cur.count += 1;
     if (cur.logoUrl === null && m.image_url) cur.logoUrl = m.image_url;

@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth, checkRateLimit } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { mayShowAdult, viewer } from "@/lib/adult-content";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import {
   buildDiceMessages,
@@ -112,10 +113,14 @@ export async function POST(req: NextRequest) {
         .order("position"),
       supabase
         .from("prompts")
-        .select("public_prompt_text")
+        .select("public_prompt_text, is_adult, creator_id")
         .eq("id", parsed.data.promptId)
         .maybeSingle(),
     ]);
+    // An 18+ prompt answers like a missing one to anyone who may not see it.
+    if (prompt?.is_adult && !mayShowAdult(await viewer(supabase, req), prompt.creator_id as string | null)) {
+      return NextResponse.json({ error: "Could not load the prompt" }, { status: 404 });
+    }
     if (error) {
       console.error("[dice] could not load prompt variables:", error.message);
       return NextResponse.json({ error: "Could not load the prompt" }, { status: 500 });

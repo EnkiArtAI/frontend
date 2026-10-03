@@ -4,12 +4,12 @@
  * Client API for bookmarks — the card picker and the Bookmarks panel both
  * talk through here, so the request shapes live in exactly one place.
  */
-import { sessionAuthHeaders } from "@/lib/session-headers";
+import { viewerHeaders } from "@/lib/session-headers";
 
 export type BookmarkCategory = { id: string; name: string; count: number; logoUrl: string | null; createdAt: string };
 export type Bookmark = { id: string; promptId: string; imageUrl: string | null; position: number };
 
-const HEADERS = () => ({ "Content-Type": "application/json", ...sessionAuthHeaders() });
+const HEADERS = () => ({ "Content-Type": "application/json", ...viewerHeaders() });
 
 export async function listCategories(): Promise<BookmarkCategory[]> {
   const res = await fetch("/api/bookmarks/categories", { headers: HEADERS() });

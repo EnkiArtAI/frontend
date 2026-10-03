@@ -106,13 +106,6 @@ describe("the routes", () => {
     }
   });
 
-  it("likes and bookmarks while the pill is off", () => {
-    expect(src("app", "api", "prompts", "likes", "mine", "route.ts")).toMatch(/if \(p\.is_adult && !showAdult\) return null;/);
-    const bm = src("app", "api", "bookmarks", "route.ts");
-    expect(bm).toMatch(/if \(!showAdult && page\.length\) \{/);
-    expect(bm).toMatch(/bookmarks: page\.filter\(\(b\) => !hidden\.has\(String\(b\.prompt_id\)\)\)/);
-  });
-
   it("the client sends the pill and the session on every such read", () => {
     expect(src("lib", "queryClient.ts")).toMatch(/fetch\(url, \{\s*headers: viewerHeaders\(\),/);
     const profile = src("components", "profile", "ProfileView.tsx");

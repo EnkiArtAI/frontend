@@ -456,7 +456,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
   const [myLikes, setMyLikes] = useState<Array<{ promptId: string; title: string; imageUrl: string | null }> | null>(null);
   useEffect(() => {
     if (activeTab !== "Likes" || myLikes !== null) return;
-    fetch("/api/prompts/likes/mine", { headers: { ...sessionAuthHeaders() } })
+    fetch("/api/prompts/likes/mine", { headers: viewerHeaders() })
       .then((r) => (r.ok ? r.json() : { likes: [] }))
       .then((d) => setMyLikes(d.likes ?? []))
       .catch(() => setMyLikes([]));
@@ -519,7 +519,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
     let dead = false;
     (async () => {
       try {
-        const res = await fetch(`/api/creators/${encodeURIComponent(handle)}/profile`);
+        const res = await fetch(`/api/creators/${encodeURIComponent(handle)}/profile`, { headers: viewerHeaders() });
         if (!res.ok || dead) return;
         const d = await res.json();
         if (dead) return;
