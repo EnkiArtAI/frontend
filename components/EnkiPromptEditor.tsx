@@ -57,6 +57,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ENKI_CATEGORIES } from "@/components/enki/EnkiFilters";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { DEFAULT_PROMPT_PRICE_USD } from "@/shared/revenue-config";
 import { nameSlotByItsText } from "@/lib/editor/slot-name";
 import {
   loadEditorVersions,
@@ -1450,7 +1451,8 @@ export default function EnkiPromptEditor() {
      after the inserted space so subsequent input flows naturally. */
   /* ─── Price stepper ───
      Bumps the price by `delta` USDC, clamps to the allowed minimum,
-     rounds to 4-decimal precision (matches the input's `step`),
+     rounds to 4-decimal precision. The arrows count in cents (Kev,
+     2026-10-05); a finer price, down to $0.0001, is typed.
      snapshots the previous value (for digit-diff animation) and
      triggers the roll-direction class. The class self-clears 240ms
      later — long enough for the keyframe to play, short enough that
@@ -3542,6 +3544,8 @@ export default function EnkiPromptEditor() {
               className={`enk-mode-card ${promptData.type === "premium-prompt" ? "enk-mode-card--active" : ""}`}
               onClick={() => {
                 setPromptData((prev) => ({ ...prev, type: "premium-prompt" }));
+                // Premium starts at the default price; one that is set stays.
+                setPromptPrice((p) => p || DEFAULT_PROMPT_PRICE_USD);
                 setUi((p) => ({ ...p, pricePerRenderReviewed: false }));
               }}
             >
@@ -4001,6 +4005,12 @@ export default function EnkiPromptEditor() {
                           onFocus={() =>
                             setUi((p) => ({ ...p, pricePerRenderReviewed: true }))
                           }
+                          onKeyDown={(e) => {
+                            // The arrow keys count like the arrow buttons: one cent.
+                            if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+                            e.preventDefault();
+                            handlePriceStep(e.key === "ArrowUp" ? 0.01 : -0.01);
+                          }}
                         />
                         <div
                           className="enk-num-input__visual"
@@ -4043,7 +4053,7 @@ export default function EnkiPromptEditor() {
                           className="enk-num-input__btn"
                           aria-label="Increase price"
                           onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => handlePriceStep(0.0001)}
+                          onClick={() => handlePriceStep(0.01)}
                         >
                           <ChevronUp size={12} strokeWidth={2.5} />
                         </button>
@@ -4052,7 +4062,7 @@ export default function EnkiPromptEditor() {
                           className="enk-num-input__btn"
                           aria-label="Decrease price"
                           onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => handlePriceStep(-0.0001)}
+                          onClick={() => handlePriceStep(-0.01)}
                         >
                           <ChevronDown size={12} strokeWidth={2.5} />
                         </button>
@@ -5097,7 +5107,9 @@ export default function EnkiPromptEditor() {
         setPromptType={(v) => {
           if (v !== "free-prompt" && v !== "premium-prompt") return;
           setPromptData((prev) => ({ ...prev, type: v }));
-          if (v === "premium-prompt") setUi((p) => ({ ...p, pricePerRenderReviewed: false }));
+          if (v !== "premium-prompt") return;
+          setPromptPrice((p) => p || DEFAULT_PROMPT_PRICE_USD);
+          setUi((p) => ({ ...p, pricePerRenderReviewed: false }));
         }}
         tags={promptData.tags}
         onAddTag={(t) => setPromptData((prev) => ({ ...prev, tags: [t.toLowerCase()] }))}

@@ -166,3 +166,30 @@ describe("the mobile sheet's settings", () => {
     expect(SHEET).toContain('import { ENKI_CATEGORIES } from "@/components/enki/EnkiFilters";');
   });
 });
+
+describe("a premium prompt's price in the editor", () => {
+  // Kev, 2026-10-05: Premium starts at $0.07; the arrows count in cents; finer prices, down to $0.0001, are typed.
+  it("starts at the default price on the desktop and in the sheet, and keeps one that is set", () => {
+    expect(EDITOR).toContain('import { DEFAULT_PROMPT_PRICE_USD } from "@/shared/revenue-config";');
+    expect(EDITOR.split("setPromptPrice((p) => p || DEFAULT_PROMPT_PRICE_USD);")).toHaveLength(3);
+    const desktop = EDITOR.slice(EDITOR.indexOf('<div className="enk-mode-card__title">Premium prompt</div>') - 600, EDITOR.indexOf('<div className="enk-mode-card__title">Premium prompt</div>'));
+    expect(desktop).toContain("setPromptPrice((p) => p || DEFAULT_PROMPT_PRICE_USD);");
+    const sheet = EDITOR.slice(EDITOR.indexOf("setPromptType={(v) => {"), EDITOR.indexOf("tags={promptData.tags}"));
+    expect(sheet).toContain('if (v !== "premium-prompt") return;');
+    expect(sheet).toContain("setPromptPrice((p) => p || DEFAULT_PROMPT_PRICE_USD);");
+  });
+
+  it("is counted up and down in cents by the arrow buttons and the arrow keys", () => {
+    expect(EDITOR).toContain("onClick={() => handlePriceStep(0.01)}");
+    expect(EDITOR).toContain("onClick={() => handlePriceStep(-0.01)}");
+    expect(EDITOR).toContain('handlePriceStep(e.key === "ArrowUp" ? 0.01 : -0.01);');
+    expect(EDITOR).not.toContain("handlePriceStep(0.0001)");
+    expect(EDITOR).not.toContain("handlePriceStep(-0.0001)");
+  });
+
+  it("can still be a typed price down to $0.0001", () => {
+    const step = EDITOR.slice(EDITOR.indexOf("const handlePriceStep = useCallback("), EDITOR.indexOf("setPromptPrice(next);"));
+    expect(step).toContain("0.0001,");
+    expect(step).toContain("parseFloat((current + delta).toFixed(4))");
+  });
+});
