@@ -73,6 +73,7 @@ export async function POST(req: NextRequest) {
     boost: settings.boost,
     quality: settings.quality ?? undefined,
     buyer: authUser.userId,
+    sessionToken: req.headers.get("X-Session-Token"),
   });
   if (!quote.ok) {
     return NextResponse.json({ error: quote.error }, { status: quote.status });
