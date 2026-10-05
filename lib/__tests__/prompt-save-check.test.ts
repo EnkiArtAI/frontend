@@ -120,7 +120,7 @@ describe("saving a prompt", () => {
     await save({ ...BASE, variables: [{ ...BASE.variables[0], options: [{ visibleName: "Coat", promptValue: "a long coat" }] }] });
     expect(check).toHaveBeenCalledOnce();
     expect(check.mock.calls[0][0]).toEqual({
-      title: "Portrait", content: "Portrait of a woman, [outfit]", tags: "portrait", "variable 1": "outfit | a red coat | Coat | a long coat",
+      title: "Portrait", content: "Portrait of a woman, [outfit]", tags: "portrait", settings: "nano-banana-pro", "variable 1": "outfit | a red coat | Coat | a long coat",
     });
   });
 
@@ -584,11 +584,16 @@ describe("the fields beside the text", () => {
   // The editor picks them from lists; the API stores and hands out whatever a direct caller sends.
   it("are judged with the rest", async () => {
     await save({ ...BASE, category: "Poster", aspectRatio: "16:9", resolution: "2K" });
-    expect(check.mock.calls[0][0].settings).toBe("Poster | 16:9 | 2K");
+    expect(check.mock.calls[0][0].settings).toBe("Poster | 16:9 | 2K | nano-banana-pro");
     await save({ ...BASE, aspectRatio: "16:9" });
-    expect(check.mock.calls[1][0].settings).toBe("16:9");
-    await save(BASE);
-    expect(check.mock.calls[2][0]).not.toHaveProperty("settings");
+    expect(check.mock.calls[1][0].settings).toBe("16:9 | nano-banana-pro");
+    // The model too: it is stored as sent and handed out with the listed prompt.
+    await save({ ...BASE, aiModel: "any text a caller sends" });
+    expect(check.mock.calls[2][0].settings).toBe("any text a caller sends");
+    // An update without a model leaves the stored one, so there is none to judge.
+    tables.prompts[0].id = "11111111-1111-4111-8111-111111111111";
+    await save({ ...BASE, aiModel: undefined, id: "11111111-1111-4111-8111-111111111111" });
+    expect(check.mock.calls[3][0]).not.toHaveProperty("settings");
   });
 
   it("are refused when they are not text", async () => {
