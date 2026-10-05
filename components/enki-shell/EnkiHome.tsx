@@ -645,14 +645,7 @@ export default function EnkiHome() {
       )}
       <LoginModal open={loginOpen} prewarm={!authed} onClose={() => setLoginOpen(false)} />
       {referOpen && (
-        <ReferModal
-          userKey={walletAddress}
-          onClose={() => setReferOpen(false)}
-          onSubmit={(r) => {
-            setReferOpen(false);
-            showToast("Referral submitted for review · " + String(r.url).replace(/^https?:\/\//, "").slice(0, 32));
-          }}
-        />
+        <ReferModal guest={!authed} onClose={() => setReferOpen(false)} />
       )}
       {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} onToast={showToast} guest={!authed} />}
 
