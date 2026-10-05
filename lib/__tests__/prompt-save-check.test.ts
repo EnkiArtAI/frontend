@@ -136,6 +136,12 @@ describe("saving a prompt", () => {
     expect(tables.prompts[0].is_adult).toBe(true);
   });
 
+  it("tells the artist whether the prompt was marked 18+", async () => {
+    expect((await (await save(BASE)).json()).adult).toBe(false);
+    check.mockResolvedValue({ verdict: "clear", adult: true });
+    expect((await (await save({ ...BASE, release: true })).json()).adult).toBe(true);
+  });
+
   it("leaves an ordinary prompt below 18", async () => {
     tables.generated_images.push({ id: "g1", storage_url: "https://blob/y.png", is_adult: false });
     await save({ ...BASE, uploadedPhotos: ["https://blob/y.png"] });

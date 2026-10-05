@@ -616,6 +616,9 @@ export async function POST(req: Request) {
       uploadedPhotos: body.uploadedPhotos ?? [],
       resolution: body.resolution ?? null,
       isFreeShowcase: Boolean(body.isFreeShowcase ?? false),
+      // The check marks a prompt 18+ by itself; its artist is told, since an
+      // 18+ prompt is shown only to viewers who may see 18+.
+      adult,
     });
   } catch (e: unknown) {
     console.error("/api/prompt POST failed:", e);
