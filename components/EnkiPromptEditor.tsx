@@ -2892,8 +2892,10 @@ export default function EnkiPromptEditor() {
   };
 
   const savePromptMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (opts?: { release?: boolean }) => {
       const payload = {
+        // A release lists the prompt on the server, in the same save that judges it.
+        ...(opts?.release ? { release: true } : {}),
         id: ui.currentPromptId,
         title: promptData.title,
         /* Persist the canonical wording, not the editor shortcut.
@@ -2956,29 +2958,13 @@ export default function EnkiPromptEditor() {
 
   const publishPromptMutation = useMutation({
     mutationFn: async () => {
-      let id = ui.currentPromptId;
-      if (!id) {
-        const saved = await savePromptMutation.mutateAsync();
-        if (typeof saved === "object" && saved !== null && "id" in saved) {
-          id = String((saved as { id?: unknown }).id ?? "");
-        }
-      }
+      /* A release is a save: what is in the editor now is what goes live, and
+         the server lists it only once that save has passed its checks. It used
+         to save only a prompt that had no id yet and then set a publish date,
+         which listed nothing; a refusal now stops the release with its reason. */
+      const saved = await savePromptMutation.mutateAsync({ release: true });
+      const id = typeof saved === "object" && saved !== null && "id" in saved ? String((saved as { id?: unknown }).id ?? "") : "";
       if (!id) throw new Error("Could not save prompt before publishing");
-      // Best-effort: try to mark published in DB. Don't fail the whole publish
-      // action if the column/route is missing — the prompt is already saved
-      // and shows on /showcase regardless.
-      try {
-        // The PATCH route requires a session (it used to accept anonymous
-        // edits), so forward it.
-        await fetch(`/api/prompts/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
-          credentials: "include",
-          body: JSON.stringify({ published: true }),
-        });
-      } catch (e) {
-        console.warn("Publish PATCH failed (non-fatal):", e);
-      }
       return { id };
     },
     onSuccess: ({ id }) => {
