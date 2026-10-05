@@ -450,11 +450,6 @@ export async function POST(req: Request) {
       // draft's is nobody else's business.
       public_prompt_text: publicText ? body.content.slice(0, 220) : null,
       updated_at: nowIso,
-      // Listed only here, after the prompt check and moderation above let this
-      // very save through; a save without a release leaves the listing as it is.
-      ...(body.release === true
-        ? { is_listed: true, listing_status: "active", listed_at: listedSince.listed_at ?? nowIso, published_at: listedSince.published_at ?? nowIso }
-        : {}),
       /* Lineage (Kev, 2026-08-24): a prompt built via "put prompt to
          editor" records its parent. The key is added only when a valid
          uuid arrives, so saves without lineage never touch the column
@@ -543,6 +538,27 @@ export async function POST(req: Request) {
 
       if (varsError) {
         throw varsError;
+      }
+    }
+
+    // Listed last: after the prompt check and moderation let this very save
+    // through, and once the prompt and its variables are both written, so a
+    // save that fails halfway leaves nothing half-made for sale. A save
+    // without a release leaves the listing as it is. The takedown mark is part
+    // of the write itself: a moderator may take the prompt down between the
+    // ownership read above and here, and what is taken down stays down.
+    if (body.release === true) {
+      const { error: listError, count: nowListed } = await supabase
+        .from("prompts")
+        .update(
+          { is_listed: true, listing_status: "active", listed_at: listedSince.listed_at ?? nowIso, published_at: listedSince.published_at ?? nowIso },
+          { count: "exact" },
+        )
+        .eq("id", promptId)
+        .is("delisted_at", null);
+      if (listError) throw listError;
+      if (nowListed === 0) {
+        return NextResponse.json({ error: "This prompt was taken down by a moderator and cannot be released again. Your changes were saved; it stays unlisted." }, { status: 403 });
       }
     }
 

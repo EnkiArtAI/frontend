@@ -9,6 +9,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 type Row = Record<string, unknown>;
 let tables: Record<string, Row[]>;
 let failingTable: string | null = null;
+let failingInsert: string | null = null;
+let failingUpdate: string | null = null;
 
 class Query implements PromiseLike<{ data: unknown; error: null; count?: number }> {
   private filters: ((r: Row) => boolean)[] = [];
@@ -37,6 +39,9 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
   // failingTable: reads of that table fail as an unreachable database's would.
   then<A, B = never>(ok?: ((v: { data: unknown; error: null; count?: number }) => A | PromiseLike<A>) | null, ko?: ((e: unknown) => B | PromiseLike<B>) | null) {
     if (this.table === failingTable && this.op === "select") return Promise.resolve({ data: null, error: { message: "fetch failed" } as unknown as null }).then(ok, ko);
+    // failingInsert: writes of new rows to that table are refused, as a broken constraint would.
+    if (this.table === failingUpdate && this.op === "update") return Promise.resolve({ data: null, error: { message: "update refused" } as unknown as null }).then(ok, ko);
+    if (this.table === failingInsert && this.op === "insert") return Promise.resolve({ data: null, error: { message: "insert refused" } as unknown as null }).then(ok, ko);
     const rows = (tables[this.table] ??= []);
     const hits = rows.filter((r) => this.filters.every((f) => f(r)));
     let res: { data: unknown; error: null; count?: number };
@@ -87,6 +92,8 @@ const EMAIL_USER = "3a3a3a3a-1111-4222-8333-444455556666";
 
 beforeEach(() => {
   failingTable = null;
+  failingInsert = null;
+  failingUpdate = null;
   check.mockReset();
   check.mockResolvedValue({ verdict: "clear" });
   warn.mockClear();
@@ -311,6 +318,38 @@ describe("releasing a prompt", () => {
     // Its artist may still edit it, unlisted.
     expect((await save({ ...BASE, id: ID })).status).toBe(200);
     expect(row).toMatchObject({ is_listed: false, title: "Portrait" });
+  });
+
+  it("lists nothing whose variables could not be written", async () => {
+    failingInsert = "prompt_variables";
+    expect((await save({ ...BASE, release: true })).status).toBe(500);
+    expect(tables.prompts[0].is_listed).not.toBe(true);
+  });
+
+  it("answers an error, not a release, when the listing itself could not be written", async () => {
+    failingUpdate = "prompts";
+    expect((await save({ ...BASE, release: true })).status).toBe(500);
+    expect(tables.prompts[0].is_listed).not.toBe(true);
+  });
+
+  it("leaves a draft a draft when its variables could not be written", async () => {
+    failingInsert = "prompt_variables";
+    const row = owned({ is_listed: false, listing_status: "draft" });
+    expect((await save({ ...BASE, id: ID, release: true })).status).toBe(500);
+    expect(row).toMatchObject({ is_listed: false, listing_status: "draft" });
+  });
+
+  it("stays down when a moderator takes it down while the release is being checked", async () => {
+    const row = owned({ is_listed: false, listing_status: "draft", delisted_at: null });
+    // The takedown lands after the ownership read, before anything is written.
+    check.mockImplementation(async () => {
+      Object.assign(row, { is_listed: false, delisted_at: "2026-10-05T12:00:00.000Z" });
+      return { verdict: "clear" };
+    });
+    const res = await save({ ...BASE, id: ID, release: true });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toContain("stays unlisted");
+    expect(row).toMatchObject({ is_listed: false, listing_status: "draft", delisted_at: "2026-10-05T12:00:00.000Z" });
   });
 
   it("releases nobody else's prompt", async () => {
