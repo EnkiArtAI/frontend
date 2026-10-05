@@ -402,7 +402,9 @@ export async function POST(req: Request) {
         ? "A prompt for sale needs its text."
         : !publicText && dbPromptType !== "paid"
           ? "A prompt for sale is either free or paid."
-          : !publicText && priceCents < 1
+          : // A price that was not sent is stored as $1.00 for a draft; nothing goes
+            // or stays on sale at a price its artist never set.
+            !publicText && (typeof body.price !== "number" || priceCents < 1)
             ? "A paid prompt for sale needs a price of at least $0.01."
             : null;
       if (unsellable) return NextResponse.json({ error: `${unsellable} Nothing was saved.` }, { status: 422 });

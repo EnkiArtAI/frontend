@@ -599,3 +599,40 @@ describe("the fields beside the text", () => {
     expect(tables.prompts).toEqual([]);
   });
 });
+
+describe("a price nobody set", () => {
+  const ID = "11111111-1111-4111-8111-111111111111";
+  const PAID = { ...BASE, promptType: "paid-prompt" };
+  const NO_PRICE = "A paid prompt for sale needs a price of at least $0.01. Nothing was saved.";
+  beforeEach(() => { tables.user_wallets.push({ address: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU", user_id: "u1", chain_family: "solana", removed_at: null }); });
+
+  it("is the draft's $1.00, which never goes on sale by itself", async () => {
+    expect((await save(PAID)).status).toBe(200);
+    expect(tables.prompts[0].price_usd_cents).toBe(100);
+    for (const price of [undefined, null, "5"]) {
+      const res = await save({ ...PAID, price, release: true });
+      expect(res.status).toBe(422);
+      expect((await res.json()).error).toBe(NO_PRICE);
+    }
+    expect(tables.prompts).toHaveLength(1);
+    expect((await save({ ...PAID, price: 1, release: true })).status).toBe(200);
+  });
+
+  it("does not replace the price of a listed prompt", async () => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Listed", is_listed: true, listing_status: "active", price_usd_cents: 500 });
+    const res = await save({ ...PAID, id: ID });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe(NO_PRICE);
+    expect(tables.prompts[0]).toMatchObject({ title: "Listed", price_usd_cents: 500 });
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it("is refused when the number is beyond what a price can be", async () => {
+    // JSON reads 1e999 as Infinity, which no column holds.
+    const raw = JSON.stringify({ ...PAID, price: 0 }).replace('"price":0', '"price":1e999');
+    const res = await POST(new Request("http://enki.test/api/prompt", { method: "POST", headers: { "Content-Type": "application/json", "X-Session-Token": "tok" }, body: raw }));
+    expect(res.status).toBe(400);
+    expect(tables.prompts).toEqual([]);
+    expect(check).not.toHaveBeenCalled();
+  });
+});
