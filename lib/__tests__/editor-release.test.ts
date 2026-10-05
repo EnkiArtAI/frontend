@@ -59,3 +59,13 @@ describe("releasing from the mobile sheet", () => {
     expect(click.indexOf("verifiedCount === 0")).toBeLessThan(click.indexOf("publishPromptMutation.mutate()"));
   });
 });
+
+describe("a prompt released as 18+", () => {
+  it("tells its artist so, from the mark the save answers with", () => {
+    expect(release).toContain("return { id, adult: (saved as { adult?: unknown }).adult === true };");
+    expect(release).toContain("onSuccess: ({ adult }) => {");
+    const said = release.slice(release.indexOf("description: adult"), release.indexOf("queryClient.invalidateQueries"));
+    expect(said.indexOf("marked 18+")).toBeGreaterThan(-1);
+    expect(said.indexOf("marked 18+")).toBeLessThan(said.indexOf("Prompt is now live on the marketplace."));
+  });
+});

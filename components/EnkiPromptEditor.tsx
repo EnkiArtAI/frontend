@@ -2965,12 +2965,16 @@ export default function EnkiPromptEditor() {
       const saved = await savePromptMutation.mutateAsync({ release: true });
       const id = typeof saved === "object" && saved !== null && "id" in saved ? String((saved as { id?: unknown }).id ?? "") : "";
       if (!id) throw new Error("Could not save prompt before publishing");
-      return { id };
+      return { id, adult: (saved as { adult?: unknown }).adult === true };
     },
-    onSuccess: ({ id }) => {
+    onSuccess: ({ adult }) => {
       toast({
         title: "Published",
-        description: "Prompt is now live on the marketplace.",
+        // The check marks a prompt 18+ by itself; said here, or the artist
+        // cannot know why most visitors never see it.
+        description: adult
+          ? "Prompt is live. It was marked 18+ and is shown only to viewers who may see 18+ content."
+          : "Prompt is now live on the marketplace.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/prompts"] });
       router.push("/showcase");
