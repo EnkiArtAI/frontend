@@ -3052,6 +3052,13 @@ export default function EnkiPromptEditor() {
     !ui.settingsCollapsed && ui.settingsReleaseAttempted && settingsMissing[key];
 
   const handleReleaseClick = () => {
+    // The desktop button is disabled by these two; the mobile sheet has its
+    // own button, so the rule is asked here, where every release starts.
+    if (publishPromptMutation.isPending) return;
+    if (verifiedCount === 0) {
+      toast({ title: "No image yet", description: "Generate at least one image from this prompt before releasing it.", variant: "destructive" });
+      return;
+    }
     if (hasSettingsErrors) {
       setUi((prev) => ({ ...prev, settingsReleaseAttempted: true }));
       toast({
@@ -5069,6 +5076,7 @@ export default function EnkiPromptEditor() {
         priceFor={slotPrice}
         modelPriceLabel={modelPriceLabel}
         requiredVariations={promptData.type === "free-prompt" ? 1 : 4}
+        onRelease={handleReleaseClick}
         onAutoFill={handleGrokFill}
         isAutoFilling={ui.isGrokFilling}
         onGenerate={(count) => {

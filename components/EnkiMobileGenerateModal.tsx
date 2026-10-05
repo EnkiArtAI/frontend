@@ -1198,8 +1198,8 @@ export default function EnkiMobileGenerateModal({
                     type="button"
                     className="mobile-modal-generate-btn"
                     style={{ width: "100%", marginTop: 14, ...(releaseReady ? { background: "#1E9E5A" } : { opacity: 0.45 }) }}
-                    disabled={!releaseReady}
-                    onClick={() => (onRelease ? onRelease() : onGenerate(1))}
+                    disabled={!releaseReady || !onRelease}
+                    onClick={onRelease}
                   >
                     <Sparkles size={14} style={{ fill: "white" }} />
                     Release prompt

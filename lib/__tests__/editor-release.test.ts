@@ -33,3 +33,29 @@ describe("releasing from the prompt editor", () => {
     expect(release).toContain('description: error instanceof Error ? error.message : "Publish failed.",');
   });
 });
+
+describe("releasing from the mobile sheet", () => {
+  const SHEET = readSource(join(__dirname, "..", "..", "components", "EnkiMobileGenerateModal.tsx"));
+  const button = SHEET.slice(SHEET.lastIndexOf("<button", SHEET.indexOf("Release prompt")), SHEET.indexOf("Release prompt"));
+
+  it("releases, and never starts a paid generation instead", () => {
+    // Its button fell back to generating one image when no release was wired, and the editor wired none.
+    expect(button).toContain("onClick={onRelease}");
+    expect(button).not.toContain("onGenerate");
+    expect(button).toContain("disabled={!releaseReady || !onRelease}");
+  });
+
+  it("is wired to the editor's one release", () => {
+    const sheet = EDITOR.slice(EDITOR.indexOf("<EnkiMobileGenerateModal"));
+    expect(sheet.slice(0, sheet.indexOf("/>"))).toContain("onRelease={handleReleaseClick}");
+  });
+
+  it("obeys the rules the desktop button is disabled by", () => {
+    const click = EDITOR.slice(EDITOR.indexOf("const handleReleaseClick = () => {"), EDITOR.indexOf("const setSettingsSectionRef"));
+    expect(click).toContain("if (publishPromptMutation.isPending) return;");
+    const gate = click.slice(click.indexOf("if (verifiedCount === 0) {"), click.indexOf("if (hasSettingsErrors) {"));
+    expect(gate).toContain('toast({ title: "No image yet"');
+    expect(gate).toContain("return;");
+    expect(click.indexOf("verifiedCount === 0")).toBeLessThan(click.indexOf("publishPromptMutation.mutate()"));
+  });
+});
