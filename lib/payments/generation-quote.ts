@@ -52,6 +52,41 @@ export type QuoteResult =
     }
   | { ok: false; status: 400 | 404 | 422 | 500; error: string };
 
+export type PayoutWallet = { ok: true; wallet: string } | { ok: false; status: 422 | 500; error: string };
+
+/**
+ * The wallet a creator's artist share is paid to — from the DB, never from
+ * the client. Live schema (2026-07-12): users.wallet_address does NOT exist;
+ * it is the creator's live Solana entry in user_wallets (payments run on
+ * Solana only). Without one the share has nowhere to go, so a paid prompt
+ * can neither be quoted nor released.
+ */
+export async function artistPayoutWallet(supabase: SupabaseClient, creatorId: string): Promise<PayoutWallet> {
+  const { data: wallets, error } = await supabase
+    .from("user_wallets")
+    .select("address")
+    .eq("user_id", creatorId)
+    .eq("chain_family", "solana")
+    .is("removed_at", null)
+    .limit(1);
+  if (error) {
+    console.error("[payments/quote] creator wallet lookup failed:", error.message);
+    return { ok: false, status: 500, error: "Failed to load creator" };
+  }
+  const wallet: string | null = wallets?.[0]?.address ?? null;
+  if (!wallet || wallet === "legacy-unbound") {
+    return { ok: false, status: 422, error: "Artist payout wallet not configured for this prompt" };
+  }
+  // A real base58 Solana pubkey always contains uppercase chars; a non-0x
+  // all-lowercase address is a corrupted legacy row (an earlier bug
+  // lowercased Solana wallets) that base58-decodes to the WRONG key. Refuse
+  // to pay a wallet nobody controls.
+  if (!wallet.startsWith("0x") && wallet === wallet.toLowerCase()) {
+    return { ok: false, status: 422, error: "Artist payout wallet must be re-linked before this prompt can sell" };
+  }
+  return { ok: true, wallet };
+}
+
 export async function computeQuote(
   supabase: SupabaseClient,
   { promptId, modelFamily, resolution, boost, quality, buyer, sessionToken }: QuoteInput,
@@ -110,49 +145,14 @@ export async function computeQuote(
   }
 
   // 3. Artist payout wallet comes from the DB — never from the client.
-  //    Live schema fix (2026-07-12): users.wallet_address does NOT exist —
-  //    the creator's payout wallet is their newest live Solana entry in
-  //    user_wallets (payments run on Solana only).
-  //    Paid prompts without a configured artist wallet cannot be quoted:
-  //    the split has nowhere to send the artist share.
   let artistWallet: string | null = null;
   if (artistPriceMicro > 0) {
     if (!prompt?.creator_id) {
       return { ok: false, status: 422, error: "Prompt has no associated creator" };
     }
-    const { data: wallets, error: creatorError } = await supabase
-      .from("user_wallets")
-      .select("address")
-      .eq("user_id", prompt.creator_id)
-      .eq("chain_family", "solana")
-      .is("removed_at", null)
-      .limit(1);
-    if (creatorError) {
-      console.error("[payments/quote] creator wallet lookup failed:", creatorError.message);
-      return { ok: false, status: 500, error: "Failed to load creator" };
-    }
-    artistWallet = wallets?.[0]?.address ?? null;
-    if (!artistWallet || artistWallet === "legacy-unbound") {
-      return {
-        ok: false,
-        status: 422,
-        error: "Artist payout wallet not configured for this prompt",
-      };
-    }
-    // A real base58 Solana pubkey always contains uppercase chars; a non-0x
-    // all-lowercase address is a corrupted legacy row (an earlier bug
-    // lowercased Solana wallets) that base58-decodes to the WRONG key. Refuse
-    // to build a payable intent against it rather than pay a wallet nobody
-    // controls. (This guard existed only on the read-only /quote route; the
-    // /intent route persists money and reaches computeQuote, so it belongs
-    // here.)
-    if (!artistWallet.startsWith("0x") && artistWallet === artistWallet.toLowerCase()) {
-      return {
-        ok: false,
-        status: 422,
-        error: "Artist payout wallet must be re-linked before this prompt can sell",
-      };
-    }
+    const payout = await artistPayoutWallet(supabase, prompt.creator_id);
+    if (!payout.ok) return payout;
+    artistWallet = payout.wallet;
   }
 
   let split = computeGenerationSplit(artistPriceMicro, modelCostMicro);
