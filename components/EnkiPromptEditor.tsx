@@ -245,9 +245,6 @@ interface EditorDraft {
   promptPrice: number;
   settingsCollapsed: boolean;
   savedAt: number;
-  // Saved-prompt id must survive reloads: without it a Turnkey user's saved
-  // prompt silently falls back to the SOL-requiring x402 flow after refresh.
-  currentPromptId?: string | null;
 }
 
 // (A translation table mapping editor-only ratios to their nearest provider
@@ -773,7 +770,6 @@ export default function EnkiPromptEditor() {
           setUi((prev) => ({
             ...prev,
             maxImages: draft.maxImages ?? prev.maxImages,
-            currentPromptId: draft.currentPromptId ?? null,
           }));
           if (draft.modelsSelected?.length) {
             // One model runs and is saved; older drafts may still hold several.
@@ -836,7 +832,6 @@ export default function EnkiPromptEditor() {
           promptPrice,
           settingsCollapsed: ui.settingsCollapsed,
           savedAt: Date.now(),
-          currentPromptId: ui.currentPromptId,
         };
         localStorage.setItem(EDITOR_DRAFT_KEY, JSON.stringify(draft));
         setDraftSavedAt(draft.savedAt);
@@ -845,7 +840,7 @@ export default function EnkiPromptEditor() {
       }
     }, 400);
     return () => clearTimeout(timeoutId);
-  }, [promptData, variables, models.selected, ratios.selected, ui.maxImages, ui.settingsCollapsed, referenceImages, promptPrice, ui.currentPromptId]);
+  }, [promptData, variables, models.selected, ratios.selected, ui.maxImages, ui.settingsCollapsed, referenceImages, promptPrice]);
 
   /* ─── Restore parked verify cards (images + variable values + per-card
      reference images) from IndexedDB so the session survives a reload ─── */

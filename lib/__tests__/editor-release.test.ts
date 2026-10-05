@@ -106,6 +106,19 @@ describe("the draft after a release", () => {
     // That tie (the id written into the stored draft) is what made the overwrite certain.
     expect(EDITOR).not.toContain("rememberDraftPromptId");
   });
+
+  it("never carries a prompt's id, stored or restored", () => {
+    // A draft an earlier build stored with an id came back tied to that prompt:
+    // the next release rewrote it. Its text is still restored, untied.
+    expect(EDITOR).not.toContain("draft.currentPromptId");
+    expect(EDITOR).not.toContain("currentPromptId: ui.currentPromptId");
+    const autosave = EDITOR.slice(EDITOR.indexOf("const draft: EditorDraft = {"), EDITOR.indexOf("localStorage.setItem(EDITOR_DRAFT_KEY, JSON.stringify(draft));"));
+    expect(autosave.length).toBeGreaterThan(50);
+    expect(autosave).not.toContain("currentPromptId");
+    const restore = EDITOR.slice(EDITOR.indexOf("const draft = JSON.parse(raw) as EditorDraft;"), EDITOR.indexOf("draftReadyRef.current = true;"));
+    expect(restore.length).toBeGreaterThan(50);
+    expect(restore).not.toContain("currentPromptId");
+  });
 });
 
 describe("the mobile sheet's settings", () => {
