@@ -275,6 +275,8 @@ export async function POST(req: Request) {
     const aiModel = typeof body.aiModel === "string" ? body.aiModel.trim() : "";
     const dbPromptType = PROMPT_TYPE_TO_DB[clientPromptType] ?? clientPromptType;
     const isFreeShowcase = Boolean(body.isFreeShowcase ?? false);
+    // A free prompt: its text is public and it has no price.
+    const publicText = isPublicText({ prompt_type: dbPromptType, is_free_showcase: isFreeShowcase });
     /* Every [slot] in the text must be a DEFINED variable WITH a value.
        The showcase image is generated from those values, and a prompt whose
        slots have none shows buyers raw brackets next to an image that
@@ -402,8 +404,10 @@ export async function POST(req: Request) {
       tags,
       ...(aiModel ? { ai_model: aiModel } : {}),
       // The body sends dollars (float); the column is integer cents.
+      // A free prompt is stored at 0 whatever was sent: the share card, the
+      // price filter and the card price read "free" from the cents alone.
       price_usd_cents:
-        typeof body.price === "number" ? Math.round(body.price * 100) : 100,
+        publicText ? 0 : typeof body.price === "number" ? Math.round(body.price * 100) : 100,
       aspect_ratio: body.aspectRatio ?? null,
       photo_count: typeof body.photoCount === "number" ? body.photoCount : 1,
       prompt_type: dbPromptType,
@@ -413,9 +417,7 @@ export async function POST(req: Request) {
       // The first 220 characters, verbatim: only a free prompt may carry its
       // text in the clear. A paid prompt's body is the artist's secret, and a
       // draft's is nobody else's business.
-      public_prompt_text: isPublicText({ prompt_type: dbPromptType, is_free_showcase: isFreeShowcase })
-        ? body.content.slice(0, 220)
-        : null,
+      public_prompt_text: publicText ? body.content.slice(0, 220) : null,
       updated_at: nowIso,
       /* Lineage (Kev, 2026-08-24): a prompt built via "put prompt to
          editor" records its parent. The key is added only when a valid
@@ -514,7 +516,7 @@ export async function POST(req: Request) {
       category: body.category ?? "",
       tags: body.tags ?? [],
       aiModel: aiModel || null,
-      price: typeof body.price === "number" ? body.price : 1,
+      price: publicText ? 0 : typeof body.price === "number" ? body.price : 1,
       aspectRatio: body.aspectRatio ?? null,
       photoCount: typeof body.photoCount === "number" ? body.photoCount : 1,
       promptType: clientPromptType,

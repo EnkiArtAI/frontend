@@ -185,3 +185,35 @@ describe("saving a prompt writes plaintext only for a free one", () => {
     expect(db.prompts[0].public_prompt_text).toBeNull();
   });
 });
+
+describe("saving a prompt stores a price only for a paid one", () => {
+  // The share card, the price filter and the card price read "free" from the cents alone,
+  // and a save without a price used to store 100 cents whatever the type.
+  it("stores 0 for a free prompt saved without a price", async () => {
+    await save({ promptType: "free-prompt" });
+    expect(promptWrite()?.price_usd_cents).toBe(0);
+  });
+
+  it("stores 0 for a free prompt even when a price was sent", async () => {
+    const res = await save({ promptType: "free-prompt", price: 5 });
+    expect(promptWrite()?.price_usd_cents).toBe(0);
+    expect((await res.json()).price).toBe(0);
+  });
+
+  it("stores 0 for a free showcase", async () => {
+    await save({ isFreeShowcase: true });
+    expect(promptWrite()?.price_usd_cents).toBe(0);
+  });
+
+  it("stores a paid prompt's price in cents", async () => {
+    const res = await save({ promptType: "paid-prompt", price: 1.5 });
+    expect(promptWrite()?.price_usd_cents).toBe(150);
+    expect((await res.json()).price).toBe(1.5);
+  });
+
+  it("drops the price when a paid prompt is saved again as free", async () => {
+    db.prompts[0].price_usd_cents = 150;
+    await save({ id: PAID, promptType: "free-prompt" });
+    expect(db.prompts[0].price_usd_cents).toBe(0);
+  });
+});
