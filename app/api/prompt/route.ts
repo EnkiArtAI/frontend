@@ -8,6 +8,7 @@ import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { showsAdultRender } from "@/lib/adult-content";
 import { resolveOwnerIds, resolveSessionUserId, resolveSessionUserWithBan } from "@/lib/session-user";
 import { isPublicText } from "@/lib/prompt-visibility";
+import { artistPayoutWallet } from "@/lib/payments/generation-quote";
 
 type VariableType =
   | "text"
@@ -360,6 +361,8 @@ export async function POST(req: Request) {
     let listedSince: { listed_at?: unknown; published_at?: unknown } = {};
     // What this save writes is for sale: it is released now, or is listed already.
     let live = body.release === true;
+    // Whose prompt it is: a paid prompt's buyers pay this creator.
+    let payee: string;
     if (body.id) {
       const owners = await resolveOwnerIds(supabase, req.headers.get("X-Session-Token"));
       if (!owners) {
@@ -368,7 +371,7 @@ export async function POST(req: Request) {
       // A session whose wallet maps to no user row owns no prompts, and
       // .in() with an empty list is a PostgREST parse error, not a no-op.
       if (owners.length === 0) return NextResponse.json({ error: "not found" }, { status: 404 });
-      const { data: own } = await supabase.from("prompts").select("id, description, is_listed, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners).maybeSingle();
+      const { data: own } = await supabase.from("prompts").select("id, creator_id, description, is_listed, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners).maybeSingle();
       if (!own) return NextResponse.json({ error: "not found" }, { status: 404 });
       // What a moderator took down stays down: releasing it again would undo the takedown.
       if (body.release === true && own.delisted_at) {
@@ -376,6 +379,7 @@ export async function POST(req: Request) {
       }
       listedSince = own;
       live ||= own.is_listed === true;
+      payee = String(own.creator_id);
       storedDescription = (own.description as string | null) ?? null;
       ownerIds = owners;
     } else {
@@ -383,6 +387,7 @@ export async function POST(req: Request) {
       if (!creatorId) {
         return NextResponse.json({ error: "Authentication required" }, { status: 401 });
       }
+      payee = creatorId;
     }
 
     // What is for sale must be sellable: it has a text, it is free or paid,
@@ -396,6 +401,17 @@ export async function POST(req: Request) {
             ? "A paid prompt for sale needs a price of at least $0.01."
             : null;
       if (unsellable) return NextResponse.json({ error: `${unsellable} Nothing was saved.` }, { status: 422 });
+      // A paid prompt's buyers pay the artist's share to the artist's Solana
+      // wallet, by the rule the quote applies. Without one every purchase
+      // would be refused at the quote: listed, and for sale to nobody.
+      if (!publicText) {
+        const payout = await artistPayoutWallet(supabase, payee);
+        if (!payout.ok) {
+          return payout.status === 500
+            ? NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 })
+            : NextResponse.json({ error: "A paid prompt for sale needs a Solana wallet on your account to be paid to: connect one, or link yours again. Nothing was saved." }, { status: 422 });
+        }
+      }
     }
 
     // Judged like a generation before it is stored, and whole: everything a

@@ -11,18 +11,20 @@ let tables: Record<string, Row[]>;
 let failingTable: string | null = null;
 let failingInsert: string | null = null;
 let failingUpdate: string | null = null;
+let failingPayoutLookup = false;
 
 class Query implements PromiseLike<{ data: unknown; error: null; count?: number }> {
   private filters: ((r: Row) => boolean)[] = [];
   private op: "select" | "update" | "insert" | "delete" = "select";
   private payload: Row | Row[] | null = null;
   private one = false;
+  private asked: string[] = [];
   constructor(private table: string) {}
   select() { return this; }
   update(p: Row) { this.op = "update"; this.payload = p; return this; }
   insert(p: Row | Row[]) { this.op = "insert"; this.payload = p; return this; }
   delete() { this.op = "delete"; return this; }
-  eq(c: string, v: unknown) { this.filters.push((r) => r[c] === v); return this; }
+  eq(c: string, v: unknown) { this.asked.push(c); this.filters.push((r) => r[c] === v); return this; }
   in(c: string, vs: unknown[]) { this.filters.push((r) => vs.includes(r[c])); return this; }
   is(c: string, v: null) { this.filters.push((r) => (r[c] ?? null) === v); return this; }
   gt(c: string, v: string) { this.filters.push((r) => String(r[c]) > v); return this; }
@@ -40,6 +42,8 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
   then<A, B = never>(ok?: ((v: { data: unknown; error: null; count?: number }) => A | PromiseLike<A>) | null, ko?: ((e: unknown) => B | PromiseLike<B>) | null) {
     if (this.table === failingTable && this.op === "select") return Promise.resolve({ data: null, error: { message: "fetch failed" } as unknown as null }).then(ok, ko);
     // failingInsert: writes of new rows to that table are refused, as a broken constraint would.
+    // failingPayoutLookup: only the payout wallet's read fails; the session's own wallet reads still answer.
+    if (failingPayoutLookup && this.table === "user_wallets" && this.asked.includes("chain_family")) return Promise.resolve({ data: null, error: { message: "fetch failed" } as unknown as null }).then(ok, ko);
     if (this.table === failingUpdate && this.op === "update") return Promise.resolve({ data: null, error: { message: "update refused" } as unknown as null }).then(ok, ko);
     if (this.table === failingInsert && this.op === "insert") return Promise.resolve({ data: null, error: { message: "insert refused" } as unknown as null }).then(ok, ko);
     const rows = (tables[this.table] ??= []);
@@ -94,6 +98,7 @@ beforeEach(() => {
   failingTable = null;
   failingInsert = null;
   failingUpdate = null;
+  failingPayoutLookup = false;
   check.mockReset();
   check.mockResolvedValue({ verdict: "clear" });
   warn.mockClear();
@@ -360,11 +365,11 @@ describe("releasing a prompt", () => {
 });
 
 describe("the save route's ownership read", () => {
-  it("asks for the listing, the takedown mark and the first listing dates, which this file's fake would hand over unasked", async () => {
+  it("asks for the creator, the listing, the takedown mark and the first listing dates, which this file's fake would hand over unasked", async () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const src = readFileSync(join(__dirname, "..", "..", "app", "api", "prompt", "route.ts"), "utf8");
-    expect(src).toContain('.select("id, description, is_listed, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners)');
+    expect(src).toContain('.select("id, creator_id, description, is_listed, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners)');
   });
 });
 
@@ -443,6 +448,7 @@ describe("while tier 2 is down", () => {
 describe("what may be for sale", () => {
   const ID = "11111111-1111-4111-8111-111111111111";
   const PAID = { ...BASE, promptType: "paid-prompt", price: 2.5 };
+  beforeEach(() => { tables.user_wallets.push({ address: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU", user_id: "u1", chain_family: "solana", removed_at: null }); });
   const refused = async (body: Row, reason: string) => {
     const res = await save(body);
     expect(res.status).toBe(422);
@@ -500,5 +506,70 @@ describe("what may be for sale", () => {
     // A free prompt is stored at 0 whatever was sent.
     expect((await save({ ...BASE, price: -5 })).status).toBe(200);
     expect(tables.prompts[0].price_usd_cents).toBe(0);
+  });
+});
+
+describe("a paid prompt's payout wallet", () => {
+  // Its buyers pay the artist's share there; without one every purchase is refused at the quote.
+  const ID = "11111111-1111-4111-8111-111111111111";
+  const SOLANA = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
+  const PAID = { ...BASE, promptType: "paid-prompt", price: 2.5 };
+  const NO_WALLET = "A paid prompt for sale needs a Solana wallet on your account to be paid to: connect one, or link yours again. Nothing was saved.";
+  const solana = (user_id: string, extra: Row = {}) => tables.user_wallets.push({ address: SOLANA, user_id, chain_family: "solana", removed_at: null, ...extra });
+  const refused = async (body: Row, token = "tok") => {
+    const res = await save(body, token);
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe(NO_WALLET);
+    expect(check).not.toHaveBeenCalled();
+  };
+
+  it("lets a paid prompt go on sale", async () => {
+    solana("u1");
+    expect((await save({ ...PAID, release: true })).status).toBe(200);
+    expect(tables.prompts[0]).toMatchObject({ is_listed: true, price_usd_cents: 250 });
+  });
+
+  it("is needed before a paid prompt is released", async () => {
+    await refused({ ...PAID, release: true });
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("is not the wallet of another chain, a removed one or one an old bug lowercased", async () => {
+    solana("u1", { chain_family: "evm", address: "0xAbC0000000000000000000000000000000000001" });
+    solana("u1", { removed_at: "2026-09-01T00:00:00Z" });
+    solana("u1", { address: SOLANA.toLowerCase() });
+    await refused({ ...PAID, release: true });
+  });
+
+  it("is not asked of a free prompt, nor of a draft", async () => {
+    expect((await save({ ...BASE, release: true })).status).toBe(200);
+    expect((await save(PAID)).status).toBe(200);
+    expect(tables.prompts.map((p) => p.is_listed)).toEqual([true, undefined]);
+  });
+
+  it("is needed to keep editing a listed paid prompt", async () => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Listed", is_listed: true, listing_status: "active" });
+    await refused({ ...PAID, id: ID });
+    expect(tables.prompts[0].title).toBe("Listed");
+  });
+
+  it("is the wallet of the prompt's creator, whoever of the session's accounts that is", async () => {
+    // An email login also owns what its address was first mapped to.
+    tables.user_wallets.push({ address: EMAIL_USER, user_id: "ph3", removed_at: null });
+    tables.prompts.push({ id: ID, creator_id: "ph3", title: "Old save", is_listed: false });
+    solana(EMAIL_USER);
+    await refused({ ...PAID, id: ID, release: true }, "email");
+    solana("ph3");
+    expect((await save({ ...PAID, id: ID, release: true }, "email")).status).toBe(200);
+    expect(tables.prompts[0].is_listed).toBe(true);
+  });
+
+  it("releases nothing while the wallet cannot be looked up", async () => {
+    solana("u1");
+    failingPayoutLookup = true;
+    const res = await save({ ...PAID, release: true });
+    expect(res.status).toBe(503);
+    expect(check).not.toHaveBeenCalled();
+    expect(tables.prompts).toEqual([]);
   });
 });
