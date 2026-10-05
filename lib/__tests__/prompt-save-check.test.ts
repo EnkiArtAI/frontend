@@ -68,7 +68,7 @@ const warn = vi.fn(async () => ({ total: 1, suspendedUntil: null, nextStepAt: 10
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), after: () => {} }));
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => fake }));
 vi.mock("@/lib/crypto", () => ({ encryptString: () => ({ encrypted: "ct", iv: "iv", authTag: "tag", kid: "k1" }), decryptString: () => "" }));
-const tier2 = vi.fn(async (_i: { prompt: string }) => ({ allowed: true }));
+const tier2 = vi.fn(async (_i: { prompt: string }): Promise<{ allowed: boolean; tier2Degraded?: boolean }> => ({ allowed: true }));
 vi.mock("@/lib/moderation", () => ({ moderate: (i: { prompt: string }) => tier2(i), CLIENT_BLOCK_MESSAGE: "blocked" }));
 const recorded = vi.fn(async (..._a: unknown[]) => {});
 vi.mock("@/lib/moderation-enforcement", () => ({ recordModerationEvent: (...a: unknown[]) => recorded(...a) }));
@@ -360,11 +360,11 @@ describe("releasing a prompt", () => {
 });
 
 describe("the save route's ownership read", () => {
-  it("asks for the takedown mark and the first listing dates, which this file's fake would hand over unasked", async () => {
+  it("asks for the listing, the takedown mark and the first listing dates, which this file's fake would hand over unasked", async () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const src = readFileSync(join(__dirname, "..", "..", "app", "api", "prompt", "route.ts"), "utf8");
-    expect(src).toContain('.select("id, description, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners)');
+    expect(src).toContain('.select("id, description, is_listed, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners)');
   });
 });
 
@@ -400,5 +400,42 @@ describe("a variable that hides text from the check", () => {
       expect((await withVariable({ defaultValue })).status).toBe(200);
     }
     expect(check.mock.calls.at(-1)![0]["variable 1"]).toBe("outfit | a red coat | a blue coat");
+  });
+});
+
+describe("while tier 2 is down", () => {
+  // It answers "allowed" then. A draft is judged again at its release; what is for sale is not.
+  const ID = "11111111-1111-4111-8111-111111111111";
+  const down = () => tier2.mockResolvedValueOnce({ allowed: true, tier2Degraded: true });
+
+  it("a draft is still saved", async () => {
+    down();
+    expect((await save(BASE)).status).toBe(200);
+    expect(tables.prompts).toHaveLength(1);
+  });
+
+  it("nothing is released", async () => {
+    down();
+    expect((await save({ ...BASE, release: true })).status).toBe(503);
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("a listed prompt is not changed", async () => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Listed", is_listed: true, listing_status: "active" });
+    down();
+    expect((await save({ ...BASE, id: ID })).status).toBe(503);
+    expect(tables.prompts[0].title).toBe("Listed");
+  });
+
+  it("an unlisted prompt of the same artist is", async () => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Draft", is_listed: false });
+    down();
+    expect((await save({ ...BASE, id: ID })).status).toBe(200);
+    expect(tables.prompts[0].title).toBe("Portrait");
+  });
+
+  it("a block still answers as a block", async () => {
+    tier2.mockResolvedValueOnce({ allowed: false, tier2Degraded: true });
+    expect((await save({ ...BASE, release: true })).status).toBe(422);
   });
 });

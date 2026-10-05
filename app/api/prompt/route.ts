@@ -351,6 +351,8 @@ export async function POST(req: Request) {
     // A release lists the prompt (Kev, 2026-10-05: the artist lists when they
     // want, once the checks have passed). A first listing keeps its dates.
     let listedSince: { listed_at?: unknown; published_at?: unknown } = {};
+    // What this save writes is for sale: it is released now, or is listed already.
+    let live = body.release === true;
     if (body.id) {
       const owners = await resolveOwnerIds(supabase, req.headers.get("X-Session-Token"));
       if (!owners) {
@@ -359,13 +361,14 @@ export async function POST(req: Request) {
       // A session whose wallet maps to no user row owns no prompts, and
       // .in() with an empty list is a PostgREST parse error, not a no-op.
       if (owners.length === 0) return NextResponse.json({ error: "not found" }, { status: 404 });
-      const { data: own } = await supabase.from("prompts").select("id, description, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners).maybeSingle();
+      const { data: own } = await supabase.from("prompts").select("id, description, is_listed, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners).maybeSingle();
       if (!own) return NextResponse.json({ error: "not found" }, { status: 404 });
       // What a moderator took down stays down: releasing it again would undo the takedown.
       if (body.release === true && own.delisted_at) {
         return NextResponse.json({ error: "This prompt was taken down by a moderator and cannot be released again. Nothing was saved." }, { status: 403 });
       }
       listedSince = own;
+      live ||= own.is_listed === true;
       storedDescription = (own.description as string | null) ?? null;
       ownerIds = owners;
     } else {
@@ -421,6 +424,12 @@ export async function POST(req: Request) {
       after(recordModerationEvent(verdict, { surface: "upload", request: req, prompt: Object.values(shownInputs).join("\n"), withheld: artistText }));
       if (!verdict.allowed) {
         return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
+      }
+      // Tier 2 answers "allowed" when it is down. That is right for a draft,
+      // which is judged again when it is released, and wrong for what is or
+      // goes on sale: nothing reaches the marketplace on a check that never ran.
+      if (verdict.tier2Degraded && live) {
+        return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 });
       }
     }
 

@@ -31,7 +31,7 @@ const query = (table: string) => {
 
 const check = vi.fn();
 const warn = vi.fn(async () => ({ total: 1, suspendedUntil: null, nextStepAt: 10 }));
-const tier2 = vi.fn(async () => ({ allowed: true }));
+const tier2 = vi.fn(async (): Promise<{ allowed: boolean; tier2Degraded?: boolean }> => ({ allowed: true }));
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), after: () => {} }));
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => ({ from: query }) }));
 // "tok" owns as u1; "email" is an email login (users.id u3 in the session)
@@ -130,5 +130,28 @@ describe("who edits", () => {
     expect((await edit("p1", { title: "New" }, "banned")).status).toBe(401);
     expect(prompts[0].title).toBe("Portrait");
     expect(check).not.toHaveBeenCalled();
+  });
+});
+
+describe("editing while tier 2 is down", () => {
+  // It answers "allowed" then; a listed prompt's public text must not change on a check that never ran.
+  it("changes nothing on a listed prompt", async () => {
+    prompts[0].is_listed = true;
+    tier2.mockResolvedValue({ allowed: true, tier2Degraded: true });
+    expect((await edit("p1", { title: "New" })).status).toBe(503);
+    expect(prompts[0].title).toBe("Portrait");
+  });
+
+  it("still edits a draft, which is judged again at its release", async () => {
+    tier2.mockResolvedValue({ allowed: true, tier2Degraded: true });
+    expect((await edit("p1", { title: "New" })).status).toBe(200);
+    expect(prompts[0].title).toBe("New");
+  });
+
+  it("reads the listing with the ownership, which this file's fake would hand over unasked", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const src = readFileSync(join(__dirname, "..", "..", "app", "api", "prompts", "[id]", "route.ts"), "utf8");
+    expect(src).toContain('.select("id, is_listed")');
   });
 });

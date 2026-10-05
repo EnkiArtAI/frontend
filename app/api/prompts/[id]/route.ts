@@ -265,7 +265,7 @@ export async function PATCH(
         .filter((e): e is [string, string] => typeof e[1] === "string" && e[1].trim() !== ""),
     );
     if (Object.keys(edited).length > 0) {
-      const { data: own } = await supabase.from("prompts").select("id")
+      const { data: own } = await supabase.from("prompts").select("id, is_listed")
         .eq("id", id).in("creator_id", owners).maybeSingle();
       if (!own) return NextResponse.json({ error: "not found" }, { status: 404 });
       const check = await checkPrompt(edited, { hidden: false, signal: req.signal });
@@ -283,6 +283,11 @@ export async function PATCH(
       const verdict = await moderate({ prompt: text, surface: "upload", signal: req.signal, adultJudged: true });
       after(recordModerationEvent(verdict, { surface: "upload", request: req, prompt: text }));
       if (!verdict.allowed) return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
+      // Tier 2 answers "allowed" when it is down; a listed prompt's public
+      // text does not change on a check that never ran.
+      if (verdict.tier2Degraded && own.is_listed === true) {
+        return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 });
+      }
     }
 
     const { error, count } = await supabase
