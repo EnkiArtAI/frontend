@@ -34,8 +34,13 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
   eq(c: string, v: unknown) { this.asked.push(c); this.filters.push((r) => r[c] === v); return this; }
   in(c: string, vs: unknown[]) { this.filters.push((r) => vs.includes(r[c])); return this; }
   is(c: string, v: null | boolean) { this.filters.push((r) => (r[c] ?? null) === v); return this; }
-  // Only "not is": a missing value is not the value either, as in SQL.
-  not(c: string, _is: string, v: null | boolean) { this.filters.push((r) => (r[c] ?? null) !== v); return this; }
+  // Only "not is": a missing value is not the value either, as in SQL. Any other
+  // operator is refused: "not eq" would never match a row whose value is missing.
+  not(c: string, op: string, v: null | boolean) {
+    if (op !== "is") throw new Error(`this fake knows only not.is, got not.${op}`);
+    this.filters.push((r) => (r[c] ?? null) !== v);
+    return this;
+  }
   gt(c: string, v: string) { this.filters.push((r) => String(r[c]) > v); return this; }
   limit() { return this; }
   order() { return this; }

@@ -159,6 +159,17 @@ describe("GET /api/prompt answers only the prompt's creator", () => {
   });
 });
 
+describe("the price its creator reads", () => {
+  it("is the default for a prompt that has none", async () => {
+    db.prompts[0].price_usd_cents = null;
+    expect((await (await get("artist-token")).json()).price).toBe(0.07);
+  });
+
+  it("is the stored price otherwise", async () => {
+    expect((await (await get("artist-token")).json()).price).toBe(1.5);
+  });
+});
+
 describe("saving a prompt writes plaintext only for a free one", () => {
   it("writes no excerpt for a paid prompt", async () => {
     await save({ promptType: "paid-prompt", price: 1.5 });
