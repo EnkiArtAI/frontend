@@ -153,6 +153,8 @@ describe("the mobile sheet's settings", () => {
     expect(SHEET).toContain("const tagsVal = tags ?? localTags;");
     expect(SHEET).toContain("const priceVal = price ?? localPrice;");
     expect(SHEET).toContain("const onPrice = setPrice ?? setLocalPrice;");
+    // Before the sheet may return nothing: a hook after that return would break the sheet.
+    expect(SHEET.indexOf("const [priceText, setPriceText] = useState")).toBeLessThan(SHEET.indexOf("if (!isOpen) return null;"));
   });
 
   it("take only the two prompt types the editor knows", () => {

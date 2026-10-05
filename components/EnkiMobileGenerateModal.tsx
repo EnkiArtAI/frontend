@@ -3,6 +3,7 @@ import DiceButton from "@/components/DiceButton";
 import type { DiceValue, DiceVariable } from "@/lib/generation/variable-dice";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import { ENKI_CATEGORIES } from "@/components/enki/EnkiFilters";
+import { priceInputText, priceOf, priceTextFor } from "@/lib/editor/price-input";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X, Sparkles, Plus, ImageIcon, Ratio, Maximize2, Copy, Settings, FileText, CheckCircle2 } from "lucide-react";
 import { getVariableColors } from "../lib/variableColors";
@@ -447,6 +448,12 @@ export default function EnkiMobileGenerateModal({
   const [localType, setLocalType] = useState("free-prompt");
   const [localTags, setLocalTags] = useState<string[]>([]);
   const [localPrice, setLocalPrice] = useState(0);
+  const priceVal = price ?? localPrice;
+  /* The price field holds its own text. Bound to the number alone it could
+     not hold "0", "0." or "0.0", so typing 0.05 left a price of 5. What is
+     shown is that text while it stands for the price, and the price itself
+     once that was set from outside. */
+  const [priceText, setPriceText] = useState("");
 
   if (!isOpen) return null;
 
@@ -457,7 +464,6 @@ export default function EnkiMobileGenerateModal({
   const tagsVal = tags ?? localTags;
   const addTagFn = onAddTag ?? ((t: string) => setLocalTags((p) => (p.includes(t) ? p : [...p, t])));
   const removeTagFn = onRemoveTag ?? ((t: string) => setLocalTags((p) => p.filter((x) => x !== t)));
-  const priceVal = price ?? localPrice;
   const onPrice = setPrice ?? setLocalPrice;
   const showReferenceImages = typeof onAddReferenceImages === "function";
   // Web has no Release flow — it offers a "Prompt editor" button instead.
@@ -958,14 +964,16 @@ export default function EnkiMobileGenerateModal({
                       <div className="mobile-modal-price-input-wrap">
                         <span className="mobile-modal-price-input-prefix">$</span>
                         <input
-                          type="number"
+                          type="text"
                           inputMode="decimal"
-                          min={0}
-                          step="0.0001"
                           className="mobile-modal-price-input"
                           placeholder="0.0000"
-                          value={priceVal || ""}
-                          onChange={(e) => onPrice(parseFloat(e.target.value) || 0)}
+                          value={priceTextFor(priceText, priceVal)}
+                          onChange={(e) => {
+                            const text = priceInputText(e.target.value);
+                            setPriceText(text);
+                            onPrice(priceOf(text));
+                          }}
                         />
                         <span className="mobile-modal-price-input-suffix">USDC / render</span>
                       </div>
