@@ -43,12 +43,15 @@ describe("the human rail", () => {
     const record = HUMAN.indexOf('after(recordModerationEvent(verdict, { surface: "generate-image"');
     expect(decide).toBeGreaterThan(-1);
     const human = HUMAN.slice(decide, record);
+    // Only a hit at the line: any other block must not become a child-safety warning.
+    expect(human).toMatch(/\n\s+if \(minors !== null\) \{\n\s+const outcome = await recordWarning\(/);
     expect(human).toMatch(/category: "minor_sexual", text: JSON\.stringify\(checked\), confidence: minors, scores: verdict\.scores, \.\.\.about,/);
     expect(human).toMatch(/return NextResponse\.json\(\{ error: warningMessage\("minor_sexual", outcome\) \}, \{ status: 422 \}\);/);
     // The agent rail counts every hit, its own prompts' too: it has no account to ban for good.
     const agentDecide = AGENT.indexOf("const minors = !verdict.allowed ? childSafetyScore(verdict) : null;");
     expect(agentDecide).toBeGreaterThan(-1);
     const agent = AGENT.slice(agentDecide, AGENT.indexOf("after(recordModerationEvent(verdict, {", agentDecide));
+    expect(agent).toMatch(/\n\s+if \(minors !== null\) \{\n\s+await recordWarning\(supabase, \{/);
     expect(agent).toMatch(/category: "minor_sexual", text: JSON\.stringify\(checked\), confidence: minors, scores: verdict\.scores,\n\s+\.\.\.\(input\.promptId \? \{ promptId: input\.promptId \} : \{\}\),/);
     expect(agent).toMatch(/return NextResponse\.json\(\{ error: addressWarningMessage\("minor_sexual"\) \}, \{ status: 422 \}\);/);
     // The agent rail never promises an account suspension it cannot give.
@@ -163,6 +166,8 @@ describe("the agent rail", () => {
     expect(decide).toBeGreaterThan(-1);
     // After the warning branch, so one hit is never two records.
     expect(record).toBeGreaterThan(decide);
+    // Unconditionally: blocks and passes alike, as on the human rail.
+    expect(AGENT).toMatch(/\n  after\(recordModerationEvent\(verdict, \{\n/);
     expect(AGENT.slice(record, record + 260)).toMatch(/surface: "x402-generate", request: asker,\n\s+\.\.\.\(input\.promptId \? \{ prompt: JSON\.stringify\(checked\), promptId: input\.promptId \} : \{ prompt: promptText \}\),/);
     expect(AGENT.indexOf("return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });")).toBeGreaterThan(record);
   });
