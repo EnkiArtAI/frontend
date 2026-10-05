@@ -179,17 +179,25 @@ describe("a premium prompt's price in the editor", () => {
     expect(sheet).toContain("setPromptPrice((p) => p || DEFAULT_PROMPT_PRICE_USD);");
   });
 
-  it("is counted up and down in cents by the arrow buttons and the arrow keys", () => {
-    expect(EDITOR).toContain("onClick={() => handlePriceStep(0.01)}");
-    expect(EDITOR).toContain("onClick={() => handlePriceStep(-0.01)}");
-    expect(EDITOR).toContain('handlePriceStep(e.key === "ArrowUp" ? 0.01 : -0.01);');
-    expect(EDITOR).not.toContain("handlePriceStep(0.0001)");
-    expect(EDITOR).not.toContain("handlePriceStep(-0.0001)");
+  it("is counted up and down by the arrow buttons and the arrow keys, one press at a time", () => {
+    expect(EDITOR).toContain("onClick={() => handlePriceStep(1)}");
+    expect(EDITOR).toContain("onClick={() => handlePriceStep(-1)}");
+    expect(EDITOR).toContain('handlePriceStep(e.key === "ArrowUp" ? 1 : -1);');
+    // What a press does is lib/editor/price-input's stepPrice, tested there by value.
+    const step = EDITOR.slice(EDITOR.indexOf("const handlePriceStep = useCallback("), EDITOR.indexOf("setPromptPrice(next);"));
+    expect(step).toContain("const next = stepPrice(current, direction);");
+    expect(step).toContain("if (next === null) return;");
+    expect(step).not.toContain("Math.max(");
   });
 
-  it("can still be a typed price down to $0.0001", () => {
-    const step = EDITOR.slice(EDITOR.indexOf("const handlePriceStep = useCallback("), EDITOR.indexOf("setPromptPrice(next);"));
-    expect(step).toContain("0.0001,");
-    expect(step).toContain("parseFloat((current + delta).toFixed(4))");
+  it("is still whatever is typed into the field, and only the arrow keys step it", () => {
+    const field = EDITOR.slice(EDITOR.indexOf("value={priceText}"), EDITOR.indexOf('className="enk-num-input__visual"'));
+    expect(field.length).toBeGreaterThan(200);
+    expect(field).toContain("setPriceText(raw);");
+    expect(field).toContain("setPromptPrice(Number.isFinite(n) ? n : 0);");
+    const guard = 'if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;';
+    expect(field).toContain(guard);
+    // Any other key must reach the field: the guard stands before the key is swallowed.
+    expect(field.indexOf(guard)).toBeLessThan(field.indexOf("e.preventDefault();"));
   });
 });

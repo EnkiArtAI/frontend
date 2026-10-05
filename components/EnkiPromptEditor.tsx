@@ -58,6 +58,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ENKI_CATEGORIES } from "@/components/enki/EnkiFilters";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import { DEFAULT_PROMPT_PRICE_USD } from "@/shared/revenue-config";
+import { stepPrice } from "@/lib/editor/price-input";
 import { nameSlotByItsText } from "@/lib/editor/slot-name";
 import {
   loadEditorVersions,
@@ -1450,24 +1451,20 @@ export default function EnkiPromptEditor() {
      having to manually re-space). Caret is repositioned right
      after the inserted space so subsequent input flows naturally. */
   /* ─── Price stepper ───
-     Bumps the price by `delta` USDC, clamps to the allowed minimum,
-     rounds to 4-decimal precision. The arrows count in cents (Kev,
-     2026-10-05); a finer price, down to $0.0001, is typed.
+     One arrow press up or down (lib/editor/price-input: the arrows count
+     in cents and stop at one cent; a finer price, down to $0.0001, is typed),
      snapshots the previous value (for digit-diff animation) and
      triggers the roll-direction class. The class self-clears 240ms
      later — long enough for the keyframe to play, short enough that
      rapid clicks restart cleanly. */
   const handlePriceStep = useCallback(
-    (delta: number) => {
+    (direction: 1 | -1) => {
       const current = promptPrice || 0;
-      const next = Math.max(
-        0.0001,
-        parseFloat((current + delta).toFixed(4))
-      );
-      if (next === current) return;
+      const next = stepPrice(current, direction);
+      if (next === null) return;
       prevPriceRollSnapshotRef.current = current;
       priceRollKeyRef.current += 1;
-      setPriceRollDir(delta > 0 ? "up" : "down");
+      setPriceRollDir(direction > 0 ? "up" : "down");
       setPromptPrice(next);
       setUi((p) => ({ ...p, pricePerRenderReviewed: true }));
       if (priceRollTimerRef.current) clearTimeout(priceRollTimerRef.current);
@@ -4009,7 +4006,7 @@ export default function EnkiPromptEditor() {
                             // The arrow keys count like the arrow buttons: one cent.
                             if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
                             e.preventDefault();
-                            handlePriceStep(e.key === "ArrowUp" ? 0.01 : -0.01);
+                            handlePriceStep(e.key === "ArrowUp" ? 1 : -1);
                           }}
                         />
                         <div
@@ -4053,7 +4050,7 @@ export default function EnkiPromptEditor() {
                           className="enk-num-input__btn"
                           aria-label="Increase price"
                           onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => handlePriceStep(0.01)}
+                          onClick={() => handlePriceStep(1)}
                         >
                           <ChevronUp size={12} strokeWidth={2.5} />
                         </button>
@@ -4062,7 +4059,7 @@ export default function EnkiPromptEditor() {
                           className="enk-num-input__btn"
                           aria-label="Decrease price"
                           onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => handlePriceStep(-0.01)}
+                          onClick={() => handlePriceStep(-1)}
                         >
                           <ChevronDown size={12} strokeWidth={2.5} />
                         </button>

@@ -25,3 +25,18 @@ export function priceOf(text: string): number {
 export function priceTextFor(text: string, price: number): string {
   return priceOf(text) === price ? text : price ? String(price) : "";
 }
+
+/** What one arrow press adds or takes, and the lowest price the arrows reach. */
+export const PRICE_STEP = 0.01;
+
+/**
+ * The price one arrow press away, or null when the press changes nothing.
+ * The arrows count in cents (Kev, 2026-10-05) and stop at one cent: a press
+ * down from $0.01 used to land on $0.0001, and every press after that stayed a
+ * hundredth of a cent off the cents. A price below a cent is typed, and a
+ * press down never raises it.
+ */
+export function stepPrice(current: number, direction: 1 | -1): number | null {
+  const next = Math.max(PRICE_STEP, parseFloat((current + direction * PRICE_STEP).toFixed(4)));
+  return next === current || (direction < 0 && next > current) ? null : next;
+}
