@@ -6,9 +6,10 @@
  * far are gone. Typing 0.05 then leaves a lone 5: a price of $5.00.
  */
 
-/** What may stand in a price field: digits and one kind of decimal mark. */
+/** What may stand in a price field: digits and one decimal mark, a comma counting as one. */
 export function priceInputText(raw: string): string {
-  return raw.replace(/,/g, ".").replace(/[^0-9.]/g, "");
+  const [whole, ...rest] = raw.replace(/,/g, ".").replace(/[^0-9.]/g, "").split(".");
+  return rest.length ? `${whole}.${rest.join("")}` : whole;
 }
 
 /** The price a field's text stands for; no number yet is 0. */

@@ -46,6 +46,16 @@ describe("the price typed into the sheet", () => {
     expect(priceInputText("1e9")).toBe("19");
   });
 
+  it("holds one decimal mark, so what is shown is the price that is sent", () => {
+    // With two the field showed "1..5" and sent $1.00, or showed "0..5" and sent nothing.
+    expect(priceInputText("1..5")).toBe("1.5");
+    expect(priceInputText("1.2.3")).toBe("1.23");
+    expect(priceInputText("0,0,5")).toBe("0.05");
+    expect(priceInputText("..")).toBe(".");
+    expect(type("1..5")).toEqual({ text: "1.5", price: 1.5 });
+    expect(type("0..5")).toEqual({ text: "0.5", price: 0.5 });
+  });
+
   it("follows a price set from outside: a restored draft, a reset after a release", () => {
     expect(priceTextFor("", 2.5)).toBe("2.5");
     expect(priceTextFor("0.05", 2.5)).toBe("2.5");
