@@ -265,14 +265,38 @@ describe("judged whole", () => {
 });
 
 describe("variables sharing a name", () => {
-  it("are each judged, none hiding another", async () => {
-    await save({ ...BASE, variables: [
-      { name: "outfit", label: "outfit", type: "text", defaultValue: "sheer lingerie", position: 0 },
-      { name: "outfit", label: "outfit", type: "text", defaultValue: "a red coat", position: 1 },
-    ] });
+  // Names are stored as slugs. The second of two alike would be saved with a
+  // tie-break no slot names, and every buyer of the prompt refused as unmatched.
+  const two = (a: string, b: string, content = "A scene") => save({ ...BASE, content, variables: [
+    { name: a, label: a, type: "text", defaultValue: "sheer lingerie", position: 0 },
+    { name: b, label: b, type: "text", defaultValue: "a red coat", position: 1 },
+  ] });
+
+  it.each([
+    ["written the same", "outfit", "outfit"],
+    ["differing only in case", "Cat", "cat"],
+    ["differing only in spaces around", " cat ", "cat"],
+    ["differing only in what a stored name drops", "red car", "red-car"],
+    ["both starting with a digit", "2nd subject", "2nd-subject"],
+  ])("are refused when %s, before any check is paid for", async (_name, a, b) => {
+    const res = await two(a, b);
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe(`Two variables would be saved under one name: "${a.trim()}" and "${b.trim()}". Rename one of them. Nothing was saved.`);
+    expect(check).not.toHaveBeenCalled();
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("are saved when their stored names differ, each judged", async () => {
+    expect((await two("outfit", "outfit colour")).status).toBe(200);
     const judged = check.mock.calls[0][0] as Record<string, string>;
     expect(judged["variable 1"]).toContain("sheer lingerie");
     expect(judged["variable 2"]).toContain("a red coat");
+    expect(tables.prompt_variables.map((v) => v.name)).toEqual(["outfit", "outfit_colour"]);
+  });
+
+  it("are saved when nothing of their names survives as a stored name: those are stored by position", async () => {
+    expect((await two("猫", "犬")).status).toBe(200);
+    expect(tables.prompt_variables.map((v) => v.name)).toEqual(["var_0", "var_1"]);
   });
 });
 

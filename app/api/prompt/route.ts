@@ -10,6 +10,7 @@ import { resolveOwnerIds, resolveSessionUserId, resolveSessionUserWithBan } from
 import { isPublicText } from "@/lib/prompt-visibility";
 import { artistPayoutWallet } from "@/lib/payments/generation-quote";
 import { DEFAULT_PROMPT_PRICE_USD } from "@/shared/revenue-config";
+import { storedName } from "@/lib/generation/prompt-text";
 
 type VariableType =
   | "text"
@@ -346,6 +347,26 @@ export async function POST(req: Request) {
           { status: 422 },
         );
       }
+    }
+
+    /* No two variables under one stored name. Names are stored as slugs
+       ("Cat" and "cat" are both cat, "red car" and "red-car" both red_car); the
+       second would get a tie-break (cat_2) that no slot names, and every buyer
+       of the prompt would be refused as unmatched. Said here, where the artist
+       can still rename one. */
+    const storedAs = new Map<string, string>();
+    for (const v of varsPayload) {
+      const name = String(v.name ?? "").trim();
+      const stored = storedName(name);
+      if (!stored) continue;
+      const first = storedAs.get(stored);
+      if (first !== undefined) {
+        return NextResponse.json(
+          { error: `Two variables would be saved under one name: "${first}" and "${name}". Rename one of them. Nothing was saved.` },
+          { status: 422 },
+        );
+      }
+      storedAs.set(stored, name);
     }
 
     if (!body.id && !aiModel) {
