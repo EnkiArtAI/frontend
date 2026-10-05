@@ -139,6 +139,22 @@ describe("the mobile sheet's settings", () => {
     expect(props).toContain("setPromptPrice(v);");
   });
 
+  it("show and set the one model a release sends", () => {
+    // The sheet's model list kept a private choice; the release sent the editor's.
+    expect(props).toContain("onToggleModel={toggleModel}");
+    expect(SHEET).toContain("const prefModels = onToggleModel ? models.selected : internalPrefModels;");
+  });
+
+  it("are read by the sheet where it has them, and only then its own", () => {
+    expect(SHEET).toContain("const titleVal = title ?? localTitle;");
+    expect(SHEET).toContain("const onTitle = setTitle ?? setLocalTitle;");
+    expect(SHEET).toContain("const typeVal = promptType ?? localType;");
+    expect(SHEET).toContain("const onType = setPromptType ?? setLocalType;");
+    expect(SHEET).toContain("const tagsVal = tags ?? localTags;");
+    expect(SHEET).toContain("const priceVal = price ?? localPrice;");
+    expect(SHEET).toContain("const onPrice = setPrice ?? setLocalPrice;");
+  });
+
   it("take only the two prompt types the editor knows", () => {
     expect(props).toContain('if (v !== "free-prompt" && v !== "premium-prompt") return;');
   });

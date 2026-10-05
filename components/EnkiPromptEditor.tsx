@@ -5103,6 +5103,7 @@ export default function EnkiPromptEditor() {
         onRemoveTag={removeTag}
         price={promptPrice}
         setPrice={(v) => { setPromptPrice(v); setUi((p) => ({ ...p, pricePerRenderReviewed: true })); }}
+        onToggleModel={toggleModel}
         onAutoFill={handleGrokFill}
         isAutoFilling={ui.isGrokFilling}
         onGenerate={(count) => {
