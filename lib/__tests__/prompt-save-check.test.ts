@@ -379,11 +379,11 @@ describe("releasing a prompt", () => {
 });
 
 describe("the save route's ownership read", () => {
-  it("asks for the creator, the listing, the takedown mark and the first listing dates, which this file's fake would hand over unasked", async () => {
+  it("asks for the creator, the content it read, the listing, the takedown mark and the first listing dates, which this file's fake would hand over unasked", async () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const src = readFileSync(join(__dirname, "..", "..", "app", "api", "prompt", "route.ts"), "utf8");
-    expect(src).toContain('.select("id, creator_id, description, is_listed, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners)');
+    expect(src).toContain('.select("id, creator_id, description, encrypted_content_iv, is_listed, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners)');
   });
 });
 
@@ -656,5 +656,108 @@ describe("a release and the other prompts", () => {
     tables.prompts.push({ id: "other", creator_id: "u1", title: "Other draft", is_listed: false, encrypted_content_iv: "iv-1", delisted_at: null });
     expect((await save({ ...BASE, release: true })).status).toBe(200);
     expect(tables.prompts.map((p) => [p.title, p.is_listed])).toEqual([["Other draft", false], ["Portrait", true]]);
+  });
+});
+
+describe("two saves of one prompt at once", () => {
+  // Each decides on its own read whether it is for sale, and the checks take seconds.
+  const ID = "11111111-1111-4111-8111-111111111111";
+  const CHANGED = "This prompt was changed by another save while this one was being checked. Nothing was saved; save it again.";
+  const draft = (extra: Row = {}) => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Draft", description: null, is_listed: false, listing_status: "draft", delisted_at: null, is_adult: false, encrypted_content_iv: "iv-old", ...extra });
+    return tables.prompts[0];
+  };
+  /** Both requests sit in their prompt check; `first` is let through and answers, then the other. */
+  const race = async (second: Row, first: "release" | "second") => {
+    // One gate per request, keyed by its title.
+    const seen: Record<string, () => void> = {};
+    const inCheck = { Release: new Promise<void>((r) => { seen.Release = r; }), Second: new Promise<void>((r) => { seen.Second = r; }) };
+    const open: Record<string, () => void> = {};
+    const gate = { Release: new Promise<void>((r) => { open.Release = r; }), Second: new Promise<void>((r) => { open.Second = r; }) };
+    check.mockImplementation(async (i: Record<string, string>) => {
+      const who = i.title === "Second" ? "Second" : "Release";
+      seen[who]();
+      await gate[who];
+      return { verdict: "clear" };
+    });
+    const release = save({ ...BASE, id: ID, title: "Release", release: true });
+    const other = save({ ...BASE, id: ID, title: "Second", ...second });
+    await Promise.all([inCheck.Release, inCheck.Second]);
+    const [a, b] = first === "release" ? ["Release", "Second"] : ["Second", "Release"];
+    open[a]();
+    const one = await (a === "Release" ? release : other);
+    open[b]();
+    const two = await (b === "Release" ? release : other);
+    return a === "Release" ? { release: one, other: two } : { release: two, other: one };
+  };
+
+  it.each([
+    ["a paid prompt at $0", { promptType: "paid-prompt", price: 0 }],
+    ["a prompt without a text, neither free nor paid", { content: "", variables: [], promptType: "create-now" }],
+    ["a paid prompt whose artist has no payout wallet", { promptType: "paid-prompt", price: 2.5 }],
+  ])("a save judged as a draft does not land on what the release listed: %s", async (_name, second) => {
+    const row = draft();
+    const { release, other } = await race(second, "release");
+    expect(release.status).toBe(200);
+    expect(other.status).toBe(409);
+    expect((await other.json()).error).toBe(CHANGED);
+    expect(row).toMatchObject({ title: "Release", is_listed: true, listing_status: "active", prompt_type: "free", price_usd_cents: 0 });
+    expect(tables.prompt_variables).toHaveLength(1);
+  });
+
+  it("text whose tier-2 check never ran does not land on what the release listed", async () => {
+    const row = draft();
+    tier2.mockImplementation(async (i: { prompt: string }) => (i.prompt.includes("Second") ? { allowed: true, tier2Degraded: true } : { allowed: true }));
+    const { release, other } = await race({ content: "text tier 2 never read", variables: [] }, "release");
+    tier2.mockReset();
+    tier2.mockImplementation(async () => ({ allowed: true }));
+    expect([release.status, other.status]).toEqual([200, 409]);
+    expect(row).toMatchObject({ title: "Release", is_listed: true });
+    expect(row.public_prompt_text).not.toContain("never read");
+  });
+
+  it("a release does not list over a save that landed first", async () => {
+    const row = draft();
+    const { release, other } = await race({ promptType: "paid-prompt", price: 0 }, "second");
+    expect(other.status).toBe(200);
+    expect(release.status).toBe(409);
+    expect((await release.json()).error).toBe(CHANGED);
+    expect(row).toMatchObject({ title: "Second", is_listed: false, prompt_type: "paid" });
+  });
+
+  it("a release does not list a prompt another save rewrote before the listing", async () => {
+    const row = draft();
+    // The other save's row lands after this one's, before this one lists.
+    betweenWrites = () => { Object.assign(row, { title: "Rewritten", encrypted_content_iv: "iv-other", prompt_type: "create-now" }); };
+    const res = await save({ ...BASE, id: ID, release: true });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("This prompt was changed by another save while it was being released, so it stays unlisted. Release it again.");
+    expect(row).toMatchObject({ title: "Rewritten", is_listed: false });
+  });
+
+  it("still names the takedown when that is why the listing did not land", async () => {
+    const row = draft();
+    betweenWrites = () => { Object.assign(row, { delisted_at: "2026-10-05T12:00:00.000Z" }); };
+    const res = await save({ ...BASE, id: ID, release: true });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toContain("taken down by a moderator");
+    expect(row.is_listed).toBe(false);
+  });
+
+  it("an edit of the description that lands during the check is put back as it was judged", async () => {
+    const row = draft({ description: "a quiet scene" });
+    check.mockImplementation(async () => {
+      // The edit route judged this text 18+ and marked the prompt; this save never read it.
+      Object.assign(row, { description: "a sultry boudoir scene", is_adult: true });
+      return { verdict: "clear" };
+    });
+    expect((await save({ ...BASE, id: ID, release: true })).status).toBe(200);
+    expect(row).toMatchObject({ is_listed: true, is_adult: false, description: "a quiet scene" });
+  });
+
+  it("a prompt saved before contents carried an IV is still saved", async () => {
+    const row = draft({ encrypted_content_iv: null });
+    expect((await save({ ...BASE, id: ID })).status).toBe(200);
+    expect(row.title).toBe("Portrait");
   });
 });

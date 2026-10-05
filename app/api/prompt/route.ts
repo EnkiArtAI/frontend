@@ -368,6 +368,10 @@ export async function POST(req: Request) {
     let live = body.release === true;
     // Whose prompt it is: a paid prompt's buyers pay this creator.
     let payee: string;
+    // The content this save read. Every save stores a fresh IV, so a write
+    // that still finds this one lands on the prompt as it was read and
+    // judged, not on what another save put there meanwhile.
+    let readIv: string | null = null;
     if (body.id) {
       const owners = await resolveOwnerIds(supabase, req.headers.get("X-Session-Token"));
       if (!owners) {
@@ -376,7 +380,7 @@ export async function POST(req: Request) {
       // A session whose wallet maps to no user row owns no prompts, and
       // .in() with an empty list is a PostgREST parse error, not a no-op.
       if (owners.length === 0) return NextResponse.json({ error: "not found" }, { status: 404 });
-      const { data: own } = await supabase.from("prompts").select("id, creator_id, description, is_listed, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners).maybeSingle();
+      const { data: own } = await supabase.from("prompts").select("id, creator_id, description, encrypted_content_iv, is_listed, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners).maybeSingle();
       if (!own) return NextResponse.json({ error: "not found" }, { status: 404 });
       // What a moderator took down stays down: releasing it again would undo the takedown.
       if (body.release === true && own.delisted_at) {
@@ -385,6 +389,7 @@ export async function POST(req: Request) {
       listedSince = own;
       live ||= own.is_listed === true;
       payee = String(own.creator_id);
+      readIv = (own.encrypted_content_iv as string | null) ?? null;
       storedDescription = (own.description as string | null) ?? null;
       ownerIds = owners;
     } else {
@@ -512,18 +517,25 @@ export async function POST(req: Request) {
     if (body.id) {
       promptId = body.id;
 
-      const { error: updateError, count } = await supabase
+      // Only onto the prompt as it was read. The rules above (for sale or
+      // not, sellable, tier 2) were decided on that read, and the checks took
+      // seconds: a second save of the same prompt may have been judged as a
+      // draft and would otherwise land on what this one lists, or the other
+      // way round. The description goes back as it was judged, so an edit of
+      // it that landed meanwhile cannot sit under a mark it was not part of.
+      const asRead = supabase
         .from("prompts")
-        .update(promptRow, { count: "exact" })
+        .update({ ...promptRow, description: storedDescription }, { count: "exact" })
         .eq("id", promptId)
         .in("creator_id", ownerIds);
+      const { error: updateError, count } = await (readIv === null ? asRead.is("encrypted_content_iv", null) : asRead.eq("encrypted_content_iv", readIv));
 
       if (updateError) {
         throw updateError;
       }
 
       if (count === 0) {
-        return NextResponse.json({ error: "not found" }, { status: 404 });
+        return NextResponse.json({ error: "This prompt was changed by another save while this one was being checked. Nothing was saved; save it again." }, { status: 409 });
       }
 
       const { error: deleteError } = await supabase
@@ -603,10 +615,15 @@ export async function POST(req: Request) {
           { count: "exact" },
         )
         .eq("id", promptId)
+        // Still the content this very save wrote, not another save's.
+        .eq("encrypted_content_iv", enc.iv)
         .is("delisted_at", null);
       if (listError) throw listError;
       if (nowListed === 0) {
-        return NextResponse.json({ error: "This prompt was taken down by a moderator and cannot be released again. Your changes were saved; it stays unlisted." }, { status: 403 });
+        const { data: now } = await supabase.from("prompts").select("delisted_at").eq("id", promptId).maybeSingle();
+        return now?.delisted_at
+          ? NextResponse.json({ error: "This prompt was taken down by a moderator and cannot be released again. Your changes were saved; it stays unlisted." }, { status: 403 })
+          : NextResponse.json({ error: "This prompt was changed by another save while it was being released, so it stays unlisted. Release it again." }, { status: 409 });
       }
     }
 
