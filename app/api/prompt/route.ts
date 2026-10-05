@@ -251,6 +251,8 @@ async function resolveCreatorId(
 }
 
 export async function POST(req: Request) {
+  // A listed prompt is off sale from its first write until its last one.
+  let offSale = false;
   try {
     const body = (await req.json()) as SaveBody;
 
@@ -372,6 +374,7 @@ export async function POST(req: Request) {
     // that still finds this one lands on the prompt as it was read and
     // judged, not on what another save put there meanwhile.
     let readIv: string | null = null;
+    let wasListed = false;
     if (body.id) {
       const owners = await resolveOwnerIds(supabase, req.headers.get("X-Session-Token"));
       if (!owners) {
@@ -387,7 +390,8 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "This prompt was taken down by a moderator and cannot be released again. Nothing was saved." }, { status: 403 });
       }
       listedSince = own;
-      live ||= own.is_listed === true;
+      wasListed = own.is_listed === true;
+      live ||= wasListed;
       payee = String(own.creator_id);
       readIv = (own.encrypted_content_iv as string | null) ?? null;
       storedDescription = (own.description as string | null) ?? null;
@@ -525,7 +529,10 @@ export async function POST(req: Request) {
       // it that landed meanwhile cannot sit under a mark it was not part of.
       const asRead = supabase
         .from("prompts")
-        .update({ ...promptRow, description: storedDescription }, { count: "exact" })
+        // Off sale in the same write that changes it; a listed prompt comes
+        // back with the last write below. Its new text is never for sale
+        // without its new variables, whatever fails in between.
+        .update({ ...promptRow, description: storedDescription, is_listed: false }, { count: "exact" })
         .eq("id", promptId)
         .in("creator_id", ownerIds);
       const { error: updateError, count } = await (readIv === null ? asRead.is("encrypted_content_iv", null) : asRead.eq("encrypted_content_iv", readIv));
@@ -537,6 +544,7 @@ export async function POST(req: Request) {
       if (count === 0) {
         return NextResponse.json({ error: "This prompt was changed by another save while this one was being checked. Nothing was saved; save it again." }, { status: 409 });
       }
+      offSale = wasListed;
 
       const { error: deleteError } = await supabase
         .from("prompt_variables")
@@ -604,10 +612,11 @@ export async function POST(req: Request) {
     // Listed last: after the prompt check and moderation let this very save
     // through, and once the prompt and its variables are both written, so a
     // save that fails halfway leaves nothing half-made for sale. A save
-    // without a release leaves the listing as it is. The takedown mark is part
-    // of the write itself: a moderator may take the prompt down between the
-    // ownership read above and here, and what is taken down stays down.
-    if (body.release === true) {
+    // without a release puts a listed prompt back on sale and lists nothing
+    // else. The takedown mark is part of the write itself: a moderator may
+    // take the prompt down between the ownership read above and here, and
+    // what is taken down stays down.
+    if (live) {
       const { error: listError, count: nowListed } = await supabase
         .from("prompts")
         .update(
@@ -647,7 +656,7 @@ export async function POST(req: Request) {
   } catch (e: unknown) {
     console.error("/api/prompt POST failed:", e);
     return NextResponse.json(
-      { error: getErrorMessage(e) || "Failed to save prompt" },
+      { error: offSale ? "This prompt could not be saved completely and is off sale now. Release it again." : getErrorMessage(e) || "Failed to save prompt" },
       { status: 500 }
     );
   }

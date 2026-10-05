@@ -761,3 +761,61 @@ describe("two saves of one prompt at once", () => {
     expect(row.title).toBe("Portrait");
   });
 });
+
+describe("a listed prompt while it is being rewritten", () => {
+  const ID = "11111111-1111-4111-8111-111111111111";
+  const listed = () => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Listed", description: null, is_listed: true, listing_status: "active", listed_at: "2026-09-01T00:00:00.000Z", published_at: "2026-09-01T00:00:00.000Z", delisted_at: null, encrypted_content_iv: "iv-old" });
+    tables.prompt_variables.push({ id: "v-old", prompt_id: ID, name: "outfit" });
+    return tables.prompts[0];
+  };
+
+  it("is off sale between its new text and its new variables, and back on sale after them", async () => {
+    const row = listed();
+    let during: unknown = "never asked";
+    betweenWrites = () => { during = row.is_listed; };
+    expect((await save({ ...BASE, id: ID })).status).toBe(200);
+    expect(during).toBe(false);
+    expect(row).toMatchObject({ title: "Portrait", is_listed: true, listing_status: "active", listed_at: "2026-09-01T00:00:00.000Z" });
+  });
+
+  it("stays off sale, and says so, when its variables could not be written", async () => {
+    const row = listed();
+    failingInsert = "prompt_variables";
+    for (const body of [{ ...BASE, id: ID }, { ...BASE, id: ID, release: true }]) {
+      row.is_listed = true;
+      const res = await save(body);
+      expect(res.status).toBe(500);
+      expect((await res.json()).error).toBe("This prompt could not be saved completely and is off sale now. Release it again.");
+      expect(row.is_listed).toBe(false);
+    }
+  });
+
+  it("is not pulled by a save that is refused before anything is written", async () => {
+    const row = listed();
+    check.mockResolvedValue({ verdict: "unavailable", reason: "api 500" });
+    expect((await save({ ...BASE, id: ID })).status).toBe(503);
+    expect(row).toMatchObject({ title: "Listed", is_listed: true });
+  });
+
+  it("a draft is never put on sale by a save that does not release it", async () => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Draft", is_listed: false, listing_status: "draft", delisted_at: null, encrypted_content_iv: "iv-old" });
+    expect((await save({ ...BASE, id: ID })).status).toBe(200);
+    expect(tables.prompts[0]).toMatchObject({ title: "Portrait", is_listed: false, listing_status: "draft" });
+  });
+
+  it("a save that fails before anything is written answers with the failure itself", async () => {
+    failingInsert = "prompts";
+    const res = await save(BASE);
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("insert refused");
+  });
+
+  it("a failed save of a draft answers with the failure itself", async () => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Draft", is_listed: false, delisted_at: null, encrypted_content_iv: "iv-old" });
+    failingInsert = "prompt_variables";
+    const res = await save({ ...BASE, id: ID });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("insert refused");
+  });
+});
