@@ -1271,11 +1271,11 @@ export default function EnkiPromptEditor() {
   const canUndo = historyVersion >= 0 && historyPastRef.current.length > 0;
   const canRedo = historyVersion >= 0 && historyFutureRef.current.length > 0;
 
-  /* ─── New prompt — wipe everything and start from a clean slate ───
+  /* ─── Clean slate ───
      Resets all editor content + settings, clears the persisted draft
      (localStorage) and verify cards (IndexedDB), and empties the
      undo/redo history so there's nothing to roll back into. */
-  const handleNewPrompt = useCallback(() => {
+  const resetEditor = useCallback(() => {
     setPromptData({ title: "", body: "", type: "free-prompt", tags: [] });
     setVariables([]);
     setReferenceImages([]);
@@ -1311,8 +1311,13 @@ export default function EnkiPromptEditor() {
     historySnapshotRef.current = null;
     gestureFocusRef.current = undefined;
     setHistoryVersion((v) => v + 1);
+  }, []);
+
+  /* ─── New prompt — wipe everything and say so ─── */
+  const handleNewPrompt = useCallback(() => {
+    resetEditor();
     toast({ title: "New prompt", description: "Cleared the editor — starting fresh." });
-  }, [toast]);
+  }, [resetEditor, toast]);
 
   /* ─── ESC → leave the editor ───
      A neutral ESC (no lightbox/dialog/dropdown open, nothing prevented it)
@@ -2977,6 +2982,12 @@ export default function EnkiPromptEditor() {
           : "Prompt is now live on the marketplace.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/prompts"] });
+      /* A release ends the draft. Left in place it came back on the next
+         visit still tied to the live prompt, with nothing saying so: the next
+         prompt written over it replaced the listing for good. The state is
+         reset too, not only the storage, or a pending autosave writes the
+         released prompt back before the editor is left. */
+      resetEditor();
       router.push("/showcase");
     },
     onError: (error: unknown) => {

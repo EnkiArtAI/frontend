@@ -69,3 +69,41 @@ describe("a prompt released as 18+", () => {
     expect(said.indexOf("marked 18+")).toBeLessThan(said.indexOf("Prompt is now live on the marketplace."));
   });
 });
+
+describe("the draft after a release", () => {
+  const reset = EDITOR.slice(EDITOR.indexOf("const resetEditor = useCallback(() => {"), EDITOR.indexOf("const handleNewPrompt = useCallback(() => {"));
+
+  it("is ended: the editor is reset before it is left, so the next visit starts clean", () => {
+    const success = release.slice(release.indexOf("onSuccess: ({ adult }) => {"), release.indexOf("onError:"));
+    expect(success).toContain("resetEditor();");
+    expect(success.indexOf("resetEditor();")).toBeLessThan(success.indexOf('router.push("/showcase");'));
+  });
+
+  it("is not ended by a release that was refused", () => {
+    const refused = release.slice(release.indexOf("onError:"));
+    expect(refused).not.toContain("resetEditor");
+    expect(refused).not.toContain("handleNewPrompt");
+  });
+
+  it("loses its tie to the released prompt, its stored copy and its images", () => {
+    expect(reset).toContain("currentPromptId: null,");
+    expect(reset).toContain("localStorage.removeItem(EDITOR_DRAFT_KEY);");
+    expect(reset).toContain("void clearEditorVersions();");
+    expect(reset).toContain('setPromptData({ title: "", body: "", type: "free-prompt", tags: [] });');
+    expect(reset).toContain("setVersions([]);");
+    // The reset itself says nothing: "New prompt" is the Clear button's message, not a release's.
+    expect(reset).not.toContain("toast(");
+  });
+
+  it("is what Clear still wipes, with its message", () => {
+    const clear = EDITOR.slice(EDITOR.indexOf("const handleNewPrompt = useCallback(() => {"), EDITOR.indexOf("const [leaveConfirm, setLeaveConfirm] = useState(false);"));
+    expect(clear.length).toBeLessThan(600);
+    expect(clear).toContain("resetEditor();");
+    expect(clear).toContain('toast({ title: "New prompt"');
+  });
+
+  it("is not tied to a prompt by the save itself any more", () => {
+    // That tie (the id written into the stored draft) is what made the overwrite certain.
+    expect(EDITOR).not.toContain("rememberDraftPromptId");
+  });
+});
