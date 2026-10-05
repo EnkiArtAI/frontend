@@ -176,6 +176,21 @@ function toDbVarName(name: unknown, position: number, taken: Set<string>): strin
   return candidate;
 }
 
+/* What a variable may carry: text in its name, label, description and
+   options; a text, number, yes/no or one flat list of those as its default.
+   The prompt check reads exactly these, one level deep, so anything nested
+   would be stored, shown and generated from without ever being judged. */
+const plain = (x: unknown) => x == null || ["string", "number", "boolean"].includes(typeof x);
+const text = (x: unknown) => x == null || typeof x === "string";
+function isPlainVariable(v: VariablePayload): boolean {
+  return (
+    typeof v === "object" && v !== null && text(v.name) && text(v.label) && text(v.description) &&
+    (Array.isArray(v.defaultValue) ? v.defaultValue.every(plain) : plain(v.defaultValue)) &&
+    (v.options == null ||
+      (Array.isArray(v.options) && v.options.every((o) => typeof o === "object" && o !== null && text(o.visibleName) && text(o.label) && text(o.promptValue))))
+  );
+}
+
 // Resolve the prompt's creator from the session — NEVER from the client
 // (a client-supplied userId could claim any creator, and the payment quote
 // pays the artist share to that creator's wallet). prompts.creator_id is
@@ -287,6 +302,12 @@ export async function POST(req: Request) {
        generieren" — raw DB seeds proved the gap). Checked at SAVE, the one
        door every prompt passes through. */
     const varsPayload = Array.isArray(body.variables) ? body.variables : [];
+    if (!varsPayload.every(isPlainVariable)) {
+      return NextResponse.json(
+        { error: "A variable holds a value that cannot be saved: its name, label, description and options must be text, its default a text, a number, yes/no or a plain list of those." },
+        { status: 400 },
+      );
+    }
     const slotNames = new Set(
       Array.from(String(body.content ?? "").matchAll(/\[([^\]\n]+)\]/g), (m) => m[1].trim()),
     );

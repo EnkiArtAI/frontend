@@ -328,3 +328,38 @@ describe("the save route's ownership read", () => {
     expect(src).toContain('.select("id, description, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners)');
   });
 });
+
+describe("a variable that hides text from the check", () => {
+  // The check reads a variable's fields one level deep; anything nested would be stored unjudged.
+  const withVariable = (extra: Row) => save({ ...BASE, variables: [{ ...BASE.variables[0], ...extra }] });
+  const refused = async (extra: Row) => {
+    const res = await withVariable(extra);
+    expect(res.status).toBe(400);
+    expect(check).not.toHaveBeenCalled();
+    expect(tables.prompts).toEqual([]);
+    expect(tables.prompt_variables).toEqual([]);
+  };
+
+  it("is refused when its default is an object", () => refused({ defaultValue: { text: "explicit" } }));
+  it("is refused when its default nests a list in a list", () => refused({ defaultValue: [["explicit"]] }));
+  it("is refused when its default lists an object", () => refused({ defaultValue: [{ text: "explicit" }] }));
+  it("is refused when an option's value is not text", () => refused({ options: [{ visibleName: "A", promptValue: ["explicit"] }] }));
+  it("is refused when an option's shown name is not text", () => refused({ options: [{ visibleName: { a: "explicit" }, promptValue: "a" }] }));
+  it("is refused when an option's label is not text", () => refused({ options: [{ label: ["explicit"], promptValue: "a" }] }));
+  it("is refused when an option is no object", () => refused({ options: [null] }));
+  it("is refused when its options are no list", () => refused({ options: { 0: { promptValue: "explicit" } } }));
+  it("is refused when its label is not text", () => refused({ label: ["explicit"] }));
+  it("is refused when its description is not text", () => refused({ description: { a: "explicit" } }));
+  it("is refused when its name is not text", () => refused({ name: ["outfit"] }));
+  it("is refused when it is no object", async () => {
+    expect((await save({ ...BASE, content: "Portrait", variables: ["explicit"] })).status).toBe(400);
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("is saved with a text, a number, a yes/no or a flat list as its default, each text judged", async () => {
+    for (const defaultValue of ["a red coat", 3, true, ["a red coat", "a blue coat", 2]]) {
+      expect((await withVariable({ defaultValue })).status).toBe(200);
+    }
+    expect(check.mock.calls.at(-1)![0]["variable 1"]).toBe("outfit | a red coat | a blue coat");
+  });
+});
