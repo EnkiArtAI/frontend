@@ -30,6 +30,7 @@ class Query implements PromiseLike<Result> {
   in(col: string, vs: unknown[]) { this.filters.push((r) => vs.includes(r[col])); return this; }
   gt() { return this; }
   is() { return this; }
+  not() { return this; }
   order() { return this; }
   or() { return this; }
   limit() { return this; }

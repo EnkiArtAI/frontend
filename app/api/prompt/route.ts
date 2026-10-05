@@ -539,7 +539,11 @@ export async function POST(req: Request) {
         .update({ ...promptRow, description: storedDescription, is_listed: false }, { count: "exact" })
         .eq("id", promptId)
         .in("creator_id", ownerIds);
-      const { error: updateError, count } = await (readIv === null ? asRead.is("encrypted_content_iv", null) : asRead.eq("encrypted_content_iv", readIv));
+      const sameContent = readIv === null ? asRead.is("encrypted_content_iv", null) : asRead.eq("encrypted_content_iv", readIv);
+      // And the listing as it was read: another save's last write puts the
+      // prompt back on sale without changing the IV, so a save that read it
+      // in that gap would be judged as a draft and take it off sale for good.
+      const { error: updateError, count } = await (wasListed ? sameContent.is("is_listed", true) : sameContent.not("is_listed", "is", true));
 
       if (updateError) {
         throw updateError;

@@ -15,6 +15,8 @@ let failingPayoutLookup = false;
 // Runs once the prompt row is written and before its variables are: where another request can land.
 let betweenWrites: (() => void) | null = null;
 let saves = 0;
+// Holds the write that puts a prompt on sale, so another request can run in that gap.
+let beforeListing: (() => Promise<void>) | null = null;
 
 class Query implements PromiseLike<{ data: unknown; error: null; count?: number }> {
   private filters: ((r: Row) => boolean)[] = [];
@@ -31,7 +33,9 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
   delete() { this.op = "delete"; return this; }
   eq(c: string, v: unknown) { this.asked.push(c); this.filters.push((r) => r[c] === v); return this; }
   in(c: string, vs: unknown[]) { this.filters.push((r) => vs.includes(r[c])); return this; }
-  is(c: string, v: null) { this.filters.push((r) => (r[c] ?? null) === v); return this; }
+  is(c: string, v: null | boolean) { this.filters.push((r) => (r[c] ?? null) === v); return this; }
+  // Only "not is": a missing value is not the value either, as in SQL.
+  not(c: string, _is: string, v: null | boolean) { this.filters.push((r) => (r[c] ?? null) !== v); return this; }
   gt(c: string, v: string) { this.filters.push((r) => String(r[c]) > v); return this; }
   limit() { return this; }
   order() { return this; }
@@ -44,7 +48,12 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
   maybeSingle() { this.one = true; return this; }
   single() { this.one = true; return this; }
   // failingTable: reads of that table fail as an unreachable database's would.
-  then<A, B = never>(ok?: ((v: { data: unknown; error: null; count?: number }) => A | PromiseLike<A>) | null, ko?: ((e: unknown) => B | PromiseLike<B>) | null) {
+  then<A, B = never>(ok?: ((v: { data: unknown; error: null; count?: number }) => A | PromiseLike<A>) | null, ko?: ((e: unknown) => B | PromiseLike<B>) | null): PromiseLike<A | B> {
+    if (beforeListing && this.table === "prompts" && this.op === "update" && (this.payload as Row).is_listed === true) {
+      const hold = beforeListing;
+      beforeListing = null;
+      return hold().then(() => this.then(ok, ko));
+    }
     if (this.table === failingTable && this.op === "select") return Promise.resolve({ data: null, error: { message: "fetch failed" } as unknown as null }).then(ok, ko);
     // failingInsert: writes of new rows to that table are refused, as a broken constraint would.
     // failingPayoutLookup: only the payout wallet's read fails; the session's own wallet reads still answer.
@@ -106,6 +115,7 @@ beforeEach(() => {
   failingUpdate = null;
   failingPayoutLookup = false;
   betweenWrites = null;
+  beforeListing = null;
   saves = 0;
   check.mockReset();
   check.mockResolvedValue({ verdict: "clear" });
@@ -354,7 +364,10 @@ describe("releasing a prompt", () => {
   it("leaves a draft a draft when its variables could not be written", async () => {
     failingInsert = "prompt_variables";
     const row = owned({ is_listed: false, listing_status: "draft" });
-    expect((await save({ ...BASE, id: ID, release: true })).status).toBe(500);
+    const res = await save({ ...BASE, id: ID, release: true });
+    expect(res.status).toBe(500);
+    // It was never on sale, so the answer is the failure, not "off sale now".
+    expect((await res.json()).error).toBe("insert refused");
     expect(row).toMatchObject({ is_listed: false, listing_status: "draft" });
   });
 
@@ -384,6 +397,8 @@ describe("the save route's ownership read", () => {
     const { join } = await import("node:path");
     const src = readFileSync(join(__dirname, "..", "..", "app", "api", "prompt", "route.ts"), "utf8");
     expect(src).toContain('.select("id, creator_id, description, ai_model, encrypted_content_iv, is_listed, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners)');
+    // And, where a listing did not land, for the one column that tells a takedown from another save.
+    expect(src).toContain('.from("prompts").select("delisted_at").eq("id", promptId).maybeSingle();');
   });
 });
 
@@ -761,6 +776,44 @@ describe("two saves of one prompt at once", () => {
     expect(row).toMatchObject({ is_listed: true, is_adult: false, description: "a quiet scene" });
   });
 
+  it("a save judged as a draft does not land on a prompt that was listed after its read", async () => {
+    const row = draft();
+    // Another save's listing lands during this save's check: the same IV, now for sale.
+    check.mockImplementation(async () => {
+      Object.assign(row, { is_listed: true, listing_status: "active" });
+      return { verdict: "clear" };
+    });
+    const res = await save({ ...BASE, id: ID, promptType: "paid-prompt", price: 0 });
+    expect(res.status).toBe(409);
+    expect(row).toMatchObject({ title: "Draft", is_listed: true });
+    expect(row).not.toHaveProperty("prompt_type");
+  });
+
+  it("a listed prompt that goes off sale during the check is not rewritten", async () => {
+    const row = draft({ title: "Listed", is_listed: true, listing_status: "active" });
+    // A moderator's takedown lands while this save is being checked.
+    check.mockImplementation(async () => {
+      Object.assign(row, { is_listed: false, delisted_at: "2026-10-05T12:00:00.000Z" });
+      return { verdict: "clear" };
+    });
+    expect((await save({ ...BASE, id: ID })).status).toBe(409);
+    expect(row).toMatchObject({ title: "Listed", is_listed: false, delisted_at: "2026-10-05T12:00:00.000Z" });
+  });
+
+  it("a prompt without an IV is still written only as it was read", async () => {
+    const row = draft({ encrypted_content_iv: null });
+    const { release, other } = await race({ promptType: "paid-prompt", price: 0 }, "release");
+    expect([release.status, other.status]).toEqual([200, 409]);
+    expect(row).toMatchObject({ title: "Release", is_listed: true });
+  });
+
+  it("a release does not overwrite a save that gave a prompt its first IV", async () => {
+    const row = draft({ encrypted_content_iv: null });
+    const { release, other } = await race({ promptType: "paid-prompt", price: 0 }, "second");
+    expect([other.status, release.status]).toEqual([200, 409]);
+    expect(row).toMatchObject({ title: "Second", is_listed: false });
+  });
+
   it("a prompt saved before contents carried an IV is still saved", async () => {
     const row = draft({ encrypted_content_iv: null });
     expect((await save({ ...BASE, id: ID })).status).toBe(200);
@@ -810,6 +863,15 @@ describe("a listed prompt while it is being rewritten", () => {
     expect(tables.prompts[0]).toMatchObject({ title: "Portrait", is_listed: false, listing_status: "draft" });
   });
 
+  it("a listed prompt whose row could not be written answers with the failure itself and stays on sale", async () => {
+    const row = listed();
+    failingUpdate = "prompts";
+    const res = await save({ ...BASE, id: ID });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("update refused");
+    expect(row).toMatchObject({ title: "Listed", is_listed: true });
+  });
+
   it("a save that fails before anything is written answers with the failure itself", async () => {
     failingInsert = "prompts";
     const res = await save(BASE);
@@ -823,5 +885,55 @@ describe("a listed prompt while it is being rewritten", () => {
     const res = await save({ ...BASE, id: ID });
     expect(res.status).toBe(500);
     expect((await res.json()).error).toBe("insert refused");
+  });
+});
+
+describe("a save that reads a listed prompt while another save has it off sale", () => {
+  // A listed prompt is off sale from a save's first write to its last one. Read in that gap it looks like a draft.
+  const ID = "11111111-1111-4111-8111-111111111111";
+  /** First is held at the write that puts the prompt back on sale; Second reads the prompt there and is held in its check. */
+  const overlap = async (second: Row) => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Listed", description: null, is_listed: true, listing_status: "active", delisted_at: null, encrypted_content_iv: "iv-old" });
+    const row = tables.prompts[0];
+    let reached!: () => void; const atListing = new Promise<void>((r) => { reached = r; });
+    let list!: () => void; const mayList = new Promise<void>((r) => { list = r; });
+    beforeListing = () => { reached(); return mayList; };
+    let seen!: () => void; const inCheck = new Promise<void>((r) => { seen = r; });
+    let go!: () => void; const mayWrite = new Promise<void>((r) => { go = r; });
+    check.mockImplementation(async (i: Record<string, string>) => {
+      if (i.title === "Second") { seen(); await mayWrite; }
+      return { verdict: "clear" };
+    });
+    const first = save({ ...BASE, id: ID, title: "First" });
+    await atListing;
+    const during = row.is_listed;
+    const other = save({ ...BASE, id: ID, title: "Second", ...second });
+    await inCheck;
+    return { row, during, first, other, list, go };
+  };
+
+  it("is refused once the other save has put the prompt back on sale, which stays on sale", async () => {
+    const { row, during, first, other, list, go } = await overlap({});
+    expect(during).toBe(false);
+    list();
+    expect((await first).status).toBe(200);
+    expect(row).toMatchObject({ title: "First", is_listed: true });
+    go();
+    const res = await other;
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("changed by another save");
+    expect(row).toMatchObject({ title: "First", is_listed: true });
+    expect(tables.prompt_variables).toHaveLength(1);
+  });
+
+  it("when it writes first, the other save is told the prompt stays off sale", async () => {
+    const { row, first, other, list, go } = await overlap({});
+    go();
+    expect((await other).status).toBe(200);
+    list();
+    const res = await first;
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("stays unlisted");
+    expect(row).toMatchObject({ title: "Second", is_listed: false });
   });
 });
