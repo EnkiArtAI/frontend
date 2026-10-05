@@ -379,11 +379,11 @@ describe("releasing a prompt", () => {
 });
 
 describe("the save route's ownership read", () => {
-  it("asks for the creator, the content it read, the listing, the takedown mark and the first listing dates, which this file's fake would hand over unasked", async () => {
+  it("asks for the creator, the stored description and model, the content it read, the listing, the takedown mark and the first listing dates, which this file's fake would hand over unasked", async () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const src = readFileSync(join(__dirname, "..", "..", "app", "api", "prompt", "route.ts"), "utf8");
-    expect(src).toContain('.select("id, creator_id, description, encrypted_content_iv, is_listed, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners)');
+    expect(src).toContain('.select("id, creator_id, description, ai_model, encrypted_content_iv, is_listed, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners)');
   });
 });
 
@@ -598,10 +598,16 @@ describe("the fields beside the text", () => {
     // The model too: it is stored as sent and handed out with the listed prompt.
     await save({ ...BASE, aiModel: "any text a caller sends" });
     expect(check.mock.calls[2][0].settings).toBe("any text a caller sends");
-    // An update without a model leaves the stored one, so there is none to judge.
-    tables.prompts[0].id = "11111111-1111-4111-8111-111111111111";
-    await save({ ...BASE, aiModel: undefined, id: "11111111-1111-4111-8111-111111111111" });
-    expect(check.mock.calls[3][0]).not.toHaveProperty("settings");
+    // An update without a model keeps the stored one, which is then the one judged:
+    // a release would otherwise list a model text no check of that release had read.
+    Object.assign(tables.prompts[0], { id: "11111111-1111-4111-8111-111111111111", ai_model: "a stored model text" });
+    await save({ ...BASE, aiModel: undefined, id: "11111111-1111-4111-8111-111111111111", release: true });
+    expect(check.mock.calls[3][0].settings).toBe("a stored model text");
+    expect(tier2.mock.calls.at(-1)![0].prompt).toContain("a stored model text");
+    expect(tables.prompts[0]).toMatchObject({ ai_model: "a stored model text", is_listed: true });
+    // A model that is sent replaces it, and is the one judged.
+    await save({ ...BASE, aiModel: "a sent model", id: "11111111-1111-4111-8111-111111111111" });
+    expect(check.mock.calls[4][0].settings).toBe("a sent model");
   });
 
   it("are refused when they are not text", async () => {

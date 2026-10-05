@@ -363,6 +363,9 @@ export async function POST(req: Request) {
     // The description is not part of this save (it is edited through the
     // PATCH route) but is shown with the prompt, so an update judges it too.
     let storedDescription: string | null = null;
+    // The model is kept when a save sends none, and is handed out with a
+    // listed prompt like the description: judged with the rest as well.
+    let storedModel = "";
     // A release lists the prompt (Kev, 2026-10-05: the artist lists when they
     // want, once the checks have passed). A first listing keeps its dates.
     let listedSince: { listed_at?: unknown; published_at?: unknown } = {};
@@ -383,7 +386,7 @@ export async function POST(req: Request) {
       // A session whose wallet maps to no user row owns no prompts, and
       // .in() with an empty list is a PostgREST parse error, not a no-op.
       if (owners.length === 0) return NextResponse.json({ error: "not found" }, { status: 404 });
-      const { data: own } = await supabase.from("prompts").select("id, creator_id, description, encrypted_content_iv, is_listed, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners).maybeSingle();
+      const { data: own } = await supabase.from("prompts").select("id, creator_id, description, ai_model, encrypted_content_iv, is_listed, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners).maybeSingle();
       if (!own) return NextResponse.json({ error: "not found" }, { status: 404 });
       // What a moderator took down stays down: releasing it again would undo the takedown.
       if (body.release === true && own.delisted_at) {
@@ -395,6 +398,7 @@ export async function POST(req: Request) {
       payee = String(own.creator_id);
       readIv = (own.encrypted_content_iv as string | null) ?? null;
       storedDescription = (own.description as string | null) ?? null;
+      storedModel = typeof own.ai_model === "string" ? own.ai_model : "";
       ownerIds = owners;
     } else {
       creatorId = await resolveCreatorId(supabase, req);
@@ -437,7 +441,7 @@ export async function POST(req: Request) {
     // is one whose showcase images are 18+ renders, so the creator never has
     // to (Kev, 2026-10-03). An outage of the check saves nothing rather than
     // an unjudged prompt.
-    const judged = savedPromptInputs({ ...body, tags, description: storedDescription });
+    const judged = savedPromptInputs({ ...body, tags, description: storedDescription, aiModel: aiModel || storedModel });
     // A record of a refused save shows what a buyer could see; the body is
     // the artist's and is withheld from every moderator (lib/moderation/evidence).
     const { content: artistText, ...shownInputs } = judged;
