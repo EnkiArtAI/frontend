@@ -12,16 +12,21 @@ let failingTable: string | null = null;
 let failingInsert: string | null = null;
 let failingUpdate: string | null = null;
 let failingPayoutLookup = false;
+// Runs once the prompt row is written and before its variables are: where another request can land.
+let betweenWrites: (() => void) | null = null;
+let saves = 0;
 
 class Query implements PromiseLike<{ data: unknown; error: null; count?: number }> {
   private filters: ((r: Row) => boolean)[] = [];
   private op: "select" | "update" | "insert" | "delete" = "select";
   private payload: Row | Row[] | null = null;
+  private counted = false;
   private one = false;
   private asked: string[] = [];
   constructor(private table: string) {}
   select() { return this; }
-  update(p: Row) { this.op = "update"; this.payload = p; return this; }
+  // A count comes back only when asked for, as from PostgREST.
+  update(p: Row, o?: { count?: string }) { this.op = "update"; this.payload = p; this.counted = o?.count === "exact"; return this; }
   insert(p: Row | Row[]) { this.op = "insert"; this.payload = p; return this; }
   delete() { this.op = "delete"; return this; }
   eq(c: string, v: unknown) { this.asked.push(c); this.filters.push((r) => r[c] === v); return this; }
@@ -46,6 +51,7 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
     if (failingPayoutLookup && this.table === "user_wallets" && this.asked.includes("chain_family")) return Promise.resolve({ data: null, error: { message: "fetch failed" } as unknown as null }).then(ok, ko);
     if (this.table === failingUpdate && this.op === "update") return Promise.resolve({ data: null, error: { message: "update refused" } as unknown as null }).then(ok, ko);
     if (this.table === failingInsert && this.op === "insert") return Promise.resolve({ data: null, error: { message: "insert refused" } as unknown as null }).then(ok, ko);
+    if (this.table === "prompt_variables" && this.op === "insert") { const land = betweenWrites; betweenWrites = null; land?.(); }
     const rows = (tables[this.table] ??= []);
     const hits = rows.filter((r) => this.filters.every((f) => f(r)));
     let res: { data: unknown; error: null; count?: number };
@@ -55,7 +61,7 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
       res = { data: this.one ? added[0] : added, error: null };
     } else if (this.op === "update") {
       hits.forEach((r) => Object.assign(r, this.payload));
-      res = { data: null, error: null, count: hits.length };
+      res = { data: null, error: null, ...(this.counted ? { count: hits.length } : {}) };
     } else if (this.op === "delete") {
       tables[this.table] = rows.filter((r) => !hits.includes(r));
       res = { data: null, error: null };
@@ -71,7 +77,7 @@ const check = vi.fn();
 const warn = vi.fn(async () => ({ total: 1, suspendedUntil: null, nextStepAt: 10 }));
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), after: () => {} }));
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => fake }));
-vi.mock("@/lib/crypto", () => ({ encryptString: () => ({ encrypted: "ct", iv: "iv", authTag: "tag", kid: "k1" }), decryptString: () => "" }));
+vi.mock("@/lib/crypto", () => ({ encryptString: () => ({ encrypted: "ct", iv: `iv-${++saves}`, authTag: "tag", kid: "k1" }), decryptString: () => "" }));
 const tier2 = vi.fn(async (_i: { prompt: string }): Promise<{ allowed: boolean; tier2Degraded?: boolean }> => ({ allowed: true }));
 vi.mock("@/lib/moderation", () => ({ moderate: (i: { prompt: string }) => tier2(i), CLIENT_BLOCK_MESSAGE: "blocked" }));
 const recorded = vi.fn(async (..._a: unknown[]) => {});
@@ -99,6 +105,8 @@ beforeEach(() => {
   failingInsert = null;
   failingUpdate = null;
   failingPayoutLookup = false;
+  betweenWrites = null;
+  saves = 0;
   check.mockReset();
   check.mockResolvedValue({ verdict: "clear" });
   warn.mockClear();
@@ -639,5 +647,14 @@ describe("a price nobody set", () => {
     expect(res.status).toBe(400);
     expect(tables.prompts).toEqual([]);
     expect(check).not.toHaveBeenCalled();
+  });
+});
+
+describe("a release and the other prompts", () => {
+  it("lists the released prompt and no other, even one that shares its IV", async () => {
+    // The next save encrypts under "iv-1": only the id tells the two rows apart.
+    tables.prompts.push({ id: "other", creator_id: "u1", title: "Other draft", is_listed: false, encrypted_content_iv: "iv-1", delisted_at: null });
+    expect((await save({ ...BASE, release: true })).status).toBe(200);
+    expect(tables.prompts.map((p) => [p.title, p.is_listed])).toEqual([["Other draft", false], ["Portrait", true]]);
   });
 });
