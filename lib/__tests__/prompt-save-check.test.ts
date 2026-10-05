@@ -242,3 +242,89 @@ describe("a showcase lookup that fails", () => {
     expect(tables.prompts).toEqual([]);
   });
 });
+
+describe("releasing a prompt", () => {
+  // Kev, 2026-10-05: the artist lists a prompt when they want, once the checks have passed.
+  // Nothing set is_listed before, so a released prompt was for sale to nobody.
+  const owned = (extra: Row = {}) => {
+    tables.prompts.push({ id: "11111111-1111-4111-8111-111111111111", creator_id: "u1", title: "Portrait", description: null, ...extra });
+    return tables.prompts[0];
+  };
+  const ID = "11111111-1111-4111-8111-111111111111";
+
+  it("lists it for sale once the checks have passed", async () => {
+    expect((await save({ ...BASE, release: true })).status).toBe(200);
+    expect(tables.prompts[0]).toMatchObject({ is_listed: true, listing_status: "active" });
+    expect(tables.prompts[0].listed_at).toBeTruthy();
+    expect(tables.prompts[0].published_at).toBeTruthy();
+  });
+
+  it("leaves a prompt saved without a release unlisted", async () => {
+    await save(BASE);
+    expect(tables.prompts[0]).not.toHaveProperty("is_listed");
+    expect(tables.prompts[0]).not.toHaveProperty("listing_status");
+  });
+
+  it("lists nothing the prompt check refuses", async () => {
+    check.mockResolvedValue({ verdict: "explicit_sexual", confidence: 0.9 });
+    expect((await save({ ...BASE, release: true })).status).toBe(422);
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("lists nothing that moderation blocks, and nothing while the check is unavailable", async () => {
+    const row = owned({ is_listed: false, listing_status: "draft" });
+    tier2.mockResolvedValueOnce({ allowed: false });
+    expect((await save({ ...BASE, id: ID, release: true })).status).toBe(422);
+    check.mockResolvedValue({ verdict: "unavailable", reason: "api 500" });
+    expect((await save({ ...BASE, id: ID, release: true })).status).toBe(503);
+    expect(row).toMatchObject({ is_listed: false, listing_status: "draft" });
+  });
+
+  it("lists a suggestive prompt, marked 18+", async () => {
+    check.mockResolvedValue({ verdict: "clear", adult: true });
+    await save({ ...BASE, release: true });
+    expect(tables.prompts[0]).toMatchObject({ is_listed: true, is_adult: true });
+  });
+
+  it("lists an existing draft and keeps a listed prompt's first dates", async () => {
+    const row = owned({ is_listed: false, listing_status: "draft", listed_at: null, published_at: null });
+    await save({ ...BASE, id: ID, release: true });
+    expect(row).toMatchObject({ is_listed: true, listing_status: "active" });
+    const first = { listed_at: "2026-09-01T00:00:00.000Z", published_at: "2026-08-30T00:00:00.000Z" };
+    Object.assign(row, first);
+    await save({ ...BASE, id: ID, release: true });
+    expect(row).toMatchObject(first);
+  });
+
+  it("leaves a listed prompt listed when it is saved again without a release", async () => {
+    const row = owned({ is_listed: true, listing_status: "active", listed_at: "2026-09-01T00:00:00.000Z" });
+    await save({ ...BASE, id: ID });
+    expect(row).toMatchObject({ is_listed: true, listing_status: "active", listed_at: "2026-09-01T00:00:00.000Z" });
+  });
+
+  it("never lists again what a moderator took down, and costs no check", async () => {
+    const row = owned({ is_listed: false, listing_status: "active", delisted_at: "2026-10-01T00:00:00.000Z", title: "Taken down" });
+    const res = await save({ ...BASE, id: ID, release: true });
+    expect(res.status).toBe(403);
+    expect(row).toMatchObject({ is_listed: false, title: "Taken down" });
+    expect(check).not.toHaveBeenCalled();
+    // Its artist may still edit it, unlisted.
+    expect((await save({ ...BASE, id: ID })).status).toBe(200);
+    expect(row).toMatchObject({ is_listed: false, title: "Portrait" });
+  });
+
+  it("releases nobody else's prompt", async () => {
+    const row = owned({ creator_id: "u2", is_listed: false });
+    expect((await save({ ...BASE, id: ID, release: true })).status).toBe(404);
+    expect(row.is_listed).toBe(false);
+  });
+});
+
+describe("the save route's ownership read", () => {
+  it("asks for the takedown mark and the first listing dates, which this file's fake would hand over unasked", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const src = readFileSync(join(__dirname, "..", "..", "app", "api", "prompt", "route.ts"), "utf8");
+    expect(src).toContain('.select("id, description, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners)');
+  });
+});

@@ -58,6 +58,8 @@ type VariablePayload = {
 
 type SaveBody = PromptPayload & {
   variables?: VariablePayload[];
+  /** The artist releases the prompt: once this save has passed the checks it is listed for sale. */
+  release?: boolean;
 };
 
 function getErrorMessage(e: unknown): string {
@@ -325,6 +327,9 @@ export async function POST(req: Request) {
     // The description is not part of this save (it is edited through the
     // PATCH route) but is shown with the prompt, so an update judges it too.
     let storedDescription: string | null = null;
+    // A release lists the prompt (Kev, 2026-10-05: the artist lists when they
+    // want, once the checks have passed). A first listing keeps its dates.
+    let listedSince: { listed_at?: unknown; published_at?: unknown } = {};
     if (body.id) {
       const owners = await resolveOwnerIds(supabase, req.headers.get("X-Session-Token"));
       if (!owners) {
@@ -333,8 +338,13 @@ export async function POST(req: Request) {
       // A session whose wallet maps to no user row owns no prompts, and
       // .in() with an empty list is a PostgREST parse error, not a no-op.
       if (owners.length === 0) return NextResponse.json({ error: "not found" }, { status: 404 });
-      const { data: own } = await supabase.from("prompts").select("id, description").eq("id", body.id).in("creator_id", owners).maybeSingle();
+      const { data: own } = await supabase.from("prompts").select("id, description, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners).maybeSingle();
       if (!own) return NextResponse.json({ error: "not found" }, { status: 404 });
+      // What a moderator took down stays down: releasing it again would undo the takedown.
+      if (body.release === true && own.delisted_at) {
+        return NextResponse.json({ error: "This prompt was taken down by a moderator and cannot be released again. Nothing was saved." }, { status: 403 });
+      }
+      listedSince = own;
       storedDescription = (own.description as string | null) ?? null;
       ownerIds = owners;
     } else {
@@ -419,6 +429,11 @@ export async function POST(req: Request) {
       // draft's is nobody else's business.
       public_prompt_text: publicText ? body.content.slice(0, 220) : null,
       updated_at: nowIso,
+      // Listed only here, after the prompt check and moderation above let this
+      // very save through; a save without a release leaves the listing as it is.
+      ...(body.release === true
+        ? { is_listed: true, listing_status: "active", listed_at: listedSince.listed_at ?? nowIso, published_at: listedSince.published_at ?? nowIso }
+        : {}),
       /* Lineage (Kev, 2026-08-24): a prompt built via "put prompt to
          editor" records its parent. The key is added only when a valid
          uuid arrives, so saves without lineage never touch the column
