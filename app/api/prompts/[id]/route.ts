@@ -236,12 +236,16 @@ export async function PATCH(
     if (typeof body.title === "string") update.title = body.title;
     if (typeof body.description === "string") update.description = body.description;
     if (typeof body.category === "string") update.category = body.category;
-    if (Array.isArray(body.tags)) update.tags = body.tags;
+    // Text only, in the tags and in the ratio: this stored whatever JSON
+    // arrived, and what is not text is not judged below.
+    const tags = Array.isArray(body.tags) ? body.tags.filter((t): t is string => typeof t === "string") : undefined;
+    if (tags) update.tags = tags;
 
+    const ratio = typeof body.aiSettings?.aspectRatio === "string" ? body.aiSettings.aspectRatio : undefined;
     if (body.aiSettings) {
       update.ai_settings = {
-        aspectRatio: body.aiSettings.aspectRatio,
-        includeText: body.aiSettings.includeText,
+        aspectRatio: ratio,
+        includeText: typeof body.aiSettings.includeText === "boolean" ? body.aiSettings.includeText : undefined,
       };
     }
 
@@ -255,12 +259,12 @@ export async function PATCH(
     // missing prompt and someone else's prompt (no ownership oracle).
 
     // Edited text is judged like a save (Kev, 2026-10-03): a prompt saved
-    // clean must not turn explicit or 18+ through its title, description or
-    // tags afterwards. Only the owner's edit is judged, so nobody else's
+    // clean must not turn explicit or 18+ through its title, description,
+    // category, tags or ratio afterwards. Only the owner's edit is judged, so nobody else's
     // request costs a check or earns a warning. The rest of the prompt was
     // judged at save, so an 18+ mark is only ever raised here.
     const edited = Object.fromEntries(
-      Object.entries({ title: body.title, description: body.description, tags: Array.isArray(body.tags) ? body.tags.join(", ") : undefined })
+      Object.entries({ title: body.title, description: body.description, category: body.category, tags: tags?.join(", "), settings: ratio })
         .filter((e): e is [string, string] => typeof e[1] === "string" && e[1].trim() !== ""),
     );
     if (Object.keys(edited).length > 0) {

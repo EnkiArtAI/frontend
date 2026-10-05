@@ -266,6 +266,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "invalid id" }, { status: 400 });
     }
 
+    // Stored and handed out with the prompt, so text only: it is judged with the rest.
+    if ([body.category, body.aspectRatio, body.resolution].some((x) => x != null && typeof x !== "string")) {
+      return NextResponse.json({ error: "category, aspectRatio and resolution must be text" }, { status: 400 });
+    }
+
     const tags = Array.isArray(body.tags)
       ? body.tags.filter((t): t is string => typeof t === "string")
       : [];

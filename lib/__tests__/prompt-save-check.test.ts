@@ -579,3 +579,23 @@ describe("a paid prompt's payout wallet", () => {
     expect(tables.prompts).toEqual([]);
   });
 });
+
+describe("the fields beside the text", () => {
+  // The editor picks them from lists; the API stores and hands out whatever a direct caller sends.
+  it("are judged with the rest", async () => {
+    await save({ ...BASE, category: "Poster", aspectRatio: "16:9", resolution: "2K" });
+    expect(check.mock.calls[0][0].settings).toBe("Poster | 16:9 | 2K");
+    await save({ ...BASE, aspectRatio: "16:9" });
+    expect(check.mock.calls[1][0].settings).toBe("16:9");
+    await save(BASE);
+    expect(check.mock.calls[2][0]).not.toHaveProperty("settings");
+  });
+
+  it("are refused when they are not text", async () => {
+    for (const odd of [{ category: { hidden: "explicit" } }, { aspectRatio: ["explicit"] }, { resolution: 4 }]) {
+      expect((await save({ ...BASE, ...odd })).status).toBe(400);
+    }
+    expect(check).not.toHaveBeenCalled();
+    expect(tables.prompts).toEqual([]);
+  });
+});

@@ -62,8 +62,8 @@ beforeEach(() => {
 
 describe("editing a prompt", () => {
   it("judges the edited title, description and tags", async () => {
-    await edit("p1", { title: "New", description: "A scene", tags: ["a", "b"], category: "Poster" });
-    expect(check).toHaveBeenCalledWith({ title: "New", description: "A scene", tags: "a, b" });
+    await edit("p1", { title: "New", description: "A scene", tags: ["a", "b"], category: "Poster", aiSettings: { aspectRatio: "16:9" } });
+    expect(check).toHaveBeenCalledWith({ title: "New", description: "A scene", category: "Poster", tags: "a, b", settings: "16:9" });
   });
 
   it("refuses an explicit edit with a warning and changes nothing", async () => {
@@ -108,8 +108,9 @@ describe("editing a prompt", () => {
   });
 
   it("costs no check when no text changes", async () => {
-    expect((await edit("p1", { category: "Poster" })).status).toBe(200);
+    expect((await edit("p1", { aiSettings: { includeText: true } })).status).toBe(200);
     expect(check).not.toHaveBeenCalled();
+    expect(prompts[0].ai_settings).toEqual({ aspectRatio: undefined, includeText: true });
   });
 });
 
@@ -161,5 +162,27 @@ describe("editing while tier 2 is down", () => {
     const { join } = await import("node:path");
     const src = readFileSync(join(__dirname, "..", "..", "app", "api", "prompts", "[id]", "route.ts"), "utf8");
     expect(src).toContain('.select("id, is_listed")');
+  });
+});
+
+describe("an edit stores only what it judges", () => {
+  // The API stores and hands out whatever a direct caller sends in these fields.
+  it("judges a category and a ratio on their own", async () => {
+    await edit("p1", { category: "Poster" });
+    expect(check).toHaveBeenLastCalledWith({ category: "Poster" });
+    await edit("p1", { aiSettings: { aspectRatio: "16:9" } });
+    expect(check).toHaveBeenLastCalledWith({ settings: "16:9" });
+  });
+
+  it("drops tags that are not text", async () => {
+    await edit("p1", { tags: ["a", { hidden: "explicit" }, ["explicit"], "b"] });
+    expect(check).toHaveBeenCalledWith({ tags: "a, b" });
+    expect(prompts[0].tags).toEqual(["a", "b"]);
+  });
+
+  it("drops a ratio and a text switch that are not what they say", async () => {
+    expect((await edit("p1", { aiSettings: { aspectRatio: { hidden: "explicit" }, includeText: "explicit" } })).status).toBe(200);
+    expect(prompts[0].ai_settings).toEqual({ aspectRatio: undefined, includeText: undefined });
+    expect(check).not.toHaveBeenCalled();
   });
 });
