@@ -84,7 +84,7 @@ const save = (body: Row, token: string | null = "tok") => POST(new Request("http
   method: "POST", headers: { "Content-Type": "application/json", ...(token ? { "X-Session-Token": token } : {}) }, body: JSON.stringify(body),
 }));
 const BASE = {
-  title: "Portrait", content: "Portrait of a woman, [outfit]", aiModel: "nano-banana-pro", tags: ["portrait"],
+  title: "Portrait", content: "Portrait of a woman, [outfit]", aiModel: "nano-banana-pro", tags: ["portrait"], promptType: "free-prompt",
   variables: [{ name: "outfit", label: "outfit", type: "text", defaultValue: "a red coat", position: 0 }],
 };
 const future = new Date(Date.now() + 86400_000).toISOString();
@@ -437,5 +437,68 @@ describe("while tier 2 is down", () => {
   it("a block still answers as a block", async () => {
     tier2.mockResolvedValueOnce({ allowed: false, tier2Degraded: true });
     expect((await save({ ...BASE, release: true })).status).toBe(422);
+  });
+});
+
+describe("what may be for sale", () => {
+  const ID = "11111111-1111-4111-8111-111111111111";
+  const PAID = { ...BASE, promptType: "paid-prompt", price: 2.5 };
+  const refused = async (body: Row, reason: string) => {
+    const res = await save(body);
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe(`${reason} Nothing was saved.`);
+    expect(check).not.toHaveBeenCalled();
+  };
+
+  it("a free prompt, and a paid one with a price", async () => {
+    expect((await save({ ...BASE, release: true })).status).toBe(200);
+    expect((await save({ ...PAID, release: true })).status).toBe(200);
+    expect(tables.prompts.map((p) => [p.prompt_type, p.price_usd_cents, p.is_listed])).toEqual([["free", 0, true], ["paid", 250, true]]);
+  });
+
+  it("a free showcase and a paid prompt at one cent", async () => {
+    expect((await save({ ...BASE, promptType: "create-now", isFreeShowcase: true, release: true })).status).toBe(200);
+    expect((await save({ ...PAID, price: 0.01, release: true })).status).toBe(200);
+    expect((await save({ ...BASE, promptType: "showcase", release: true })).status).toBe(200);
+  });
+
+  it("no prompt without a text", async () => {
+    await refused({ ...BASE, content: "  ", variables: [], release: true }, "A prompt for sale needs its text.");
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("no prompt that is neither free nor paid", async () => {
+    await refused({ ...BASE, promptType: undefined, release: true }, "A prompt for sale is either free or paid.");
+    await refused({ ...BASE, promptType: "create-now", release: true }, "A prompt for sale is either free or paid.");
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("no paid prompt without a price", async () => {
+    await refused({ ...PAID, price: 0, release: true }, "A paid prompt for sale needs a price of at least $0.01.");
+    await refused({ ...PAID, price: 0.004, release: true }, "A paid prompt for sale needs a price of at least $0.01.");
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("a listed prompt cannot be saved into something unsellable either", async () => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Listed", is_listed: true, listing_status: "active", price_usd_cents: 250 });
+    await refused({ ...PAID, id: ID, price: 0 }, "A paid prompt for sale needs a price of at least $0.01.");
+    await refused({ ...BASE, id: ID, promptType: "create-now" }, "A prompt for sale is either free or paid.");
+    expect(tables.prompts[0]).toMatchObject({ title: "Listed", price_usd_cents: 250 });
+  });
+
+  it("a draft may still be any of these", async () => {
+    expect((await save({ ...BASE, promptType: "create-now" })).status).toBe(200);
+    expect((await save({ ...PAID, price: 0 })).status).toBe(200);
+    expect((await save({ ...BASE, content: "", variables: [] })).status).toBe(200);
+  });
+
+  it("no save carries a price below zero", async () => {
+    const res = await save({ ...PAID, price: -5 });
+    expect(res.status).toBe(400);
+    expect(check).not.toHaveBeenCalled();
+    expect(tables.prompts).toEqual([]);
+    // A free prompt is stored at 0 whatever was sent.
+    expect((await save({ ...BASE, price: -5 })).status).toBe(200);
+    expect(tables.prompts[0].price_usd_cents).toBe(0);
   });
 });

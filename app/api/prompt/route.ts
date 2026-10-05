@@ -294,6 +294,13 @@ export async function POST(req: Request) {
     const isFreeShowcase = Boolean(body.isFreeShowcase ?? false);
     // A free prompt: its text is public and it has no price.
     const publicText = isPublicText({ prompt_type: dbPromptType, is_free_showcase: isFreeShowcase });
+    // The body sends dollars (float); the column is integer cents.
+    // A free prompt is stored at 0 whatever was sent: the share card, the
+    // price filter and the card price read "free" from the cents alone.
+    const priceCents = publicText ? 0 : typeof body.price === "number" ? Math.round(body.price * 100) : 100;
+    if (!Number.isFinite(priceCents) || priceCents < 0) {
+      return NextResponse.json({ error: "The price must be zero or more." }, { status: 400 });
+    }
     /* Every [slot] in the text must be a DEFINED variable WITH a value.
        The showcase image is generated from those values, and a prompt whose
        slots have none shows buyers raw brackets next to an image that
@@ -378,6 +385,19 @@ export async function POST(req: Request) {
       }
     }
 
+    // What is for sale must be sellable: it has a text, it is free or paid,
+    // and a paid one has a price. Asked before any check is paid for.
+    if (live) {
+      const unsellable = !body.content.trim()
+        ? "A prompt for sale needs its text."
+        : !publicText && dbPromptType !== "paid"
+          ? "A prompt for sale is either free or paid."
+          : !publicText && priceCents < 1
+            ? "A paid prompt for sale needs a price of at least $0.01."
+            : null;
+      if (unsellable) return NextResponse.json({ error: `${unsellable} Nothing was saved.` }, { status: 422 });
+    }
+
     // Judged like a generation before it is stored, and whole: everything a
     // saved prompt can put into an image or show a buyer — title, text, tags,
     // every variable's default and options. Explicit and child-safety text is
@@ -443,11 +463,7 @@ export async function POST(req: Request) {
       category: body.category ?? "",
       tags,
       ...(aiModel ? { ai_model: aiModel } : {}),
-      // The body sends dollars (float); the column is integer cents.
-      // A free prompt is stored at 0 whatever was sent: the share card, the
-      // price filter and the card price read "free" from the cents alone.
-      price_usd_cents:
-        publicText ? 0 : typeof body.price === "number" ? Math.round(body.price * 100) : 100,
+      price_usd_cents: priceCents,
       aspect_ratio: body.aspectRatio ?? null,
       photo_count: typeof body.photoCount === "number" ? body.photoCount : 1,
       prompt_type: dbPromptType,
