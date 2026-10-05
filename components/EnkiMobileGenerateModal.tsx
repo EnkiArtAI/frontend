@@ -2,23 +2,14 @@ import BoostToggle from "@/components/generation/BoostToggle";
 import DiceButton from "@/components/DiceButton";
 import type { DiceValue, DiceVariable } from "@/lib/generation/variable-dice";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { ENKI_CATEGORIES } from "@/components/enki/EnkiFilters";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X, Sparkles, Plus, ImageIcon, Ratio, Maximize2, Copy, Settings, FileText, CheckCircle2 } from "lucide-react";
 import { getVariableColors } from "../lib/variableColors";
 import "../app/editor/mobile-modal.css"; // We will create this next
 
-const CATEGORY_OPTIONS = [
-  { value: "portrait", label: "Portrait" },
-  { value: "character", label: "Character" },
-  { value: "landscape", label: "Landscape" },
-  { value: "abstract", label: "Abstract" },
-  { value: "anime", label: "Anime" },
-  { value: "3d-render", label: "3D Render" },
-  { value: "photography", label: "Photography" },
-  { value: "concept-art", label: "Concept Art" },
-  { value: "logo", label: "Logo" },
-  { value: "product", label: "Product" },
-];
+// The categories the desktop editor saves and the feed filters by, stored in lower case.
+const CATEGORY_OPTIONS = ENKI_CATEGORIES.map((label) => ({ value: label.toLowerCase(), label }));
 
 interface PromptVariable {
   id: string;

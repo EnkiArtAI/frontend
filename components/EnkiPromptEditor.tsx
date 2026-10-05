@@ -5092,6 +5092,22 @@ export default function EnkiPromptEditor() {
         modelPriceLabel={modelPriceLabel}
         requiredVariations={promptData.type === "free-prompt" ? 1 : 4}
         onRelease={handleReleaseClick}
+        /* The sheet's Settings edit the editor's own state: a release sends
+           and checks that state, and on a phone the sheet is the only place
+           to fill it. Unwired, the sheet kept a private copy nobody read. */
+        title={promptData.title}
+        setTitle={(v) => setPromptData((prev) => ({ ...prev, title: v }))}
+        promptType={promptData.type}
+        setPromptType={(v) => {
+          if (v !== "free-prompt" && v !== "premium-prompt") return;
+          setPromptData((prev) => ({ ...prev, type: v }));
+          if (v === "premium-prompt") setUi((p) => ({ ...p, pricePerRenderReviewed: false }));
+        }}
+        tags={promptData.tags}
+        onAddTag={(t) => setPromptData((prev) => ({ ...prev, tags: [t.toLowerCase()] }))}
+        onRemoveTag={removeTag}
+        price={promptPrice}
+        setPrice={(v) => { setPromptPrice(v); setUi((p) => ({ ...p, pricePerRenderReviewed: true })); }}
         onAutoFill={handleGrokFill}
         isAutoFilling={ui.isGrokFilling}
         onGenerate={(count) => {

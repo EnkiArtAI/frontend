@@ -107,3 +107,31 @@ describe("the draft after a release", () => {
     expect(EDITOR).not.toContain("rememberDraftPromptId");
   });
 });
+
+describe("the mobile sheet's settings", () => {
+  const SHEET = readSource(join(__dirname, "..", "..", "components", "EnkiMobileGenerateModal.tsx"));
+  const wired = EDITOR.slice(EDITOR.indexOf("<EnkiMobileGenerateModal"));
+  const props = wired.slice(0, wired.indexOf("onAutoFill={handleGrokFill}"));
+
+  it("are the editor's own title, type, category and price, which a release sends and checks", () => {
+    // On a phone the sheet is the only place to fill them; it kept a private copy the release never read.
+    expect(props).toContain("title={promptData.title}");
+    expect(props).toContain("setTitle={(v) => setPromptData((prev) => ({ ...prev, title: v }))}");
+    expect(props).toContain("promptType={promptData.type}");
+    expect(props).toContain('setPromptData((prev) => ({ ...prev, type: v }));');
+    expect(props).toContain("tags={promptData.tags}");
+    expect(props).toContain("onAddTag={(t) => setPromptData((prev) => ({ ...prev, tags: [t.toLowerCase()] }))}");
+    expect(props).toContain("onRemoveTag={removeTag}");
+    expect(props).toContain("price={promptPrice}");
+    expect(props).toContain("setPromptPrice(v);");
+  });
+
+  it("take only the two prompt types the editor knows", () => {
+    expect(props).toContain('if (v !== "free-prompt" && v !== "premium-prompt") return;');
+  });
+
+  it("offer the categories the desktop editor saves and the feed filters by", () => {
+    expect(SHEET).toContain("const CATEGORY_OPTIONS = ENKI_CATEGORIES.map((label) => ({ value: label.toLowerCase(), label }));");
+    expect(SHEET).toContain('import { ENKI_CATEGORIES } from "@/components/enki/EnkiFilters";');
+  });
+});
