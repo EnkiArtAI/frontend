@@ -640,9 +640,11 @@ describe("a price nobody set", () => {
   const NO_PRICE = "A paid prompt for sale needs a price of at least $0.01. Nothing was saved.";
   beforeEach(() => { tables.user_wallets.push({ address: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU", user_id: "u1", chain_family: "solana", removed_at: null }); });
 
-  it("is the draft's $1.00, which never goes on sale by itself", async () => {
-    expect((await save(PAID)).status).toBe(200);
-    expect(tables.prompts[0].price_usd_cents).toBe(100);
+  it("is the draft's default of $0.07, which never goes on sale by itself", async () => {
+    const saved = await save(PAID);
+    expect(saved.status).toBe(200);
+    expect(tables.prompts[0].price_usd_cents).toBe(7);
+    expect((await saved.json()).price).toBe(0.07);
     for (const price of [undefined, null, "5"]) {
       const res = await save({ ...PAID, price, release: true });
       expect(res.status).toBe(422);

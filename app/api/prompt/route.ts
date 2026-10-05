@@ -9,6 +9,7 @@ import { showsAdultRender } from "@/lib/adult-content";
 import { resolveOwnerIds, resolveSessionUserId, resolveSessionUserWithBan } from "@/lib/session-user";
 import { isPublicText } from "@/lib/prompt-visibility";
 import { artistPayoutWallet } from "@/lib/payments/generation-quote";
+import { DEFAULT_PROMPT_PRICE_USD } from "@/shared/revenue-config";
 
 type VariableType =
   | "text"
@@ -305,7 +306,7 @@ export async function POST(req: Request) {
     // The body sends dollars (float); the column is integer cents.
     // A free prompt is stored at 0 whatever was sent: the share card, the
     // price filter and the card price read "free" from the cents alone.
-    const priceCents = publicText ? 0 : typeof body.price === "number" ? Math.round(body.price * 100) : 100;
+    const priceCents = publicText ? 0 : typeof body.price === "number" ? Math.round(body.price * 100) : Math.round(DEFAULT_PROMPT_PRICE_USD * 100);
     if (!Number.isFinite(priceCents) || priceCents < 0) {
       return NextResponse.json({ error: "The price must be zero or more." }, { status: 400 });
     }
@@ -650,7 +651,7 @@ export async function POST(req: Request) {
       category: body.category ?? "",
       tags: body.tags ?? [],
       aiModel: aiModel || null,
-      price: publicText ? 0 : typeof body.price === "number" ? body.price : 1,
+      price: publicText ? 0 : typeof body.price === "number" ? body.price : DEFAULT_PROMPT_PRICE_USD,
       aspectRatio: body.aspectRatio ?? null,
       photoCount: typeof body.photoCount === "number" ? body.photoCount : 1,
       promptType: clientPromptType,
@@ -751,7 +752,7 @@ export async function GET(req: Request) {
       price:
         typeof prompt.price_usd_cents === "number"
           ? prompt.price_usd_cents / 100
-          : 1,
+          : DEFAULT_PROMPT_PRICE_USD,
       aspectRatio: (prompt.aspect_ratio as string | null | undefined) ?? null,
       photoCount: typeof prompt.photo_count === "number" ? prompt.photo_count : 1,
       promptType: PROMPT_TYPE_FROM_DB[dbPromptType] ?? dbPromptType,

@@ -14,5 +14,12 @@ export const PLATFORM_FEE_PCT = 10;
 /** Referrer's share OF THE PLATFORM FEE (not of the sale) for referred prompts. */
 export const REFERRAL_SHARE_PCT = 50;
 
+/**
+ * What a premium prompt costs per image until its artist sets a price (Kev,
+ * 2026-10-05): the editor starts a premium prompt at this, and a save without
+ * a price stores it.
+ */
+export const DEFAULT_PROMPT_PRICE_USD = 0.07;
+
 /** Hunter's share of the artist's revenue until the original artist claims. */
 export const HUNT_SHARE_PCT = 50;
