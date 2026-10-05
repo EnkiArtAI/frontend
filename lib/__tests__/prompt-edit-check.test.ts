@@ -114,10 +114,18 @@ describe("editing a prompt", () => {
 });
 
 describe("who edits", () => {
-  it("an email login edits and publishes the prompts it owns", async () => {
+  it("an email login edits the prompts it owns", async () => {
     prompts.push({ id: "p3", creator_id: "u3", title: "Mine" });
+    expect((await edit("p3", { category: "Poster" }, "email")).status).toBe(200);
+    expect(prompts.find((p) => p.id === "p3")?.category).toBe("Poster");
+  });
+
+  it("publishes nothing: a prompt is published by its release", async () => {
+    prompts.push({ id: "p3", creator_id: "u3", title: "Mine" }, { id: "p5", creator_id: "u3", title: "Live", published_at: "2026-09-01T00:00:00.000Z" });
     expect((await edit("p3", { published: true }, "email")).status).toBe(200);
-    expect(prompts.find((p) => p.id === "p3")?.published_at).toBeTruthy();
+    expect(prompts.find((p) => p.id === "p3")).not.toHaveProperty("published_at");
+    await edit("p5", { published: true, category: "Poster" }, "email");
+    expect(prompts.find((p) => p.id === "p5")?.published_at).toBe("2026-09-01T00:00:00.000Z");
   });
 
   it("an email login edits a prompt owned through its first address mapping", async () => {

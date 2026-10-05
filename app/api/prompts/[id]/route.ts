@@ -15,7 +15,6 @@ type PatchBody = {
   category?: string;
   tags?: string[];
   aiSettings?: { aspectRatio?: string; includeText?: boolean };
-  published?: boolean;
 };
 
 /*
@@ -246,9 +245,9 @@ export async function PATCH(
       };
     }
 
-    if (body.published === true) {
-      update.published_at = new Date().toISOString();
-    }
+    // No publish date from here: a prompt is published by its release, a
+    // save that judges and lists it (POST /api/prompt). This stamped the date
+    // on a draft that was listed nowhere, and overwrote a listed prompt's.
 
     // Ownership is part of the WHERE clause — the service-role client bypasses
     // RLS, so without it any valid session could edit any prompt (IDOR).
