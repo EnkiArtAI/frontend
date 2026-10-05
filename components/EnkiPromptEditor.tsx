@@ -57,6 +57,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ENKI_CATEGORIES } from "@/components/enki/EnkiFilters";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { nameSlotByItsText } from "@/lib/editor/slot-name";
 import {
   loadEditorVersions,
   saveEditorVersions,
@@ -1721,7 +1722,7 @@ export default function EnkiPromptEditor() {
         // Keep existing variables in list order; drop tokens removed from prompt
         for (const existing of prev) {
           if (!detectionByToken.has(existing.fullToken)) continue;
-          merged.push(normalizeVariable(existing, merged));
+          merged.push(normalizeVariable(nameSlotByItsText(existing, isMobileViewport), merged));
           seenTokens.add(existing.fullToken);
         }
 
@@ -1743,14 +1744,14 @@ export default function EnkiPromptEditor() {
             fullToken: det.full,
             colorIndex: pickVariableColorIndex(merged),
           };
-          merged.push(normalizeVariable(draft, merged));
+          merged.push(normalizeVariable(nameSlotByItsText(draft, isMobileViewport), merged));
         }
         return merged;
       });
     }, 400);
 
     return () => clearTimeout(timeoutId);
-  }, [promptData.body]);
+  }, [promptData.body, isMobileViewport]);
 
   useEffect(() => {
     variableLabelRegistryRef.current = buildLabelRegistry(variables, promptData.body);
