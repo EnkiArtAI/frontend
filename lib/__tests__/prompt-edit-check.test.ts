@@ -144,7 +144,7 @@ describe("who edits", () => {
 });
 
 describe("editing while tier 2 is down", () => {
-  // It answers "allowed" then; a listed prompt's public text must not change on a check that never ran.
+  // It answers "allowed" then; no text is stored on a check that never ran.
   it("changes nothing on a listed prompt", async () => {
     prompts[0].is_listed = true;
     tier2.mockResolvedValue({ allowed: true, tier2Degraded: true });
@@ -152,17 +152,16 @@ describe("editing while tier 2 is down", () => {
     expect(prompts[0].title).toBe("Portrait");
   });
 
-  it("still edits a draft, which is judged again at its release", async () => {
+  it("changes nothing on a draft either: a release running at that moment would list the edit unread", async () => {
     tier2.mockResolvedValue({ allowed: true, tier2Degraded: true });
-    expect((await edit("p1", { title: "New" })).status).toBe(200);
-    expect(prompts[0].title).toBe("New");
+    expect((await edit("p1", { title: "New" })).status).toBe(503);
+    expect(prompts[0].title).toBe("Portrait");
   });
 
-  it("reads the listing with the ownership, which this file's fake would hand over unasked", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const src = readFileSync(join(__dirname, "..", "..", "app", "api", "prompts", "[id]", "route.ts"), "utf8");
-    expect(src).toContain('.select("id, is_listed")');
+  it("still changes what needs no check", async () => {
+    tier2.mockResolvedValue({ allowed: true, tier2Degraded: true });
+    expect((await edit("p1", { aiSettings: { aspectRatio: "16:9" } })).status).toBe(200);
+    expect(tier2).not.toHaveBeenCalled();
   });
 });
 
