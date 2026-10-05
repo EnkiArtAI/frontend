@@ -109,12 +109,16 @@ describe("loadPromptText", () => {
   });
 
   it("never serves a priced prompt from its public excerpt", async () => {
-    const excerpt = { public_prompt_text: "the first 220 characters", price_usd_cents: 150, prompt_type: "premium-prompt" };
+    const excerpt = { public_prompt_text: "the first 220 characters", price_usd_cents: 150, prompt_type: "paid" };
     expect(await loadPromptText(prompts(excerpt), "p")).toMatchObject({ ok: false, status: 500 });
     expect(await loadPromptText(prompts({ ...excerpt, encrypted_content: "garbage", encrypted_content_iv: "x", encrypted_content_tag: "y" }), "p"))
       .toMatchObject({ ok: false, status: 500 });
-    // A free or showcase prompt is public text: the excerpt is its text.
-    expect(await loadPromptText(prompts({ ...excerpt, prompt_type: "free-prompt" }), "p")).toMatchObject({ ok: true });
+    // A free or showcase prompt is public text: the excerpt is its text, by the database's words.
+    for (const free of [{ prompt_type: "free" }, { prompt_type: "showcase" }, { prompt_type: "create-now", is_free_showcase: true }]) {
+      expect(await loadPromptText(prompts({ ...excerpt, ...free }), "p")).toMatchObject({ ok: true, text: "the first 220 characters" });
+    }
+    // The client's word for it is no stored type.
+    expect(await loadPromptText(prompts({ ...excerpt, prompt_type: "free-prompt" }), "p")).toMatchObject({ ok: false, status: 500 });
   });
 
   it("refuses a prompt with no readable text rather than generating from nothing", async () => {

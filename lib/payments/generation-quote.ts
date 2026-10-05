@@ -23,6 +23,7 @@ import {
   resolvePricingRule,
   type AppliedRule,
 } from "@/lib/payments/pricing-rules";
+import { isPublicText } from "@/lib/prompt-visibility";
 
 export interface QuoteInput {
   /** Absent for the buyer's own prompt: no artist, so no artist leg. */
@@ -78,11 +79,10 @@ export async function computeQuote(
     prompt = data;
   }
 
-  const isFree =
-    !prompt ||
-    prompt.prompt_type === "showcase" ||
-    prompt.prompt_type === "free-prompt" ||
-    prompt.is_free_showcase === true;
+  // Free by the database's word ("free", "showcase"), the rule the agent rail
+  // asks too. This compared the client's word "free-prompt", which no row
+  // holds, so a free prompt saved with a price was quoted an artist share.
+  const isFree = !prompt || isPublicText(prompt);
   const priceCents = typeof prompt?.price_usd_cents === "number" ? prompt.price_usd_cents : 0;
   const artistPriceMicro = isFree ? 0 : usdToMicro(priceCents / 100);
 
