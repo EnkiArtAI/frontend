@@ -63,7 +63,8 @@ beforeEach(() => {
 describe("editing a prompt", () => {
   it("judges the edited title, description and tags", async () => {
     await edit("p1", { title: "New", description: "A scene", tags: ["a", "b"], category: "Poster", aiSettings: { aspectRatio: "16:9" } });
-    expect(check).toHaveBeenCalledWith({ title: "New", description: "A scene", category: "Poster", tags: "a, b", settings: "16:9" });
+    expect(check).toHaveBeenCalledWith({ title: "New", description: "A scene", category: "Poster", tags: "a, b" });
+    expect(prompts[0].ai_settings).toEqual({ aspectRatio: "16:9", includeText: undefined });
   });
 
   it("refuses an explicit edit with a warning and changes nothing", async () => {
@@ -167,11 +168,22 @@ describe("editing while tier 2 is down", () => {
 
 describe("an edit stores only what it judges", () => {
   // The API stores and hands out whatever a direct caller sends in these fields.
-  it("judges a category and a ratio on their own", async () => {
+  it("judges a category on its own", async () => {
     await edit("p1", { category: "Poster" });
     expect(check).toHaveBeenLastCalledWith({ category: "Poster" });
-    await edit("p1", { aiSettings: { aspectRatio: "16:9" } });
-    expect(check).toHaveBeenLastCalledWith({ settings: "16:9" });
+  });
+
+  it("keeps a ratio only in a ratio's shape, which needs no check", async () => {
+    for (const ratio of ["16:9", "1:1", "2.39:1", "1:2.39", "21:9"]) {
+      expect((await edit("p1", { aiSettings: { aspectRatio: ratio } })).status).toBe(200);
+      expect(prompts[0].ai_settings).toEqual({ aspectRatio: ratio, includeText: undefined });
+    }
+    // A save never reads this field back, so text in it would never be judged at a release.
+    for (const text of ["a sultry boudoir scene", "16:9 a sultry scene", "16:9\na sultry scene", "", "16:", "100:1"]) {
+      await edit("p1", { aiSettings: { aspectRatio: text } });
+      expect(prompts[0].ai_settings).toEqual({ aspectRatio: undefined, includeText: undefined });
+    }
+    expect(check).not.toHaveBeenCalled();
   });
 
   it("drops tags that are not text", async () => {

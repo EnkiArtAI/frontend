@@ -9,6 +9,8 @@ import { recordModerationEvent } from "@/lib/moderation-enforcement";
 import { checkPrompt } from "@/lib/moderation/prompt-check";
 import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 
+const RATIO_SHAPE = /^[0-9]{1,2}([.][0-9]{1,2})?:[0-9]{1,2}([.][0-9]{1,2})?$/;
+
 type PatchBody = {
   title?: string;
   description?: string;
@@ -236,12 +238,15 @@ export async function PATCH(
     if (typeof body.title === "string") update.title = body.title;
     if (typeof body.description === "string") update.description = body.description;
     if (typeof body.category === "string") update.category = body.category;
-    // Text only, in the tags and in the ratio: this stored whatever JSON
-    // arrived, and what is not text is not judged below.
+    // Text only in the tags: this stored whatever JSON arrived, and what is
+    // not text is not judged below. The ratio is kept only in a ratio's shape
+    // ("16:9", "2.39:1"): a save never reads this field back, so free text in
+    // it would sit beside a released prompt without the release judging it.
     const tags = Array.isArray(body.tags) ? body.tags.filter((t): t is string => typeof t === "string") : undefined;
     if (tags) update.tags = tags;
 
-    const ratio = typeof body.aiSettings?.aspectRatio === "string" ? body.aiSettings.aspectRatio : undefined;
+    const sent = body.aiSettings?.aspectRatio;
+    const ratio = typeof sent === "string" && RATIO_SHAPE.test(sent) ? sent : undefined;
     if (body.aiSettings) {
       update.ai_settings = {
         aspectRatio: ratio,
@@ -260,11 +265,11 @@ export async function PATCH(
 
     // Edited text is judged like a save (Kev, 2026-10-03): a prompt saved
     // clean must not turn explicit or 18+ through its title, description,
-    // category, tags or ratio afterwards. Only the owner's edit is judged, so nobody else's
+    // category or tags afterwards. Only the owner's edit is judged, so nobody else's
     // request costs a check or earns a warning. The rest of the prompt was
     // judged at save, so an 18+ mark is only ever raised here.
     const edited = Object.fromEntries(
-      Object.entries({ title: body.title, description: body.description, category: body.category, tags: tags?.join(", "), settings: ratio })
+      Object.entries({ title: body.title, description: body.description, category: body.category, tags: tags?.join(", ") })
         .filter((e): e is [string, string] => typeof e[1] === "string" && e[1].trim() !== ""),
     );
     if (Object.keys(edited).length > 0) {
