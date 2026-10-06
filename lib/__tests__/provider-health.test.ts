@@ -39,6 +39,18 @@ describe("what must never open the breaker", () => {
     }
   });
 
+  it("does not blame the provider for a key this deployment does not have (ENV-01)", () => {
+    // The breaker state lives in a database other deployments share: a
+    // developer environment without the key must not take production down.
+    for (const msg of ["OPENAI_API_KEY is not set", "WAVESPEED_API_KEY is not set", "GEMINI_API_KEY is not set"]) {
+      expect(classifyFailure(msg).kind, msg).toBe("config");
+      expect(shouldOpen(classifyFailure(msg), 99), msg).toBe(false);
+    }
+    // ...while a provider that refuses our key still counts.
+    expect(classifyFailure("invalid api key").kind).toBe("infrastructure");
+    expect(classifyFailure("the setting is not settled").kind).not.toBe("config");
+  });
+
   it("keeps counting content refusals harmless however many arrive", () => {
     // A user hammering a banned prompt must not take the model offline.
     expect(shouldOpen(classifyFailure("safety system rejected"), 1000)).toBe(false);

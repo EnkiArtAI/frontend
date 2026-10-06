@@ -66,6 +66,12 @@ export async function generateImagesWithGemini(
   const startTime = Date.now();
   const model = request.modelVersion;
   if (!model) return missingModel(startTime);
+  // Said like the other adapters. Thrown from getGeminiClient, the catch below
+  // read "API key" in its text and reported an INVALID key, which opens the
+  // breaker for every Gemini route in the shared database (ENV-01).
+  if (!process.env.GOOGLE_GEMINI_API_KEY && !process.env.GEMINI_API_KEY) {
+    return { success: false, error: "GEMINI_API_KEY is not set", generationTime: 0, retryable: false };
+  }
 
   try {
     // 1. Validate request
