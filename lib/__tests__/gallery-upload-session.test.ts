@@ -14,7 +14,7 @@ const session = vi.fn<(token: string | null) => Promise<string | null>>();
 vi.mock("@/lib/session-user", () => ({ resolveSessionUserId: (_s: unknown, t: string | null) => session(t) }));
 
 const inserted: Record<string, unknown>[] = [];
-let insertError: { message: string } | null = null;
+let insertError: { message: string; code?: string } | null = null;
 vi.mock("@/lib/supabaseServer", () => ({
   getSupabaseServerClient: () => ({
     from: () => ({
@@ -93,7 +93,7 @@ describe("POST /api/gallery/upload", () => {
     session.mockResolvedValue(USER_A);
     const rendition = { buffer: Buffer.from([1]), bytes: 1 };
     derived = { preview: rendition, thumb: rendition, width: 1, height: 1 };
-    insertError = { message: "violates check constraint" };
+    insertError = { message: "violates check constraint", code: "23514" };
     const res = await upload({ "X-Session-Token": "tok-a" });
     expect(res.status).toBe(500);
     expect(put).toHaveBeenCalledTimes(3);
@@ -101,12 +101,22 @@ describe("POST /api/gallery/upload", () => {
     expect(del.mock.calls[0][0]).toEqual(put.mock.calls.map(([n]) => `https://s.public.blob.vercel-storage.com/${n}`));
   });
 
-  it("keeps the files when the answer was lost, since the row may exist", async () => {
+  it("keeps the files when the answer was lost or came from a gateway, since the row may exist", async () => {
     session.mockResolvedValue(USER_A);
-    insertError = { message: "TypeError: fetch failed" };
-    const res = await upload({ "X-Session-Token": "tok-a" });
-    expect(res.status).toBe(503);
+    for (const lost of [{ message: "TypeError: fetch failed" }, { message: "upstream request timeout", code: "" }]) {
+      insertError = lost;
+      const res = await upload({ "X-Session-Token": "tok-a" });
+      expect(res.status, lost.message).toBe(503);
+    }
     expect(del).not.toHaveBeenCalled();
+  });
+
+  it("does not call a dead blob store a dead database", async () => {
+    session.mockResolvedValue(USER_A);
+    put.mockRejectedValueOnce(new TypeError("fetch failed"));
+    const res = await upload({ "X-Session-Token": "tok-a" });
+    expect(res.status).toBe(500);
+    expect(await res.json()).not.toMatchObject({ code: "DB_UNAVAILABLE" });
   });
 
   it("answers a dead database with the honest 503, not a 500", async () => {

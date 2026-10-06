@@ -2,7 +2,7 @@ import { NextRequest, after } from "next/server";
 import { put, del } from "@vercel/blob";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
-import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
+import { dbUnavailableResponse, DbUnreachableError } from "@/lib/db-error";
 import { createErrorResponse, createSuccessResponse } from "../../../middleware/validation";
 import { tryMakeDerivatives } from "@/lib/imageDerivatives";
 import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
@@ -244,9 +244,10 @@ export async function POST(req: NextRequest) {
     if (error) {
       console.error('❌ Database error:', error);
       // The row is what owns the files; without it they are orphans nobody can
-      // see or delete. Only on a definite refusal: a lost answer may hide a row
-      // that was written, and deleting its files would break it.
-      if (isDbUnreachable(error)) return dbUnavailableResponse();
+      // see or delete. Only when PostgREST refused the write (a SQLSTATE or
+      // PGRST code): a lost or gateway answer may hide a row that was written,
+      // and deleting its files would break it.
+      if (!/^([0-9A-Z]{5}|PGRST\d+)$/.test(String(error.code ?? ""))) return dbUnavailableResponse();
       const stored = [imageUrl, previewUrl, thumbnailUrl].filter((u): u is string => Boolean(u));
       await del(stored).catch((e) =>
         console.warn("⚠️ orphan cleanup failed:", e instanceof Error ? e.message : e),
@@ -264,7 +265,8 @@ export async function POST(req: NextRequest) {
     }, 201);
 
   } catch (e: unknown) {
-    if (isDbUnreachable(e)) return dbUnavailableResponse();
+    // The session lookup's own error, not any "fetch failed": a dead blob store is not a dead database.
+    if (e instanceof DbUnreachableError) return dbUnavailableResponse();
     const message = e instanceof Error ? e.message : String(e);
     console.error('❌ Upload error:', message);
     return createErrorResponse('Internal server error', 500, message);
