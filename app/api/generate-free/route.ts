@@ -14,7 +14,7 @@ import { normalizeTier, RESOLUTION_TIERS } from "@/lib/generation/resolution";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
 import { storeReferenceImages } from "@/lib/generation/reference-images";
 import { readImageDimensions } from "@/backend/services/gemini-image-generation";
-import { freeGenerationDecision } from "@/lib/generation/free-quota";
+import { freeGenerationDecision, releaseFreeClaim } from "@/lib/generation/free-quota";
 
 // A silent refusal waits 3-12 s like a failing generation; a platform default
 // of 10-15 s would turn the slow ones into timeouts, which is a tell of its own.
@@ -24,7 +24,8 @@ export const maxDuration = 300;
  * Free image generation endpoint (dev/testing)
  *
  * Uses Pollinations.ai (free, no API key needed)
- * No payment required, no database needed.
+ * No payment required. The allowance is claimed in the database
+ * (free_generation_claims), so no database means no free generation.
  *
  * REQUIRES A SESSION as of 2026-08-18. It used to be deliberately
  * unauthenticated, which made the per-account free allowance decorative: the
@@ -46,6 +47,8 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export async function POST(request: NextRequest) {
   // What a failure from the render on is recorded with, for the admin person list.
   let failCtx: Omit<GenerationFailure, "error"> | null = null;
+  // The free allowance this request holds; every path that renders nothing gives it back.
+  let claimId: string | null = null;
   // JSON only. A page elsewhere may send a form or plain text here in a
   // visitor's name without asking first; every request costs a check and can
   // earn the visitor's address a warning. JSON from another site has to ask,
@@ -157,42 +160,41 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
     }
 
-    /* The free allowance, checked BEFORE the provider is called.
+    /* The free allowance, CLAIMED before the provider is called.
      *
      * Three images per account (Kev, 2026-08-18) — free usage is an onboarding
-     * allowance for new accounts, not a permanent tier. Checked here rather
-     * than after generating so an account over its limit does not cost a
-     * render, and so the answer arrives in a second rather than a minute.
+     * allowance for new accounts, not a permanent tier. Claimed here rather
+     * than counted after generating: parallel requests all read "2 used" when
+     * the row was only written once the response had gone (ENG-20), and an
+     * account over its limit must not cost a render.
      *
      * A caller without an account is asked to sign in here: only accounts
      * generate on this route, and an account is stopped by its own ban.
      */
-    const quotaClient = getSupabaseServerClientSafe();
-    const quotaUserId = await resolveRecordingUserId(quotaClient, request);
-    if (quotaClient) {
-      const decision = await freeGenerationDecision(quotaClient, quotaUserId);
-      if (!decision.allowed && decision.reason === "sign-in") {
-        return NextResponse.json(
-          {
-            error: "Sign in to generate for free.",
-            signInRequired: true,
-          },
-          { status: 401 },
-        );
-      }
-      if (!decision.allowed) {
-        const q = decision.quota;
-        return NextResponse.json(
-          {
-            error: `You have used all ${q?.limit ?? 0} free generations on this account.`,
-            freeQuotaExhausted: true,
-            used: q?.used ?? 0,
-            limit: q?.limit ?? 0,
-          },
-          { status: 402 },
-        );
-      }
+    const quotaUserId = await resolveRecordingUserId(supabaseForChecks, request);
+    const decision = await freeGenerationDecision(supabaseForChecks, quotaUserId);
+    if (!decision.allowed && decision.reason === "sign-in") {
+      return NextResponse.json(
+        {
+          error: "Sign in to generate for free.",
+          signInRequired: true,
+        },
+        { status: 401 },
+      );
     }
+    if (!decision.allowed) {
+      const q = decision.quota;
+      return NextResponse.json(
+        {
+          error: `You have used all ${q?.limit ?? 0} free generations on this account.`,
+          freeQuotaExhausted: true,
+          used: q?.used ?? 0,
+          limit: q?.limit ?? 0,
+        },
+        { status: 402 },
+      );
+    }
+    claimId = decision.claimId;
 
     // Never log the prompt itself — this is shared log output, and a blocked
     // prompt is exactly the text we must not spray around in the clear.
@@ -202,7 +204,11 @@ export async function POST(request: NextRequest) {
       resolution,
     });
 
-    if (silent) return silentFailure();
+    if (silent) {
+      // Refused like a failing render, so it gives the claim back like one.
+      await releaseFreeClaim(supabaseForChecks, claimId);
+      return silentFailure();
+    }
 
     failCtx = {
       request, surface: "generate-free", modelId: model.id, resolution, quality: null, boost: false,
@@ -218,6 +224,7 @@ export async function POST(request: NextRequest) {
     if (!result.success || !result.imageBuffers || result.imageBuffers.length === 0) {
       console.error('❌ Image generation failed:', result.error);
       after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: result.error || "Image generation failed" }));
+      await releaseFreeClaim(supabaseForChecks, claimId);
       // Same answer as a caught request, so the two cannot be told apart.
       return NextResponse.json(SILENT_FAILURE, { status: 500 });
     }
@@ -244,7 +251,7 @@ export async function POST(request: NextRequest) {
     {
       // Same client and same identity the allowance was checked against, so
       // the row that gets written is the row that was counted.
-      const supabase = quotaClient;
+      const supabase = supabaseForChecks;
       const recUserId = quotaUserId;
       if (supabase && recUserId) {
         const stripped = stripWorkflowImages(body?.workflow ?? {});
@@ -325,6 +332,7 @@ export async function POST(request: NextRequest) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("Generate free image error:", message);
     if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: message }));
+    await releaseFreeClaim(getSupabaseServerClientSafe(), claimId);
     return NextResponse.json(SILENT_FAILURE, { status: 500 });
   }
 }

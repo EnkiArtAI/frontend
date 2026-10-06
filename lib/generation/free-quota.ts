@@ -6,11 +6,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * Kev, 2026-08-18: free usage is an onboarding allowance for new accounts,
  * not a permanent tier — "3 pro account wären super".
  *
- * Counted rather than stored. A column would be a second truth next to the
- * generations rows and the two would drift the first time a row was inserted
- * by a path that forgot to bump the counter; the rows ARE the record of what
- * was generated. It also means changing this number changes the allowance
- * immediately, with nothing to migrate.
+ * Counted from free_generation_claims (ENG-20), one row per free render,
+ * claimed before the render and given back only when it fails. Changing this
+ * number changes the allowance immediately, with nothing to migrate.
  */
 export const FREE_GENERATIONS_PER_ACCOUNT = 3;
 
@@ -22,25 +20,24 @@ export interface FreeQuota {
 }
 
 /**
- * What this account has already spent of its free allowance.
+ * What this account has already spent of its free allowance: its claims.
  *
- * "Free" is defined as nothing having been paid, NOT as a provider name. If a
- * second free provider is ever added, or Pollinations is replaced, the count
- * still means the same thing — whereas `provider = 'pollinations'` would
- * quietly reset everyone's allowance the day that changed.
+ * Not its generations rows. Those were written only after the response, so
+ * parallel requests all read the same count, a failed insert was never
+ * counted, and a paid render (amount_paid_cents never written) ate the free
+ * allowance. Not a provider name either: `provider = 'pollinations'` would
+ * reset everyone's allowance the day the free provider changed.
  *
- * Deleted rows still count. A generation that happened, happened; letting a
- * delete refund the allowance would make the limit a formality.
+ * Deleting a generation refunds nothing. A generation that happened, happened.
  */
 export async function freeQuotaFor(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<FreeQuota> {
   const { count, error } = await supabase
-    .from("generations")
+    .from("free_generation_claims")
     .select("id", { count: "exact", head: true })
-    .eq("user_id", userId)
-    .is("amount_paid_cents", null);
+    .eq("user_id", userId);
 
   /* A failed count must not hand out free generations. The alternative —
      treating an outage as "0 used" — turns a database blip into an unlimited
@@ -56,7 +53,8 @@ export async function freeQuotaFor(
 const TEAM_ROLES = new Set(["admin", "mod"]);
 
 export type FreeDecision =
-  | { allowed: true; quota: FreeQuota | null }
+  // claimId null: the team, which claims nothing.
+  | { allowed: true; claimId: string | null }
   | { allowed: false; reason: "sign-in" | "quota"; quota: FreeQuota | null };
 
 /**
@@ -74,7 +72,9 @@ export type FreeDecision =
  *     2026-08-18). Read from users.role, the same marker app/api/admin gates
  *     on, so granting it to someone else is a role change rather than a
  *     deploy.
- *  3. Everyone else gets the allowance.
+ *  3. Everyone else gets the allowance, claimed atomically here: the
+ *     database takes one claim at a time per account, so ten parallel
+ *     requests get at most what is left.
  */
 export async function freeGenerationDecision(
   supabase: SupabaseClient,
@@ -92,11 +92,23 @@ export async function freeGenerationDecision(
      the team's exemption — an outage must not hand anyone unlimited free
      generation, and the allowance below still protects the account. */
   if (!error && data && TEAM_ROLES.has(String((data as { role?: string }).role ?? ""))) {
-    return { allowed: true, quota: null };
+    return { allowed: true, claimId: null };
   }
 
-  const quota = await freeQuotaFor(supabase, userId);
-  return quota.exhausted
-    ? { allowed: false, reason: "quota", quota }
-    : { allowed: true, quota };
+  const { data: claimId, error: claimErr } = await supabase.rpc("claim_free_generation", {
+    p_user_id: userId,
+    p_limit: FREE_GENERATIONS_PER_ACCOUNT,
+  });
+  // A failed claim must not hand out a free generation, like a failed count.
+  if (claimErr) throw new Error(`free claim failed: ${claimErr.message}`);
+  return claimId
+    ? { allowed: true, claimId: String(claimId) }
+    : { allowed: false, reason: "quota", quota: await freeQuotaFor(supabase, userId) };
+}
+
+/** A render that failed gives its claim back: the allowance counts images made, not attempts. */
+export async function releaseFreeClaim(supabase: SupabaseClient | null, claimId: string | null): Promise<void> {
+  if (!supabase || !claimId) return;
+  const { error } = await supabase.from("free_generation_claims").delete().eq("id", claimId);
+  if (error) console.warn("[free-quota] claim not given back:", error.message);
 }

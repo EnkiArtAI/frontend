@@ -125,7 +125,7 @@ describe("the free generator", () => {
   });
 
   it("fails silently only after the sign-in and quota answers", () => {
-    const at = FREE.indexOf("    if (silent) return silentFailure();");
+    const at = FREE.indexOf("    if (silent) {");
     expect(at).toBeGreaterThan(FREE.indexOf('error: "Sign in to generate for free."'));
     expect(FREE.indexOf("await generateImageWithPollinations(")).toBeGreaterThan(at);
   });
@@ -137,7 +137,7 @@ describe("the free generator", () => {
   it("never silences an account for its address's warnings", () => {
     // Only accounts generate here, and an account is stopped by its own ban.
     expect(FREE).not.toMatch(/addressWarnedOut/);
-    expect(FREE.indexOf("decision.reason === \"sign-in\"")).toBeLessThan(FREE.indexOf("if (silent) return silentFailure();"));
+    expect(FREE.indexOf("decision.reason === \"sign-in\"")).toBeLessThan(FREE.indexOf("if (silent) {"));
   });
 
   it("warns, and fails closed otherwise", () => {
