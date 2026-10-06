@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { join } from "node:path";
+import { existsSync } from "node:fs";
 import { readSource } from "@/lib/__tests__/_read-source";
 
 /**
@@ -30,5 +31,9 @@ describe("the editor's Auto Fill", () => {
 
   it("no longer calls the unguarded endpoint anywhere", () => {
     expect(EDITOR).not.toMatch(/\/api\/grok-fill/);
+  });
+
+  it("and that endpoint is gone", () => {
+    expect(existsSync(join(__dirname, "..", "..", "app", "api", "grok-fill", "route.ts"))).toBe(false);
   });
 });
