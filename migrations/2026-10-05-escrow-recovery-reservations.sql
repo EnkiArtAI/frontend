@@ -4,6 +4,7 @@
 -- Activate these RPCs only after the old nonce rail has stopped accepting
 -- payments and its pending recoveries have drained: its direct ledger writes
 -- do not participate in the escrow reservation lock.
+-- Per-image generation claims must be implemented before any production call.
 BEGIN;
 
 ALTER TABLE public.generation_payment_intents
@@ -18,7 +19,7 @@ CREATE TABLE IF NOT EXISTS public.generation_escrow_recovery (
     'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
   )),
   units smallint NOT NULL CHECK (units BETWEEN 1 AND 24),
-  total_unit_micro bigint NOT NULL CHECK (total_unit_micro BETWEEN 1 AND 25000000),
+  total_unit_micro bigint NOT NULL CHECK (total_unit_micro > 0),
   original_artist_unit_micro bigint NOT NULL CHECK (original_artist_unit_micro >= 0),
   fronted_original_micro bigint NOT NULL CHECK (fronted_original_micro >= 0),
   recovery_unit_micro bigint NOT NULL CHECK (recovery_unit_micro >= 0),
@@ -33,12 +34,9 @@ CREATE TABLE IF NOT EXISTS public.generation_escrow_recovery (
   created_at timestamptz NOT NULL DEFAULT now(),
   confirmed_at timestamptz,
   released_at timestamptz,
-  CHECK (units::bigint * total_unit_micro <= 25000000),
   CHECK (original_artist_unit_micro <= total_unit_micro),
   CHECK (original_artist_unit_micro = 0 OR (artist_wallet IS NOT NULL AND artist_wallet <> '')),
-  CHECK (recovery_unit_micro <= original_artist_unit_micro / 2
-     AND recovery_unit_micro <= fronted_original_micro / 4
-         + CASE WHEN fronted_original_micro % 4 = 0 THEN 0 ELSE 1 END),
+  CHECK (recovery_unit_micro <= original_artist_unit_micro / 2),
   CHECK (
     (state = 'reserved' AND delivered_units IS NULL AND settlement_signature IS NULL
       AND confirmed_at IS NULL AND released_at IS NULL)
@@ -65,8 +63,11 @@ END $$;
 
 -- The quote amounts remain per image. This RPC snapshots the two net legs,
 -- preserving their sum; it never changes prices or appends a ledger recovery.
+-- The server must read and verify the program's current Config account before
+-- calling: p_max_deposit_micro is Config.max_deposit_micro, with no SQL default
+-- or independent limit. It must never come from a buyer request.
 CREATE OR REPLACE FUNCTION public.reserve_generation_escrow_recovery(
-  p_intent_id uuid, p_units integer, p_mint text
+  p_intent_id uuid, p_units integer, p_mint text, p_max_deposit_micro bigint
 ) RETURNS public.generation_escrow_recovery
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE
@@ -77,7 +78,8 @@ DECLARE
   v_reserved bigint := 0;
   v_recovery bigint := 0;
 BEGIN
-  IF p_units IS NULL OR p_units NOT BETWEEN 1 AND 24 OR p_mint IS NULL
+  IF p_max_deposit_micro IS NULL OR p_max_deposit_micro <= 0
+      OR p_units IS NULL OR p_units NOT BETWEEN 1 AND 24 OR p_mint IS NULL
       OR p_mint NOT IN ('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
                         'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v') THEN
     RAISE EXCEPTION 'Invalid escrow reservation arguments' USING ERRCODE = '22023';
@@ -101,13 +103,13 @@ BEGIN
   END IF;
   IF v_intent.status NOT IN ('quoted', 'building') OR v_intent.expires_at <= now()
       OR v_intent.deposit_confirmed_at IS NOT NULL OR v_intent.nonce_account IS NOT NULL
-      OR v_intent.total_micro NOT BETWEEN 1 AND 25000000
+      OR v_intent.total_micro <= 0
       OR v_intent.artist_amount_micro > v_intent.total_micro
       OR (v_intent.artist_amount_micro > 0 AND
           (v_intent.artist_wallet IS NULL OR v_intent.artist_wallet = '')) THEN
     RAISE EXCEPTION 'Payment intent cannot reserve escrow recovery' USING ERRCODE = '22023';
   END IF;
-  IF v_intent.total_micro * p_units::bigint > 25000000 THEN
+  IF v_intent.total_micro::numeric * p_units > p_max_deposit_micro THEN
     RAISE EXCEPTION 'Escrow deposit exceeds its cap' USING ERRCODE = '22023';
   END IF;
   IF v_intent.artist_amount_micro > 0 THEN
@@ -122,10 +124,9 @@ BEGIN
     SELECT COALESCE(sum(reserved_micro), 0) INTO v_reserved
       FROM public.generation_escrow_recovery
       WHERE artist_wallet = v_intent.artist_wallet AND mint = p_mint AND state = 'reserved';
-    -- Match the existing four-instalment policy: ceil(original fronting / 4),
-    -- but floor the half-share and available-debt-per-image bounds.
-    v_recovery := LEAST(v_fronted / 4 + CASE WHEN v_fronted % 4 = 0 THEN 0 ELSE 1 END,
-                       v_intent.artist_amount_micro / 2,
+    -- Section 7 (2026-10-06): half the artist share per delivered unit until
+    -- rent is recovered. No instalment limit; floor both integer bounds.
+    v_recovery := LEAST(v_intent.artist_amount_micro / 2,
                        GREATEST(v_outstanding - v_reserved, 0) / p_units);
   END IF;
   INSERT INTO public.generation_escrow_recovery
@@ -219,13 +220,13 @@ BEGIN
   RETURN v_result;
 END $$;
 
-REVOKE ALL ON FUNCTION public.reserve_generation_escrow_recovery(uuid, integer, text)
+REVOKE ALL ON FUNCTION public.reserve_generation_escrow_recovery(uuid, integer, text, bigint)
   FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.confirm_generation_escrow_recovery(uuid, integer, text)
   FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.cancel_unfunded_generation_escrow_recovery(uuid)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.reserve_generation_escrow_recovery(uuid, integer, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.reserve_generation_escrow_recovery(uuid, integer, text, bigint) TO service_role;
 GRANT EXECUTE ON FUNCTION public.confirm_generation_escrow_recovery(uuid, integer, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.cancel_unfunded_generation_escrow_recovery(uuid) TO service_role;
 

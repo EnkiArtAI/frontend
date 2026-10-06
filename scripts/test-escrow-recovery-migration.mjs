@@ -51,8 +51,10 @@ async function front(artist, amount, mint = devMint) {
   await db.query(`INSERT INTO public.artist_cost_ledger (artist_wallet,mint,entry,micro,lamports)
     VALUES ($1,$2,'fronted',$3,2039280)`, [artist,mint,amount]);
 }
-async function reserve(intentId, units = 4, mint = devMint) {
-  return row('SELECT * FROM public.reserve_generation_escrow_recovery($1,$2,$3)', [intentId,units,mint]);
+// Fixture of a verified Config read; never a production fallback or SQL default.
+const configCap = 50_000_000;
+async function reserve(intentId, units = 4, mint = devMint, cap = configCap) {
+  return row('SELECT * FROM public.reserve_generation_escrow_recovery($1,$2,$3,$4)', [intentId,units,mint,cap]);
 }
 async function funded(intentId) {
   await db.query(`UPDATE public.generation_payment_intents
@@ -142,14 +144,37 @@ try {
     await db.query("UPDATE public.generation_payment_intents SET status='expired' WHERE id=$1",[active]);
     await rejects(() => cancel(active));
   });
-  await check('integer rounding matches quarter, half-share and debt-per-unit limits', async () => {
+  await check('integer rounding floors half-share and available debt per unit', async () => {
     await front('artist-round',150_003);
     const first = await reserve(await intent('artist-round'),1);
-    assert.equal(money(first.recovery_unit_micro),37_501); // ceil(original fronting / 4)
+    assert.equal(money(first.recovery_unit_micro),50_000);
     await front('artist-tiny-share',150_000);
     assert.equal(money((await reserve(await intent('artist-tiny-share',100,5),4)).recovery_unit_micro),2);
     await front('artist-tiny-debt',3);
     assert.equal(money((await reserve(await intent('artist-tiny-debt'),4)).recovery_unit_micro),0);
+  });
+  await check('half-share continues beyond four instalments until rent is recovered', async () => {
+    await front('artist-many-instalments',350_003);
+    for (let payment = 0; payment < 8; payment++) {
+      const pending = await intent('artist-many-instalments');
+      const reserved = await reserve(pending,1);
+      assert.equal(money(reserved.recovery_unit_micro),payment < 7 ? 50_000 : 3);
+      await funded(pending); await confirm(pending,1);
+    }
+    assert.equal(money((await reserve(await intent('artist-many-instalments'),1)).recovery_unit_micro),0);
+    assert.equal(money((await row("SELECT sum(micro) AS micro FROM public.artist_cost_ledger WHERE artist_wallet='artist-many-instalments' AND entry='recovered'")).micro),350_003);
+  });
+  await check('only the supplied Chain Config cap bounds the whole deposit', async () => {
+    const exact = await intent(null,12_500_000,0);
+    assert.equal(money((await reserve(exact,4)).total_unit_micro)*4,configCap);
+    await rejects(async () => reserve(await intent(null,12_500_001,0),4));
+    // Config can change without an application/SQL release; there is no 25/50 cap here.
+    const increased = await intent(null,60_000_000,0);
+    await rejects(() => reserve(increased,1,devMint,configCap));
+    assert.equal(money((await reserve(increased,1,devMint,60_000_000)).total_unit_micro),60_000_000);
+    await rejects(async () => reserve(await intent(null,30_000_000,0),1,devMint,20_000_000));
+    const invalidCapIntent = await intent(null,1,0);
+    for (const cap of [null,0,-1]) await rejects(() => reserve(invalidCapIntent,1,devMint,cap));
   });
   await check('mint, artist and prior over-recovery remain isolated', async () => {
     await front('artist-chain',150_000,mainMint);
@@ -167,8 +192,9 @@ try {
     await rejects(() => reserve(valid,4,'other-mint'));
     await rejects(() => reserve(id()));
     await rejects(async () => reserve(await intent('artist-invalid',0,0)));
-    await rejects(async () => reserve(await intent('artist-invalid',25_000_001,0)));
-    await rejects(async () => reserve(await intent('artist-invalid',7_000_000,0),4));
+    await rejects(async () => reserve(await intent('artist-invalid',50_000_001,0),1));
+    await rejects(async () => reserve(await intent('artist-invalid',13_000_000,0),4));
+    await rejects(async () => reserve(await intent(null,Number.MAX_SAFE_INTEGER,0),24));
     await rejects(async () => reserve(await intent(null,100,10)));
     const nonce = await intent('artist-invalid');
     await db.query("UPDATE public.generation_payment_intents SET nonce_account='legacy-nonce' WHERE id=$1",[nonce]);
@@ -202,12 +228,12 @@ try {
     try {
       await holder.query('BEGIN'); await contender.query('BEGIN');
       await contender.query("SET LOCAL statement_timeout='10s'");
-      await holder.query('SELECT * FROM public.reserve_generation_escrow_recovery($1,4,$2)',[firstId,devMint]);
+      await holder.query('SELECT * FROM public.reserve_generation_escrow_recovery($1,4,$2,$3)',[firstId,devMint,configCap]);
       const lock = (await contender.query(`SELECT pg_try_advisory_xact_lock(
         hashtextextended('enki-escrow-recovery:artist-parallel:' || $1,0)) AS acquired`,[devMint])).rows[0];
       assert.equal(lock.acquired,false,'The reservation function must hold its account lock');
       const pid = (await contender.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
-      pending = contender.query('SELECT * FROM public.reserve_generation_escrow_recovery($1,4,$2)',[secondId,devMint])
+      pending = contender.query('SELECT * FROM public.reserve_generation_escrow_recovery($1,4,$2,$3)',[secondId,devMint,configCap])
         .then(result => ({result}), error => ({error}));
       let waiting = false;
       // Observe the lock state, not an elapsed-time guess, before committing A.
