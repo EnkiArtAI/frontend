@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
+import { checkEscrowDeposits } from './escrow-deposit-migration-checks.mjs';
 
 globalThis.fetch = async () => { throw new Error('HTTP calls are forbidden in migration tests'); };
 const postgres = process.argv.includes('--postgres');
@@ -259,6 +260,10 @@ try {
       await holder.end(); await contender.end();
     }
   });
+  const depositSql = fs.readFileSync(new URL('../migrations/2026-10-06-escrow-deposit-persistence.sql',import.meta.url),'utf8');
+  await db.exec(depositSql);
+  await db.exec(depositSql);
+  await checkEscrowDeposits({db,row,check,rejects,id,intent,reserve,pgOptions});
   console.log(`PASS ${passed} escrow migration checks; live database was not used.`);
 } finally {
   await db.close();
