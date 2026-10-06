@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { apiPricePerImage } from "@/lib/pricing";
+import { apiPricePerImage, geminiDirectPricePerImage } from "@/lib/pricing";
 import { notifyAdmins } from "@/lib/admin-notify";
 
 /**
@@ -29,7 +29,10 @@ const ALERT_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const lastAlert = new Map<string, number>();
 
 export function driftOf(obs: DriftObservation): { expectedUsd: number; ratio: number; drifted: boolean } {
-  const expectedUsd = apiPricePerImage(obs.modelFamily, obs.resolution, obs.quality);
+  // A Google bill is held against Google's own price: a model can run there as its boost or fallback host.
+  const expectedUsd =
+    (obs.provider === "gemini" ? geminiDirectPricePerImage(obs.modelFamily, obs.resolution) : null) ??
+    apiPricePerImage(obs.modelFamily, obs.resolution, obs.quality);
   const ratio = expectedUsd > 0 ? obs.observedUsd / expectedUsd : Infinity;
   return { expectedUsd, ratio, drifted: Math.abs(ratio - 1) > TOLERANCE };
 }
@@ -55,7 +58,7 @@ export async function reportPriceDrift(supabase: SupabaseClient | null, obs: Dri
         (ratio > 1
           ? "The provider now bills MORE than lib/pricing.ts charges — every such image loses money until the table is updated."
           : "The provider now bills LESS than the table — buyers are overcharged until the table is updated.") +
-        "\n\nUpdate the corresponding cell in lib/pricing.ts (GPT_OPENAI / GEMINI_BOOST / MODEL_IMAGE_PRICING) and re-run the tests.",
+        "\n\nUpdate the corresponding cell in lib/pricing.ts (GPT_OPENAI / GEMINI_DIRECT / MODEL_IMAGE_PRICING) and re-run the tests.",
     });
   } catch (e) {
     console.error("[price-drift] admin notification failed:", e instanceof Error ? e.message : e);

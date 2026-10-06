@@ -89,8 +89,8 @@ export async function generateImagesWithGemini(
       }
     };
 
-    // Only add imageSize if model is Gemini 3 Pro (supports 1K, 2K, 4K)
-    if (isGemini3ProImage(model) && request.imageSize) {
+    // Every image model with a known rate takes imageSize (1K, 2K, 4K)
+    if (imageTokenRate(model) !== null && request.imageSize) {
       config.imageConfig.imageSize = request.imageSize;
     }
 
@@ -235,12 +235,12 @@ export async function generateImagesWithGemini(
       (measured ? ` — ${measured.width}x${measured.height} ${measured.format}, ${imageBuffers[0].length} bytes` : ''),
     );
 
-    /* The bill for THIS image: gemini-3-pro-image bills image output tokens
-       at $120/1M (official page, confirmed 2026-08-24: 1120 tokens per 1K/2K,
-       2000 per 4K). Carried out for the runtime price-drift detector. */
+    /* The bill for THIS image: image output tokens at the model's rate
+       (imageTokenRate). Carried out for the runtime price-drift detector. */
     const imageOutputTokens = (response as { usageMetadata?: { candidatesTokenCount?: number } }).usageMetadata?.candidatesTokenCount;
-    const usage = typeof imageOutputTokens === 'number'
-      ? { imageOutputTokens, costUsd: (imageOutputTokens * 120) / 1_000_000 }
+    const rate = imageTokenRate(model);
+    const usage = typeof imageOutputTokens === 'number' && rate !== null
+      ? { imageOutputTokens, costUsd: (imageOutputTokens * rate) / 1_000_000 }
       : undefined;
 
     return {
@@ -348,6 +348,7 @@ export async function generateMultipleImagesWithGemini(
 
   let usageTokens = 0;
   let usageSeen = false;
+  const rate = imageTokenRate(request.modelVersion);
   for (const result of results) {
     if (result.success && result.imageBuffers) {
       allImageBuffers.push(...result.imageBuffers);
@@ -369,8 +370,8 @@ export async function generateMultipleImagesWithGemini(
     return {
       success: true,
       // Per-image bill: the drift detector compares ONE image with ONE cell.
-      usage: usageSeen
-        ? { imageOutputTokens: usageTokens / allImageBuffers.length, costUsd: ((usageTokens / allImageBuffers.length) * 120) / 1_000_000 }
+      usage: usageSeen && rate !== null
+        ? { imageOutputTokens: usageTokens / allImageBuffers.length, costUsd: ((usageTokens / allImageBuffers.length) * rate) / 1_000_000 }
         : undefined,
       imageBuffers: allImageBuffers,
       generationTime: totalTime,
@@ -415,12 +416,22 @@ export function parseImageInput(input: string): { mimeType: string; data: string
  * fixed offset; JPEG needs a walk to the first Start-Of-Frame marker.
  */
 /**
- * Is this the Gemini 3 Pro Image model?
- *
- * Two behaviours branch on it and BOTH fail silently on a miss: the request
- * only carries imageSize for this family (a miss means the buyer pays for 4K
- * and receives 1024², with nothing reporting it), and the cost estimate only
- * has a rate for this family (a miss books the generation at $0).
+ * $ per 1M image output tokens for the Gemini image models we run (official
+ * pricing page). Only these are sent imageSize: a model missing here renders
+ * at 1024² whatever the buyer paid for, so a new one needs its row.
+ */
+const IMAGE_TOKEN_RATE = new Map([
+  ['gemini-3-pro-image', 120],
+  ['gemini-3.1-flash-image', 60],
+]);
+
+export function imageTokenRate(model: string | null | undefined): number | null {
+  return IMAGE_TOKEN_RATE.get(model ?? '') ?? null;
+}
+
+/**
+ * Is this the Gemini 3 Pro Image model? Only the cost estimate below still
+ * branches on it.
  *
  * Only the GA id. Google shut the preview id down on 2026-06-25, and the live
  * model_providers rows carry gemini-3-pro-image (read 2026-10-02).
