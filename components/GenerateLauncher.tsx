@@ -60,7 +60,7 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
 
   const [open, setOpen] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const { loading: refsLoading, read: readRef } = useReferenceReads();
+  const { loading: refsLoading, pending: refsPending, read: readRef } = useReferenceReads();
   // Same model on a priority host — faster, dearer, identical image.
   const [boost, setBoost] = useState(false);
   const [prompt, setPrompt] = useState("");
@@ -318,6 +318,7 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
         setResolution={setResolution}
         resolutionOptions={core.tiers.map((t, i) => ({ value: t.tier, label: tierLabel(i) ? `${t.tier} · ${tierLabel(i)}` : t.tier, short: t.tier }))}
         referenceImages={referenceImages}
+        pendingReferenceImages={refsPending}
         onAddReferenceImages={addReferenceImages}
         onRemoveReferenceImage={(i) =>
           setReferenceImages((prev) => prev.filter((_, idx) => idx !== i))

@@ -183,7 +183,7 @@ export default function PromptGeneratorView({
   const { access, role } = useBetaAccess();
   const guest = !(access === "ok" && role !== "team");
   const [generating, setGenerating] = useState(false);
-  const { loading: refsLoading, read: readRef } = useReferenceReads();
+  const { loading: refsLoading, pending: refsPending, read: readRef } = useReferenceReads();
   // Same model on a priority host — faster, dearer, identical image.
   const [boost, setBoost] = useState(false);
   /* Only consulted below the 960px breakpoint, where the history is an
@@ -1579,7 +1579,7 @@ export default function PromptGeneratorView({
               >
                 +
               </button>
-              {refs.length === 0 ? (
+              {refs.length + refsPending.length === 0 ? (
                 <span className="pgv-ref-hint">Add images this prompt can refer to</span>
               ) : (
                 <div className="pgv-ref-deck">
@@ -1622,6 +1622,11 @@ export default function PromptGeneratorView({
                       >
                         <X size={10} />
                       </button>
+                    </div>
+                  ))}
+                  {refsPending.map((src) => (
+                    <div key={src} className="pgv-ref-slot enki-ref-pending" aria-label="Reference image loading">
+                      <img src={src} alt="" draggable={false} />
                     </div>
                   ))}
                   {/* The seam past the last card needs its own element: the

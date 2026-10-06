@@ -50,7 +50,7 @@ describe("readImageFile", () => {
 describe("every generate surface waits for its reference images", () => {
   it("reads them through the shared counter, never a bare FileReader", () => {
     for (const s of [LAUNCHER, BUYER, EDITOR, EDITOR2]) {
-      expect(s).toMatch(/const \{ loading: refsLoading, read: readRef \} = useReferenceReads\(\);/);
+      expect(s).toMatch(/const \{ loading: refsLoading, (pending: refsPending, )?read: readRef \} = useReferenceReads\(\);/);
       expect(s).not.toMatch(/new FileReader\(\)[\s\S]{0,200}readAsDataURL/);
     }
   });
@@ -76,5 +76,36 @@ describe("every generate surface waits for its reference images", () => {
   it("Editor 2 refuses on both generate paths while they load", () => {
     expect(EDITOR2.split("if (refsLoading) { onToast(REFS_LOADING); return; }").length - 1).toBe(2);
     expect(EDITOR2).toMatch(/return Promise\.all\(files\.map\(readRef\)\)/);
+  });
+});
+
+describe("an image still being read shows greyed, and only there", () => {
+  const HOOK = src("hooks", "useReferenceReads.ts");
+
+  it("gets a preview before the read and loses it after, whatever the read answered", () => {
+    const added = HOOK.search(/const preview = URL\.createObjectURL\(file\);\s+setPending\(\(p\) => \[\.\.\.p, preview\]\);/);
+    const read = HOOK.search(/return await readImageFile\(file\);/);
+    const gone = HOOK.search(/\} finally \{\s+setPending\(\(p\) => p\.filter\(\(u\) => u !== preview\)\);\s+URL\.revokeObjectURL\(preview\);/);
+    expect(added).toBeGreaterThan(-1);
+    expect(read).toBeGreaterThan(added);
+    expect(gone).toBeGreaterThan(read);
+    expect(HOOK).toMatch(/return \{ loading: pending\.length > 0, pending, read \};/);
+  });
+
+  it("every reference strip renders the previews greyed after its images", () => {
+    const greyed = /\{refsPending\.map\(\(src\) => \(\s+<div key=\{src\} className="[a-z-]+ enki-ref-pending"/;
+    expect(BUYER).toMatch(greyed);
+    expect(EDITOR).toMatch(greyed);
+    expect(MODAL).toMatch(/\{pendingReferenceImages\.map\(\(src\) => \(\s+<div key=\{src\} className="mobile-modal-ref-thumb enki-ref-pending"/);
+    expect(LAUNCHER).toMatch(/pendingReferenceImages=\{refsPending\}/);
+    expect(src("app", "globals.css")).toMatch(/\.enki-ref-pending \{ opacity: 0\.45; filter: grayscale\(1\); pointer-events: none; \}/);
+  });
+
+  it("a preview never enters a reference list, so no draft or generation carries one", () => {
+    for (const [name, code] of [["buyer", BUYER], ["editor", EDITOR], ["launcher", LAUNCHER]] as const) {
+      const uses = code.match(/refsPending/g) ?? [];
+      const rendered = code.match(/refsPending\.(map|length)|=\{refsPending\}|pending: refsPending/g) ?? [];
+      expect(uses.length, name).toBe(rendered.length);
+    }
   });
 });

@@ -581,7 +581,7 @@ export default function EnkiPromptEditor() {
 
   const [variables, setVariables] = useState<PromptVariable[]>([]);
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
-  const { loading: refsLoading, read: readRef } = useReferenceReads();
+  const { loading: refsLoading, pending: refsPending, read: readRef } = useReferenceReads();
   /** Refuses while a reference image is still being read (Kev, 2026-10-06). */
   const refsStillLoading = () => {
     if (!refsLoading) return false;
@@ -3709,7 +3709,7 @@ export default function EnkiPromptEditor() {
                   >
                     <Plus size={16} />
                   </button>
-                  {referenceImages.length === 0 && (
+                  {referenceImages.length + refsPending.length === 0 && (
                     <span
                       className={`enk-ref-hint${externalDragActive ? " enk-ref-hint--drop" : ""}`}
                     >
@@ -3718,7 +3718,7 @@ export default function EnkiPromptEditor() {
                         : "Click or drag images here for reference"}
                     </span>
                   )}
-                  {referenceImages.length > 0 && (
+                  {referenceImages.length + refsPending.length > 0 && (
                     /* Cascading card-stack — each slot overlaps the
                        previous one by a fixed offset (see CSS for the
                        `--enk-ref-overlap` math). Hovering or focusing a
@@ -3806,6 +3806,11 @@ export default function EnkiPromptEditor() {
                           </div>
                         );
                       })}
+                      {refsPending.map((src) => (
+                        <div key={src} className="enk-ref-slot enki-ref-pending" aria-label="Reference image loading">
+                          <img src={src} alt="" draggable={false} />
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
