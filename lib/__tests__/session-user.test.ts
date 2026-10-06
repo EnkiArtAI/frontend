@@ -28,7 +28,7 @@ describe("resolveSessionUserWithBan", () => {
 
   it("still answers 'nobody' for an unknown or expired token (no error, no row)", async () => {
     const { client } = fakeSupabase({ auth_sessions: { data: null, error: null } });
-    await expect(resolveSessionUserWithBan(client, "tok")).resolves.toEqual({ userId: null, ban: null });
+    await expect(resolveSessionUserWithBan(client, "tok")).resolves.toEqual({ userId: null, ban: null, wallet: null });
   });
 
   it("resolves a uuid session and an empty ban list to the user", async () => {
@@ -45,12 +45,12 @@ describe("resolveSessionUserWithBan", () => {
 
   it("does not misread an ordinary query error as an outage", async () => {
     const { client } = fakeSupabase({ auth_sessions: { data: null, error: { message: "permission denied for table auth_sessions", code: "42501" } } });
-    await expect(resolveSessionUserWithBan(client, "tok")).resolves.toEqual({ userId: null, ban: null });
+    await expect(resolveSessionUserWithBan(client, "tok")).resolves.toEqual({ userId: null, ban: null, wallet: null });
   });
 
   it("never queries without a token", async () => {
     const { client, from } = fakeSupabase({});
-    await expect(resolveSessionUserWithBan(client, null)).resolves.toEqual({ userId: null, ban: null });
+    await expect(resolveSessionUserWithBan(client, null)).resolves.toEqual({ userId: null, ban: null, wallet: null });
     expect(from).not.toHaveBeenCalled();
   });
 });

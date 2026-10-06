@@ -8,6 +8,7 @@ import { isAddress, verifyMessage } from 'viem';
 import { PublicKey } from '@solana/web3.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { getSupabaseServerClient } from '@/lib/supabaseServer';
+import { resolveSessionUserWithBan } from '@/lib/session-user';
 import { getPromptById } from '@/lib/prompts-db';
 import { APP_NAME } from '@/shared/app-config';
 
@@ -174,19 +175,15 @@ export function createAuthHeaders(
 }
 
 async function resolveSessionToken(token: string): Promise<AuthenticatedUser | null> {
-  const supabase = getSupabaseServerClient();
-  const { data, error } = await supabase
-    .from('auth_sessions')
-    .select('wallet_address, expires_at')
-    .eq('token', token)
-    .gt('expires_at', new Date().toISOString())
-    .maybeSingle();
-
-  if (error || !data) return null;
+  // Ban-aware like every other resolver: a suspended account is nobody on the
+  // paid rail too. Reading the session row alone let a ban stop the feed but
+  // not a purchase or a generation (Kev, 2026-10-06).
+  const session = await resolveSessionUserWithBan(getSupabaseServerClient(), token).catch(() => null);
+  if (!session?.wallet || session.ban) return null;
 
   return {
-    walletAddress: data.wallet_address,
-    userId: data.wallet_address,
+    walletAddress: session.wallet,
+    userId: session.wallet,
   };
 }
 

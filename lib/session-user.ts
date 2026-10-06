@@ -12,14 +12,16 @@ export type ActiveBan = { id: string; reason: string | null; expiresAt: string |
  * auth_sessions.wallet_address is either the user's UUID (fresh email-login
  * bridge) or a wallet address that maps to a user via user_wallets.
  *
+ * `wallet` is that column as stored, for the paid rail, which is keyed by it.
+ *
  * Throws DbUnreachableError when the database host cannot be reached: a
  * dead database must never read as "not logged in" (Kev, 2026-09-05).
  */
 export async function resolveSessionUserWithBan(
   supabase: SupabaseClient,
   token: string | null,
-): Promise<{ userId: string | null; ban: ActiveBan | null }> {
-  if (!token) return { userId: null, ban: null };
+): Promise<{ userId: string | null; ban: ActiveBan | null; wallet: string | null }> {
+  if (!token) return { userId: null, ban: null, wallet: null };
   const { data: session, error: sessionErr } = await supabase
     .from("auth_sessions")
     .select("wallet_address")
@@ -27,7 +29,8 @@ export async function resolveSessionUserWithBan(
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();
   if (isDbUnreachable(sessionErr)) throw new DbUnreachableError();
-  if (!session) return { userId: null, ban: null };
+  if (!session) return { userId: null, ban: null, wallet: null };
+  const wallet = session.wallet_address as string;
   let userId: string | null = null;
   if (UUID.test(session.wallet_address)) {
     userId = session.wallet_address;
@@ -41,8 +44,8 @@ export async function resolveSessionUserWithBan(
     if (isDbUnreachable(rowErr)) throw new DbUnreachableError();
     userId = row?.user_id ?? null;
   }
-  if (!userId) return { userId: null, ban: null };
-  return { userId, ban: await activeBanFor(supabase, userId) };
+  if (!userId) return { userId: null, ban: null, wallet };
+  return { userId, ban: await activeBanFor(supabase, userId), wallet };
 }
 
 /**
