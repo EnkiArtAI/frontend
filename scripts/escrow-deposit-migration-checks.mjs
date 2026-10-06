@@ -47,6 +47,17 @@ export async function checkEscrowDeposits({ db, row, check, rejects, id, intent,
   const state = intentId => row('SELECT * FROM public.generation_escrow_deposits WHERE intent_id=$1',[intentId]);
   const intentState = intentId => row('SELECT * FROM public.generation_payment_intents WHERE id=$1',[intentId]);
 
+  await check('deposit preparation uses the Chain-capped RPC snapshot above the old limit', async () => {
+    const intentId = await intent(null,12_500_000,0);
+    const recovery = await reserve(intentId,4);
+    assert.equal(Number(recovery.total_unit_micro)*recovery.units,50_000_000);
+    const prepared = await prepare(args(intentId));
+    assert.equal(prepared.state,'prepared');
+    assert.equal(prepared.intent_id,intentId);
+    assert.equal(Number(recovery.treasury_unit_micro),12_500_000);
+    assert.equal(Number(recovery.recovery_unit_micro),0);
+  });
+
   await check('deposit rerun preserves service-only read and RPC privileges', async () => {
     for (const role of ['anon','authenticated']) {
       await db.exec(`SET ROLE ${role}`);

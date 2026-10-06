@@ -12,6 +12,14 @@ treasury and canonical escrow/vault addresses survive a server restart. Units,
 mint and the two per-image amounts remain in the immutable recovery snapshot
 from the first migration. Combine both records to reconstruct the SDK plan.
 
+The only deposit policy is the deployed `Config.max_deposit_micro` (50 USDC
+under the 2026-10-06 specification). Before reserving, read and verify that
+on-chain Config and pass its cap to `reserve_generation_escrow_recovery` as
+the required fourth argument. Neither migration supplies a fallback cap.
+Read `recovery_unit_micro` and both net legs from the returned RPC row; do
+not recompute Section 7 in TypeScript. Its one formula takes half the artist
+share, bounded by unreserved debt per unit, without an instalment ceiling.
+
 The database stores transaction bytes as `bytea`; PostgREST accepts their hex
 representation (`\x` followed by hex digits). Convert the SDK's canonical
 base64 with `Buffer.from(value, 'base64')` and persist its hex bytes. When reading,
@@ -50,9 +58,10 @@ performing the appropriate SDK/RPC checks:
    amounts from the recovery snapshot and the case-exact wallet. The wire is the
    SDK's unsigned legacy transaction with two empty signature slots. SQL checks
    the byte boundary, message equality and size; it does not decode instructions.
-2. Submission validates the buyer's Ed25519 signature and exact original message,
-   checks block-height lifetime, then acquires the transition. The winner calls
-   the SDK's `coSignEscrowDeposit`. The sponsor signs last. Only a successfully
+2. Submission checks the owned intent and block-height lifetime, then acquires
+   the single-winner transition. The winner calls `coSignEscrowDeposit`, which
+   compares the exact original message and verifies the buyer's Ed25519 signature
+   before signing as sponsor. Only a successfully
    persisted signed transaction may be simulated or sent.
 3. A retry reads the stored transaction first. It checks for a landed signature
    and resends only the same bytes while the blockhash remains valid. It never
@@ -72,9 +81,16 @@ performing the appropriate SDK/RPC checks:
 The database's `confirmed` parent status must be routed through escrow's funded
 marker and per-image claims in the application cutover. The legacy one-shot
 prepaid claimant is insufficient. Deploy these RPCs before that coordinated
-cutover; do not invoke them from the existing nonce handlers. Stop accepting new
+cutover; do not invoke any escrow RPC in production before per-image claims
+exist. Stop accepting new
 nonce payments and drain pending legacy recoveries before activating escrow,
 because the old ledger writer does not share the reservation lock.
+Delete the nonce rail in the coordinated cutover release, not in this stack.
+The missing-buyer-ATA refund rules remain unchanged and must appear in the Terms.
+
+Review/merge base is `feat/nsfw` (#116). Merge #117 before this migration (#120).
+The separate client chain is #118 then #119. Kev reviews and merges each PR;
+generation and x402 handlers are not changed by either chain.
 
 ## Verification and deployment
 
