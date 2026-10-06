@@ -6,7 +6,7 @@
 
 import BoostToggle from "@/components/generation/BoostToggle";
 import { type Quality } from "@/components/generation/QualitySelect";
-import { useModelCatalogue, resolveCatalogueEntry, FALLBACK_RATIOS, type CatalogueEntry } from "@/hooks/useModelLimits";
+import { useModelCatalogue, resolveCatalogueEntry, boostAt, FALLBACK_RATIOS, type CatalogueEntry } from "@/hooks/useModelLimits";
 import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
 import type { QuoteRequest } from "@/lib/generation-checkout";
 import { moveToken } from "@/lib/editor/move-token";
@@ -1369,7 +1369,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
             model: picked,
             resolution: tier,
             quality: qualityRef.current,
-            boost: boostRef.current,
+            boost: boostRef.current && boostAt(picked, tier),
             prompt: promptText,
             aspectRatio: ratio,
             workflow: buildExportJSON(),
@@ -1612,7 +1612,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     modelId: m.id,
     resolution: tier,
     quality: m.supportsQuality ? quality : undefined,
-    boost: boost && !!m.boostAvailable,
+    boost: boost && boostAt(m, tier),
   });
   /* Each model at the tier IT would run: the stored pick, clamped to that
      model's ceiling, exactly as finalizeOutput clamps it once picked. */
@@ -2438,7 +2438,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
           <span className="nc-gp-cost">{priceFor(imgCount)}</span>
         </div>
         <div className="nc-gp-gen" style={{ marginBottom: 6 }}>
-          <BoostToggle boost={boost} onChange={setBoost} available={!!selectedModel?.boostAvailable} />
+          <BoostToggle boost={boost} onChange={setBoost} available={!!selectedModel?.boostAvailable} sameHost={!!selectedModel && !boostAt(selectedModel, tierFor(selectedModel))} />
         </div>
         <div className="nc-gp-gen">
           <button className="nc-gp-btn" onClick={() => runGenerate(true)} title="Autofill variables & generate"><Icon name="wand" size={12} stroke={2} /> Autofill</button>

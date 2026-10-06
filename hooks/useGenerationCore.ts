@@ -25,7 +25,7 @@
  */
 import { useMemo } from "react";
 import {
-  useModelCatalogue, resolveCatalogueEntry,
+  useModelCatalogue, resolveCatalogueEntry, boostAt,
   FALLBACK_RATIOS, type CatalogueEntry,
 } from "@/hooks/useModelLimits";
 import { tiersUpTo, type ResolutionTier } from "@/lib/generation/resolution";
@@ -48,6 +48,8 @@ export type GenerationCore = {
   supportsQuality: boolean;
   /** Boost is a choice only where a faster host actually exists. */
   boostAvailable: boolean;
+  /** ...and at this size that host is not already the regular one. */
+  boostAt: (tier: string) => boolean;
   /** Nothing is charged (free model, or the free route). */
   free: boolean;
   /** Keep a stored value inside the legal list (pickers call this in an
@@ -89,6 +91,7 @@ export function useGenerationCore(
       tiers,
       supportsQuality: entry?.supportsQuality ?? false,
       boostAvailable: entry?.boostAvailable ?? false,
+      boostAt: (tier) => boostAt(entry, tier),
       free,
       clampRatio: (v: string) => (ratios.includes(v) ? v : ratios[0]),
       clampTier: (v: string) => {

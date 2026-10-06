@@ -428,9 +428,9 @@ export default function PromptGeneratorView({
     /* boost + quality are part of the key: toggling either MUST refetch, or
        the shown price is the old route's (Kev, 2026-08-23: boost = real cost
        everywhere). */
-    queryKey: ["generation-quote", promptId, core.entry?.id, quoteResolution, core.boostAvailable && boost, quality],
+    queryKey: ["generation-quote", promptId, core.entry?.id, quoteResolution, core.boostAt(quoteResolution) && boost, quality],
     queryFn: () =>
-      fetchGenerationQuote({ promptId: promptId!, modelId: core.entry!.id, resolution: quoteResolution, boost: core.boostAvailable && boost, quality }),
+      fetchGenerationQuote({ promptId: promptId!, modelId: core.entry!.id, resolution: quoteResolution, boost: core.boostAt(quoteResolution) && boost, quality }),
     enabled: !noCharge && !!promptId && !loading && !!core.entry,
     // Quotes expire server-side after 5 minutes; refresh a little sooner.
     refetchInterval: 4 * 60 * 1000,
@@ -441,7 +441,7 @@ export default function PromptGeneratorView({
      without the fee. */
   const tierQuotes = useServerQuotes(
     !noCharge && promptId && core.entry && !loading
-      ? resolutions.map((t) => ({ promptId, modelId: core.entry!.id, resolution: t, boost: core.boostAvailable && boost, quality }))
+      ? resolutions.map((t) => ({ promptId, modelId: core.entry!.id, resolution: t, boost: core.boostAt(t) && boost, quality }))
       : [],
   );
   const showcaseImages = prompt?.showcaseImages?.length ? prompt.showcaseImages : propShowcaseImages;
@@ -906,7 +906,7 @@ export default function PromptGeneratorView({
           model: core.entry,
           resolution: quoteResolution,
           quality,
-          boost: core.boostAvailable && boost,
+          boost: core.boostAt(quoteResolution) && boost,
           prompt: final.trim(),
           promptId: promptId || undefined,
           // Fills a paid prompt's own text on the server, which this client never sees.
@@ -1717,7 +1717,7 @@ export default function PromptGeneratorView({
               could not happen, on a button labelled "Generate free" (Kev,
               2026-08-19). A control that changes nothing is the lie this
               codebase keeps relearning. */}
-          {!guest && !noCharge && <BoostToggle boost={boost} onChange={setBoost} available={core.boostAvailable} disabled={generating} />}
+          {!guest && !noCharge && <BoostToggle boost={boost} onChange={setBoost} available={core.boostAvailable} sameHost={!core.boostAt(quoteResolution)} disabled={generating} />}
           {/* publicPromptText is the only prompt text this surface may hold
               for a paid prompt; sliced because the route's zod max REJECTS an
               over-long context rather than clipping it. */}
