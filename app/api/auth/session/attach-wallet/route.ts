@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { activeBanFor } from "@/lib/session-user";
 
 const bodySchema = z.object({
   solanaAddress: z.string().min(32).max(64),
@@ -63,6 +64,11 @@ export async function POST(req: NextRequest) {
     userId = data?.user_id ?? null;
   }
   if (!userId) return NextResponse.json({ error: "No user for session" }, { status: 404 });
+  // A suspended account maps no new wallets. The ones it already holds stay
+  // reachable on /banned, through wallet/jwt, which stays ban tolerant.
+  if (await activeBanFor(supabase, userId)) {
+    return NextResponse.json({ error: "This account is suspended.", banned: true }, { status: 403 });
+  }
 
   if (session.wallet_address === sol) {
     return NextResponse.json({ attached: sol, evm });

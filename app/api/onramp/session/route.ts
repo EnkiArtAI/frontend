@@ -15,10 +15,10 @@ import { createHmac } from "crypto";
 import { PublicKey } from "@solana/web3.js";
 import { generateJwt } from "@coinbase/cdp-sdk/auth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { resolveSessionUserWithBan } from "@/lib/session-user";
 
 const HOST = "api.developer.coinbase.com";
 const PATH = "/onramp/v1/token";
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Accept both env spellings — MoonPay's dashboard calls the pk_ key
 // "publishable key", their widget docs call it "API key".
@@ -77,30 +77,20 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = getSupabaseServerClient();
-  const { data: session } = await supabase
-    .from("auth_sessions")
-    .select("wallet_address")
-    .eq("token", token)
-    .gt("expires_at", new Date().toISOString())
-    .maybeSingle();
-  if (!session) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  const { userId, ban, wallet } = await resolveSessionUserWithBan(supabase, token);
+  if (!wallet) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  // A ban closes the ramp. The account's funds stay reachable on /banned
+  // (balance, send, key export), which is the door a ban never shuts.
+  if (ban) {
+    return NextResponse.json({ error: "This account is suspended. Your funds stay reachable on the suspension page.", banned: true }, { status: 403 });
+  }
 
   // The requested address must be the session wallet or one of the user's
   // wallets. Compare case-insensitively: the DB stores addresses LOWERCASED
   // while the client sends the real base58 casing — a strict compare 403'd
   // every legitimate request. (Coinbase below always gets the client's
   // real-case address; Solana addresses are case-sensitive.)
-  if (session.wallet_address !== address.toLowerCase()) {
-    let userId: string | null = UUID.test(session.wallet_address) ? session.wallet_address : null;
-    if (!userId) {
-      const { data: row } = await supabase
-        .from("user_wallets")
-        .select("user_id")
-        .eq("address", session.wallet_address)
-        .is("removed_at", null)
-        .maybeSingle();
-      userId = row?.user_id ?? null;
-    }
+  if (wallet !== address.toLowerCase()) {
     const { data: owned } = userId
       ? await supabase
           .from("user_wallets")
@@ -148,7 +138,7 @@ export async function POST(req: NextRequest) {
     const common =
       `sessionToken=${encodeURIComponent(data.token)}` +
       `&defaultAsset=USDC&defaultNetwork=solana&fiatCurrency=EUR` +
-      `&partnerUserRef=${encodeURIComponent(session.wallet_address)}` +
+      `&partnerUserRef=${encodeURIComponent(wallet)}` +
       `&redirectUrl=${encodeURIComponent(`${origin}/settings?tab=payment`)}`;
     const url =
       side === "buy"
