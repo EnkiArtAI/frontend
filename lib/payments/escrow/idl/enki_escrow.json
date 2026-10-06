@@ -1,0 +1,1068 @@
+{
+  "address": "hNNT7mTmthTVvnw4NYo6jYoBTDazRgweWTBHBmwgcak",
+  "metadata": {
+    "name": "enki_escrow",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Per-image USDC escrow for Enki paid generation intents"
+  },
+  "instructions": [
+    {
+      "name": "deposit",
+      "discriminator": [
+        242,
+        35,
+        198,
+        137,
+        82,
+        225,
+        242,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "buyer",
+          "signer": true
+        },
+        {
+          "name": "rent_payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "mint",
+          "address": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+        },
+        {
+          "name": "buyer_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "buyer"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "buyer"
+              },
+              {
+                "kind": "arg",
+                "path": "intent_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "escrow"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "intent_id",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        },
+        {
+          "name": "units",
+          "type": "u8"
+        },
+        {
+          "name": "recipient_owners",
+          "type": {
+            "array": [
+              "pubkey",
+              2
+            ]
+          }
+        },
+        {
+          "name": "unit_amounts",
+          "type": {
+            "array": [
+              "u64",
+              2
+            ]
+          }
+        },
+        {
+          "name": "expires_at",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "init_config",
+      "discriminator": [
+        23,
+        235,
+        115,
+        232,
+        168,
+        96,
+        1,
+        231
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "address": "hNNT7mTmthTVvnw4NYo6jYoBTDazRgweWTBHBmwgcak"
+        },
+        {
+          "name": "program_data"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "ConfigArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "pause",
+      "discriminator": [
+        211,
+        22,
+        221,
+        251,
+        74,
+        121,
+        193,
+        47
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "reclaim",
+      "discriminator": [
+        44,
+        177,
+        236,
+        249,
+        145,
+        109,
+        163,
+        186
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "rent_payer",
+          "writable": true
+        },
+        {
+          "name": "buyer"
+        },
+        {
+          "name": "escrow",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "escrow"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "address": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+          "relations": [
+            "escrow"
+          ]
+        },
+        {
+          "name": "buyer_ata",
+          "writable": true
+        },
+        {
+          "name": "treasury_ata",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "revoke_operator",
+      "discriminator": [
+        185,
+        25,
+        87,
+        77,
+        88,
+        8,
+        30,
+        175
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "settle",
+      "discriminator": [
+        175,
+        42,
+        185,
+        87,
+        144,
+        131,
+        102,
+        212
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "operator",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "escrow",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "escrow"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "address": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+          "relations": [
+            "escrow"
+          ]
+        },
+        {
+          "name": "treasury_ata",
+          "writable": true
+        },
+        {
+          "name": "artist_ata",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "k",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "update_config",
+      "discriminator": [
+        29,
+        158,
+        252,
+        191,
+        10,
+        83,
+        219,
+        99
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "ConfigArgs"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Config",
+      "discriminator": [
+        155,
+        12,
+        170,
+        224,
+        30,
+        250,
+        204,
+        130
+      ]
+    },
+    {
+      "name": "Escrow",
+      "discriminator": [
+        31,
+        213,
+        123,
+        187,
+        186,
+        22,
+        218,
+        155
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "Deposited",
+      "discriminator": [
+        111,
+        141,
+        26,
+        45,
+        161,
+        35,
+        100,
+        57
+      ]
+    },
+    {
+      "name": "Reclaimed",
+      "discriminator": [
+        230,
+        25,
+        32,
+        135,
+        40,
+        167,
+        137,
+        130
+      ]
+    },
+    {
+      "name": "Settled",
+      "discriminator": [
+        232,
+        210,
+        40,
+        17,
+        142,
+        124,
+        145,
+        238
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Paused",
+      "msg": "Deposits are paused."
+    },
+    {
+      "code": 6001,
+      "name": "Unauthorized",
+      "msg": "This signer is not authorized."
+    },
+    {
+      "code": 6002,
+      "name": "WrongProgramData",
+      "msg": "The upgrade authority does not belong to this program."
+    },
+    {
+      "code": 6003,
+      "name": "InvalidRole",
+      "msg": "An admin, guardian or treasury address is missing."
+    },
+    {
+      "code": 6004,
+      "name": "DepositCap",
+      "msg": "The deposit exceeds the configured cap."
+    },
+    {
+      "code": 6005,
+      "name": "InvalidTtl",
+      "msg": "The expiry is outside the allowed lifetime."
+    },
+    {
+      "code": 6006,
+      "name": "RefundFeeCap",
+      "msg": "The ATA recovery fee exceeds one USDC."
+    },
+    {
+      "code": 6007,
+      "name": "WrongMint",
+      "msg": "Only the configured cluster's classic USDC mint is accepted."
+    },
+    {
+      "code": 6008,
+      "name": "WrongTreasury",
+      "msg": "The treasury recipient does not match the configuration."
+    },
+    {
+      "code": 6009,
+      "name": "InvalidRecipient",
+      "msg": "The artist recipient does not match its amount."
+    },
+    {
+      "code": 6010,
+      "name": "InvalidUnits",
+      "msg": "A deposit must contain between one and 24 units."
+    },
+    {
+      "code": 6011,
+      "name": "ZeroAmount",
+      "msg": "The per-unit amount must be positive."
+    },
+    {
+      "code": 6012,
+      "name": "Overflow",
+      "msg": "The amount or expiry calculation overflowed."
+    },
+    {
+      "code": 6013,
+      "name": "DelegatedSource",
+      "msg": "The buyer's deposit account must have no delegate."
+    },
+    {
+      "code": 6014,
+      "name": "AlreadySettled",
+      "msg": "The escrow has already been settled."
+    },
+    {
+      "code": 6015,
+      "name": "Expired",
+      "msg": "The escrow has expired."
+    },
+    {
+      "code": 6016,
+      "name": "TooManyDeliveredUnits",
+      "msg": "Delivered units exceed the funded units."
+    },
+    {
+      "code": 6017,
+      "name": "InsufficientVault",
+      "msg": "The vault cannot cover this settlement."
+    },
+    {
+      "code": 6018,
+      "name": "NonCanonicalAta",
+      "msg": "The token account is not the canonical associated token account."
+    },
+    {
+      "code": 6019,
+      "name": "WrongTokenOwner",
+      "msg": "The token account has the wrong owner."
+    },
+    {
+      "code": 6020,
+      "name": "WrongTokenProgram",
+      "msg": "Only the classic SPL Token program is accepted."
+    },
+    {
+      "code": 6021,
+      "name": "InvalidTokenAccount",
+      "msg": "The token account is invalid."
+    },
+    {
+      "code": 6022,
+      "name": "NotReclaimable",
+      "msg": "A funded escrow cannot be reclaimed before expiry."
+    },
+    {
+      "code": 6023,
+      "name": "FrozenBuyerAta",
+      "msg": "The buyer's token account is frozen."
+    },
+    {
+      "code": 6024,
+      "name": "RentPayerMustSign",
+      "msg": "The stored rent payer must sign to recover a missing buyer account."
+    },
+    {
+      "code": 6025,
+      "name": "WrongRentPayer",
+      "msg": "Rent must return to the original rent payer."
+    }
+  ],
+  "types": [
+    {
+      "name": "Config",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "guardian",
+            "type": "pubkey"
+          },
+          {
+            "name": "operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury_owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          },
+          {
+            "name": "max_deposit_micro",
+            "type": "u64"
+          },
+          {
+            "name": "min_ttl_s",
+            "type": "i64"
+          },
+          {
+            "name": "max_ttl_s",
+            "type": "i64"
+          },
+          {
+            "name": "refund_ata_fee_micro",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ConfigArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "guardian",
+            "type": "pubkey"
+          },
+          {
+            "name": "operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury_owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          },
+          {
+            "name": "max_deposit_micro",
+            "type": "u64"
+          },
+          {
+            "name": "min_ttl_s",
+            "type": "i64"
+          },
+          {
+            "name": "max_ttl_s",
+            "type": "i64"
+          },
+          {
+            "name": "refund_ata_fee_micro",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Deposited",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "escrow",
+            "type": "pubkey"
+          },
+          {
+            "name": "buyer",
+            "type": "pubkey"
+          },
+          {
+            "name": "intent_id",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "units",
+            "type": "u8"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "expires_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Escrow",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "state",
+            "type": {
+              "defined": {
+                "name": "EscrowState"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "vault_bump",
+            "type": "u8"
+          },
+          {
+            "name": "intent_id",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "buyer",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "rent_payer",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipient_count",
+            "type": "u8"
+          },
+          {
+            "name": "recipient_owners",
+            "type": {
+              "array": [
+                "pubkey",
+                2
+              ]
+            }
+          },
+          {
+            "name": "unit_amounts",
+            "type": {
+              "array": [
+                "u64",
+                2
+              ]
+            }
+          },
+          {
+            "name": "units",
+            "type": "u8"
+          },
+          {
+            "name": "settled_units",
+            "type": "u8"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "expires_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EscrowState",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Funded"
+          },
+          {
+            "name": "Settled"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Reclaimed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "escrow",
+            "type": "pubkey"
+          },
+          {
+            "name": "refund",
+            "type": "u64"
+          },
+          {
+            "name": "ata_fee",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Settled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "escrow",
+            "type": "pubkey"
+          },
+          {
+            "name": "k",
+            "type": "u8"
+          },
+          {
+            "name": "paid",
+            "type": {
+              "array": [
+                "u64",
+                2
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "sourceRepository": "EnkiArtAI/enki-escrow",
+  "sourceCommit": "9645f491fa35822f0dafd9d5ae2c60bc4e871a8f",
+  "pullRequestHead": "09a0babb7ada6a3400f3e71dd81a85a7f7250620",
+  "sourceTree": "c32c9d5218761a089b83b7c0b425ccced88fca3b",
+  "sourceRun": "https://github.com/EnkiArtAI/enki-escrow/actions/runs/37430040337",
+  "artifactName": "enki-escrow-idl",
+  "idlSha256": "bea4b0636369b8bad495c2351cdb0d8f93527d429d8a07d6bd6a686a500a3e64"
+}

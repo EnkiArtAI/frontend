@@ -17,6 +17,16 @@ const eslintConfig = defineConfig([
     // baseline away.
     ".design/**",
   ]),
+  {
+    files: ["lib/payments/escrow/generated/instructions/*.ts"],
+    rules: {
+      // Codama's discriminator-only instructions have no payload fields.
+      // Keep those three generated input types intact; lint all other types.
+      "@typescript-eslint/no-empty-object-type": ["error", {
+        allowWithName: "^(Pause|Reclaim|RevokeOperator)InstructionDataInput$",
+      }],
+    },
+  },
   // CDP hooks only work inside CDPHooksProvider, which mounts lazily and only
   // for signed-in users. Called anywhere else they throw at runtime and take
   // the whole page down (this cost us the editor once). TypeScript cannot catch
