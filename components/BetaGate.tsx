@@ -13,7 +13,7 @@
 import { CDP_ADDRESS_EVENT } from "@/lib/cdp-bridge";
 import { createContext, useContext, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
-import { SHOW_ADULT_KEY, pillSurvives, sessionAuthHeaders, setPillActive } from "@/lib/session-headers";
+import { SHOW_ADULT_KEY, isSessionStorageKey, pillSurvives, sessionAuthHeaders, setPillActive } from "@/lib/session-headers";
 import { useQueryClient } from "@tanstack/react-query";
 import AccessGate from "@/components/enki-shell/AccessGate";
 
@@ -85,16 +85,21 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
   };
   const [tick, setTick] = useState(0);
 
-  // Re-verify when a login/logout happens in this or another tab.
+  /* Re-verify when a login/logout happens in this or another tab. Only a
+     session key counts as one: every editor autosave used to re-run this in
+     all other tabs. And the page stays mounted while it re-checks: blanking
+     it to "checking" unmounted whatever was open, an unsaved Editor 2 graph
+     included (Kev, 2026-10-06). */
   useEffect(() => {
-    const rerun = () => { setAccess("checking"); setTick((t) => t + 1); };
+    const rerun = () => setTick((t) => t + 1);
+    const onStorage = (e: StorageEvent) => { if (isSessionStorageKey(e.key)) rerun(); };
     window.addEventListener("enki-email-auth-changed", rerun);
     window.addEventListener(CDP_ADDRESS_EVENT, rerun);
-    window.addEventListener("storage", rerun);
+    window.addEventListener("storage", onStorage);
     return () => {
       window.removeEventListener("enki-email-auth-changed", rerun);
       window.removeEventListener(CDP_ADDRESS_EVENT, rerun);
-      window.removeEventListener("storage", rerun);
+      window.removeEventListener("storage", onStorage);
     };
   }, []);
 
