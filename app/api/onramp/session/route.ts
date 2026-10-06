@@ -17,6 +17,7 @@ import { generateJwt } from "@coinbase/cdp-sdk/auth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserWithBan } from "@/lib/session-user";
 import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
+import { solanaChainKey } from "@/lib/payments/solana";
 
 const HOST = "api.developer.coinbase.com";
 const PATH = "/onramp/v1/token";
@@ -127,6 +128,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ url: moonpayUrl(side as "buy" | "sell", address, redirect) });
   }
 
+  // Coinbase sells mainnet USDC only. A deployment that pays on devnet opens
+  // Coinbase's sandbox instead: the whole buy flow, and no card is charged.
+  // Selling has no sandbox, so it stays a mainnet feature.
+  const sandbox = solanaChainKey() !== "solana";
+  if (sandbox && side === "sell") {
+    return NextResponse.json({ error: "Selling has no test mode. It works once payments run on mainnet." }, { status: 501 });
+  }
+
   const apiKeyId = process.env.CDP_API_KEY_ID;
   const apiKeySecret = process.env.CDP_SECRET_KEY;
   if (!apiKeyId || !apiKeySecret) {
@@ -154,9 +163,11 @@ export async function POST(req: NextRequest) {
       `&partnerUserRef=${encodeURIComponent(wallet)}` +
       `&redirectUrl=${encodeURIComponent(`${origin}/settings?tab=payment`)}`;
     const url =
-      side === "buy"
-        ? `https://pay.coinbase.com/buy/select-asset?${common}&presetFiatAmount=5`
-        : `https://pay.coinbase.com/v3/sell/input?${common}`;
+      side === "sell"
+        ? `https://pay.coinbase.com/v3/sell/input?${common}`
+        : sandbox
+          ? `https://pay-sandbox.coinbase.com/?${common}&presetFiatAmount=5`
+          : `https://pay.coinbase.com/buy/select-asset?${common}&presetFiatAmount=5`;
     return NextResponse.json({ url });
   } catch (e) {
     console.error("[onramp] error", e);
