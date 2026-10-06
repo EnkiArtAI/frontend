@@ -55,6 +55,47 @@ async function putBlob(name: string, buf: Buffer, contentType: string): Promise<
   }
 }
 
+/**
+ * Raw bytes that still fit inline: a function's response is capped at 4.5 MB
+ * and base64 adds a third. A 2K PNG is ~7 MB, so only small renders qualify.
+ */
+export const INLINE_MAX_BYTES = 3 * 1024 * 1024;
+
+/**
+ * When a paid route must have its image stored by: maxDuration (300 s) minus
+ * the seconds the capture and the answer need. Never less than 10 s from now,
+ * so a late render still gets a real attempt.
+ */
+export function storeDeadline(startedAt: number): number {
+  return Math.max(startedAt + 290_000, Date.now() + 10_000);
+}
+
+/**
+ * Put one object, retrying until it lands or `deadline` (epoch ms) passes.
+ *
+ * An image that was made is delivered (Kev, 2026-10-06: "bild upload darf
+ * nicht failen. ist ein bild erstellt worden, so muss das geliefert werden").
+ * The SDK retries outages itself for up to ~17 minutes, which the platform
+ * cuts off at 300 s mid-request; the abort signal hands control back first,
+ * and the loop covers what the SDK gives up on at once, rate limits among
+ * them. Overwrite is allowed because a lost response may hide a put that
+ * landed, and the retry carries the same bytes. Null without a token.
+ */
+export async function putDurably(name: string, buf: Buffer, contentType: string, deadline: number): Promise<string | null> {
+  if (!process.env.BLOB_READ_WRITE_TOKEN?.trim()) return null;
+  const { put } = await import("@vercel/blob");
+  const abortSignal = AbortSignal.timeout(Math.max(0, deadline - Date.now()));
+  for (let wait = 1_000; ; wait = Math.min(wait * 2, 8_000)) {
+    try {
+      return (await put(name, buf, { access: "public", contentType, addRandomSuffix: false, allowOverwrite: true, abortSignal })).url;
+    } catch (e) {
+      console.warn("[derivative-store] upload failed:", e instanceof Error ? e.message : e);
+      if (abortSignal.aborted || Date.now() + wait >= deadline) return null;
+    }
+    await new Promise((r) => setTimeout(r, wait));
+  }
+}
+
 /** A file already in our Blob store stays where it is, so its stored URL is the one the client was given. */
 function inOurBlob(url: string): boolean {
   try {
@@ -64,7 +105,8 @@ function inOurBlob(url: string): boolean {
   }
 }
 
-export async function storeGeneratedImage(providerUrl: string, userId: string): Promise<StoredImage> {
+/** With `deadline`, the original is stored durably (putDurably); without, one attempt as before. */
+export async function storeGeneratedImage(providerUrl: string, userId: string, deadline?: number): Promise<StoredImage> {
   const passthrough: StoredImage = { imageUrl: providerUrl, previewUrl: null, thumbnailUrl: null };
   if (!process.env.BLOB_READ_WRITE_TOKEN?.trim()) return passthrough;
 
@@ -76,7 +118,11 @@ export async function storeGeneratedImage(providerUrl: string, userId: string): 
     const base = `generations/${userId}/${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
     const [original, derivatives] = await Promise.all([
-      inOurBlob(providerUrl) ? Promise.resolve(providerUrl) : putBlob(`${base}.${ext}`, fetched.buf, fetched.contentType),
+      inOurBlob(providerUrl)
+        ? Promise.resolve(providerUrl)
+        : deadline
+          ? putDurably(`${base}.${ext}`, fetched.buf, fetched.contentType, deadline)
+          : putBlob(`${base}.${ext}`, fetched.buf, fetched.contentType),
       tryMakeDerivatives(fetched.buf),
     ]);
 

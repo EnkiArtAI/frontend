@@ -59,7 +59,7 @@ import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { resolveModelByFamily, chooseRoute } from "@/lib/generation/models";
 import { clampTier } from "@/lib/generation/resolution";
 import { reportSuccess, reportFailure } from "@/lib/generation/provider-health";
-import { storeGeneratedImage } from "@/lib/generation/derivative-store";
+import { INLINE_MAX_BYTES, storeDeadline, storeGeneratedImage } from "@/lib/generation/derivative-store";
 import { generateImagesWithWaveSpeed } from "@/backend/services/wavespeed-image-generation";
 import { generateImagesWithOpenAI } from "@/backend/services/openai-image-generation";
 import { generateImagesWithGemini } from "@/backend/services/gemini-image-generation";
@@ -230,6 +230,8 @@ function rejectPayment(reqs: Priced, error: string) {
 }
 
 async function settleAndGenerate(input: Input, paymentHeader: string, request: NextRequest): Promise<NextResponse> {
+  // The clock maxDuration runs on; the image must be stored inside it.
+  const startedAt = Date.now();
   // Warnings and hits here count on the address alone: this rail never reads
   // an account's ban, so one filed on an account would stop nobody.
   const asker = byAddress(request);
@@ -502,7 +504,25 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   }
 
   const dataUrl = `data:image/png;base64,${buffer.toString("base64")}`;
-  const stored = await storeGeneratedImage(dataUrl, "x402-agent");
+  const stored = await storeGeneratedImage(dataUrl, "x402-agent", storeDeadline(startedAt));
+  // Not stored by the deadline: inline only while it fits the response cap,
+  // or the agent that paid would get HTTP 413 instead of its image.
+  if (stored.imageUrl === dataUrl && buffer.length > INLINE_MAX_BYTES) {
+    after(recordGenerationFailure(supabase, {
+      request, surface: "x402-generate", modelId: model.id, resolution: input.resolution, quality: effQuality, boost: false,
+      aspectRatio: ratio, referenceImageCount: 0,
+      prompt: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
+      error: "image could not be stored", txSignature: signature,
+    }));
+    return NextResponse.json(
+      {
+        error: "Your image was made but could not be delivered after your payment settled.",
+        transaction: signature,
+        note: "Keep this transaction signature — support will make it right.",
+      },
+      { status: 502 },
+    );
+  }
 
   return NextResponse.json(
     {

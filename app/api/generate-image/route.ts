@@ -28,6 +28,7 @@ import { reportSuccess, reportFailure } from "@/lib/generation/provider-health";
 import { childSafetyScore, recordModerationEvent } from "@/lib/moderation-enforcement";
 import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
 import { storeReferenceImages } from "@/lib/generation/reference-images";
+import { INLINE_MAX_BYTES, putDurably, storeDeadline } from "@/lib/generation/derivative-store";
 import { acquireSlot, releaseSlot } from "@/lib/generation/concurrency";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
 import {
@@ -43,11 +44,13 @@ import {
 // slow day, and the failure lands AFTER the buyer has authorised payment.
 export const maxDuration = 300;
 
-// Four budgets that MUST stay in this order, or a generation that is still
+// Five budgets that MUST stay in this order, or a generation that is still
 // running gets treated as dead by something downstream:
 //
 //   285s  this timeout      give up in-process, with time left to upload,
 //                           record and answer inside the platform budget
+//   290s  storeDeadline     (lib/generation/derivative-store.ts) the stored
+//                           image must have landed; capture and answer follow
 //   300s  maxDuration       the platform kills the function here
 //   330s  SLOT_TTL_MS       (lib/generation/concurrency.ts) a killed function
 //                           must not free its slot before it is truly gone
@@ -110,6 +113,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
 }
 
 export async function POST(request: NextRequest) {
+  // The clock maxDuration runs on; the image must be stored inside it.
+  const startedAt = Date.now();
   // JSON only, before anything runs, like the free route: a page elsewhere
   // must not post here in a visitor's name as a form or plain text, which
   // browsers send unasked.
@@ -714,39 +719,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(SILENT_FAILURE, { status: 500 });
     }
 
-    // Upload image buffer to Vercel Blob storage
-    let imageUrl: string;
-    try {
-      const { put } = await import('@vercel/blob');
-      const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
-      
-      if (!blobToken) {
-        console.warn('⚠️ BLOB_READ_WRITE_TOKEN not set, using data URL fallback');
-        // Fallback to data URL if blob storage not configured
-        const base64 = generatedImageBuffer.toString('base64');
-        imageUrl = `data:image/png;base64,${base64}`;
-      } else {
-        // Create unique filename
-        const timestamp = Date.now();
-        const randomSuffix = Math.random().toString(36).substring(2, 9);
-        const filename = `generations/${timestamp}_${randomSuffix}.png`;
-
-        // Upload to Vercel Blob
-        const { url } = await put(filename, generatedImageBuffer, {
-          access: 'public',
-          contentType: 'image/png',
-          addRandomSuffix: false,
-        });
-
-        imageUrl = url;
-        console.log(`✅ Image uploaded to blob storage: ${url}`);
-      }
-    } catch (uploadError: any) {
-      console.error('❌ Failed to upload image to blob storage:', uploadError);
-      // Fallback to data URL if upload fails
-      const base64 = generatedImageBuffer.toString('base64');
-      imageUrl = `data:image/png;base64,${base64}`;
-      console.warn('⚠️ Using data URL fallback due to upload error');
+    // Stored until it lands (putDurably). Inline only when no store answers by
+    // the deadline AND the bytes fit the response cap: a bigger one used to go
+    // inline anyway, was captured, and reached the buyer as HTTP 413 with no
+    // image. When neither works, nothing is charged.
+    const imageUrl =
+      (await putDurably(
+        `generations/${Date.now()}_${Math.random().toString(36).substring(2, 9)}.png`,
+        generatedImageBuffer,
+        "image/png",
+        storeDeadline(startedAt),
+      )) ??
+      (generatedImageBuffer.length <= INLINE_MAX_BYTES
+        ? `data:image/png;base64,${generatedImageBuffer.toString("base64")}`
+        : null);
+    if (!imageUrl) {
+      if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: "image could not be stored" }));
+      await releaseIfConsumed();
+      await releaseHeldSlot();
+      return NextResponse.json(
+        { error: "Your image was made but could not be delivered. Nothing was charged. Please try again." },
+        { status: 503 },
+      );
     }
 
     // The image exists and is stored. NOW take the money.

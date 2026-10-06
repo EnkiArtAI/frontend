@@ -89,16 +89,17 @@ describe("every failure point records it", () => {
   const AGENT = readSource(join(ROOT, "app", "api", "x402", "generate", "route.ts"));
   const count = (src: string) => (src.match(/after\(recordGenerationFailure\(/g) ?? []).length;
 
-  it("the human rail at the provider failure, the empty result and the catch-all", () => {
-    expect(count(HUMAN)).toBe(3);
+  it("the human rail at the provider failure, the empty result, the unstored image and the catch-all", () => {
+    expect(count(HUMAN)).toBe(4);
   });
 
   it("the free generator at the provider failure and the catch-all", () => {
     expect(count(FREE)).toBe(2);
   });
 
-  it("the agent rail when a paid generation fails, and when its payment's confirmation times out, with the signature", () => {
-    expect(count(AGENT)).toBe(2);
+  it("the agent rail when a paid generation fails, when its image cannot be stored, and when its payment's confirmation times out, with the signature", () => {
+    expect(count(AGENT)).toBe(3);
+    expect(AGENT).toMatch(/error: "image could not be stored", txSignature: signature,/);
     expect(AGENT).toMatch(/error: result\.error \|\| "generation failed", txSignature: signature,/);
     expect(AGENT).toMatch(/if \(timedOut\) \{\n(\s+\/\/[^\n]*\n)*\s+after\(recordGenerationFailure\([\s\S]{0,400}error: "Payment confirmation timed out", txSignature: signature,/);
   });
