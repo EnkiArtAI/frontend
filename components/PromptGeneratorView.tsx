@@ -954,42 +954,8 @@ export default function PromptGeneratorView({
         window.dispatchEvent(new Event("gallery-refresh"));
       }
 
-      /* 4. Persist to Supabase: POST record, then PATCH image_urls */
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (userKey && isUuid.test(userKey)) {
-        try {
-          const postRes = await fetch("/api/generations", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: userKey,
-              promptId,
-              encryptedPrompt: final,
-              variableValues: Object.entries(vars).map(([k, v]) => ({ variableName: k, value: v })),
-              settings: { aspectRatio: aspect, resolution, referenceImageCount: refs.length },
-              boost,
-            }),
-          });
-          if (postRes.ok) {
-            const postData = await postRes.json();
-            const genId = postData?.data?.generationId ?? postData?.generationId;
-            if (genId) {
-              /* PATCH image_urls + mark completed */
-              await fetch(`/api/generations/${genId}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
-                body: JSON.stringify({
-                  status: "completed",
-                  imageUrls: [data.imageUrl],
-                  completedAt: new Date().toISOString(),
-                }),
-              });
-            }
-          }
-        } catch { /* non-critical */ }
-        /* Refetch history panel */
-        queryClient.invalidateQueries({ queryKey: genQueryKey });
-      }
+      /* 4. The generate route records the image itself; refetch the history panel. */
+      if (userKey) queryClient.invalidateQueries({ queryKey: genQueryKey });
 
       toast({ title: "Image Generated!", description: `Generated using ${data.provider || "AI"}` });
     } catch (e: any) {

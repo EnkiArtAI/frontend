@@ -130,13 +130,8 @@ export default function MyGalleryPage() {
     };
   }, [userKey, refreshTrigger]);
 
-  const handleClear = async () => {
+  const handleClear = () => {
     if (!userKey) return;
-    try {
-      await fetch(`/api/generations?userKey=${encodeURIComponent(userKey)}`, { method: "DELETE" });
-    } catch {
-      // ignore
-    }
     clearCreations(userKey);
   };
 

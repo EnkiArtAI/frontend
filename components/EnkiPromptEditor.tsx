@@ -5,7 +5,6 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
 import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { PAYMENT_CHAINS } from "@/shared/payment-config";
@@ -2576,13 +2575,6 @@ export default function EnkiPromptEditor() {
       setVersions(prev => prev.map(v => v.id === versionId ? { ...v, status: "complete", imageUrl: displayUrl, sourceUrl: data.imageUrl } : v));
       const userKey = getUserKeyFromAccount(account);
       if (userKey && data?.imageUrl) {
-        try {
-          await apiRequest("POST", "/api/generations", {
-            userKey, prompt: previewText, imageUrl: String(data.imageUrl),
-            provider: typeof data.provider === "string" ? data.provider : "unknown",
-            meta: { usedGemini: Boolean(data.usedGemini ?? false) },
-          });
-        } catch { /* ignore */ }
         try {
           addCreation(userKey, {
             id: creationId(),
