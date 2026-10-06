@@ -38,7 +38,8 @@ import { checkAgentPromptInputs } from "@/lib/generation/agent-prompt-inputs";
 import {
   getModelCostMicro, computeGenerationSplit, UnknownModelError,
 } from "@/lib/payments/generation-pricing";
-import { usdcMint, feePayerKeypair, solanaConnection, solanaChainKey } from "@/lib/payments/solana";
+import { usdcMint, feePayerKeypair, solanaConnection, solanaChainKey, broadcastAndConfirm } from "@/lib/payments/solana";
+import bs58 from "bs58";
 import { effectiveQuality } from "@/lib/pricing";
 import { reportPriceDrift } from "@/lib/generation/price-drift";
 import {
@@ -367,14 +368,13 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
           mint,
         ),
       );
-      const { blockhash } = await conn.getLatestBlockhash("confirmed");
+      const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash("confirmed");
       const msg = new TransactionMessage({
         payerKey: feePayer.publicKey, recentBlockhash: blockhash, instructions: ixs,
       }).compileToV0Message();
       const fronted = new VersionedTransaction(msg);
       fronted.sign([feePayer]);
-      const sig = await conn.sendRawTransaction(Buffer.from(fronted.serialize()), { maxRetries: 3 });
-      await conn.confirmTransaction(sig, "confirmed");
+      await broadcastAndConfirm(conn, fronted.serialize(), bs58.encode(fronted.signatures[0]), { lastValidBlockHeight, timeoutMs: 30_000 });
       console.warn(`[x402] fronted ${missing.length} USDC account(s) for payment legs — rent on the fee payer`);
     }
   } catch (e) {

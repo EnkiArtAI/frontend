@@ -19,7 +19,7 @@
  * only possible if we can act on the nonce alone. Hand that authority to the
  * buyer and abandoned authorisations could never be flushed.
  */
-import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey, SendTransactionError } from "@solana/web3.js";
 import bs58 from "bs58";
 import { PAYMENT_CHAINS, isSolanaChain, type ChainKey } from "@/shared/payment-config";
 
@@ -77,8 +77,18 @@ export function solanaRpcUrls(): string[] {
     mainnet ? process.env.SOLANA_RPC_URL : undefined,
     mainnet ? process.env.SOLANA_RPC_URL_FALLBACK : undefined,
     solanaChain().rpcUrl,
-  ].map((u) => u?.trim()).filter((u): u is string => Boolean(u));
+  ].map((u) => u?.trim()).filter((u): u is string => Boolean(u) && parses(u!));
   return [...new Set(urls)];
+}
+
+/** A URL that cannot be parsed is dropped, by name only: it may carry a key. */
+function parses(url: string): boolean {
+  try {
+    return Boolean(new URL(url));
+  } catch {
+    console.error("[solana-rpc] an RPC URL in the environment cannot be parsed and is skipped");
+    return false;
+  }
 }
 
 /**
@@ -92,27 +102,80 @@ export function solanaConnection(): Connection {
 }
 
 /**
- * The next endpoint is tried only when one cannot answer: a network error or
- * a 5xx. An answer is final, a JSON-RPC error included (a rejected
+ * The next endpoint is tried only when one cannot answer: a network error, a
+ * 5xx, a refused key (401, 403), a spent quota or rate limit (429), or no
+ * headers within RPC_ATTEMPT_MS. Those are refusals before the request was
+ * handled. An answer is final, a JSON-RPC error included (a rejected
  * transaction comes back as HTTP 200), so nothing rejected is re-sent
- * elsewhere. Re-sending after a network error is safe: a signed transaction
- * has one signature, and the chain lands it at most once. An endpoint that
- * hangs counts as one that cannot answer, after RPC_ATTEMPT_MS.
+ * elsewhere. Re-sending after an endpoint that timed out is safe: a signed
+ * transaction has one signature and lands at most once, and the sender
+ * confirms rather than believes a failed send (broadcastAndConfirm).
  */
 const RPC_ATTEMPT_MS = 10_000;
+const UNANSWERED = new Set([401, 403, 429]);
 function failover(urls: string[]): typeof fetch {
   return async (_input, init) => {
     for (let i = 0; ; i++) {
       const last = i === urls.length - 1;
+      const ac = last ? null : new AbortController();
+      const timer = ac && setTimeout(() => ac.abort(), RPC_ATTEMPT_MS);
       try {
-        const res = await fetch(urls[i], last ? init : { ...init, signal: AbortSignal.timeout(RPC_ATTEMPT_MS) });
-        if (res.status < 500 || last) return res;
+        const res = await fetch(urls[i], ac ? { ...init, signal: ac.signal } : init);
+        if (last || (res.status < 500 && !UNANSWERED.has(res.status))) return res;
       } catch (e) {
         if (last) throw e;
+      } finally {
+        if (timer) clearTimeout(timer);
       }
       reportDown(urls[i]);
     }
   };
+}
+
+/**
+ * Wait for "confirmed" by asking over HTTP. web3.js confirms on the FIRST
+ * endpoint's websocket, which is down exactly when the failover is needed;
+ * these questions go through the failover like every other call. Throws when
+ * the transaction failed on chain, when its blockhash expired (it can no
+ * longer land), or at the timeout, whose message the agent route reads.
+ */
+export async function confirmSignature(
+  connection: Connection,
+  signature: string,
+  { lastValidBlockHeight, timeoutMs = 60_000 }: { lastValidBlockHeight?: number; timeoutMs?: number } = {},
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const s = (await connection.getSignatureStatuses([signature])).value[0];
+    if (s?.err) throw new Error(`Transaction failed on-chain: ${JSON.stringify(s.err)}`);
+    if (s?.confirmationStatus === "confirmed" || s?.confirmationStatus === "finalized") return;
+    if (lastValidBlockHeight !== undefined && (await connection.getBlockHeight("confirmed")) > lastValidBlockHeight) {
+      throw new Error("Transaction expired before it landed");
+    }
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for confirmation");
+    await new Promise((r) => setTimeout(r, 1_500));
+  }
+}
+
+/**
+ * Send a signed transaction and confirm it (confirmSignature). A rejection
+ * is final, except "already processed": the failover re-sends after an
+ * endpoint that cannot answer, and one that timed out may have forwarded it
+ * first. A send that failed in transit may have landed too, so both are
+ * confirmed rather than believed.
+ */
+export async function broadcastAndConfirm(
+  connection: Connection,
+  raw: Uint8Array,
+  signature: string,
+  opts?: { lastValidBlockHeight?: number; timeoutMs?: number },
+): Promise<void> {
+  try {
+    await connection.sendRawTransaction(raw, { preflightCommitment: "confirmed", maxRetries: 3 });
+  } catch (e) {
+    if (e instanceof SendTransactionError && !/already been processed/i.test(e.message)) throw e;
+  }
+  await confirmSignature(connection, signature, opts);
 }
 
 const reported = new Set<string>();

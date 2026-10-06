@@ -30,6 +30,7 @@ import {
 } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import bs58 from "bs58";
+import { broadcastAndConfirm } from "@/lib/payments/solana";
 
 const COMPUTE_BUDGET_PROGRAM = "ComputeBudget111111111111111111111111111111";
 const MEMO_PROGRAM = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
@@ -254,23 +255,15 @@ export async function submitAndConfirm(
   tx: VersionedTransaction,
   timeoutMs = 45_000,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  let signature: string;
+  // The signature is fixed before the send, so a send that failed in transit
+  // (or was answered "already processed" after a failover) is still confirmed
+  // rather than reported as "no funds moved" (broadcastAndConfirm).
   try {
-    signature = await connection.sendRawTransaction(Buffer.from(tx.serialize()), { maxRetries: 3 });
+    await broadcastAndConfirm(connection, tx.serialize(), bs58.encode(tx.signatures[0]), { timeoutMs });
+    return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Transaction submission failed" };
   }
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const st = await connection.getSignatureStatuses([signature]);
-    const s = st.value[0];
-    if (s?.err) return { ok: false, error: `Transaction failed on-chain: ${JSON.stringify(s.err)}` };
-    if (s && (s.confirmationStatus === "confirmed" || s.confirmationStatus === "finalized")) {
-      return { ok: true };
-    }
-    await new Promise((r) => setTimeout(r, 1_500));
-  }
-  return { ok: false, error: "Timed out waiting for confirmation" };
 }
 
 /** The X-PAYMENT-RESPONSE header body the spec asks for on success. */
