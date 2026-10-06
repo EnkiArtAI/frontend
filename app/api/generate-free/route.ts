@@ -13,6 +13,7 @@ import { resolveModel } from "@/lib/generation/models";
 import { normalizeTier, RESOLUTION_TIERS } from "@/lib/generation/resolution";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
 import { storeReferenceImages } from "@/lib/generation/reference-images";
+import { storeGeneratedImage } from "@/lib/generation/derivative-store";
 import { readImageDimensions } from "@/backend/services/gemini-image-generation";
 import { freeGenerationDecision, releaseFreeClaim } from "@/lib/generation/free-quota";
 
@@ -261,9 +262,15 @@ export async function POST(request: NextRequest) {
         // Measured once, above, for the media type. Measuring the same
         // buffer a second time here could only ever agree with itself.
         const dims = measured;
-        after(
-          recordGeneration(supabase, {
+        // Everything here runs after the response. The image is stored first,
+        // with the paid route's retries and fallback bucket: without our copy
+        // the row would carry megabytes of data URL, and without the row the
+        // image never reaches its owner's gallery (ENG-07).
+        after(async () => {
+          const stored = await storeGeneratedImage(imageUrl, recUserId, Date.now() + 120_000);
+          await recordGeneration(supabase, {
             adult,
+            ...(stored.imageUrl.startsWith("data:") ? {} : stored),
             userId: recUserId,
             /* Which prompt this came from.
              *
@@ -294,7 +301,7 @@ export async function POST(request: NextRequest) {
               ? {
                   width: dims.width,
                   height: dims.height,
-                  bytes: result.imageBuffers[0].length,
+                  bytes: buffer.length,
                   format: dims.format,
                 }
               : null,
@@ -302,8 +309,8 @@ export async function POST(request: NextRequest) {
             workflow: stripped.workflow,
             workflowTexts: stripped.texts,
             references: await storeReferenceImages(stripped.images, recUserId),
-          }),
-        );
+          });
+        });
       }
     }
 
