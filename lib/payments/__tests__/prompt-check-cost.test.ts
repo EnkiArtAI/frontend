@@ -24,7 +24,7 @@ describe("the buyer pays the check", () => {
   const base = getModelCostMicro("nano-banana-pro", "2K", {});
 
   it("on an artist's prompt, as part of the model cost", async () => {
-    const q = await computeQuote(db({ price_usd_cents: 150, creator_id: "c1", prompt_type: "paid", is_free_showcase: false }), { promptId: "p1", modelFamily: "nano-banana-pro", resolution: "2K" });
+    const q = await computeQuote(db({ price_usd_cents: 150, creator_id: "c1", prompt_type: "paid", is_free_showcase: false, is_listed: true, listing_status: "active", deleted_at: null }), { promptId: "p1", modelFamily: "nano-banana-pro", resolution: "2K" });
     if (!q.ok) throw new Error(q.error);
     expect(q.split.modelCostMicro).toBe(base + PRICING_POLICY.extractionCheckMicro);
   });

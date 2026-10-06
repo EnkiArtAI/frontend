@@ -42,7 +42,7 @@ const batchSchema = z.object({ items: z.array(settingsSchema).min(1).max(24) });
 async function quoteOne(
   supabase: SupabaseClient,
   input: SettingsInput,
-  user: { userId: string; walletAddress: string },
+  user: { userId: string; walletAddress: string; sessionToken: string | null },
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const resolved = await resolvePaidSettings(supabase, input);
   if (!resolved.ok) return { status: resolved.status, body: { error: resolved.error } };
@@ -58,6 +58,7 @@ async function quoteOne(
     boost: settings.boost,
     quality: settings.quality ?? undefined,
     buyer: user.userId,
+    sessionToken: user.sessionToken,
   });
   if (!quote.ok) return { status: quote.status, body: { error: quote.error } };
   const { artistWallet, split, appliedRule } = quote;
@@ -90,7 +91,7 @@ export async function POST(req: NextRequest) {
 
   let authUser;
   try {
-    authUser = await requireAuth(req);
+    authUser = { ...(await requireAuth(req)), sessionToken: req.headers.get("X-Session-Token") };
   } catch {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }

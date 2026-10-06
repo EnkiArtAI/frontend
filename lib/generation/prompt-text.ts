@@ -10,6 +10,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decryptPrompt } from "@/backend/encryption";
+import { isPublicText } from "@/lib/prompt-visibility";
 
 /** A stored variable, by the name app/api/prompt saved it under. */
 export interface StoredVariable {
@@ -46,11 +47,7 @@ export async function loadPromptText(supabase: SupabaseClient, promptId: string)
      characters): the buyer would pay the artist for an image the artist's
      prompt never made. Refused before anything is charged. Free and showcase
      prompts are public text anyway. */
-  const priced =
-    Number(row.price_usd_cents) > 0 &&
-    row.prompt_type !== "showcase" &&
-    row.prompt_type !== "free-prompt" &&
-    row.is_free_showcase !== true;
+  const priced = Number(row.price_usd_cents) > 0 && !isPublicText(row);
   if (!text.trim() && priced) {
     return { ok: false, status: 500, error: "This prompt's text cannot be read right now. Nothing was generated and nothing was charged." };
   }

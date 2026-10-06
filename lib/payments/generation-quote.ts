@@ -23,6 +23,8 @@ import {
   resolvePricingRule,
   type AppliedRule,
 } from "@/lib/payments/pricing-rules";
+import { isListed, isPublicText } from "@/lib/prompt-visibility";
+import { resolveOwnerIds } from "@/lib/session-user";
 
 export interface QuoteInput {
   /** Absent for the buyer's own prompt: no artist, so no artist leg. */
@@ -35,6 +37,8 @@ export interface QuoteInput {
   quality?: "low" | "medium" | "high";
   /** requireAuth's userId (wallet or users.id) — enables DB pricing rules. */
   buyer?: string;
+  /** The buyer's session: lets a creator through to their own prompt that is not live. */
+  sessionToken?: string | null;
 }
 
 export type QuoteResult =
@@ -50,7 +54,7 @@ export type QuoteResult =
 
 export async function computeQuote(
   supabase: SupabaseClient,
-  { promptId, modelFamily, resolution, boost, quality, buyer }: QuoteInput,
+  { promptId, modelFamily, resolution, boost, quality, buyer, sessionToken }: QuoteInput,
 ): Promise<QuoteResult> {
   // 1. Prompt price comes from the DB — never from the client.
   //    Live schema (verified 2026-07-12): prompts has creator_id +
@@ -65,24 +69,30 @@ export async function computeQuote(
   if (promptId) {
     const { data, error: promptError } = await supabase
       .from("prompts")
-      .select("id, price_usd_cents, creator_id, prompt_type, is_free_showcase")
+      .select("id, price_usd_cents, creator_id, prompt_type, is_free_showcase, is_listed, listing_status, deleted_at")
       .eq("id", promptId)
       .maybeSingle();
     if (promptError) {
       console.error("[payments/quote] prompt lookup failed:", promptError.message);
       return { ok: false, status: 500, error: "Failed to load prompt" };
     }
-    if (!data) {
+    // Only a live prompt is for sale: a draft, a deleted or a delisted one
+    // answers like a missing one. Every paid path prices through here, so the
+    // intent, the authorisation and the generation inherit it. Its creator is
+    // let through to their own (the generator page opens for it), recognised
+    // the way a save recognises them; a lookup that fails lets nobody through.
+    const mine = async () =>
+      ((await resolveOwnerIds(supabase, sessionToken ?? null).catch(() => null)) ?? []).includes(String(data?.creator_id));
+    if (!data || (!isListed(data) && !(await mine()))) {
       return { ok: false, status: 404, error: "Prompt not found" };
     }
     prompt = data;
   }
 
-  const isFree =
-    !prompt ||
-    prompt.prompt_type === "showcase" ||
-    prompt.prompt_type === "free-prompt" ||
-    prompt.is_free_showcase === true;
+  // Free by the database's word ("free", "showcase"), the rule the agent rail
+  // asks too. This compared the client's word "free-prompt", which no row
+  // holds, so a free prompt saved with a price was quoted an artist share.
+  const isFree = !prompt || isPublicText(prompt);
   const priceCents = typeof prompt?.price_usd_cents === "number" ? prompt.price_usd_cents : 0;
   const artistPriceMicro = isFree ? 0 : usdToMicro(priceCents / 100);
 
