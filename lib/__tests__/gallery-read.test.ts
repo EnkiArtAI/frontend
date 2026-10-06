@@ -63,6 +63,13 @@ describe("a gallery", () => {
     expect(await gallery({ "X-Session-Token": "adult-tok", "X-Show-Adult": "1" })).toEqual(["plain", "adult-render"]);
   });
 
+  it("tells its owner which images are published", async () => {
+    const res = await GET(new Request(`http://enki.test/api/generations?userId=${OWNER}`, { headers: { "X-Session-Token": "owner-tok" } }));
+    const rows = ((await res.json()).generations as Row[]).map((g) => [g.id, g.visibility]);
+    expect(rows).toContainEqual(["plain", "public"]);
+    expect(rows).toContainEqual(["private", "private"]);
+  });
+
   it("shows its owner everything", async () => {
     expect(await gallery({ "X-Session-Token": "owner-tok" })).toEqual(["plain", "adult-render", "upload", "private"]);
   });
