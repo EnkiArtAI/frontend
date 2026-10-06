@@ -16,7 +16,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { eligibleRoutes, pickRoute, type RouteLink, type RouteCandidate } from "@/lib/generation/routing";
 import { loadHealth, breakerVerdict, runProbe } from "@/lib/generation/provider-health";
 import { canCarryReferenceImages } from "@/lib/generation/provider-capabilities";
-import { maxTier, type ResolutionTier } from "@/lib/generation/resolution";
+import { maxTier, tiersUpTo, type ResolutionTier } from "@/lib/generation/resolution";
 import { toModelFamily } from "@/lib/generation/model-family";
 
 /** "none" = no route at all: a model with no provider rows and no bridge entry. */
@@ -82,19 +82,33 @@ export function routeFor(model: ResolvedModel, boost: boolean | undefined): Rout
 }
 
 /**
- * Does boost actually do anything for this model?
+ * The sizes at which boost actually does something: the boost route differs
+ * from the normal route policy would run at that size.
  *
  * Derived, never stored. A column saying "has boost" would be a second truth
  * next to the model_providers rows, and two truths drift: someone deletes the
  * boost row and the flag still says yes, so the UI offers a paid speed-up that
- * changes nothing. The rows ARE the answer — a boost route that differs from
- * the normal one is exactly what "has boost" means.
+ * changes nothing. The rows ARE the answer. Per size, because a route may be
+ * conditioned on it: Nano Banana 2 runs WaveSpeed Fast at 2K/4K and Google at
+ * 1K, where Google is also the boost host, so at 1K there is nothing to boost
+ * and the button shows disabled (Kev, 2026-10-06).
  */
+export function boostTiers(model: ResolvedModel, audience: Audience = "public"): ResolutionTier[] {
+  const links = (model.links ?? []) as RouteLink[];
+  const first = (tier: ResolutionTier, boost: boolean): Route => {
+    const c = eligibleRoutes(links, { resolution: tier }, boost ? "boost" : "normal", audience)[0];
+    return c ? toRoute(c) : routeFor(model, boost);
+  };
+  return tiersUpTo(model.maxResolution).filter((tier) => {
+    const n = first(tier, false);
+    const b = first(tier, true);
+    return n.provider !== b.provider || n.providerModel !== b.providerModel;
+  });
+}
+
+/** Does boost do anything for this model at any size? */
 export function hasBoost(model: ResolvedModel): boolean {
-  return (
-    model.boost.provider !== model.normal.provider ||
-    model.boost.providerModel !== model.normal.providerModel
-  );
+  return boostTiers(model).length > 0;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -287,14 +301,17 @@ export function withCapabilities(rows: ModelRow[], audience: Audience = "public"
     if (m.normal.provider === "pollinations") {
       (raw as Record<string, unknown>).allowed_ratios = FULL_RATIOS;
     }
+    const boostAt = boostTiers(m, audience);
     return {
       ...raw,
       maxResolution: m.maxResolution,
       supportsResolution: m.supportsResolution,
       supportsQuality: m.supportsQuality,
-      // Derived from the provider rows (hasBoost), never stored: a boost
-      // toggle may only show where a faster host actually exists.
-      boostAvailable: hasBoost(m),
+      // Derived from the provider rows, never stored: the boost toggle shows
+      // only where a faster host exists, and is enabled only at the sizes
+      // where that host is not already the regular one.
+      boostAvailable: boostAt.length > 0,
+      boostTiers: boostAt,
       // The one fact that sends a generation to /api/generate-free: the model
       // renders on the free host. Never inferred from a price.
       free: m.normal.provider === "pollinations",

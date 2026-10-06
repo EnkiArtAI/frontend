@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { __testing__, routeFor } from "@/lib/generation/models";
+import { __testing__, routeFor, boostTiers, withCapabilities } from "@/lib/generation/models";
 
 const { fromRow } = __testing__;
 
@@ -109,6 +109,70 @@ describe("model → route resolution", () => {
     expect(m.maxRefs).toBe(18);
     expect(m.maxRefs).not.toBe(3); // the column default for rows that predate it
     expect(m.allowedRatios).toEqual(["1:1"]);
+  });
+});
+
+describe("boostTiers", () => {
+  // Nano Banana 2 as the catalogue will carry it: Fast first at 2K/4K, Google
+  // at 1K and as the fallback, Google as the boost host.
+  const NB2 = {
+    id: "m3", name: "Nano Banana 2", allowed_ratios: ["1:1"], max_reference_images: 14,
+    model_providers: [
+      { ...link("normal", "gemini", "gemini-3.1-flash-image"), priority: 20 },
+      { ...link("normal", "wavespeed", "google/nano-banana-2/text-to-image-fast"), priority: 10, applies_when: { resolution: ["2K", "4K"] } },
+      { ...link("normal", "wavespeed", "google/nano-banana-2/text-to-image"), priority: 30 },
+      { ...link("boost", "gemini", "gemini-3.1-flash-image"), priority: 10 },
+    ],
+  };
+
+  it("names only the sizes where the boost host is not already the regular one", () => {
+    expect(boostTiers(fromRow(NB2, "public"))).toEqual(["2K", "4K"]);
+    const [cat] = withCapabilities([NB2]);
+    expect(cat.boostTiers).toEqual(["2K", "4K"]);
+    expect(cat.boostAvailable).toBe(true);
+  });
+
+  it("is empty when the regular host is the boost host at every size", () => {
+    // Nano Banana Pro with Google first (the SQL of 2026-10-06).
+    const row = { ...NANO, model_providers: [
+      { ...link("normal", "gemini", "gemini-3-pro-image"), priority: 10 },
+      { ...link("normal", "wavespeed", "google/nano-banana-pro/text-to-image"), priority: 20 },
+      { ...link("boost", "gemini", "gemini-3-pro-image"), priority: 10 },
+    ] };
+    expect(boostTiers(fromRow(row, "public"))).toEqual([]);
+    expect(withCapabilities([row])[0].boostAvailable).toBe(false);
+  });
+
+  it("stops at the model's largest size", () => {
+    const m = fromRow({ ...NANO, model_providers: [
+      { ...link("normal", "wavespeed", "google/nano-banana-pro/text-to-image"), priority: 10 },
+      { ...link("boost", "gemini", "gemini-3-pro-image"), priority: 10 },
+    ] }, "public");
+    expect(boostTiers(m)).toEqual(["1K", "2K", "4K"]);
+    expect(boostTiers({ ...m, maxResolution: "2K" })).toEqual(["1K", "2K"]);
+  });
+
+  it("tells two model ids on the same host apart", () => {
+    const m = fromRow({ ...NANO, model_providers: [
+      { ...link("normal", "gemini", "gemini-3.1-flash-image"), priority: 10 },
+      { ...link("boost", "gemini", "gemini-3-pro-image"), priority: 10 },
+    ] }, "public");
+    expect(boostTiers(m)).toEqual(["1K", "2K", "4K"]);
+    // ...and the same model id on two hosts (an unknown id renders 1K only).
+    const h = fromRow({ ...NANO, model_providers: [
+      { ...link("normal", "wavespeed", "x"), priority: 10 },
+      { ...link("boost", "gemini", "x"), priority: 10 },
+    ] }, "public");
+    expect(boostTiers(h)).toEqual(["1K"]);
+  });
+
+  it("does not offer a public buyer a boost host that is not public", () => {
+    const m = fromRow({ ...NANO, model_providers: [
+      { ...link("normal", "wavespeed", "google/nano-banana-pro/text-to-image"), priority: 10 },
+      { ...link("boost", "gemini", "gemini-3-pro-image", { audience: "enterprise" }), priority: 10 },
+    ] }, "public");
+    expect(boostTiers(m)).toEqual([]);
+    expect(boostTiers(m, "enterprise")).toEqual(["1K", "2K", "4K"]);
   });
 });
 
