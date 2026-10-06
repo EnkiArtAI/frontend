@@ -65,6 +65,7 @@ import { generateImagesWithOpenAI } from "@/backend/services/openai-image-genera
 import { generateImagesWithGemini } from "@/backend/services/gemini-image-generation";
 import type { ImageGenerationRequest } from "@/backend/services/types";
 import { PublicKey } from "@solana/web3.js";
+import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 
 export const maxDuration = 300;
 
@@ -518,7 +519,19 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   );
 }
 
+/**
+ * This route is public (proxy.ts) and every paying request costs a metered
+ * prompt check: agents hold no session, so the address is the only handle
+ * (Kev, 2026-10-06).
+ */
+function ipLimited(req: NextRequest): NextResponse | null {
+  const limit = checkRequestRateLimit(rateLimitKey(req, "x402:ip"), 60, 60_000);
+  return limit.allowed ? null : rateLimitResponse(limit.retryAfterSeconds);
+}
+
 export async function GET(req: NextRequest) {
+  const limited = ipLimited(req);
+  if (limited) return limited;
   const promptId = req.nextUrl.searchParams.get("promptId") ?? undefined;
   const parsed = bodySchema.safeParse({
     prompt: req.nextUrl.searchParams.get("prompt") ?? (promptId ? undefined : "probe"),
@@ -532,6 +545,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const limited = ipLimited(req);
+  if (limited) return limited;
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid request" }, { status: 400 });
