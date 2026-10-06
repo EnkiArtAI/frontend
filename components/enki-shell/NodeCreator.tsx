@@ -1390,7 +1390,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === oid ? { ...n, img: null, status: "empty" } : n)) }));
       return;
     }
-    persistCreation({ prompt: promptText, imageUrl: outcome.imageUrl, model: picked?.id ?? "", title: stRef.current.title, userKey });
+    persistCreation({ prompt: promptText, imageUrl: outcome.imageUrl, userKey });
     setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === oid ? { ...n, img: outcome.imageUrl, status: "ready" } : n)) }));
   }, [onToast, userKey, signPayment]);
 
