@@ -47,7 +47,7 @@ import {
 import { checkAndRecordSolanaSignature } from "@/backend/solana-x402-verifier";
 import { isSolanaChain } from "@/shared/payment-config";
 import { loadPromptText, fillVariables, inputsUnmatched, VALUE_MAX } from "@/lib/generation/prompt-text";
-import { checkPrompt, textValues } from "@/lib/moderation/prompt-check";
+import { checkPrompt, NOT_CHECKED, textValues } from "@/lib/moderation/prompt-check";
 import { recordGenerationFailure } from "@/lib/generation/record";
 import { addressWarnedOut, addressWarningMessage, byAddress, recordWarning } from "@/lib/moderation/warnings";
 import { childSafetyScore, recordModerationEvent } from "@/lib/moderation-enforcement";
@@ -55,7 +55,7 @@ import { agentBlocked, recordExtractionHit, silentFailure } from "@/lib/moderati
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 import { TransactionMessage, VersionedTransaction } from "@solana/web3.js";
-import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
+import { moderate, screenFirst, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { resolveModelByFamily, chooseRoute } from "@/lib/generation/models";
 import { clampTier } from "@/lib/generation/resolution";
 import { reportSuccess, reportFailure } from "@/lib/generation/provider-health";
@@ -277,7 +277,10 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   const checked = input.promptId ? textValues(input.variableValues) : { prompt: promptText };
   // A blocked address is still judged, so its answers and their timing match
   // everyone else's up to the silent point; only its hits are not recorded.
-  const check = await checkPrompt(checked, { hidden });
+  // The regex first: what Tier 1 refuses never reaches the chat model, and
+  // its refusal is this request's moderation verdict (Kev, 2026-10-06).
+  const first = screenFirst(checked);
+  const check = first ? NOT_CHECKED : await checkPrompt(checked, { hidden });
   if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
     await recordWarning(supabase, {
       surface: "x402-generate", request: asker, category: check.verdict, text: JSON.stringify(checked), confidence: check.confidence,
@@ -291,7 +294,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // For a marketplace prompt the check saw only the agent's values, so tier 2
   // keeps its sexual flag for the artist's text, unless the prompt is marked
   // 18+: its save already judged that text 18+ and not explicit.
-  const verdict = await moderate({ prompt: promptText, surface: "x402-generate", adultJudged: !input.promptId || promptAdult });
+  const verdict = first ?? await moderate({ prompt: promptText, surface: "x402-generate", adultJudged: !input.promptId || promptAdult });
   // A child-safety hit counts on the requester's ladder, where it stops an
   // address at once; an agent's own prompt too, since this rail has no
   // account to ban for good. The warning is the hit's one record.

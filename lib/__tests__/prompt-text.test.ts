@@ -126,7 +126,7 @@ describe("loadPromptText", () => {
 describe("/api/generate-image builds a paid prompt from the artist's text", () => {
   it("composes when the intent carries an artist share, before moderation", () => {
     const compose = ROUTE.indexOf("const filled = fillVariables(text.text, body.variableValues, text.variables);");
-    const moderate = ROUTE.indexOf("const verdict = await moderate({ prompt,");
+    const moderate = ROUTE.indexOf("const verdict = first ?? await moderate({ prompt,");
     expect(ROUTE).toMatch(/const fromArtist = Boolean\(paid\.prompt_id\) && Number\(paid\.artist_amount_micro\) > 0;/);
     expect(compose).toBeGreaterThan(-1);
     expect(moderate).toBeGreaterThan(compose);
@@ -135,7 +135,7 @@ describe("/api/generate-image builds a paid prompt from the artist's text", () =
   it("refuses unmatched inputs before moderation and before the claim, on both rails", () => {
     const refuse = ROUTE.search(/if \(inputsUnmatched\(filled\)\) \{\n\s+return NextResponse\.json\(/);
     expect(refuse).toBeGreaterThan(-1);
-    expect(ROUTE.indexOf("const verdict = await moderate({ prompt,")).toBeGreaterThan(refuse);
+    expect(ROUTE.indexOf("const verdict = first ?? await moderate({ prompt,")).toBeGreaterThan(refuse);
     expect(ROUTE.indexOf("await claimForGeneration(")).toBeGreaterThan(refuse);
     // The agent rail refuses in agentPrompt, which settlement calls before reading the payment.
     const helper = AGENT.slice(AGENT.indexOf("async function agentPrompt("), AGENT.indexOf("async function requirementsFor("));

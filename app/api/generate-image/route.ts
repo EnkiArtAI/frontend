@@ -8,7 +8,7 @@ import { getSupabaseServerClient, getSupabaseServerClientSafe } from "@/lib/supa
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireAuth, checkRateLimit } from "@/lib/auth";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
-import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
+import { moderate, screenFirst, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { resolveModel, chooseRoute } from "@/lib/generation/models";
 import { normalizeTier, clampTier } from "@/lib/generation/resolution";
 import { effectiveQuality } from "@/lib/pricing";
@@ -17,7 +17,7 @@ import { toModelFamily } from "@/lib/generation/model-family";
 import { claimForGeneration, type ClaimMode } from "@/lib/payments/generation-claim";
 import { settingMismatch, type StoredSettings } from "@/lib/payments/generation-settings";
 import { loadPromptText, fillVariables, inputsUnmatched, overLong, VALUE_MAX } from "@/lib/generation/prompt-text";
-import { checkPrompt, textValues } from "@/lib/moderation/prompt-check";
+import { checkPrompt, NOT_CHECKED, textValues } from "@/lib/moderation/prompt-check";
 import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { ADULT_REFUSAL, adultConfirmed, promptMarkedAdult } from "@/lib/adult-content";
 import { recordExtractionHit, SILENT_FAILURE, silentFailure } from "@/lib/moderation/extraction-hits";
@@ -300,7 +300,10 @@ export async function POST(request: NextRequest) {
     // free route; lib/moderation/evidence).
     const authoring = !fromArtist && body.authoring === true && Boolean(request.headers.get("X-Session-Token"));
     const about = fromArtist ? { promptId: String(paid.prompt_id) } : authoring ? { withheld: prompt, draft: true } : {};
-    const check = await checkPrompt(checked, { hidden: fromArtist, signal: request.signal });
+    // The regex first: what Tier 1 refuses never reaches the chat model, and
+    // its refusal is this request's moderation verdict (Kev, 2026-10-06).
+    const first = screenFirst(checked);
+    const check = first ? NOT_CHECKED : await checkPrompt(checked, { hidden: fromArtist, signal: request.signal });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
       const outcome = await recordWarning(getSupabaseServerClient(), {
         surface: "generate-image", request, category: check.verdict, text: authoring ? "" : JSON.stringify(checked), confidence: check.confidence, ...about,
@@ -337,7 +340,7 @@ export async function POST(request: NextRequest) {
     // The prompt check saw only the buyer's values of an artist's prompt, so
     // tier 2 keeps its sexual flag for the artist's text unless the prompt is
     // marked 18+ (legacy prompts were never judged at save).
-    const verdict = await moderate({ prompt, surface: "generate-image", signal: request.signal, adultJudged: !fromArtist || promptAdult });
+    const verdict = first ?? await moderate({ prompt, surface: "generate-image", signal: request.signal, adultJudged: !fromArtist || promptAdult });
     // A child-safety hit on a marketplace prompt is a warning on the buyer's
     // ladder, and that warning is its one record: it weighs ten, so it
     // suspends at once, and every repeat climbs the ladder to a ban for good

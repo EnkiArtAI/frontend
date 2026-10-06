@@ -74,7 +74,7 @@ describe("the human rail", () => {
 
   it("checks after composing, before moderation and before the charge", () => {
     expect(check).toBeGreaterThan(HUMAN.indexOf("const filled = fillVariables("));
-    expect(HUMAN.indexOf("const verdict = await moderate({ prompt,")).toBeGreaterThan(check);
+    expect(HUMAN.indexOf("const verdict = first ?? await moderate({ prompt,")).toBeGreaterThan(check);
     expect(HUMAN.indexOf("await claimForGeneration(")).toBeGreaterThan(check);
   });
 
@@ -120,7 +120,7 @@ describe("the free generator", () => {
 
   it("checks the whole prompt before moderation and before rendering", () => {
     expect(check).toBeGreaterThan(-1);
-    expect(FREE.indexOf("const verdict = await moderate({ prompt, surface: \"generate-free\"")).toBeGreaterThan(check);
+    expect(FREE.indexOf("const verdict = first ?? await moderate({ prompt, surface: \"generate-free\"")).toBeGreaterThan(check);
     expect(FREE.indexOf("generateImageWithPollinations(")).toBeGreaterThan(check);
   });
 
@@ -177,8 +177,8 @@ describe("the agent rail", () => {
     expect(blocked).toBeGreaterThan(-1);
     expect(check).toBeGreaterThan(blocked);
     // Judged like everyone else, so nothing before the silent point differs.
-    expect(AGENT).toMatch(/const check = await checkPrompt\(checked, \{ hidden \}\);/);
-    expect(FREE).toMatch(/const check = await checkPrompt\(\{ prompt \}, \{ hidden: false, signal: request\.signal \}\);/);
+    expect(AGENT).toMatch(/const check = first \? NOT_CHECKED : await checkPrompt\(checked, \{ hidden \}\);/);
+    expect(FREE).toMatch(/const check = first \? NOT_CHECKED : await checkPrompt\(\{ prompt \}, \{ hidden: false, signal: request\.signal \}\);/);
     expect(FREE).toMatch(/const silent = check\.verdict !== "clear";/);
   });
 

@@ -46,6 +46,12 @@ export type PromptCheckVerdict =
   | { verdict: "minor_sexual" | "explicit_sexual"; confidence: number }
   | { verdict: "unavailable"; reason: string };
 
+/**
+ * The check's place when Tier 1 already refused the text (screenFirst): the
+ * chat model is never asked, and the Tier 1 verdict refuses the request.
+ */
+export const NOT_CHECKED: PromptCheckVerdict = { verdict: "clear" };
+
 function apiKey(): string | null {
   const raw = process.env.OPENAI_API_KEYS || process.env.OPENAI_API_KEY || "";
   return raw.split(",")[0]?.trim() || null;

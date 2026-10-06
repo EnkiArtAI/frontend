@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { generateImageWithPollinations } from "@/backend/services/pollinations-image-generation";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
-import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
+import { moderate, screenFirst, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
-import { checkPrompt } from "@/lib/moderation/prompt-check";
+import { checkPrompt, NOT_CHECKED } from "@/lib/moderation/prompt-check";
 import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { ADULT_REFUSAL, adultConfirmed, promptMarkedAdult } from "@/lib/adult-content";
 import { SILENT_FAILURE, silentFailure } from "@/lib/moderation/extraction-hits";
@@ -128,7 +128,10 @@ export async function POST(request: NextRequest) {
     // counts on the ladder as before; the owner opens it where it is a
     // warning or a child-safety case, and other blocks stay closed.
     const authoring = body?.authoring === true && Boolean(request.headers.get("X-Session-Token"));
-    const check = await checkPrompt({ prompt }, { hidden: false, signal: request.signal });
+    // The regex first: what Tier 1 refuses never reaches the chat model, and
+    // its refusal is this request's moderation verdict (Kev, 2026-10-06).
+    const first = screenFirst({ prompt });
+    const check = first ? NOT_CHECKED : await checkPrompt({ prompt }, { hidden: false, signal: request.signal });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
       const outcome = await recordWarning(supabaseForChecks, {
         surface: "generate-free", request, category: check.verdict, confidence: check.confidence,
@@ -151,7 +154,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(ADULT_REFUSAL, { status: 403 });
     }
 
-    const verdict = await moderate({ prompt, surface: "generate-free", signal: request.signal, adultJudged: true });
+    const verdict = first ?? await moderate({ prompt, surface: "generate-free", signal: request.signal, adultJudged: true });
     after(recordModerationEvent(verdict, { surface: "generate-free", request, ...(authoring ? { prompt: "", withheld: prompt, draft: true } : { prompt }) }));
     if (!verdict.allowed) {
       return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
