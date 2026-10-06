@@ -178,11 +178,9 @@ export async function voidAndFlush(
 /**
  * Flush authorisations whose worker went quiet.
  *
- * Opportunistic — there is no scheduler on this deployment, so the generate
- * route runs a few of these before doing its own work. Under load that is
- * constant; with no load there is also nobody whose nonce could be misused.
- * Never allowed to throw: a failing sweep must not stop a paying customer's
- * generation.
+ * Runs every five minutes from /api/cron/sweep-payments, and the generate
+ * route runs a few before doing its own work. Never allowed to throw: a
+ * failing sweep must not stop a paying customer's generation.
  */
 export async function sweepAndFlush(supabase: SupabaseClient, limit = 5): Promise<number> {
   try {
