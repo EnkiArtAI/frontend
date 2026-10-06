@@ -151,7 +151,7 @@ export default function MyGalleryPage() {
       return;
     }
     try {
-      await fetch(`/api/generations/${encodeURIComponent(id)}`, {
+      await fetch(`/api/images/${encodeURIComponent(id)}`, {
         method: "DELETE",
         headers: { ...sessionAuthHeaders(), ...(stepUpToken ? { "X-StepUp-Token": stepUpToken } : {}) },
       });
