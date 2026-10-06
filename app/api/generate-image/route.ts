@@ -795,7 +795,9 @@ export async function POST(request: NextRequest) {
         // references as data URLs, and its own draft save already breaks on
         // the 5MB cap because of it.
         const stripped = stripWorkflowImages(body.workflow ?? {});
-        after(
+        // The reference uploads run in after() too: an upload stuck on a
+        // failing store must not hold the answer to a buyer who has paid.
+        after(async () =>
           recordGeneration(recSupabase, {
             adult,
             userId: recUserId,

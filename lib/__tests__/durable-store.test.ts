@@ -12,16 +12,27 @@ import { readSource } from "@/lib/__tests__/_read-source";
 
 type PutOpts = { allowOverwrite?: boolean; abortSignal?: AbortSignal };
 const put = vi.fn<(name: string, buf: Buffer, opts: PutOpts) => Promise<{ url: string }>>();
-vi.mock("@vercel/blob", () => ({ put: (...a: [string, Buffer, PutOpts]) => put(...a) }));
+vi.mock("@vercel/blob", () => {
+  class BlobError extends Error {}
+  class BlobServiceRateLimited extends BlobError {}
+  class BlobServiceNotAvailable extends BlobError {}
+  class BlobUnknownError extends BlobError {}
+  return { put: (...a: [string, Buffer, PutOpts]) => put(...a), BlobError, BlobServiceRateLimited, BlobServiceNotAvailable, BlobUnknownError };
+});
+let derivatives: unknown = null;
+vi.mock("@/lib/imageDerivatives", () => ({ tryMakeDerivatives: async () => derivatives }));
 
-import { putDurably, storeDeadline, INLINE_MAX_BYTES } from "@/lib/generation/derivative-store";
+import { putDurably, storeDeadline, storeGeneratedImage, INLINE_MAX_BYTES } from "@/lib/generation/derivative-store";
 
 const BYTES = Buffer.from([137, 80, 78, 71]);
 const ok = (name: string) => ({ url: `https://s.public.blob.vercel-storage.com/${name}` });
 
+// A stray real SDK call would reach a closed port, never Vercel.
 beforeEach(() => {
   put.mockReset();
+  derivatives = null;
   vi.stubEnv("BLOB_READ_WRITE_TOKEN", "test-token");
+  vi.stubEnv("VERCEL_BLOB_API_URL", "http://127.0.0.1:9");
   vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
 });
 afterEach(() => {
@@ -66,14 +77,37 @@ describe("putDurably", () => {
 });
 
 describe("the deadline and the inline cap", () => {
-  it("stores by 290 s into the request, but never with less than 10 s left", () => {
+  it("stores by 285 s into the request and never later, so capture and answer keep 15 s", () => {
     const now = Date.now();
-    expect(storeDeadline(now)).toBe(now + 290_000);
-    expect(storeDeadline(now - 289_000)).toBe(now + 10_000);
+    expect(storeDeadline(now)).toBe(now + 285_000);
+    expect(storeDeadline(now - 289_000)).toBe(now - 4_000);
   });
 
   it("keeps an inline image under the 4.5 MB response cap after base64", () => {
     expect(Math.ceil(INLINE_MAX_BYTES / 3) * 4).toBeLessThan(4_500_000 - 10_000);
+  });
+});
+
+describe("storeGeneratedImage with a deadline", () => {
+  const DATA = `data:image/png;base64,${BYTES.toString("base64")}`;
+  const rendition = { buffer: BYTES, bytes: 4 };
+
+  it("cuts no renditions when the original did not land", async () => {
+    derivatives = { preview: rendition, thumb: rendition, width: 1, height: 1 };
+    put.mockRejectedValue(new Error("down"));
+    const p = storeGeneratedImage(DATA, "u1", Date.now() + 20_000);
+    await vi.runAllTimersAsync();
+    expect((await p).imageUrl).toBe(DATA);
+    expect(put.mock.calls.every(([name]) => !name.includes(".preview.") && !name.includes(".thumb."))).toBe(true);
+  });
+
+  it("bounds the renditions by the same deadline", async () => {
+    derivatives = { preview: rendition, thumb: rendition, width: 1, height: 1 };
+    put.mockImplementation(async (n) => ok(n));
+    const stored = await storeGeneratedImage(DATA, "u1", Date.now() + 20_000);
+    expect(stored.previewUrl).toMatch(/\.preview\.webp$/);
+    expect(put.mock.calls).toHaveLength(3);
+    expect(put.mock.calls.every(([, , o]) => o.abortSignal instanceof AbortSignal)).toBe(true);
   });
 });
 
@@ -92,6 +126,10 @@ describe("the paid routes", () => {
     expect(refuse).toBeGreaterThan(fits);
     expect(capture).toBeGreaterThan(refuse);
     expect(HUMAN).not.toMatch(/uploadError/);
+  });
+
+  it("the human route uploads references after the answer, not before it", () => {
+    expect(HUMAN).toMatch(/after\(async \(\) =>\s+recordGeneration\(recSupabase, \{[\s\S]{0,2500}references: await storeReferenceImages\(/);
   });
 
   it("the agent route stores durably and never answers with an inline image too big to arrive", () => {
