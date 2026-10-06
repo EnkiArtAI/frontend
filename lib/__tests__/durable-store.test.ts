@@ -22,6 +22,25 @@ vi.mock("@vercel/blob", () => {
 let derivatives: unknown = null;
 vi.mock("@/lib/imageDerivatives", () => ({ tryMakeDerivatives: async () => derivatives }));
 
+// The fallback bucket: off unless a test turns it on.
+const upload = vi.fn<(name: string, buf: Buffer, opts: { contentType: string; upsert: boolean }) => Promise<{ error: unknown }>>();
+const SUPA = "https://proj.supabase.co/storage/v1/object/public/generations/";
+let fallbackOn = false;
+vi.mock("@/lib/supabaseServer", () => ({
+  getSupabaseServerClientSafe: () =>
+    fallbackOn
+      ? { storage: { from: () => ({ upload: (...a: Parameters<typeof upload>) => upload(...a), getPublicUrl: (n: string) => ({ data: { publicUrl: SUPA + n } }) }) } }
+      : null,
+}));
+
+/** Runs fake time forward until the promise settles; the store lookup is async before any timer exists. */
+async function settle<T>(p: Promise<T>, stepMs = 1_000, steps = 400): Promise<T> {
+  let done = false;
+  void p.finally(() => { done = true; });
+  for (let i = 0; i < steps && !done; i++) await vi.advanceTimersByTimeAsync(stepMs);
+  return p;
+}
+
 import { putDurably, storeDeadline, storeGeneratedImage, INLINE_MAX_BYTES } from "@/lib/generation/derivative-store";
 
 const BYTES = Buffer.from([137, 80, 78, 71]);
@@ -30,10 +49,12 @@ const ok = (name: string) => ({ url: `https://s.public.blob.vercel-storage.com/$
 // A stray real SDK call would reach a closed port, never Vercel.
 beforeEach(() => {
   put.mockReset();
+  upload.mockReset();
+  fallbackOn = false;
   derivatives = null;
   vi.stubEnv("BLOB_READ_WRITE_TOKEN", "test-token");
   vi.stubEnv("VERCEL_BLOB_API_URL", "http://127.0.0.1:9");
-  vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -44,8 +65,7 @@ describe("putDurably", () => {
   it("retries a failed put until it lands, overwriting its own earlier attempt", async () => {
     put.mockRejectedValueOnce(new Error("rate limited")).mockRejectedValueOnce(new Error("503")).mockImplementation(async (n) => ok(n));
     const p = putDurably("generations/a.png", BYTES, "image/png", Date.now() + 60_000);
-    await vi.runAllTimersAsync();
-    expect(await p).toBe(ok("generations/a.png").url);
+    expect(await settle(p)).toBe(ok("generations/a.png").url);
     expect(put).toHaveBeenCalledTimes(3);
     expect(put.mock.calls[2][2]).toMatchObject({ allowOverwrite: true });
     expect(put.mock.calls[2][2].abortSignal).toBeInstanceOf(AbortSignal);
@@ -54,8 +74,7 @@ describe("putDurably", () => {
   it("gives up at the deadline instead of running into the platform's kill", async () => {
     put.mockRejectedValue(new Error("down"));
     const p = putDurably("generations/b.png", BYTES, "image/png", Date.now() + 20_000);
-    await vi.runAllTimersAsync();
-    expect(await p).toBeNull();
+    expect(await settle(p)).toBeNull();
     // 1 s, 2 s, 4 s, 8 s waits fit in 20 s; the fifth attempt is the last.
     expect(put).toHaveBeenCalledTimes(5);
   });
@@ -79,6 +98,61 @@ describe("putDurably", () => {
   });
 });
 
+describe("the fallback bucket", () => {
+  it("takes the image in the same round when Blob fails, so an outage costs no wait", async () => {
+    fallbackOn = true;
+    put.mockRejectedValue(new Error("503"));
+    upload.mockResolvedValue({ error: null });
+    expect(await settle(putDurably("generations/f.png", BYTES, "image/png", Date.now() + 60_000))).toBe(SUPA + "generations/f.png");
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(upload.mock.calls[0][2]).toMatchObject({ contentType: "image/png", upsert: true });
+  });
+
+  it("gets its turn when Blob hangs inside its own retries", async () => {
+    fallbackOn = true;
+    put.mockImplementation(() => new Promise(() => {}));
+    upload.mockResolvedValue({ error: null });
+    const p = putDurably("generations/h.png", BYTES, "image/png", Date.now() + 120_000);
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(upload).not.toHaveBeenCalled();
+    expect(await settle(p)).toBe(SUPA + "generations/h.png");
+  });
+
+  it("is used alone where no Blob token is configured", async () => {
+    fallbackOn = true;
+    vi.stubEnv("BLOB_READ_WRITE_TOKEN", "");
+    upload.mockResolvedValue({ error: null });
+    expect(await settle(putDurably("generations/n.png", BYTES, "image/png", Date.now() + 60_000))).toBe(SUPA + "generations/n.png");
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("drops out of the put when it refuses for good (a missing bucket), and Blob keeps its turns", async () => {
+    fallbackOn = true;
+    put.mockRejectedValueOnce(new Error("503")).mockRejectedValueOnce(new Error("503")).mockImplementation(async (n) => ok(n));
+    upload.mockResolvedValue({ error: Object.assign(new Error("Bucket not found"), { status: 404 }) });
+    expect(await settle(putDurably("generations/m.png", BYTES, "image/png", Date.now() + 60_000))).toBe(ok("generations/m.png").url);
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an image already in the bucket where it is", async () => {
+    vi.stubGlobal("fetch", async () => new Response(new Uint8Array(BYTES), { headers: { "content-type": "image/png" } }));
+    put.mockImplementation(async (n) => ok(n));
+    const url = SUPA + "generations/u1/x.png";
+    const stored = await storeGeneratedImage(url, "u1");
+    vi.unstubAllGlobals();
+    expect(stored.imageUrl).toBe(url);
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("takes a paid image without a Blob token at all, through storeGeneratedImage too", async () => {
+    fallbackOn = true;
+    vi.stubEnv("BLOB_READ_WRITE_TOKEN", "");
+    upload.mockResolvedValue({ error: null });
+    const stored = await settle(storeGeneratedImage(`data:image/png;base64,${BYTES.toString("base64")}`, "u1", Date.now() + 60_000));
+    expect(stored.imageUrl.startsWith(SUPA)).toBe(true);
+  });
+});
+
 describe("the deadline and the inline cap", () => {
   it("stores by 285 s into the request and never later, so capture and answer keep 15 s", () => {
     const now = Date.now();
@@ -99,8 +173,7 @@ describe("storeGeneratedImage with a deadline", () => {
     derivatives = { preview: rendition, thumb: rendition, width: 1, height: 1 };
     put.mockRejectedValue(new Error("down"));
     const p = storeGeneratedImage(DATA, "u1", Date.now() + 20_000);
-    await vi.runAllTimersAsync();
-    expect((await p).imageUrl).toBe(DATA);
+    expect((await settle(p)).imageUrl).toBe(DATA);
     expect(put.mock.calls.every(([name]) => !name.includes(".preview.") && !name.includes(".thumb."))).toBe(true);
   });
 
@@ -109,7 +182,7 @@ describe("storeGeneratedImage with a deadline", () => {
     put.mockImplementation(async (n) => { if (n.includes(".png")) return ok(n); throw new Error("rate limited"); });
     let done = false;
     const p = storeGeneratedImage(DATA, "u1", Date.now() + 200_000).then((r) => { done = true; return r; });
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(1_500);
     expect(done).toBe(false); // still retrying the renditions
     await vi.advanceTimersByTimeAsync(10_000);
     expect(done).toBe(true); // within 10 s, far short of the 200 s deadline
@@ -121,7 +194,7 @@ describe("storeGeneratedImage with a deadline", () => {
   it("bounds the renditions by the same deadline", async () => {
     derivatives = { preview: rendition, thumb: rendition, width: 1, height: 1 };
     put.mockImplementation(async (n) => ok(n));
-    const stored = await storeGeneratedImage(DATA, "u1", Date.now() + 20_000);
+    const stored = await settle(storeGeneratedImage(DATA, "u1", Date.now() + 20_000));
     expect(stored.previewUrl).toMatch(/\.preview\.webp$/);
     expect(put.mock.calls).toHaveLength(3);
     expect(put.mock.calls.every(([, , o]) => o.abortSignal instanceof AbortSignal)).toBe(true);
