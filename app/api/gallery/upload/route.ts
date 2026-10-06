@@ -1,6 +1,8 @@
 import { NextRequest, after } from "next/server";
+import { put, del } from "@vercel/blob";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
+import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
 import { createErrorResponse, createSuccessResponse } from "../../../middleware/validation";
 import { tryMakeDerivatives } from "@/lib/imageDerivatives";
 import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
@@ -53,7 +55,6 @@ async function uploadToBlob(file: File, userId: string): Promise<string> {
   const buffer = Buffer.from(arrayBuffer);
 
   try {
-    const { put } = await import('@vercel/blob');
     
     // Create unique filename
     const timestamp = Date.now();
@@ -83,7 +84,6 @@ async function uploadToBlob(file: File, userId: string): Promise<string> {
 async function putDerivative(filename: string, buffer: Buffer): Promise<string | null> {
   if (!process.env.BLOB_READ_WRITE_TOKEN) return null;
   try {
-    const { put } = await import("@vercel/blob");
     const { url } = await put(filename, buffer, {
       access: "public",
       contentType: "image/webp",
@@ -243,9 +243,12 @@ export async function POST(req: NextRequest) {
 
     if (error) {
       console.error('❌ Database error:', error);
-      // The row is what owns the files; without it they are orphans nobody can see or delete.
+      // The row is what owns the files; without it they are orphans nobody can
+      // see or delete. Only on a definite refusal: a lost answer may hide a row
+      // that was written, and deleting its files would break it.
+      if (isDbUnreachable(error)) return dbUnavailableResponse();
       const stored = [imageUrl, previewUrl, thumbnailUrl].filter((u): u is string => Boolean(u));
-      await import("@vercel/blob").then(({ del }) => del(stored)).catch((e) =>
+      await del(stored).catch((e) =>
         console.warn("⚠️ orphan cleanup failed:", e instanceof Error ? e.message : e),
       );
       return createErrorResponse('Failed to create gallery entry', 500, error.message);
@@ -261,6 +264,7 @@ export async function POST(req: NextRequest) {
     }, 201);
 
   } catch (e: unknown) {
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
     const message = e instanceof Error ? e.message : String(e);
     console.error('❌ Upload error:', message);
     return createErrorResponse('Internal server error', 500, message);

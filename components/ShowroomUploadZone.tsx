@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { useEmailAuth } from "@/hooks/useEmailAuth";
 
 interface UploadPreview {
   file: File;
@@ -20,7 +21,9 @@ interface UploadPreview {
 export default function ShowroomUploadZone() {
   const account = useActiveAccount();
   const { connected: solanaConnected } = useWallet();
-  const authenticated = !!account || solanaConnected;
+  // An email login holds a session too, and the server files uploads under the session.
+  const { isAuthed: emailAuthed } = useEmailAuth();
+  const authenticated = emailAuthed || !!account || solanaConnected;
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
   const [uploads, setUploads] = useState<UploadPreview[]>([]);
