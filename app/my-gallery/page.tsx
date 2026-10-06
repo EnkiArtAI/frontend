@@ -26,7 +26,11 @@ type SupabaseGeneration = {
   };
   status?: string;
   created_at: string;
+  visibility?: "public" | "private";
 };
+
+/** A DB image knows whether it is published; a local-only one has no such state. */
+type GalleryItem = StoredCreation & { visibility?: "public" | "private"; isUploaded?: boolean };
 
 export default function MyGalleryPage() {
   const account = useActiveAccount();
@@ -39,7 +43,7 @@ export default function MyGalleryPage() {
     () => account?.address ?? solanaPublicKey?.toBase58() ?? cdpAddress ?? null,
     [account?.address, solanaPublicKey, cdpAddress]
   );
-  const [items, setItems] = useState<StoredCreation[]>([]);
+  const [items, setItems] = useState<GalleryItem[]>([]);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -81,7 +85,7 @@ export default function MyGalleryPage() {
         const raw = json?.data?.generations ?? json?.generations ?? json?.items ?? [];
         const generations: SupabaseGeneration[] = Array.isArray(raw) ? raw : [];
 
-        const dbMapped: StoredCreation[] = generations
+        const dbMapped: GalleryItem[] = generations
           .filter((g) => g.image_urls?.length || g.image_url)
           .map((g) => {
             const imageUrl = g.image_urls && g.image_urls.length > 0
@@ -94,6 +98,7 @@ export default function MyGalleryPage() {
               prompt: typeof prompt === "string" ? prompt : "",
               createdAt: typeof g.created_at === "string" ? g.created_at : new Date().toISOString(),
               isUploaded: g.settings?.origin === "uploaded" || g.status === "uploaded",
+              visibility: g.visibility === "public" ? "public" : "private",
             };
           });
 
@@ -156,6 +161,16 @@ export default function MyGalleryPage() {
     removeCreation(userKey, id);
   };
 
+  // Publish or unpublish one image (SHR-1); the list changes once the server agreed.
+  const handleVisibility = async (id: string, visibility: "public" | "private") => {
+    const res = await fetch(`/api/images/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
+      body: JSON.stringify({ visibility }),
+    }).catch(() => null);
+    if (res?.ok) setItems((prev) => prev.map((c) => (c.id === id ? { ...c, visibility } : c)));
+  };
+
   if (!authenticated || !userKey) {
     return (
       <div className="enki">
@@ -206,7 +221,7 @@ export default function MyGalleryPage() {
       <div className="enki-page-title" style={{ maxWidth: 1200, margin: "0 auto" }}>
         <div className="enki-page-eyebrow">Private Collection</div>
         <h1 className="enki-page-h1">My Gallery</h1>
-        <p className="enki-page-lede">Your generated and uploaded images. Only visible to you.</p>
+        <p className="enki-page-lede">Your generated and uploaded images. Only visible to you, unless you publish one.</p>
       </div>
 
       <main style={{ maxWidth: 1200, margin: "0 auto", padding: "0 40px 80px" }}>
@@ -348,6 +363,22 @@ export default function MyGalleryPage() {
                     <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--enki-ink-3)" }}>
                       {new Date(c.createdAt).toLocaleDateString()}
                     </span>
+                    <span style={{ display: "inline-flex", gap: 6 }}>
+                    {c.visibility && !c.isUploaded && (
+                      <button
+                        onClick={() => handleVisibility(c.id, c.visibility === "public" ? "private" : "public")}
+                        data-testid={`button-visibility-${c.id}`}
+                        style={{
+                          padding: "3px 8px", fontSize: 11, fontWeight: 500,
+                          border: "1px solid var(--enki-rule)", borderRadius: 3,
+                          background: c.visibility === "public" ? "var(--enki-ink)" : "transparent",
+                          color: c.visibility === "public" ? "var(--enki-paper)" : "var(--enki-ink-2)",
+                          cursor: "pointer", fontFamily: "var(--font-sans)",
+                        }}
+                      >
+                        {c.visibility === "public" ? "Public" : "Publish"}
+                      </button>
+                    )}
                     <button
                       onClick={() => handleRemove(c.id)}
                       data-testid={`button-delete-creation-${c.id}`}
@@ -360,6 +391,7 @@ export default function MyGalleryPage() {
                     >
                       Remove
                     </button>
+                    </span>
                   </div>
                   <p style={{
                     margin: 0, fontSize: 12, color: "var(--enki-ink-2)",
