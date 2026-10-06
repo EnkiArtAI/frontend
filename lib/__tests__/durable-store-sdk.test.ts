@@ -52,7 +52,9 @@ describe("putDurably on the real SDK", () => {
     expect(await putDurably("generations/a.png", BYTES, "image/png", started + 2_500)).toBeNull();
     expect(Date.now() - started).toBeLessThan(3_000);
     expect(hits).toBeGreaterThan(0);
-  }, 10_000);
+    // Wall-clock: a loaded full run can delay timers past the 0.5 s margin.
+    // A retry cannot hide the bug: without the race it takes 3 s every time.
+  }, { timeout: 10_000, retry: 2 });
 
   it("leaves no abandoned put calling the store after the deadline", async () => {
     mode = "down";

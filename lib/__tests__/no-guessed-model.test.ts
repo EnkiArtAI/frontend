@@ -27,7 +27,7 @@ describe("the agent route sends the routed model", () => {
     // Money first moves when the fee payer fronts a missing token account,
     // then at settlement. Reading the payment header moves nothing; it runs
     // before the routing on purpose (Kev, 2026-10-06).
-    const fronting = X402.search(/await conn\.sendRawTransaction\(/);
+    const fronting = X402.search(/await broadcastAndConfirm\(conn, fronted\.serialize\(\)/);
     const settle = X402.search(/await submitAndConfirm\(solanaConnection\(\), parsed\.tx\)/);
     expect(hosts).toBeGreaterThan(-1);
     expect(guard).toBeGreaterThan(hosts);
