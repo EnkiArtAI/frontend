@@ -12,6 +12,9 @@ import "@/components/enki-shell/enki-shell.css";
 import "@/components/settings/settings.css";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import SendUsdcPanel from "@/components/settings/SendUsdcPanel";
+import KeyExport from "@/components/settings/KeyExport";
+import { useEmailAuth } from "@/hooks/useEmailAuth";
+import { useCdpAddress } from "@/hooks/useCdpAddress";
 
 type BanMe = {
   banned: boolean; reason?: string | null; permanent?: boolean; expiresAt?: string | null;
@@ -29,6 +32,8 @@ export default function BannedPage() {
   const [statement, setStatement] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { email } = useEmailAuth();
+  const { address: cdpAddress } = useCdpAddress();
 
   useEffect(() => {
     (async () => {
@@ -145,9 +150,10 @@ export default function BannedPage() {
               ) : embedded ? (
                 <>
                   <p style={{ margin: "0 0 10px", fontSize: 12, color: "var(--enki-ink-3)", lineHeight: 1.6 }}>
-                    Your account uses an embedded wallet. Send its USDC to any Solana wallet below — your wallet signs, Enki pays the network fee. Nothing is ever withheld.
+                    Your account uses an embedded wallet. Send its USDC to any Solana wallet below — your wallet signs, Enki pays the network fee. Or export the key and take the whole wallet with you. Nothing is ever withheld.
                   </p>
                   <SendUsdcPanel fromAddress={embedded.address} />
+                  <KeyExport email={email} ready={!!cdpAddress} />
                 </>
               ) : (
                 <p style={{ margin: 0, fontSize: 12, color: "var(--enki-ink-3)", lineHeight: 1.6 }}>
