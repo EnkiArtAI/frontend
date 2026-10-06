@@ -1,5 +1,6 @@
 import { NextRequest, after } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { resolveSessionUserId } from "@/lib/session-user";
 import { createErrorResponse, createSuccessResponse } from "../../../middleware/validation";
 import { tryMakeDerivatives } from "@/lib/imageDerivatives";
 import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
@@ -47,19 +48,9 @@ function validateFile(file: File): { valid: boolean; error?: string } {
  * Uploads image file to blob storage
  */
 async function uploadToBlob(file: File, userId: string): Promise<string> {
-  const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
-  
   // Convert File to Buffer (works in both browser and Node.js)
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
-  
-  if (!blobToken) {
-    console.warn('⚠️ BLOB_READ_WRITE_TOKEN not set, using data URL fallback');
-    // Return a data URL as fallback for development (Node.js compatible)
-    const base64 = buffer.toString('base64');
-    const dataUrl = `data:${file.type};base64,${base64}`;
-    return dataUrl;
-  }
 
   try {
     const { put } = await import('@vercel/blob');
@@ -118,29 +109,30 @@ function sanitizeString(input: string | null | undefined, maxLength: number = 10
 
 export async function POST(req: NextRequest) {
   try {
+    /* Whose upload this is comes from the session, never from the request:
+       a header equal to a form field proved only that the caller typed the
+       same address twice, so anyone could file images under anyone. A
+       banned session resolves to nobody. Checked before a 10 MB body is read. */
+    const supabase = getSupabaseServerClient();
+    const userId = await resolveSessionUserId(supabase, req.headers.get("X-Session-Token"));
+    if (!userId) {
+      return createErrorResponse('Sign in to upload images', 401);
+    }
+    /* A data URL used to stand in for the store here, and landed in the row
+       as megabytes of text. No store, no upload. */
+    if (!process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
+      return createErrorResponse('Image uploads are not configured on this environment', 503);
+    }
+
     // Parse FormData
     const formData = await req.formData();
     const file = formData.get('file') as File | null;
-    const userId = formData.get('userId') as string | null;
     const prompt = formData.get('prompt') as string | null;
     const metadata = formData.get('metadata') as string | null;
 
     // Validate required fields
     if (!file) {
       return createErrorResponse('File is required', 400);
-    }
-
-    if (!userId || typeof userId !== 'string' || userId.trim().length === 0) {
-      return createErrorResponse('userId is required', 400);
-    }
-
-    // Ownership check: X-Wallet-Address header must match userId in body
-    const callerAddress = req.headers.get("X-Wallet-Address");
-    if (!callerAddress) {
-      return createErrorResponse('X-Wallet-Address header required', 401);
-    }
-    if (callerAddress.toLowerCase() !== userId.toLowerCase()) {
-      return createErrorResponse('Forbidden', 403);
     }
 
     // Validate file
@@ -243,7 +235,6 @@ export async function POST(req: NextRequest) {
     };
 
     // Store in database
-    const supabase = getSupabaseServerClient();
     const { data, error } = await supabase
       .from('generated_images')
       .insert([generationData])
@@ -252,6 +243,11 @@ export async function POST(req: NextRequest) {
 
     if (error) {
       console.error('❌ Database error:', error);
+      // The row is what owns the files; without it they are orphans nobody can see or delete.
+      const stored = [imageUrl, previewUrl, thumbnailUrl].filter((u): u is string => Boolean(u));
+      await import("@vercel/blob").then(({ del }) => del(stored)).catch((e) =>
+        console.warn("⚠️ orphan cleanup failed:", e instanceof Error ? e.message : e),
+      );
       return createErrorResponse('Failed to create gallery entry', 500, error.message);
     }
 
