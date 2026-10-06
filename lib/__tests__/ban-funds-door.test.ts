@@ -76,6 +76,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", coinbase);
   vi.stubEnv("CDP_API_KEY_ID", "id");
   vi.stubEnv("CDP_SECRET_KEY", "secret");
+  vi.stubEnv("SOLANA_PAYMENT_CHAIN", "solana");
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
@@ -127,6 +128,30 @@ describe("the ramp", () => {
     session = { userId: USER, wallet: USER };
     tablesDown = true;
     expect((await ramp(post({ side: "buy", address: SOL }))).status).toBe(503);
+  });
+});
+
+describe("the ramp on a devnet deployment", () => {
+  beforeEach(() => vi.stubEnv("SOLANA_PAYMENT_CHAIN", "solana-devnet"));
+
+  it("opens Coinbase's sandbox for buying: the whole flow, no card charged", async () => {
+    const res = await ramp(post({ side: "buy", address: SOL }));
+    expect(res.status).toBe(200);
+    expect(new URL((await res.json()).url).host).toBe("pay-sandbox.coinbase.com");
+  });
+
+  it("refuses selling before Coinbase is asked: it has no sandbox", async () => {
+    const res = await ramp(post({ side: "sell", address: SOL }));
+    expect(res.status).toBe(501);
+    expect(coinbase).not.toHaveBeenCalled();
+  });
+
+  it("on mainnet both sides open the real Coinbase", async () => {
+    vi.stubEnv("SOLANA_PAYMENT_CHAIN", "solana");
+    for (const side of ["buy", "sell"]) {
+      const res = await ramp(post({ side, address: SOL }));
+      expect(new URL((await res.json()).url).host, side).toBe("pay.coinbase.com");
+    }
   });
 });
 
