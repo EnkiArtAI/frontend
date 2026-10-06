@@ -67,11 +67,11 @@
   "devDependencies": {
     "@coral-xyz/anchor": "0.32.1",
     "@electric-sql/pglite": "0.5.8",
-    "@codama/nodes-from-anchor": "1.5.6",
-    "@codama/renderers-js": "2.5.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@codama/nodes-from-anchor": "1.5.6",
+    "@codama/renderers-js": "2.5.0",
     "codama": "1.11.0",
     "eslint": "^9",
     "eslint-config-next": "16.1.1",
