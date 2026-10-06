@@ -202,7 +202,7 @@ describe("the agent route checks the inputs before any payment", () => {
   it("looks for extraction whenever the text is secret, not only when the artist charges", () => {
     expect(src).toMatch(/hidden = reqs\.prompt\.paid;/);
     expect(helper).toMatch(/return \{ ok: true, text: filled\.text, adult: text\.adult, paid: inputs\.paid \};/);
-    expect(src).toMatch(/const check = await checkPrompt\(checked, \{ hidden \}\);/);
+    expect(src).toMatch(/const check = first \? NOT_CHECKED : await checkPrompt\(checked, \{ hidden \}\);/);
     expect(src).not.toMatch(/hidden: reqs\.legs/);
   });
 

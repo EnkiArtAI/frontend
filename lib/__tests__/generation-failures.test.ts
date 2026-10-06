@@ -101,7 +101,7 @@ describe("every failure point records it", () => {
     expect(count(AGENT)).toBe(3);
     expect(AGENT).toMatch(/error: "image could not be stored", txSignature: signature,/);
     expect(AGENT).toMatch(/error: result\.error \|\| "generation failed", txSignature: signature,/);
-    expect(AGENT).toMatch(/if \(timedOut\) \{\n(\s+\/\/[^\n]*\n)*\s+after\(recordGenerationFailure\([\s\S]{0,400}error: "Payment confirmation timed out", txSignature: signature,/);
+    expect(AGENT).toMatch(/if \(settled\.pending\) \{\n(\s+\/\/[^\n]*\n)*\s+after\(recordGenerationFailure\([\s\S]{0,400}error: "Payment outcome unknown", txSignature: signature,/);
   });
 
   it("never stores an artist's text with a failure", () => {

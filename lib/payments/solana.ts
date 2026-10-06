@@ -19,7 +19,7 @@
  * only possible if we can act on the nonce alone. Hand that authority to the
  * buyer and abandoned authorisations could never be flushed.
  */
-import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey, SendTransactionError } from "@solana/web3.js";
 import bs58 from "bs58";
 import { PAYMENT_CHAINS, isSolanaChain, type ChainKey } from "@/shared/payment-config";
 
@@ -61,18 +61,166 @@ export function usdcMint(): PublicKey {
 }
 
 /**
- * "confirmed" rather than "finalized": a confirmed payment is one the cluster
- * has agreed on, and waiting the extra ~13s for finality would sit in the
- * user's checkout for no gain we can act on.
+ * The RPC endpoints, in the order they are tried.
  *
  * SOLANA_RPC_URL overrides ONLY on mainnet. The var holds one URL and a URL
  * is chain-specific — on 2026-08-24 a mainnet Helius URL sat in the env of a
  * devnet deployment and every settlement died with the RPC's 401 instead of
  * reaching the (free, public) devnet RPC the chain config already named.
+ * SOLANA_RPC_URL_FALLBACK, a second provider, follows the same rule (ENG-12:
+ * with one URL, an outage at that provider stopped every payment), and the
+ * chain's public endpoint comes last.
+ */
+export function solanaRpcUrls(): string[] {
+  const mainnet = solanaChainKey() === "solana";
+  const urls = [
+    mainnet ? process.env.SOLANA_RPC_URL : undefined,
+    mainnet ? process.env.SOLANA_RPC_URL_FALLBACK : undefined,
+    solanaChain().rpcUrl,
+  ].map((u) => u?.trim()).filter((u): u is string => Boolean(u) && parses(u!));
+  return [...new Set(urls)];
+}
+
+/** A URL that cannot be parsed is dropped, by name only: it may carry a key. */
+function parses(url: string): boolean {
+  try {
+    return Boolean(new URL(url));
+  } catch {
+    console.error("[solana-rpc] an RPC URL in the environment cannot be parsed and is skipped");
+    return false;
+  }
+}
+
+/**
+ * "confirmed" rather than "finalized": a confirmed payment is one the cluster
+ * has agreed on, and waiting the extra ~13s for finality would sit in the
+ * user's checkout for no gain we can act on.
  */
 export function solanaConnection(): Connection {
-  const override = solanaChainKey() === "solana" ? process.env.SOLANA_RPC_URL : undefined;
-  return new Connection(override || solanaChain().rpcUrl, "confirmed");
+  const urls = solanaRpcUrls();
+  return new Connection(urls[0], urls.length > 1 ? { commitment: "confirmed", fetch: failover(urls) } : "confirmed");
+}
+
+/**
+ * The next endpoint is tried only when one cannot answer: a network error, a
+ * 5xx, a refused key (401, 403), a spent quota or rate limit (429), or no
+ * headers within RPC_ATTEMPT_MS. Those are refusals before the request was
+ * handled. An answer is final, a JSON-RPC error included (a rejected
+ * transaction comes back as HTTP 200), so nothing rejected is re-sent
+ * elsewhere. Re-sending after an endpoint that timed out is safe: a signed
+ * transaction has one signature and lands at most once, and the sender
+ * confirms rather than believes a failed send (broadcastAndConfirm).
+ */
+const RPC_ATTEMPT_MS = 10_000;
+/** How long this instance skips an endpoint that did not answer, so only the first call pays RPC_ATTEMPT_MS. */
+const DOWN_FOR_MS = 30_000;
+const UNANSWERED = new Set([401, 403, 429]);
+const downUntil = new Map<string, number>();
+function failover(urls: string[]): typeof fetch {
+  return async (_input, init) => {
+    const live = urls.filter((u) => (downUntil.get(u) ?? 0) <= Date.now());
+    const order = live.length ? live : urls;
+    for (let i = 0; ; i++) {
+      const last = i === order.length - 1;
+      const ac = last ? null : new AbortController();
+      const timer = ac && setTimeout(() => ac.abort(), RPC_ATTEMPT_MS);
+      try {
+        const res = await fetch(order[i], ac ? { ...init, signal: ac.signal } : init);
+        if (last || (res.status < 500 && !UNANSWERED.has(res.status))) return res;
+      } catch (e) {
+        if (last) throw e;
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+      downUntil.set(order[i], Date.now() + DOWN_FOR_MS);
+      reportDown(order[i]);
+    }
+  };
+}
+
+/** Tests and a provider fix: forget which endpoints were down and which were reported. */
+export function resetRpcHealth(): void {
+  downUntil.clear();
+  reported.clear();
+}
+
+/** A transaction that did not land and never will: refused before it moved, failed on chain, or expired. */
+export class Rejected extends Error {}
+
+/**
+ * Wait for "confirmed" by asking over HTTP. web3.js confirms on the FIRST
+ * endpoint's websocket, which is down exactly when the failover is needed;
+ * these questions go through the failover like every other call. Throws
+ * Rejected when the transaction failed on chain or its blockhash expired;
+ * anything else (the timeout, an endpoint that cannot answer) leaves the
+ * outcome open.
+ */
+export async function confirmSignature(
+  connection: Connection,
+  signature: string,
+  { lastValidBlockHeight, timeoutMs = 60_000 }: { lastValidBlockHeight?: number; timeoutMs?: number } = {},
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const s = (await connection.getSignatureStatuses([signature])).value[0];
+    if (s?.err) throw new Rejected(`Transaction failed on-chain: ${JSON.stringify(s.err)}`);
+    if (s?.confirmationStatus === "confirmed" || s?.confirmationStatus === "finalized") return;
+    if (lastValidBlockHeight !== undefined && (await connection.getBlockHeight("confirmed")) > lastValidBlockHeight) {
+      throw new Rejected("Transaction expired before it landed");
+    }
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for confirmation");
+    await new Promise((r) => setTimeout(r, 1_500));
+  }
+}
+
+/**
+ * Send a signed transaction and confirm it (confirmSignature). A rejection
+ * is final (Rejected, with the node's message) unless the network already
+ * has the transaction: the failover re-sends after an endpoint that cannot
+ * answer, and one that timed out may have forwarded it first, so "already
+ * processed", or a refusal from a lagging node, is checked against the
+ * signature's status. A send that failed in transit is confirmed, not
+ * believed. maxRetries unset leaves the rebroadcast to the RPC until expiry.
+ */
+export async function broadcastAndConfirm(
+  connection: Connection,
+  raw: Uint8Array,
+  signature: string,
+  { maxRetries, ...wait }: { lastValidBlockHeight?: number; timeoutMs?: number; maxRetries?: number } = {},
+): Promise<void> {
+  try {
+    await connection.sendRawTransaction(raw, { preflightCommitment: "confirmed", maxRetries });
+  } catch (e) {
+    if (e instanceof SendTransactionError && !/already been processed/i.test(e.message) && !(await networkHas(connection, signature))) {
+      throw new Rejected(e.message);
+    }
+  }
+  await confirmSignature(connection, signature, wait);
+}
+
+/** Whether any endpoint knows the signature; a lookup that fails counts as yes, to be confirmed rather than believed. */
+async function networkHas(connection: Connection, signature: string): Promise<boolean> {
+  try {
+    return Boolean((await connection.getSignatureStatuses([signature])).value[0]);
+  } catch {
+    return true;
+  }
+}
+
+const reported = new Set<string>();
+/** Logged with the host only: a provider URL carries its API key in the query. */
+function reportDown(url: string): void {
+  const host = new URL(url).host;
+  console.error(`[solana-rpc] ${host} did not answer; trying the next endpoint`);
+  if (reported.has(host)) return;
+  reported.add(host);
+  // One mail per instance, not per request.
+  void Promise.all([import("@/lib/admin-notify"), import("@/lib/supabaseServer")])
+    .then(([{ notifyAdmins }, { getSupabaseServerClientSafe }]) => {
+      const db = getSupabaseServerClientSafe();
+      return db && notifyAdmins(db, { subject: "Solana RPC failover", text: `${host} did not answer. Payments moved to the next RPC endpoint.` });
+    })
+    .catch(() => {});
 }
 
 let cachedFeePayer: Keypair | null = null;

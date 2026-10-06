@@ -38,7 +38,8 @@ import { checkAgentPromptInputs } from "@/lib/generation/agent-prompt-inputs";
 import {
   getModelCostMicro, computeGenerationSplit, UnknownModelError,
 } from "@/lib/payments/generation-pricing";
-import { usdcMint, feePayerKeypair, solanaConnection, solanaChainKey } from "@/lib/payments/solana";
+import { usdcMint, feePayerKeypair, solanaConnection, solanaChainKey, broadcastAndConfirm } from "@/lib/payments/solana";
+import bs58 from "bs58";
 import { effectiveQuality } from "@/lib/pricing";
 import { reportPriceDrift } from "@/lib/generation/price-drift";
 import {
@@ -47,7 +48,7 @@ import {
 import { checkAndRecordSolanaSignature } from "@/backend/solana-x402-verifier";
 import { isSolanaChain } from "@/shared/payment-config";
 import { loadPromptText, fillVariables, inputsUnmatched, VALUE_MAX } from "@/lib/generation/prompt-text";
-import { checkPrompt, textValues } from "@/lib/moderation/prompt-check";
+import { checkPrompt, NOT_CHECKED, textValues } from "@/lib/moderation/prompt-check";
 import { recordGenerationFailure } from "@/lib/generation/record";
 import { addressWarnedOut, addressWarningMessage, byAddress, recordWarning } from "@/lib/moderation/warnings";
 import { childSafetyScore, recordModerationEvent } from "@/lib/moderation-enforcement";
@@ -55,7 +56,7 @@ import { agentBlocked, recordExtractionHit, silentFailure } from "@/lib/moderati
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 import { TransactionMessage, VersionedTransaction } from "@solana/web3.js";
-import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
+import { moderate, screenFirst, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { resolveModelByFamily, chooseRoute } from "@/lib/generation/models";
 import { clampTier } from "@/lib/generation/resolution";
 import { reportSuccess, reportFailure } from "@/lib/generation/provider-health";
@@ -65,6 +66,7 @@ import { generateImagesWithOpenAI } from "@/backend/services/openai-image-genera
 import { generateImagesWithGemini } from "@/backend/services/gemini-image-generation";
 import type { ImageGenerationRequest } from "@/backend/services/types";
 import { PublicKey } from "@solana/web3.js";
+import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 
 export const maxDuration = 300;
 
@@ -249,6 +251,20 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   const reqs = await requirementsFor(input);
   if (reqs.status !== 402) return NextResponse.json(reqs.body, { status: reqs.status });
 
+  // ── Verify the agent's transaction offline, before anything is judged ──
+  // Free, and the same answer for everyone: a header that is not a signed
+  // transaction paying exactly these legs is refused here, so it can no
+  // longer buy a metered prompt check or the address lookups below (Kev,
+  // 2026-10-06). Moved up from after the routing, unchanged.
+  const parsed = parseXPayment(paymentHeader);
+  if (!parsed.ok) return rejectPayment(reqs, parsed.error);
+  const verified = verifyAgentPayment(parsed.tx, {
+    legs: reqs.legs.map((l) => ({ owner: new PublicKey(l.recipient), amountMicro: l.amountMicro })),
+    mint: usdcMint(),
+    feePayer: feePayer.publicKey,
+  });
+  if (!verified.ok) return rejectPayment(reqs, verified.error);
+
   const supabase = getSupabaseServerClient();
 
   // Prompt text: sent directly, or loaded from the prompt row. A PAID
@@ -274,12 +290,15 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // more; explicit and child-safety requests get a warning, everything else
   // that is refused reads like any failure.
   // A blocked address, like a caught request, fails silently once its
-  // payment is verified (below); before that, a junk header told them apart.
+  // payment is simulated (below); a junk header never gets this far.
   const blocked = (await agentBlocked(supabase, request)) || (await addressWarnedOut(supabase, request));
   const checked = input.promptId ? textValues(input.variableValues) : { prompt: promptText };
   // A blocked address is still judged, so its answers and their timing match
   // everyone else's up to the silent point; only its hits are not recorded.
-  const check = await checkPrompt(checked, { hidden });
+  // The regex first: what Tier 1 refuses never reaches the chat model, and
+  // its refusal is this request's moderation verdict (Kev, 2026-10-06).
+  const first = screenFirst(checked);
+  const check = first ? NOT_CHECKED : await checkPrompt(checked, { hidden });
   if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
     await recordWarning(supabase, {
       surface: "x402-generate", request: asker, category: check.verdict, text: JSON.stringify(checked), confidence: check.confidence,
@@ -293,7 +312,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // For a marketplace prompt the check saw only the agent's values, so tier 2
   // keeps its sexual flag for the artist's text, unless the prompt is marked
   // 18+: its save already judged that text 18+ and not explicit.
-  const verdict = await moderate({ prompt: promptText, surface: "x402-generate", adultJudged: !input.promptId || promptAdult });
+  const verdict = first ?? await moderate({ prompt: promptText, surface: "x402-generate", adultJudged: !input.promptId || promptAdult });
   // A child-safety hit counts on the requester's ladder, where it stops an
   // address at once; an agent's own prompt too, since this rail has no
   // account to ban for good. The warning is the hit's one record.
@@ -339,16 +358,6 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
     return NextResponse.json({ error: "This model has no provider model configured — nothing was charged" }, { status: 503 });
   }
 
-  // ── Verify the agent's transaction offline ──────────────────────────────
-  const parsed = parseXPayment(paymentHeader);
-  if (!parsed.ok) return rejectPayment(reqs, parsed.error);
-  const verified = verifyAgentPayment(parsed.tx, {
-    legs: reqs.legs.map((l) => ({ owner: new PublicKey(l.recipient), amountMicro: l.amountMicro })),
-    mint: usdcMint(),
-    feePayer: feePayer.publicKey,
-  });
-  if (!verified.ok) return rejectPayment(reqs, verified.error);
-
   // A leg can point at a wallet with no USDC account yet (a new artist).
   // TransferChecked to a missing ATA fails the whole payment, so the fee
   // payer fronts the account first — the same thing the human rails do.
@@ -369,14 +378,13 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
           mint,
         ),
       );
-      const { blockhash } = await conn.getLatestBlockhash("confirmed");
+      const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash("confirmed");
       const msg = new TransactionMessage({
         payerKey: feePayer.publicKey, recentBlockhash: blockhash, instructions: ixs,
       }).compileToV0Message();
       const fronted = new VersionedTransaction(msg);
       fronted.sign([feePayer]);
-      const sig = await conn.sendRawTransaction(Buffer.from(fronted.serialize()), { maxRetries: 3 });
-      await conn.confirmTransaction(sig, "confirmed");
+      await broadcastAndConfirm(conn, fronted.serialize(), bs58.encode(fronted.signatures[0]), { lastValidBlockHeight, timeoutMs: 30_000, maxRetries: 3 });
       console.warn(`[x402] fronted ${missing.length} USDC account(s) for payment legs — rent on the fee payer`);
     }
   } catch (e) {
@@ -427,23 +435,22 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   }
   const settled = await submitAndConfirm(solanaConnection(), parsed.tx);
   if (!settled.ok) {
-    // Preflight/on-chain rejection means no funds moved; a confirmation
-    // timeout is the one ambiguous case, so the signature travels with the
-    // error for the agent to check.
-    const timedOut = settled.error.includes("Timed out");
-    if (timedOut) {
+    // A rejection (preflight, on chain, expired) means no funds moved; every
+    // other failure is pending, the payment may still land, so the signature
+    // travels with the error for the agent to check.
+    if (settled.pending) {
       // The payment may still land with no image for it: recorded with its
       // signature so support can make it right.
       after(recordGenerationFailure(supabase, {
         request, surface: "x402-generate", modelId: model.id, resolution: input.resolution, quality: effQuality, boost: false,
         aspectRatio: input.aspectRatio ?? null, referenceImageCount: 0,
         prompt: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
-        error: "Payment confirmation timed out", txSignature: signature,
+        error: "Payment outcome unknown", txSignature: signature,
       }));
     }
     return NextResponse.json(
       { error: settled.error, transaction: signature },
-      { status: timedOut ? 504 : 402 },
+      { status: settled.pending ? 504 : 402 },
     );
   }
 
@@ -538,7 +545,19 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   );
 }
 
+/**
+ * This route is public (proxy.ts) and every paying request costs a metered
+ * prompt check: agents hold no session, so the address is the only handle
+ * (Kev, 2026-10-06).
+ */
+function ipLimited(req: NextRequest): NextResponse | null {
+  const limit = checkRequestRateLimit(rateLimitKey(req, "x402:ip"), 60, 60_000);
+  return limit.allowed ? null : rateLimitResponse(limit.retryAfterSeconds);
+}
+
 export async function GET(req: NextRequest) {
+  const limited = ipLimited(req);
+  if (limited) return limited;
   const promptId = req.nextUrl.searchParams.get("promptId") ?? undefined;
   const parsed = bodySchema.safeParse({
     prompt: req.nextUrl.searchParams.get("prompt") ?? (promptId ? undefined : "probe"),
@@ -552,6 +571,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const limited = ipLimited(req);
+  if (limited) return limited;
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid request" }, { status: 400 });

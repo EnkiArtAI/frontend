@@ -64,7 +64,8 @@ vi.mock("next/server", async (original) => ({ ...(await original<typeof import("
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => fake }));
 vi.mock("@/lib/crypto", () => ({ encryptString: () => ({ encrypted: "ct", iv: "iv", authTag: "tag", kid: "k1" }), decryptString: () => "" }));
 const tier2 = vi.fn(async (_i: { prompt: string }) => ({ allowed: true }));
-vi.mock("@/lib/moderation", () => ({ moderate: (i: { prompt: string }) => tier2(i), CLIENT_BLOCK_MESSAGE: "blocked" }));
+const screened = vi.fn((_i: Record<string, string>): unknown => null);
+vi.mock("@/lib/moderation", () => ({ moderate: (i: { prompt: string }) => tier2(i), screenFirst: (i: Record<string, string>) => screened(i), CLIENT_BLOCK_MESSAGE: "blocked" }));
 const recorded = vi.fn(async (..._a: unknown[]) => {});
 vi.mock("@/lib/moderation-enforcement", () => ({ recordModerationEvent: (...a: unknown[]) => recorded(...a) }));
 vi.mock("@/lib/moderation/warnings", () => ({ recordWarning: (...a: unknown[]) => warn(...(a as [])), warningMessage: () => "warned" }));
@@ -89,6 +90,8 @@ beforeEach(() => {
   failingTable = null;
   check.mockReset();
   check.mockResolvedValue({ verdict: "clear" });
+  screened.mockReset();
+  screened.mockReturnValue(null);
   warn.mockClear();
   tables = {
     auth_sessions: [
@@ -104,6 +107,19 @@ beforeEach(() => {
 });
 
 describe("saving a prompt", () => {
+  it("refuses what Tier 1 refuses without asking the chat model, and records it", async () => {
+    const block = { allowed: false, decision: "block", tier: 1, category: "csam", enforcement: "review" };
+    screened.mockReturnValue(block);
+    tier2.mockClear();
+    recorded.mockClear();
+    const res = await save(BASE);
+    expect(res.status).toBe(422);
+    expect(check).not.toHaveBeenCalled();
+    expect(tier2).not.toHaveBeenCalled();
+    expect(recorded.mock.calls[0][0]).toBe(block);
+    expect(tables.prompts).toHaveLength(0);
+  });
+
   it("judges title, text, tags and every variable's values", async () => {
     await save({ ...BASE, variables: [{ ...BASE.variables[0], options: [{ visibleName: "Coat", promptValue: "a long coat" }] }] });
     expect(check).toHaveBeenCalledOnce();

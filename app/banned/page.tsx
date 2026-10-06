@@ -8,7 +8,13 @@ import { useEffect, useState } from "react";
 /* Defines `.ek-app` and the --enki-* tokens this page paints with — without it
    they fall back to the globals.css copy, which has no purple variant. */
 import "@/components/enki-shell/enki-shell.css";
+/* The .set-send* rules SendUsdcPanel paints with. */
+import "@/components/settings/settings.css";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import SendUsdcPanel from "@/components/settings/SendUsdcPanel";
+import KeyExport from "@/components/settings/KeyExport";
+import { useEmailAuth } from "@/hooks/useEmailAuth";
+import { useCdpAddress } from "@/hooks/useCdpAddress";
 
 type BanMe = {
   banned: boolean; reason?: string | null; permanent?: boolean; expiresAt?: string | null;
@@ -26,6 +32,8 @@ export default function BannedPage() {
   const [statement, setStatement] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { email } = useEmailAuth();
+  const { address: cdpAddress } = useCdpAddress();
 
   useEffect(() => {
     (async () => {
@@ -58,6 +66,9 @@ export default function BannedPage() {
   };
 
   const external = (me && me !== "unauth" && me.wallets?.filter((w) => w.external)) || [];
+  // The embedded (Enki) wallet: its funds leave through the same server-built,
+  // ban-tolerant Send USDC the settings page uses (BAN-3).
+  const embedded = (me && me !== "unauth" && me.wallets?.find((w) => !w.external && w.chain === "solana")) || null;
 
   return (
     <div className="ek-app" style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, background: "var(--enki-paper-2)", color: "var(--enki-ink)" }}>
@@ -136,9 +147,17 @@ export default function BannedPage() {
                     <div key={w.address} style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--enki-ink-2)", padding: "4px 0", wordBreak: "break-all" }}>{w.address}</div>
                   ))}
                 </>
+              ) : embedded ? (
+                <>
+                  <p style={{ margin: "0 0 10px", fontSize: 12, color: "var(--enki-ink-3)", lineHeight: 1.6 }}>
+                    Your account uses an embedded wallet. Send its USDC to any Solana wallet below — your wallet signs, Enki pays the network fee. Or export the key and take the whole wallet with you. Nothing is ever withheld.
+                  </p>
+                  <SendUsdcPanel fromAddress={embedded.address} />
+                  <KeyExport email={email} ready={!!cdpAddress} />
+                </>
               ) : (
                 <p style={{ margin: 0, fontSize: 12, color: "var(--enki-ink-3)", lineHeight: 1.6 }}>
-                  Your account uses an embedded wallet. Full key export (so you own it outright, in any wallet app) ships with the wallet upgrade — until then, write to the team and we&apos;ll help you move your funds out. Nothing is ever withheld.
+                  No wallet is attached to this account, so there is nothing to move. Nothing is ever withheld.
                 </p>
               )}
             </div>

@@ -16,6 +16,7 @@ import { useCdpSolanaSigner } from "@/hooks/useCdpSolanaSigner";
 import { useModelLimits, useModelCatalogue, FALLBACK_RATIOS, resolveCatalogueEntry } from "@/hooks/useModelLimits";
 import { runGeneration } from "@/lib/generation/run-generation";
 import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
+import { useReferenceReads, REFS_LOADING } from "@/hooks/useReferenceReads";
 import { tiersUpTo } from "@/lib/generation/resolution";
 import BoostToggle from "@/components/generation/BoostToggle";
 import QualitySelect, { type Quality } from "@/components/generation/QualitySelect";
@@ -63,10 +64,10 @@ import {
   clearEditorVersions,
   type PersistedVersionCard,
 } from "@/lib/editorVersions";
-import nlp from "compromise";
 import { getVariableColors, pickVariableColorIndex } from "@/lib/variableColors";
 import DiceButton from "@/components/DiceButton";
 import { DICE_LIMITS, type DiceValue, type DiceVariable } from "@/lib/generation/variable-dice";
+import { fixedValue, snapshotValue } from "@/lib/editor/variable-value";
 
 
 const EDITOR_DRAFT_KEY = "symphora-editor-draft-v1";
@@ -580,6 +581,13 @@ export default function EnkiPromptEditor() {
 
   const [variables, setVariables] = useState<PromptVariable[]>([]);
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
+  const { loading: refsLoading, pending: refsPending, read: readRef } = useReferenceReads();
+  /** Refuses while a reference image is still being read (Kev, 2026-10-06). */
+  const refsStillLoading = () => {
+    if (!refsLoading) return false;
+    toast({ title: "Images still loading", description: REFS_LOADING });
+    return true;
+  };
   const [refImageDrag, setRefImageDrag] = useState<{
     from: number | null;
     over: number | null;
@@ -925,11 +933,7 @@ export default function EnkiPromptEditor() {
   const applyVarSyncToVersions = useCallback(
     (reset: boolean) => {
       const named = variables.filter((v) => v.name.trim());
-      const snapValue = (v: PromptVariable): string => {
-        if (v.type === "checkbox") return v.defaultValue ? v.description || "on" : "off";
-        if (v.type === "image") return v.description || "";
-        return (v.defaultValue as string) || v.name;
-      };
+      const snapValue = (v: PromptVariable): string => snapshotValue(v);
       setVersions((prev) => {
         let touched = false;
         const next = prev.map((card) => {
@@ -1357,12 +1361,9 @@ export default function EnkiPromptEditor() {
       });
       return;
     }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const dataUrl = String(e.target?.result || "");
+    void readRef(file).then((dataUrl) => {
       if (dataUrl) setReferenceImages((prev) => [...prev, dataUrl]);
-    };
-    reader.readAsDataURL(file);
+    });
   };
 
   const pickReferenceImages = () => {
@@ -2512,16 +2513,7 @@ export default function EnkiPromptEditor() {
     let previewText = expandReferenceImageMentions(promptData.body);
     variables.forEach((variable) => {
       const placeholder = `[${variable.name}]`;
-      let val: string;
-      if (snapshot[variable.name] !== undefined) {
-        val = snapshot[variable.name];
-      } else if (variable.type === "text") {
-        val = (variable.defaultValue as string) || "";
-      } else if (variable.type === "image") {
-        val = variable.description || "";
-      } else {
-        val = variable.defaultValue ? variable.description : "";
-      }
+      const val = snapshot[variable.name] ?? fixedValue(variable) ?? ((variable.defaultValue as string) || "");
       previewText = previewText.split(placeholder).join(val);
     });
 
@@ -2656,10 +2648,9 @@ export default function EnkiPromptEditor() {
       for (let i = 0; i < stackSize; i++) {
         const snapshot: Record<string, string> = {};
         variables.forEach(v => {
-        if (v.type === "checkbox") {
-          snapshot[v.name] = v.defaultValue ? v.description || "on" : "off";
-        } else if (v.type === "image") {
-          snapshot[v.name] = v.description || "";
+        const fixed = fixedValue(v);
+        if (fixed !== null) {
+          snapshot[v.name] = fixed;
         } else {
           const pool = v.values.length > 0 ? v.values : [(v.defaultValue as string) || v.name];
           snapshot[v.name] = pool[i % pool.length];
@@ -2702,7 +2693,7 @@ export default function EnkiPromptEditor() {
 
   const handleCreateEmptySlots = () => {
     const snapshot: Record<string, string> = {};
-    variables.forEach(v => { snapshot[v.name] = (v.defaultValue as string) || v.name; });
+    variables.forEach(v => { snapshot[v.name] = snapshotValue(v); });
     const newId = versions.length > 0 ? Math.max(...versions.map(v => v.id)) + 1 : 1;
     setVersions(prev => [...prev, { id: newId, variableSnapshot: snapshot, imageUrl: null, status: "idle" }]);
   };
@@ -2739,9 +2730,7 @@ export default function EnkiPromptEditor() {
     input.onchange = (ev) => {
       const files = Array.from((ev.target as HTMLInputElement).files || []);
       files.forEach((file) => {
-        const reader = new FileReader();
-        reader.onload = (e) => addVerifyCardRef(slotId, String(e.target?.result || ""));
-        reader.readAsDataURL(file);
+        void readRef(file).then((dataUrl) => { if (dataUrl) addVerifyCardRef(slotId, dataUrl); });
       });
     };
     input.click();
@@ -2759,6 +2748,7 @@ export default function EnkiPromptEditor() {
 
   /* ─── Pay & Generate — UX shows total cost, fires one paid generation per slot ─── */
   const handlePayAndGenerate = () => {
+    if (refsStillLoading()) return;
     if (!picked) {
       toast({ title: "Pick a model", description: "Choose the model to generate with.", variant: "destructive" });
       return;
@@ -2800,6 +2790,7 @@ export default function EnkiPromptEditor() {
   /* ─── Refill & Generate — delete selected + pay 80% price for those slots ─── */
   const handleRefillAndGenerate = () => {
     if (ui.selectedCards.length === 0) return;
+    if (refsStillLoading()) return;
     if (!picked) {
       toast({ title: "Pick a model", description: "Choose the model to generate with.", variant: "destructive" });
       return;
@@ -2816,7 +2807,7 @@ export default function EnkiPromptEditor() {
     setUi(prev => ({ ...prev, selectedCards: [] }));
     // Create fresh idle snapshots for refill slots (use current variable defaults)
     const baseSnapshot: Record<string, string> = {};
-    variables.forEach(v => { baseSnapshot[v.name] = (v.defaultValue as string) || v.name; });
+    variables.forEach(v => { baseSnapshot[v.name] = snapshotValue(v); });
     const baseId = versions.filter(v => !ui.selectedCards.includes(v.id)).length > 0
       ? Math.max(...versions.filter(v => !ui.selectedCards.includes(v.id)).map(v => v.id))
       : 0;
@@ -2853,7 +2844,10 @@ export default function EnkiPromptEditor() {
     }));
   };
 
-  /* ─── Grok auto-fill empty variables ─── */
+  /* ─── Grok auto-fill empty variables ───
+     Through the dice endpoint, which checks the session, limits the rate and
+     validates every value. /api/grok-fill did none of that, so anyone past
+     the team gate could spend our xAI key freely (Kev, 2026-10-06). */
   const handleGrokFill = async () => {
     const emptyVars = variables.filter(v => v.type === "text" && !v.defaultValue);
     if (emptyVars.length === 0) {
@@ -2861,18 +2855,21 @@ export default function EnkiPromptEditor() {
       handleCreateEmptySlots();
       return;
     }
+    const emptyIds = new Set(emptyVars.map(v => v.id));
     setUi(prev => ({ ...prev, isGrokFilling: true }));
     try {
-      const res = await fetch("/api/grok-fill", {
+      const res = await fetch("/api/workflow/variables", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: promptData.body, variables: emptyVars.map(v => v.name) }),
+        headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
+        body: JSON.stringify({
+          variables: diceVariables.filter(v => emptyIds.has(v.id)),
+          context: promptData.body.slice(0, DICE_LIMITS.maxContextLen),
+        }),
       });
-      const filled = await res.json() as Record<string, string>;
-      setVariables(prev => prev.map(v =>
-        filled[v.name] ? { ...v, defaultValue: filled[v.name] } : v
-      ));
-      toast({ title: "Auto filled variables", description: `Filled ${Object.keys(filled).length} variable(s).` });
+      if (!res.ok) throw new Error(`auto fill answered ${res.status}`);
+      const { values = {} } = await res.json() as { values?: Record<string, DiceValue> };
+      applyDiceValues(values);
+      toast({ title: "Auto filled variables", description: `Filled ${Object.keys(values).length} variable(s).` });
     } catch {
       toast({ title: "Auto fill failed", description: "Could not auto-fill. Try again.", variant: "destructive" });
     } finally {
@@ -3704,7 +3701,7 @@ export default function EnkiPromptEditor() {
                   >
                     <Plus size={16} />
                   </button>
-                  {referenceImages.length === 0 && (
+                  {referenceImages.length + refsPending.length === 0 && (
                     <span
                       className={`enk-ref-hint${externalDragActive ? " enk-ref-hint--drop" : ""}`}
                     >
@@ -3713,7 +3710,7 @@ export default function EnkiPromptEditor() {
                         : "Click or drag images here for reference"}
                     </span>
                   )}
-                  {referenceImages.length > 0 && (
+                  {referenceImages.length + refsPending.length > 0 && (
                     /* Cascading card-stack — each slot overlaps the
                        previous one by a fixed offset (see CSS for the
                        `--enk-ref-overlap` math). Hovering or focusing a
@@ -3801,6 +3798,11 @@ export default function EnkiPromptEditor() {
                           </div>
                         );
                       })}
+                      {refsPending.map((src) => (
+                        <div key={src} className="enk-ref-slot enki-ref-pending" aria-label="Reference image loading">
+                          <img src={src} alt="" draggable={false} />
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -4830,6 +4832,7 @@ export default function EnkiPromptEditor() {
                   <button
                     className="enk-refill-bar__refill"
                     onClick={handleRefillAndGenerate}
+                    disabled={refsLoading}
                   >
                     Refill
                     <span className="enk-refill-bar__cost">{slotPrice(ui.selectedCards.length)}</span>
@@ -4989,7 +4992,8 @@ export default function EnkiPromptEditor() {
                     className="enk-pay-btn"
                     onClick={handlePayAndGenerate}
                     disabled={
-                      isGeneratingPaymentPending || 
+                      refsLoading ||
+                      isGeneratingPaymentPending ||
                       versions.filter(v => v.status === "idle" || v.status === "failed").length === 0 ||
                       (promptData.type === "premium-prompt" && variables.some(v => !v.name))
                     }
@@ -5085,7 +5089,9 @@ export default function EnkiPromptEditor() {
         requiredVariations={promptData.type === "free-prompt" ? 1 : 4}
         onAutoFill={handleGrokFill}
         isAutoFilling={ui.isGrokFilling}
+        generateBlocked={refsLoading}
         onGenerate={(count) => {
+          if (refsStillLoading()) return;
           if (!picked) {
             toast({ title: "Pick a model", description: "Choose the model to generate with.", variant: "destructive" });
             return;
@@ -5096,7 +5102,7 @@ export default function EnkiPromptEditor() {
             return;
           }
           const snapshot: Record<string, string> = {};
-          variables.forEach(v => { snapshot[v.name] = (v.defaultValue as string) || v.name; });
+          variables.forEach(v => { snapshot[v.name] = snapshotValue(v); });
           // As many images as the sheet shows and prices, one payment each.
           const base = versions.length > 0 ? Math.max(...versions.map(v => v.id)) + 1 : 1;
           const ids = Array.from({ length: count }, (_, i) => base + i);

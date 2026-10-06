@@ -5,26 +5,15 @@
  *  - placeholderArt(): the design's deterministic SVG-gradient generator, for
  *    the decorative seed/reference nodes and mock-up mode. Never a stand-in
  *    for a failed generation.
- *  - persistCreation(): best-effort hook to save a finished render to the
- *    user's database/gallery, swallowing errors so an unconfigured DB never
- *    breaks the editor.
+ *  - persistCreation(): saves a finished render to the local creations store
+ *    so "My Gallery" shows it at once. The server records the generation
+ *    itself (recordGeneration), so nothing is posted from here.
  */
 
 import { addCreation } from "@/lib/creations";
 
-/**
- * Best-effort persistence to the user's gallery/DB + local creations store so
- * the render shows up in "My Gallery". Never throws.
- */
-export async function persistCreation(opts: {
-  prompt: string;
-  imageUrl: string;
-  model: string;
-  title?: string;
-  userKey?: string | null;
-}): Promise<void> {
-  const { prompt, imageUrl, model, title, userKey } = opts;
-  // 1) local creations store (instant, offline-safe) — what My Gallery merges in.
+/** The render into the local creations store, which "My Gallery" merges in. Never throws. */
+export function persistCreation({ prompt, imageUrl, userKey }: { prompt: string; imageUrl: string; userKey?: string | null }): void {
   try {
     addCreation(userKey || "guest", {
       id: "nc-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
@@ -34,17 +23,6 @@ export async function persistCreation(opts: {
     });
   } catch {
     /* ignore */
-  }
-  // 2) server gallery (only succeeds when DB/auth are configured; harmless otherwise).
-  try {
-    await fetch("/api/gallery/upload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ imageUrl, prompt, model, title, source: "node-creator" }),
-    });
-  } catch {
-    /* ignore — DB not configured locally */
   }
 }
 

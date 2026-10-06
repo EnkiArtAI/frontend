@@ -25,6 +25,19 @@ export function sessionAuthHeaders(): Record<string, string> {
   return {};
 }
 
+/** The localStorage keys sessionAuthHeaders reads a session from. */
+const SESSION_KEYS = new Set(["enki_session_token", "turnkey_session_token", "solana-auth-session"]);
+
+/**
+ * Whether a storage change from another tab can have changed who is signed
+ * in: a session key, or the whole store cleared (key null). The editors
+ * autosave their drafts every 400 ms, and those writes say nothing about the
+ * session (Kev, 2026-10-06).
+ */
+export function isSessionStorageKey(key: string | null): boolean {
+  return key === null || SESSION_KEYS.has(key);
+}
+
 /** Where the feed's 18+ pill is kept: the id of the account that turned it on (BetaGate). */
 export const SHOW_ADULT_KEY = "enki:show-adult";
 

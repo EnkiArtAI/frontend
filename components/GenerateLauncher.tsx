@@ -17,6 +17,7 @@ import { usePaymentSigner } from "@/hooks/usePaymentSigner";
 import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
 import { useGenerationCore } from "@/hooks/useGenerationCore";
 import NftPickerModal from "@/components/enki/NftPickerModal";
+import { useReferenceReads, REFS_LOADING } from "@/hooks/useReferenceReads";
 
 /* No literals: models, ratios, tiers, prices, the boost lever and the NFT
    reference limit all come from useGenerationCore — the one global source
@@ -59,6 +60,7 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
 
   const [open, setOpen] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const { loading: refsLoading, pending: refsPending, read: readRef } = useReferenceReads();
   // Same model on a priority host — faster, dearer, identical image.
   const [boost, setBoost] = useState(false);
   const [prompt, setPrompt] = useState("");
@@ -173,6 +175,10 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
 
   const generate = async (count: number) => {
     if (generating) return;
+    if (refsLoading) {
+      toast({ title: "Images still loading", description: REFS_LOADING });
+      return;
+    }
     const final = prompt.replace(/\[[^\]]+\]/g, (tok) => valueByToken[tok] || tok);
     if (!final.trim()) {
       toast({ title: "Error", description: "Please enter a prompt.", variant: "destructive" });
@@ -249,9 +255,7 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
         toast({ title: "File type not supported", description: `${file.name} — this model accepts ${modelLimits.filetypes.map((t) => t.split("/")[1]).join(", ")}.`, variant: "destructive" });
         return;
       }
-      const reader = new FileReader();
-      reader.onload = () => {
-        const url = typeof reader.result === "string" ? reader.result : null;
+      void readRef(file).then((url) => {
         if (url) {
           setList((prev) => {
             if (prev.length >= modelLimits.maxRefs) {
@@ -261,8 +265,7 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
             return [...prev, url];
           });
         }
-      };
-      reader.readAsDataURL(file);
+      });
     });
   };
 
@@ -315,6 +318,7 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
         setResolution={setResolution}
         resolutionOptions={core.tiers.map((t, i) => ({ value: t.tier, label: tierLabel(i) ? `${t.tier} · ${tierLabel(i)}` : t.tier, short: t.tier }))}
         referenceImages={referenceImages}
+        pendingReferenceImages={refsPending}
         onAddReferenceImages={addReferenceImages}
         onRemoveReferenceImage={(i) =>
           setReferenceImages((prev) => prev.filter((_, idx) => idx !== i))
@@ -326,7 +330,8 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
         nftImages={nftImages}
         onRemoveNFT={(i) => setNftImages((prev) => prev.filter((_, idx) => idx !== i))}
         onReorderNFTs={(from, to) => setNftImages((prev) => reorder(prev, from, to))}
-        generateLabel={generating ? "Generating…" : "Generate"}
+        generateLabel={generating ? "Generating…" : refsLoading ? "Loading images…" : "Generate"}
+        generateBlocked={refsLoading}
         boost={boost}
         onBoostChange={core.boostAvailable ? setBoost : undefined}
         hideReleaseTab

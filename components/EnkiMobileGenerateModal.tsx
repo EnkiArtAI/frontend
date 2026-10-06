@@ -146,6 +146,8 @@ interface EnkiMobileGenerateModalProps {
      hide the Release tab and surface reference-image inputs. */
   hideReleaseTab?: boolean;
   referenceImages?: string[];
+  /** Greyed previews of images still being read (useReferenceReads). */
+  pendingReferenceImages?: string[];
   onAddReferenceImages?: (files: FileList) => void;
   onRemoveReferenceImage?: (index: number) => void;
   /* Reorder the image card deck (drag-and-drop in the footer). */
@@ -171,6 +173,8 @@ interface EnkiMobileGenerateModalProps {
   /* Freshly generated images to surface ABOVE the sheet (newest first). */
   resultImages?: string[];
   isGenerating?: boolean;
+  /* Reference images are still being read: Generate waits for them. */
+  generateBlocked?: boolean;
   /* Release flow: how many verified variations are required before publishing.
      Defaults to 1 for free prompts, 4 for paid. onRelease fires the publish action. */
   requiredVariations?: number;
@@ -286,6 +290,7 @@ export default function EnkiMobileGenerateModal({
   isAutoFilling = false,
   hideReleaseTab = false,
   referenceImages,
+  pendingReferenceImages = [],
   onAddReferenceImages,
   onRemoveReferenceImage,
   onReorderReferenceImages,
@@ -301,6 +306,7 @@ export default function EnkiMobileGenerateModal({
   resolutionOptions,
   resultImages,
   isGenerating = false,
+  generateBlocked = false,
   requiredVariations,
   onRelease,
   title,
@@ -1038,6 +1044,11 @@ export default function EnkiMobileGenerateModal({
                         >
                           <Plus size={16} />
                         </button>
+                        {pendingReferenceImages.map((src) => (
+                          <div key={src} className="mobile-modal-ref-thumb enki-ref-pending" aria-label="Reference image loading">
+                            <img src={src} alt="" />
+                          </div>
+                        ))}
                         {(referenceImages ?? []).map((src, i) => (
                           <div key={i} className="mobile-modal-ref-thumb">
                             <img src={src} alt={`Reference ${i + 1}`} />
@@ -1186,7 +1197,7 @@ export default function EnkiMobileGenerateModal({
                             ))}
                           </div>
                         )}
-                        <button type="button" className="mobile-modal-varimg-gen" onClick={() => onGenerate(1)}>
+                        <button type="button" className="mobile-modal-varimg-gen" onClick={() => onGenerate(1)} disabled={generateBlocked}>
                           <Sparkles size={13} />
                           Generate this image
                         </button>
@@ -1255,13 +1266,13 @@ export default function EnkiMobileGenerateModal({
                         <Plus size={13} />
                         <ImageIcon size={15} />
                       </button>
-                      {(referenceImages ?? []).length > 0 && (
+                      {(referenceImages ?? []).length + pendingReferenceImages.length > 0 && (
                         <div
-                          className="mobile-modal-ref-chip"
+                          className={`mobile-modal-ref-chip${(referenceImages ?? []).length ? "" : " enki-ref-pending"}`}
                           title={`${(referenceImages ?? []).length} image(s) — hover to reorder`}
                         >
-                          <img src={(referenceImages ?? [])[0]} alt="Uploaded" />
-                          <span className="mobile-modal-ref-chip-count">{(referenceImages ?? []).length}</span>
+                          <img src={(referenceImages ?? [])[0] ?? pendingReferenceImages[0]} alt="Uploaded" />
+                          <span className="mobile-modal-ref-chip-count">{(referenceImages ?? []).length + pendingReferenceImages.length}</span>
                         </div>
                       )}
                       {openDeck === "img" && (referenceImages ?? []).length > 0 &&
@@ -1375,7 +1386,7 @@ export default function EnkiMobileGenerateModal({
                   size={14}
                 />
               )}
-              <button className="mobile-modal-generate-btn" onClick={() => onGenerate(genCountNum)} disabled={isGenerating}>
+              <button className="mobile-modal-generate-btn" onClick={() => onGenerate(genCountNum)} disabled={isGenerating || generateBlocked}>
                 <Sparkles size={13} style={{ fill: "white" }} />
                 {generateLabel || "Generate"}
               </button>

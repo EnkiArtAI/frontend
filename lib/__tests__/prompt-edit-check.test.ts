@@ -40,7 +40,7 @@ const OWNERS: Record<string, string[] | null> = { tok: ["u1"], email: ["u3", "ph
 vi.mock("@/lib/session-user", () => ({
   resolveOwnerIds: async (_s: unknown, t: string | null) => OWNERS[t ?? ""] ?? null,
 }));
-vi.mock("@/lib/moderation", () => ({ moderate: (...a: unknown[]) => tier2(...(a as [])), CLIENT_BLOCK_MESSAGE: "blocked" }));
+vi.mock("@/lib/moderation", () => ({ moderate: (...a: unknown[]) => tier2(...(a as [])), screenFirst: () => null, CLIENT_BLOCK_MESSAGE: "blocked" }));
 vi.mock("@/lib/moderation-enforcement", () => ({ recordModerationEvent: async () => {} }));
 vi.mock("@/lib/moderation/warnings", () => ({ recordWarning: (...a: unknown[]) => warn(...(a as [])), warningMessage: () => "warned" }));
 vi.mock("@/lib/moderation/prompt-check", () => ({ checkPrompt: (inputs: Record<string, string>) => check(inputs) }));

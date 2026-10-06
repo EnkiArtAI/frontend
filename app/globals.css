@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* A reference image still being read: shown greyed, not yet usable (useReferenceReads). */
+.enki-ref-pending { opacity: 0.45; filter: grayscale(1); pointer-events: none; }
+
 /* Two-finger horizontal swipes on trackpads must never trigger the browser's
    back/forward navigation — it hijacked node drags in the editor (the node
    moved for a moment, then the "go back" bubble appeared instead). */

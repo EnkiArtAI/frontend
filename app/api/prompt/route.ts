@@ -1,9 +1,9 @@
 import { NextResponse, after } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { encryptString, decryptString } from "@/lib/crypto";
-import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
+import { moderate, screenFirst, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
-import { checkPrompt, savedPromptInputs } from "@/lib/moderation/prompt-check";
+import { checkPrompt, NOT_CHECKED, savedPromptInputs } from "@/lib/moderation/prompt-check";
 import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { showsAdultRender } from "@/lib/adult-content";
 import { resolveOwnerIds, resolveSessionUserId, resolveSessionUserWithBan } from "@/lib/session-user";
@@ -355,7 +355,10 @@ export async function POST(req: Request) {
     // A record of a refused save shows what a buyer could see; the body is
     // the artist's and is withheld from every moderator (lib/moderation/evidence).
     const { content: artistText, ...shownInputs } = judged;
-    const check = await checkPrompt(judged, { hidden: false, signal: req.signal });
+    // The regex first: what Tier 1 refuses never reaches the chat model, and
+    // its refusal is this request's moderation verdict (Kev, 2026-10-06).
+    const first = screenFirst(judged);
+    const check = first ? NOT_CHECKED : await checkPrompt(judged, { hidden: false, signal: req.signal });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
       const outcome = await recordWarning(supabase, {
         surface: "upload", request: req, category: check.verdict, text: JSON.stringify(shownInputs), withheld: artistText, confidence: check.confidence,
@@ -386,7 +389,7 @@ export async function POST(req: Request) {
     // Tier 2 reads the same whole as the prompt check.
     const moderatedText = Object.values(judged).join("\n");
     if (moderatedText) {
-      const verdict = await moderate({ prompt: moderatedText, surface: "upload", signal: req.signal, adultJudged: true });
+      const verdict = first ?? await moderate({ prompt: moderatedText, surface: "upload", signal: req.signal, adultJudged: true });
       after(recordModerationEvent(verdict, { surface: "upload", request: req, prompt: Object.values(shownInputs).join("\n"), withheld: artistText }));
       if (!verdict.allowed) {
         return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });

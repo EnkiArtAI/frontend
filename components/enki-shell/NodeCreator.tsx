@@ -19,6 +19,7 @@ import { Maximize2, Gem } from "lucide-react";
 import { Icon } from "./icons";
 import { persistCreation, placeholderArt } from "./generation";
 import { runGeneration } from "@/lib/generation/run-generation";
+import { useReferenceReads, REFS_LOADING } from "@/hooks/useReferenceReads";
 import { useModelLimits } from "@/hooks/useModelLimits";
 import DocView from "./DocView";
 import DiceButton from "@/components/DiceButton";
@@ -323,6 +324,8 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
 
   const [st, setSt] = useState<St>(initial);
   const stRef = useRef(st); stRef.current = st;
+  // Generate waits while a reference image is still being read (Kev, 2026-10-06).
+  const { loading: refsLoading, read: readRef } = useReferenceReads();
   // Doc-style vs node-canvas view. Doc is the default for new sessions; the
   // last-used view survives close/reopen (Kev's "resume where I left off").
   const [view, setView] = useState<EditorView>(() => {
@@ -1387,7 +1390,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === oid ? { ...n, img: null, status: "empty" } : n)) }));
       return;
     }
-    persistCreation({ prompt: promptText, imageUrl: outcome.imageUrl, model: picked?.id ?? "", title: stRef.current.title, userKey });
+    persistCreation({ prompt: promptText, imageUrl: outcome.imageUrl, userKey });
     setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === oid ? { ...n, img: outcome.imageUrl, status: "ready" } : n)) }));
   }, [onToast, userKey, signPayment]);
 
@@ -1396,6 +1399,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
      composition — those are left alone and offered via a co-generate dialog. */
   const spawnOutput = (autofill?: boolean) => {
     if (!stRef.current.body.trim()) return;
+    if (refsLoading) { onToast(REFS_LOADING); return; }
     if (!resolveCatalogueEntry(catalogueRef.current, stRef.current.models[0])) { onToast("Pick a model first"); return; }
     // strict check: node-view buttons pass the click event as the first arg
     const wantsAutofill = autofill === true;
@@ -1649,6 +1653,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   /* dock batch generate */
   const runGenerate = (autofill: boolean) => {
     if (!stRef.current.body.trim()) { onToast("Write a prompt first"); return; }
+    if (refsLoading) { onToast(REFS_LOADING); return; }
     const picked = resolveCatalogueEntry(catalogueRef.current, stRef.current.models[0]);
     if (!picked) { onToast("Pick a model first"); return; }
     pushHist();
@@ -1825,7 +1830,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const setRefImg = (id: string, url: string) => setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === id ? { ...n, img: url } : n)) }));
   const readImages = (fileList: FileList | null): Promise<string[]> => {
     const files = Array.from(fileList || []).filter((f) => f.type.startsWith("image/"));
-    return Promise.all(files.map((f) => new Promise<string>((res) => { const r = new FileReader(); r.onload = () => res(r.result as string); r.readAsDataURL(f); })));
+    return Promise.all(files.map(readRef)).then((urls) => urls.filter((u): u is string => Boolean(u)));
   };
   // Click/drop on one empty node: the first image fills it, extras become new reference nodes.
   const onRefFiles = async (id: string, fileList: FileList | null) => {

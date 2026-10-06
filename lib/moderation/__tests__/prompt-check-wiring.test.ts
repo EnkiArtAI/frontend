@@ -74,7 +74,7 @@ describe("the human rail", () => {
 
   it("checks after composing, before moderation and before the charge", () => {
     expect(check).toBeGreaterThan(HUMAN.indexOf("const filled = fillVariables("));
-    expect(HUMAN.indexOf("const verdict = await moderate({ prompt,")).toBeGreaterThan(check);
+    expect(HUMAN.indexOf("const verdict = first ?? await moderate({ prompt,")).toBeGreaterThan(check);
     expect(HUMAN.indexOf("await claimForGeneration(")).toBeGreaterThan(check);
   });
 
@@ -120,7 +120,7 @@ describe("the free generator", () => {
 
   it("checks the whole prompt before moderation and before rendering", () => {
     expect(check).toBeGreaterThan(-1);
-    expect(FREE.indexOf("const verdict = await moderate({ prompt, surface: \"generate-free\"")).toBeGreaterThan(check);
+    expect(FREE.indexOf("const verdict = first ?? await moderate({ prompt, surface: \"generate-free\"")).toBeGreaterThan(check);
     expect(FREE.indexOf("generateImageWithPollinations(")).toBeGreaterThan(check);
   });
 
@@ -177,8 +177,8 @@ describe("the agent rail", () => {
     expect(blocked).toBeGreaterThan(-1);
     expect(check).toBeGreaterThan(blocked);
     // Judged like everyone else, so nothing before the silent point differs.
-    expect(AGENT).toMatch(/const check = await checkPrompt\(checked, \{ hidden \}\);/);
-    expect(FREE).toMatch(/const check = await checkPrompt\(\{ prompt \}, \{ hidden: false, signal: request\.signal \}\);/);
+    expect(AGENT).toMatch(/const check = first \? NOT_CHECKED : await checkPrompt\(checked, \{ hidden \}\);/);
+    expect(FREE).toMatch(/const check = first \? NOT_CHECKED : await checkPrompt\(\{ prompt \}, \{ hidden: false, signal: request\.signal \}\);/);
     expect(FREE).toMatch(/const silent = check\.verdict !== "clear";/);
   });
 
@@ -196,9 +196,15 @@ describe("the agent rail", () => {
     expect(AGENT).toMatch(/error: "Image generation failed after your payment settled\.",/);
   });
 
-  it("checks before any payment is read", () => {
-    expect(check).toBeGreaterThan(-1);
-    expect(AGENT.indexOf("parseXPayment(paymentHeader)")).toBeGreaterThan(check);
+  it("verifies the payment offline before anything is judged", () => {
+    // Kev, 2026-10-06: a junk X-PAYMENT header must not buy a metered prompt
+    // check. The offline verification is free and answers everyone alike.
+    const verify = AGENT.indexOf("if (!verified.ok) return rejectPayment(reqs, verified.error);");
+    expect(verify).toBeGreaterThan(AGENT.indexOf("const reqs = await requirementsFor(input);"));
+    expect(AGENT.indexOf("const blocked = (await agentBlocked(supabase, request))")).toBeGreaterThan(verify);
+    expect(check).toBeGreaterThan(verify);
+    expect(AGENT.split("parseXPayment(paymentHeader)").length - 1).toBe(1);
+    expect(AGENT.split("verifyAgentPayment(parsed.tx,").length - 1).toBe(1);
   });
 
   it("warns, and fails closed otherwise", () => {
