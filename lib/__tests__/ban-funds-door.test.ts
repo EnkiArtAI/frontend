@@ -16,7 +16,8 @@ const USER = "11111111-1111-4111-8111-111111111111";
 const SOL = "So11111111111111111111111111111111111111112"; // real base58 casing, as stored since 2d08fe7
 
 let banned = false;
-let dbDown = false;
+let dbDown = false; // the whole database
+let tablesDown = false; // only the queries a route runs itself
 let session: { userId: string | null; wallet: string | null } = { userId: USER, wallet: SOL };
 vi.mock("@/lib/session-user", () => ({
   resolveSessionUserWithBan: async () => {
@@ -30,6 +31,7 @@ vi.mock("@/lib/session-user", () => ({
 }));
 
 const writes: string[] = [];
+const DEAD = { message: "TypeError: fetch failed" };
 let ownedRows: { address: string }[] = [];
 let ownedQuery: unknown[] = [];
 vi.mock("@/lib/supabaseServer", () => ({
@@ -41,9 +43,11 @@ vi.mock("@/lib/supabaseServer", () => ({
         is: () => chain,
         gt: () => chain,
         in: (_col: string, values: unknown[]) => { ownedQuery = values; return chain; },
-        limit: async () => ({ data: ownedRows, error: null }),
+        limit: async () => (dbDown || tablesDown ? { data: null, error: DEAD } : { data: ownedRows, error: null }),
         maybeSingle: async () =>
-          table === "auth_sessions" ? { data: { wallet_address: USER, wallet_type: "password" } } : { data: null },
+          dbDown || tablesDown ? { data: null, error: DEAD }
+          : table === "auth_sessions" ? { data: { wallet_address: USER, wallet_type: "password" }, error: null }
+          : { data: null, error: null },
         insert: async () => { writes.push(`${table}.insert`); return { error: null }; },
         update: () => ({ eq: async () => { writes.push(`${table}.update`); return { error: null }; } }),
       };
@@ -63,6 +67,7 @@ const coinbase = vi.fn(async () => Response.json({ token: "session-token" }));
 beforeEach(() => {
   banned = false;
   dbDown = false;
+  tablesDown = false;
   session = { userId: USER, wallet: SOL };
   ownedRows = [];
   ownedQuery = [];
@@ -122,6 +127,12 @@ describe("the ramp", () => {
     dbDown = true;
     expect((await ramp(post({ side: "buy", address: SOL }))).status).toBe(503);
   });
+
+  it("answers a database that dies at the ownership lookup with 503, not 'not yours'", async () => {
+    session = { userId: USER, wallet: USER };
+    tablesDown = true;
+    expect((await ramp(post({ side: "buy", address: SOL }))).status).toBe(503);
+  });
 });
 
 describe("attach-wallet", () => {
@@ -138,7 +149,10 @@ describe("attach-wallet", () => {
     expect(writes).toEqual([]);
   });
 
-  it("answers a dead database with the honest 503 and maps nothing", async () => {
+  it("answers a dead database with the honest 503 and maps nothing, at the session lookup too", async () => {
+    tablesDown = true;
+    expect((await attach(post({ solanaAddress: SOL }))).status).toBe(503);
+    tablesDown = false;
     dbDown = true;
     const res = await attach(post({ solanaAddress: SOL }));
     expect(res.status).toBe(503);

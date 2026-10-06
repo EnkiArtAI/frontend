@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
   // below always gets the client's real-case address.)
   const forms = [address, address.toLowerCase()];
   if (!forms.includes(wallet)) {
-    const { data: owned } = userId
+    const { data: owned, error: ownedErr } = userId
       ? await supabase
           .from("user_wallets")
           .select("address")
@@ -107,7 +107,8 @@ export async function POST(req: NextRequest) {
           .in("address", forms)
           .is("removed_at", null)
           .limit(1)
-      : { data: null };
+      : { data: null, error: null };
+    if (isDbUnreachable(ownedErr)) return dbUnavailableResponse();
     if (!owned?.length) return NextResponse.json({ error: "That wallet isn't linked to your account" }, { status: 403 });
   }
 

@@ -42,12 +42,14 @@ export async function POST(req: NextRequest) {
   const evm = parsed.data.evmAddress ?? null;
 
   const supabase = getSupabaseServerClient();
-  const { data: session } = await supabase
+  const { data: session, error: sessionErr } = await supabase
     .from("auth_sessions")
     .select("wallet_address, wallet_type")
     .eq("token", token)
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();
+  // A dead database is not "signed out" (Kev, 2026-09-05).
+  if (isDbUnreachable(sessionErr)) return dbUnavailableResponse();
   if (!session) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   if (session.wallet_type !== "password") {
     return NextResponse.json({ error: "Only password sessions attach wallets" }, { status: 400 });
@@ -56,12 +58,13 @@ export async function POST(req: NextRequest) {
   // Resolve users.id: fresh sessions carry it directly, re-attached ones map back.
   let userId: string | null = UUID.test(session.wallet_address) ? session.wallet_address : null;
   if (!userId) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("user_wallets")
       .select("user_id")
       .eq("address", session.wallet_address)
       .is("removed_at", null)
       .maybeSingle();
+    if (isDbUnreachable(error)) return dbUnavailableResponse();
     userId = data?.user_id ?? null;
   }
   if (!userId) return NextResponse.json({ error: "No user for session" }, { status: 404 });
