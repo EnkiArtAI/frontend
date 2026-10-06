@@ -225,3 +225,25 @@ export async function storeGeneratedImage(providerUrl: string, userId: string, d
     return passthrough;
   }
 }
+
+/**
+ * A prompt's showcase images, as URLs in our stores (SHR-4). The editor
+ * sends its finished renders: our URL, or a data URL when the model was free
+ * or storing failed. A raster data URL is stored now; megabytes of text in
+ * prompts.showcase_images would ride along on every listing query, and the
+ * share card drops it. Any other address is dropped, so the share card never
+ * fetches a URL a creator typed. null when a data URL could not be stored.
+ */
+export async function ownShowcaseImages(urls: string[], userId: string): Promise<string[] | null> {
+  const deadline = Date.now() + 20_000;
+  const wanted = urls.filter((url) => inOurBlob(url) || /^data:image\/(png|jpeg|webp)[;,]/.test(url)).slice(0, 4);
+  const kept = await Promise.all(wanted.map(async (url) => {
+    if (inOurBlob(url)) return url;
+    const bytes = await fetchBytes(url);
+    if (!bytes) return undefined;
+    const ext = bytes.contentType.includes("png") ? "png" : bytes.contentType.includes("webp") ? "webp" : "jpg";
+    return putDurably(`showcase/${userId}/${Date.now()}_${Math.random().toString(36).slice(2, 9)}.${ext}`, bytes.buf, bytes.contentType, deadline);
+  }));
+  if (kept.includes(null)) return null;
+  return kept.filter((u): u is string => typeof u === "string");
+}

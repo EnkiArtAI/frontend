@@ -8,6 +8,7 @@ import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { showsAdultRender } from "@/lib/adult-content";
 import { resolveOwnerIds, resolveSessionUserId, resolveSessionUserWithBan } from "@/lib/session-user";
 import { isPublicText } from "@/lib/prompt-visibility";
+import { ownShowcaseImages } from "@/lib/generation/derivative-store";
 
 type VariableType =
   | "text"
@@ -396,6 +397,12 @@ export async function POST(req: Request) {
       }
     }
 
+    // Stored only now, so a refused save leaves nothing behind.
+    const showcase = await ownShowcaseImages(uploadedPhotos, creatorId ?? ownerIds[0]);
+    if (!showcase) {
+      return NextResponse.json({ error: "Your showcase images could not be stored right now. Nothing was saved." }, { status: 503 });
+    }
+
     const promptRow = {
       is_adult: adult,
       title: body.title,
@@ -414,7 +421,7 @@ export async function POST(req: Request) {
       aspect_ratio: body.aspectRatio ?? null,
       photo_count: typeof body.photoCount === "number" ? body.photoCount : 1,
       prompt_type: dbPromptType,
-      showcase_images: uploadedPhotos,
+      showcase_images: showcase,
       resolution: body.resolution ?? null,
       is_free_showcase: isFreeShowcase,
       // The first 220 characters, verbatim: only a free prompt may carry its
@@ -523,7 +530,7 @@ export async function POST(req: Request) {
       aspectRatio: body.aspectRatio ?? null,
       photoCount: typeof body.photoCount === "number" ? body.photoCount : 1,
       promptType: clientPromptType,
-      uploadedPhotos: body.uploadedPhotos ?? [],
+      uploadedPhotos: showcase,
       resolution: body.resolution ?? null,
       isFreeShowcase: Boolean(body.isFreeShowcase ?? false),
     });
