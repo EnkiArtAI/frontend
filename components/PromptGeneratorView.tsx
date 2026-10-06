@@ -45,6 +45,7 @@ import DiceButton from "@/components/DiceButton";
 import { DICE_LIMITS, type DiceValue, type DiceVariable } from "@/lib/generation/variable-dice";
 import { type ResolutionTier } from "@/lib/generation/resolution";
 import { useGenerationCore } from "@/hooks/useGenerationCore";
+import { useReferenceReads, REFS_LOADING } from "@/hooks/useReferenceReads";
 import QualitySelect, { type Quality } from "@/components/generation/QualitySelect";
 import { variableRange } from "@/lib/editor/selection-variable";
 import RatioSelect from "@/components/generation/RatioSelect";
@@ -182,6 +183,7 @@ export default function PromptGeneratorView({
   const { access, role } = useBetaAccess();
   const guest = !(access === "ok" && role !== "team");
   const [generating, setGenerating] = useState(false);
+  const { loading: refsLoading, read: readRef } = useReferenceReads();
   // Same model on a priority host — faster, dearer, identical image.
   const [boost, setBoost] = useState(false);
   /* Only consulted below the 960px breakpoint, where the history is an
@@ -677,12 +679,10 @@ export default function PromptGeneratorView({
     if (!files) return;
     const remaining = 10 - refs.length;
     Array.from(files).slice(0, remaining).forEach(file => {
-      const reader = new FileReader();
-      reader.onload = ev => setRefs(prev => prev.length >= 10 ? prev : [...prev, ev.target?.result as string]);
-      reader.readAsDataURL(file);
+      void readRef(file).then(url => { if (url) setRefs(prev => prev.length >= 10 ? prev : [...prev, url]); });
     });
     if (fileRef.current) fileRef.current.value = "";
-  }, [refs.length]);
+  }, [refs.length, readRef]);
 
   const removeRef = useCallback((i: number) => setRefs(prev => prev.filter((_, idx) => idx !== i)), []);
 
@@ -844,6 +844,10 @@ export default function PromptGeneratorView({
   }, []);
 
   const generate = useCallback(async () => {
+    if (refsLoading) {
+      toast({ title: "Images still loading", description: REFS_LOADING });
+      return;
+    }
     setGenerating(true);
     setResultUrl(null);
     try {
@@ -1002,7 +1006,7 @@ export default function PromptGeneratorView({
        so a prompt whose variables arrived after it would have generated from
        an empty set. Same class of bug as the edited-prompt one this component
        already carried. */
-  }, [isFree, core, boost, quality, quoteResolution, promptText, editedPrompt, vars, variables, promptSegments, title, aspect, resolution, userKey, promptId, refs, toast, queryClient, genQueryKey, signPayment]);
+  }, [isFree, core, boost, quality, quoteResolution, promptText, editedPrompt, vars, variables, promptSegments, title, aspect, resolution, userKey, promptId, refs, refsLoading, toast, queryClient, genQueryKey, signPayment]);
 
   const download = useCallback(() => {
     if (!resultUrl) return;
@@ -1759,7 +1763,7 @@ export default function PromptGeneratorView({
             <button
               className="pgv-generate-btn"
               onClick={generate}
-              disabled={generating || guest || (!noCharge && !paidQuote)}
+              disabled={generating || refsLoading || guest || (!noCharge && !paidQuote)}
               title={guest ? "Sign in to generate" : undefined}
             >
               {generating ? <Loader2 size={14} className="pgv-spinner" /> : <Sparkles size={14} />}
@@ -1768,6 +1772,8 @@ export default function PromptGeneratorView({
                   2026-08-24). */}
               {guest
                 ? "Log in to generate"
+                : refsLoading
+                ? "Loading images…"
                 : noCharge
                   ? "Generate free"
                   : paidQuote

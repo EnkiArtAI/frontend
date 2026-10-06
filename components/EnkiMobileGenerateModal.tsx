@@ -171,6 +171,8 @@ interface EnkiMobileGenerateModalProps {
   /* Freshly generated images to surface ABOVE the sheet (newest first). */
   resultImages?: string[];
   isGenerating?: boolean;
+  /* Reference images are still being read: Generate waits for them. */
+  generateBlocked?: boolean;
   /* Release flow: how many verified variations are required before publishing.
      Defaults to 1 for free prompts, 4 for paid. onRelease fires the publish action. */
   requiredVariations?: number;
@@ -301,6 +303,7 @@ export default function EnkiMobileGenerateModal({
   resolutionOptions,
   resultImages,
   isGenerating = false,
+  generateBlocked = false,
   requiredVariations,
   onRelease,
   title,
@@ -1186,7 +1189,7 @@ export default function EnkiMobileGenerateModal({
                             ))}
                           </div>
                         )}
-                        <button type="button" className="mobile-modal-varimg-gen" onClick={() => onGenerate(1)}>
+                        <button type="button" className="mobile-modal-varimg-gen" onClick={() => onGenerate(1)} disabled={generateBlocked}>
                           <Sparkles size={13} />
                           Generate this image
                         </button>
@@ -1375,7 +1378,7 @@ export default function EnkiMobileGenerateModal({
                   size={14}
                 />
               )}
-              <button className="mobile-modal-generate-btn" onClick={() => onGenerate(genCountNum)} disabled={isGenerating}>
+              <button className="mobile-modal-generate-btn" onClick={() => onGenerate(genCountNum)} disabled={isGenerating || generateBlocked}>
                 <Sparkles size={13} style={{ fill: "white" }} />
                 {generateLabel || "Generate"}
               </button>
