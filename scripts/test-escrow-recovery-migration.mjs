@@ -175,6 +175,11 @@ try {
     await rejects(async () => reserve(await intent(null,30_000_000,0),1,devMint,20_000_000));
     const invalidCapIntent = await intent(null,1,0);
     for (const cap of [null,0,-1]) await rejects(() => reserve(invalidCapIntent,1,devMint,cap));
+    await rejects(() => row('SELECT * FROM public.reserve_generation_escrow_recovery($1,$2,$3)',
+      [invalidCapIntent,1,devMint]),'42883'); // No overload/default bypasses the chain cap.
+    const overflowing = await intent(null,1,0);
+    await db.query('UPDATE public.generation_payment_intents SET total_micro=9223372036854775807 WHERE id=$1',[overflowing]);
+    await rejects(() => reserve(overflowing,24)); // Reject by cap before bigint multiplication could overflow.
   });
   await check('mint, artist and prior over-recovery remain isolated', async () => {
     await front('artist-chain',150_000,mainMint);
