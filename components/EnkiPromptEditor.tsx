@@ -64,7 +64,6 @@ import {
   clearEditorVersions,
   type PersistedVersionCard,
 } from "@/lib/editorVersions";
-import nlp from "compromise";
 import { getVariableColors, pickVariableColorIndex } from "@/lib/variableColors";
 import DiceButton from "@/components/DiceButton";
 import { DICE_LIMITS, type DiceValue, type DiceVariable } from "@/lib/generation/variable-dice";
