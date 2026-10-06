@@ -61,18 +61,74 @@ export function usdcMint(): PublicKey {
 }
 
 /**
- * "confirmed" rather than "finalized": a confirmed payment is one the cluster
- * has agreed on, and waiting the extra ~13s for finality would sit in the
- * user's checkout for no gain we can act on.
+ * The RPC endpoints, in the order they are tried.
  *
  * SOLANA_RPC_URL overrides ONLY on mainnet. The var holds one URL and a URL
  * is chain-specific — on 2026-08-24 a mainnet Helius URL sat in the env of a
  * devnet deployment and every settlement died with the RPC's 401 instead of
  * reaching the (free, public) devnet RPC the chain config already named.
+ * SOLANA_RPC_URL_FALLBACK, a second provider, follows the same rule (ENG-12:
+ * with one URL, an outage at that provider stopped every payment), and the
+ * chain's public endpoint comes last.
+ */
+export function solanaRpcUrls(): string[] {
+  const mainnet = solanaChainKey() === "solana";
+  const urls = [
+    mainnet ? process.env.SOLANA_RPC_URL : undefined,
+    mainnet ? process.env.SOLANA_RPC_URL_FALLBACK : undefined,
+    solanaChain().rpcUrl,
+  ].map((u) => u?.trim()).filter((u): u is string => Boolean(u));
+  return [...new Set(urls)];
+}
+
+/**
+ * "confirmed" rather than "finalized": a confirmed payment is one the cluster
+ * has agreed on, and waiting the extra ~13s for finality would sit in the
+ * user's checkout for no gain we can act on.
  */
 export function solanaConnection(): Connection {
-  const override = solanaChainKey() === "solana" ? process.env.SOLANA_RPC_URL : undefined;
-  return new Connection(override || solanaChain().rpcUrl, "confirmed");
+  const urls = solanaRpcUrls();
+  return new Connection(urls[0], urls.length > 1 ? { commitment: "confirmed", fetch: failover(urls) } : "confirmed");
+}
+
+/**
+ * The next endpoint is tried only when one cannot answer: a network error or
+ * a 5xx. An answer is final, a JSON-RPC error included (a rejected
+ * transaction comes back as HTTP 200), so nothing rejected is re-sent
+ * elsewhere. Re-sending after a network error is safe: a signed transaction
+ * has one signature, and the chain lands it at most once. An endpoint that
+ * hangs counts as one that cannot answer, after RPC_ATTEMPT_MS.
+ */
+const RPC_ATTEMPT_MS = 10_000;
+function failover(urls: string[]): typeof fetch {
+  return async (_input, init) => {
+    for (let i = 0; ; i++) {
+      const last = i === urls.length - 1;
+      try {
+        const res = await fetch(urls[i], last ? init : { ...init, signal: AbortSignal.timeout(RPC_ATTEMPT_MS) });
+        if (res.status < 500 || last) return res;
+      } catch (e) {
+        if (last) throw e;
+      }
+      reportDown(urls[i]);
+    }
+  };
+}
+
+const reported = new Set<string>();
+/** Logged with the host only: a provider URL carries its API key in the query. */
+function reportDown(url: string): void {
+  const host = new URL(url).host;
+  console.error(`[solana-rpc] ${host} did not answer; trying the next endpoint`);
+  if (reported.has(host)) return;
+  reported.add(host);
+  // One mail per instance, not per request.
+  void Promise.all([import("@/lib/admin-notify"), import("@/lib/supabaseServer")])
+    .then(([{ notifyAdmins }, { getSupabaseServerClientSafe }]) => {
+      const db = getSupabaseServerClientSafe();
+      return db && notifyAdmins(db, { subject: "Solana RPC failover", text: `${host} did not answer. Payments moved to the next RPC endpoint.` });
+    })
+    .catch(() => {});
 }
 
 let cachedFeePayer: Keypair | null = null;
