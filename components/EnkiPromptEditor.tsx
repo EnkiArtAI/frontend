@@ -67,6 +67,7 @@ import nlp from "compromise";
 import { getVariableColors, pickVariableColorIndex } from "@/lib/variableColors";
 import DiceButton from "@/components/DiceButton";
 import { DICE_LIMITS, type DiceValue, type DiceVariable } from "@/lib/generation/variable-dice";
+import { fixedValue, snapshotValue } from "@/lib/editor/variable-value";
 
 
 const EDITOR_DRAFT_KEY = "symphora-editor-draft-v1";
@@ -925,11 +926,7 @@ export default function EnkiPromptEditor() {
   const applyVarSyncToVersions = useCallback(
     (reset: boolean) => {
       const named = variables.filter((v) => v.name.trim());
-      const snapValue = (v: PromptVariable): string => {
-        if (v.type === "checkbox") return v.defaultValue ? v.description || "on" : "off";
-        if (v.type === "image") return v.description || "";
-        return (v.defaultValue as string) || v.name;
-      };
+      const snapValue = (v: PromptVariable): string => snapshotValue(v);
       setVersions((prev) => {
         let touched = false;
         const next = prev.map((card) => {
@@ -2512,16 +2509,7 @@ export default function EnkiPromptEditor() {
     let previewText = expandReferenceImageMentions(promptData.body);
     variables.forEach((variable) => {
       const placeholder = `[${variable.name}]`;
-      let val: string;
-      if (snapshot[variable.name] !== undefined) {
-        val = snapshot[variable.name];
-      } else if (variable.type === "text") {
-        val = (variable.defaultValue as string) || "";
-      } else if (variable.type === "image") {
-        val = variable.description || "";
-      } else {
-        val = variable.defaultValue ? variable.description : "";
-      }
+      const val = snapshot[variable.name] ?? fixedValue(variable) ?? ((variable.defaultValue as string) || "");
       previewText = previewText.split(placeholder).join(val);
     });
 
@@ -2656,10 +2644,9 @@ export default function EnkiPromptEditor() {
       for (let i = 0; i < stackSize; i++) {
         const snapshot: Record<string, string> = {};
         variables.forEach(v => {
-        if (v.type === "checkbox") {
-          snapshot[v.name] = v.defaultValue ? v.description || "on" : "off";
-        } else if (v.type === "image") {
-          snapshot[v.name] = v.description || "";
+        const fixed = fixedValue(v);
+        if (fixed !== null) {
+          snapshot[v.name] = fixed;
         } else {
           const pool = v.values.length > 0 ? v.values : [(v.defaultValue as string) || v.name];
           snapshot[v.name] = pool[i % pool.length];
@@ -2702,7 +2689,7 @@ export default function EnkiPromptEditor() {
 
   const handleCreateEmptySlots = () => {
     const snapshot: Record<string, string> = {};
-    variables.forEach(v => { snapshot[v.name] = (v.defaultValue as string) || v.name; });
+    variables.forEach(v => { snapshot[v.name] = snapshotValue(v); });
     const newId = versions.length > 0 ? Math.max(...versions.map(v => v.id)) + 1 : 1;
     setVersions(prev => [...prev, { id: newId, variableSnapshot: snapshot, imageUrl: null, status: "idle" }]);
   };
@@ -2816,7 +2803,7 @@ export default function EnkiPromptEditor() {
     setUi(prev => ({ ...prev, selectedCards: [] }));
     // Create fresh idle snapshots for refill slots (use current variable defaults)
     const baseSnapshot: Record<string, string> = {};
-    variables.forEach(v => { baseSnapshot[v.name] = (v.defaultValue as string) || v.name; });
+    variables.forEach(v => { baseSnapshot[v.name] = snapshotValue(v); });
     const baseId = versions.filter(v => !ui.selectedCards.includes(v.id)).length > 0
       ? Math.max(...versions.filter(v => !ui.selectedCards.includes(v.id)).map(v => v.id))
       : 0;
@@ -5096,7 +5083,7 @@ export default function EnkiPromptEditor() {
             return;
           }
           const snapshot: Record<string, string> = {};
-          variables.forEach(v => { snapshot[v.name] = (v.defaultValue as string) || v.name; });
+          variables.forEach(v => { snapshot[v.name] = snapshotValue(v); });
           // As many images as the sheet shows and prices, one payment each.
           const base = versions.length > 0 ? Math.max(...versions.map(v => v.id)) + 1 : 1;
           const ids = Array.from({ length: count }, (_, i) => base + i);
