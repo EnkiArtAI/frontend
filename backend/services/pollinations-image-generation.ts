@@ -96,6 +96,13 @@ function rawDimensions(aspectRatio: string, baseSize: number): { width: number; 
 /**
  * Generate image using Pollinations.ai (FREE, no API key)
  */
+/**
+ * Below the free route's maxDuration (300 s), with room for the checks before
+ * the render: a render the platform kills midway cannot give its free claim
+ * back (ENG-20), one that times out here fails like any other and does.
+ */
+export const POLLINATIONS_TIMEOUT_MS = 240_000;
+
 export async function generateImageWithPollinations(
   prompt: string,
   aspectRatio: string,
@@ -156,6 +163,7 @@ export async function generateImageWithPollinations(
 
     // Fetch the image to get the buffer (Pollinations returns the image directly)
     const response = await fetch(imageUrl, {
+      signal: AbortSignal.timeout(POLLINATIONS_TIMEOUT_MS),
       headers: {
         'Accept': 'image/*',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
