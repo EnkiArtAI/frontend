@@ -1,8 +1,5 @@
-import { splitForRecovery } from "./fronted-recovery";
-
 /** Amount rules from ClickUp 123qmzqzw1w; no RPC, database or fee calculation. */
 export const ESCROW_MAX_UNITS = 24;
-export const ESCROW_MAX_DEPOSIT_MICRO = 25_000_000;
 export const ESCROW_MAX_REFUND_ATA_FEE_MICRO = 1_000_000;
 export const ESCROW_MIN_TTL_SECONDS = 600;
 export const ESCROW_MAX_TTL_SECONDS = 1_800;
@@ -26,28 +23,34 @@ export interface EscrowAmounts {
   depositedMicro: number;
 }
 
-/** Recipients' amounts are already priced by the server; escrow adds no fee. */
-export function escrowAmounts(
-  count: number,
-  treasuryUnitMicro: number,
-  artistUnitMicro: number,
-  maxDepositMicro = ESCROW_MAX_DEPOSIT_MICRO,
-): EscrowAmounts {
+/** Validate immutable deposit arithmetic independently of today's Config cap. */
+function checkedAmounts(count: number, treasuryUnitMicro: number, artistUnitMicro: number): EscrowAmounts {
   units(count);
   micro(treasuryUnitMicro);
   micro(artistUnitMicro);
-  micro(maxDepositMicro);
-  if (maxDepositMicro > ESCROW_MAX_DEPOSIT_MICRO) {
-    throw new Error("The payment limit exceeds the escrow cap.");
-  }
   const unitTotal = treasuryUnitMicro + artistUnitMicro;
   const depositedMicro = count * unitTotal;
   micro(unitTotal);
   micro(depositedMicro);
-  if (depositedMicro === 0 || depositedMicro > maxDepositMicro) {
+  if (depositedMicro === 0) {
     throw new Error("The payment amount is outside the escrow limit.");
   }
   return { units: count, treasuryUnitMicro, artistUnitMicro, depositedMicro };
+}
+
+/** Pass the verified on-chain Config cap; no default or independent policy cap. */
+export function escrowAmounts(
+  count: number,
+  treasuryUnitMicro: number,
+  artistUnitMicro: number,
+  maxDepositMicro: number,
+): EscrowAmounts {
+  micro(maxDepositMicro);
+  const amounts = checkedAmounts(count, treasuryUnitMicro, artistUnitMicro);
+  if (maxDepositMicro === 0 || amounts.depositedMicro > maxDepositMicro) {
+    throw new Error("The payment amount is outside the escrow limit.");
+  }
+  return amounts;
 }
 
 /** Validate against the supplied chain clock, never the process's wall clock. */
@@ -60,42 +63,13 @@ export function validateEscrowExpiry(nowSeconds: number, expiresAtSeconds: numbe
   }
 }
 
-/**
- * Compute inside the database's atomic reservation operation. This pure
- * calculation does not itself lock debt: other open intents must be included
- * in reservedMicro before storing this intent's reservation.
- */
-export function escrowRecovery(args: {
-  units: number;
-  artistUnitMicro: number;
-  frontedTotalMicro: number;
-  outstandingMicro: number;
-  reservedMicro: number;
-}): { unitRecoveryMicro: number; reserveMicro: number } {
-  units(args.units);
-  micro(args.artistUnitMicro);
-  micro(args.frontedTotalMicro);
-  micro(args.reservedMicro);
-  // Older ledger rows can report an over-recovery; no further deduction then.
-  if (!Number.isSafeInteger(args.outstandingMicro)) {
-    throw new Error("The payout-account balance is invalid.");
-  }
-  const unreservedMicro = Math.max(0, args.outstandingMicro - args.reservedMicro);
-  const split = splitForRecovery(
-    Math.floor(unreservedMicro / args.units),
-    args.artistUnitMicro,
-    args.frontedTotalMicro,
-  );
-  return { unitRecoveryMicro: split.toRecovery, reserveMicro: args.units * split.toRecovery };
-}
-
 /** Missing/frozen artist accounts leave that entire leg available for refund. */
 export function escrowSettlement(
   amounts: EscrowAmounts,
   deliveredUnits: number,
   artistPayable: boolean,
 ): { treasuryMicro: number; artistMicro: number; refundableMicro: number } {
-  const checked = escrowAmounts(amounts.units, amounts.treasuryUnitMicro, amounts.artistUnitMicro);
+  const checked = checkedAmounts(amounts.units, amounts.treasuryUnitMicro, amounts.artistUnitMicro);
   if (checked.depositedMicro !== amounts.depositedMicro) {
     throw new Error("The payment split does not match the deposit.");
   }
@@ -111,7 +85,7 @@ export function escrowSettlement(
   };
 }
 
-/** Recovery is booked only after chain confirmation; release the unused reserve. */
+/** Use recovery_unit_micro from the RPC row, never recalculate its debt formula. */
 export function settledEscrowRecovery(
   count: number,
   deliveredUnits: number,
