@@ -16,6 +16,7 @@ import { PublicKey } from "@solana/web3.js";
 import { generateJwt } from "@coinbase/cdp-sdk/auth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserWithBan } from "@/lib/session-user";
+import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
 
 const HOST = "api.developer.coinbase.com";
 const PATH = "/onramp/v1/token";
@@ -77,30 +78,37 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = getSupabaseServerClient();
-  const { userId, ban, wallet } = await resolveSessionUserWithBan(supabase, token);
+  let session: Awaited<ReturnType<typeof resolveSessionUserWithBan>>;
+  try {
+    session = await resolveSessionUserWithBan(supabase, token);
+  } catch (e) {
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
+    throw e;
+  }
+  const { userId, ban, wallet } = session;
   if (!wallet) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  // A ban closes the ramp. The account's funds stay reachable on /banned
-  // (balance, send, key export), which is the door a ban never shuts.
-  if (ban) {
-    return NextResponse.json({ error: "This account is suspended. Your funds stay reachable on the suspension page.", banned: true }, { status: 403 });
+  // A ban closes buying: a suspended account has nothing to spend credit on.
+  // Selling stays open, because a ban locks the marketplace, never the wallet.
+  if (ban && side === "buy") {
+    return NextResponse.json({ error: "This account is suspended, so it cannot buy credit.", banned: true }, { status: 403 });
   }
 
   // The requested address must be the session wallet or one of the user's
-  // wallets. Compare case-insensitively: the DB stores addresses LOWERCASED
-  // while the client sends the real base58 casing — a strict compare 403'd
-  // every legitimate request. (Coinbase below always gets the client's
-  // real-case address; Solana addresses are case-sensitive.)
-  if (wallet !== address.toLowerCase()) {
+  // wallets. Solana addresses are case-sensitive and stored as they are since
+  // 2d08fe7; rows from before it are lowercased, so both forms count. (Coinbase
+  // below always gets the client's real-case address.)
+  const forms = [address, address.toLowerCase()];
+  if (!forms.includes(wallet)) {
     const { data: owned } = userId
       ? await supabase
           .from("user_wallets")
           .select("address")
           .eq("user_id", userId)
-          .eq("address", address.toLowerCase())
+          .in("address", forms)
           .is("removed_at", null)
-          .maybeSingle()
+          .limit(1)
       : { data: null };
-    if (!owned) return NextResponse.json({ error: "That wallet isn't linked to your account" }, { status: 403 });
+    if (!owned?.length) return NextResponse.json({ error: "That wallet isn't linked to your account" }, { status: 403 });
   }
 
   const origin0 = process.env.NEXT_PUBLIC_SITE_ORIGIN || "https://enki.gallery";

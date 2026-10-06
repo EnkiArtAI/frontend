@@ -9,8 +9,8 @@
  *
  * The client feeds this to CDP via CdpProvider's customAuth.getJwt callback.
  *
- * Ban tolerant on purpose: a ban locks the marketplace, never the wallet, and
- * a suspended account still signs its sends and its key export on /banned.
+ * Ban tolerant on purpose: a ban locks the marketplace, never the wallet, so
+ * a suspended account still signs its sends and exports its key.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
