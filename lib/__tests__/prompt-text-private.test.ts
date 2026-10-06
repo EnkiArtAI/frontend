@@ -73,7 +73,7 @@ vi.mock("@/lib/crypto", () => ({
   encryptString: () => ({ encrypted: "ct", iv: "iv", authTag: "tag", kid: "k1" }),
   decryptString: () => decrypt(),
 }));
-vi.mock("@/lib/moderation", () => ({ moderate: async () => ({ allowed: true }), CLIENT_BLOCK_MESSAGE: "blocked" }));
+vi.mock("@/lib/moderation", () => ({ moderate: async () => ({ allowed: true }), screenFirst: () => null, CLIENT_BLOCK_MESSAGE: "blocked" }));
 vi.mock("@/lib/moderation-enforcement", () => ({ recordModerationEvent: async () => {} }));
 // The save's prompt check is a paid call; here it finds nothing.
 vi.mock("@/lib/moderation/prompt-check", async (orig) => ({

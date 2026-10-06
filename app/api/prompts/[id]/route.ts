@@ -4,9 +4,9 @@ import { decryptString } from "@/lib/crypto";
 import { isListed, isPublicText } from "@/lib/prompt-visibility";
 import { resolveOwnerIds } from "@/lib/session-user";
 import { mayShowAdult, viewer } from "@/lib/adult-content";
-import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
+import { moderate, screenFirst, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
-import { checkPrompt } from "@/lib/moderation/prompt-check";
+import { checkPrompt, NOT_CHECKED } from "@/lib/moderation/prompt-check";
 import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 
 type PatchBody = {
@@ -268,7 +268,10 @@ export async function PATCH(
       const { data: own } = await supabase.from("prompts").select("id")
         .eq("id", id).in("creator_id", owners).maybeSingle();
       if (!own) return NextResponse.json({ error: "not found" }, { status: 404 });
-      const check = await checkPrompt(edited, { hidden: false, signal: req.signal });
+      // The regex first: what Tier 1 refuses never reaches the chat model, and
+      // its refusal is this request's moderation verdict (Kev, 2026-10-06).
+      const first = screenFirst(edited);
+      const check = first ? NOT_CHECKED : await checkPrompt(edited, { hidden: false, signal: req.signal });
       if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
         const outcome = await recordWarning(supabase, {
           surface: "upload", request: req, category: check.verdict, text: JSON.stringify(edited), confidence: check.confidence,
@@ -280,7 +283,7 @@ export async function PATCH(
       }
       if (check.adult) update.is_adult = true;
       const text = Object.values(edited).join("\n");
-      const verdict = await moderate({ prompt: text, surface: "upload", signal: req.signal, adultJudged: true });
+      const verdict = first ?? await moderate({ prompt: text, surface: "upload", signal: req.signal, adultJudged: true });
       after(recordModerationEvent(verdict, { surface: "upload", request: req, prompt: text }));
       if (!verdict.allowed) return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
     }
