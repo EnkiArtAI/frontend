@@ -18,10 +18,16 @@ deploy a program or activate payments.
 
 ## Deposit integration contract
 
-1. Authenticate the intent owner, apply limits and atomically reserve recovery.
-   Read the program's configuration at confirmed commitment and validate it with
-   `validateEscrowConfiguration`. Build a plan from stored server prices and the
-   chain clock. Never accept amounts, recipients, network or program from a buyer.
+1. Authenticate the intent owner. Read the deployed program's current Config at
+   confirmed commitment and validate it with `validateEscrowConfiguration` using
+   the server quote and chain clock. Pass its verified `maxDepositMicro` to the
+   reservation RPC as required `p_max_deposit_micro`. Build the deposit plan from
+   the returned row's net treasury/artist legs and `recovery_unit_micro`, then
+   validate the updated plan against that Config. Supply its cap explicitly to
+   `prepareEscrowDeposit`; no default or independent 25/50-USDC limit exists.
+   Never accept amounts, caps, recipients, network or program from a buyer.
+   Section 7 is calculated only in the RPC, with half the artist share per unit
+   until unreserved rent debt is repaid, without an instalment ceiling.
 2. Call `prepareEscrowDeposit` with a recent blockhash and its last valid block
    height. Persist the exact message, addresses, amount snapshot and lifetime
    before returning the unsigned wire. Neither buyer nor sponsor has signed it.
@@ -37,8 +43,19 @@ deploy a program or activate payments.
    `verifyFundedEscrow` validates immutable deposit fields, program owners,
    canonical addresses, state, unexpired lifetime and funds. Only then may the database mark the
    deposit funded and admit image claims. A client-supplied signature is not proof.
+   This verification takes the immutable `EscrowPaymentSnapshot`, without a
+   current cap: changing Config after funding cannot invalidate the payment or
+   block settlement/refund. New deposits require `EscrowDepositPlan`, including
+   the verified current cap. Caps beyond JavaScript's safe integer representation
+   fail closed; that numeric boundary is not a second payment policy.
 
 These pure helpers perform no RPC, database writes or paid API calls. The
 generated settlement and reclaim builders share the same program interface;
 delivered-image counting, retry persistence and atomic recovery booking belong
 to the subsequent server lifecycle integration.
+
+Base is `feat/nsfw` (#116), with #118 merged before this client (#119); the
+database chain is #117 then #120. No generation or x402 route changes belong in
+this stack. Do not call any escrow RPC in production until per-image claims
+exist; the nonce rail is removed/drained in the coordinated cutover release.
+The missing-buyer-ATA refund behavior is unchanged and belongs in the Terms.

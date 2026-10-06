@@ -32,7 +32,7 @@ const plan = (overrides: Partial<EscrowDepositPlan> = {}): EscrowDepositPlan => 
   programAddress: PROGRAM, cluster: "solana-devnet", intentId: INTENT,
   buyer: buyer.address, rentPayer: sponsor.address, treasuryOwner: treasury.address, artistOwner: artist.address,
   units: 4, treasuryUnitMicro: 100_000, artistUnitMicro: 150_000,
-  chainNowSeconds: 1000, expiresAtSeconds: 1900, ...overrides,
+  chainNowSeconds: 1000, expiresAtSeconds: 1900, maxDepositMicro: 50_000_000, ...overrides,
 });
 async function buyerSigned(prepared: Awaited<ReturnType<typeof prepareEscrowDeposit>>) {
   const unsigned = getTransactionDecoder().decode(Buffer.from(prepared.unsignedTransactionBase64, "base64"));
@@ -160,7 +160,8 @@ describe("Escrow transaction preparation and buyer-first sponsorship", () => {
   });
   it("enforces deposit caps, TTL, recipient sentinel and priority bounds", async () => {
     for (const invalid of [
-      { treasuryUnitMicro: 25_000_000 }, { treasuryUnitMicro: 0, artistUnitMicro: 0, artistOwner: EMPTY_RECIPIENT },
+      { treasuryUnitMicro: 50_000_000 }, { maxDepositMicro: undefined },
+      { treasuryUnitMicro: 0, artistUnitMicro: 0, artistOwner: EMPTY_RECIPIENT },
       { expiresAtSeconds: 1599 }, { expiresAtSeconds: 2801 }, { artistUnitMicro: 0 },
       { artistOwner: EMPTY_RECIPIENT }, { treasuryOwner: EMPTY_RECIPIENT }, { rentPayer: buyer.address },
     ]) await expect(prepareEscrowDeposit(plan(invalid), lifetime)).rejects.toThrow();
@@ -170,7 +171,7 @@ describe("Escrow transaction preparation and buyer-first sponsorship", () => {
   });
 });
 
-async function funded(overrides: Partial<EscrowInput> = {}) {
+async function funded(overrides: Partial<EscrowInput> = {}, vaultAmount = 1_000_000) {
   const expected = plan();
   const derived = await escrowAddresses(PROGRAM, buyer.address, INTENT);
   const escrow: EscrowChainAccount = {
@@ -185,7 +186,7 @@ async function funded(overrides: Partial<EscrowInput> = {}) {
   const vault: EscrowChainAccount = {
     address: derived.vault, programAddress: TOKEN_PROGRAM_ADDRESS, executable: false,
     data: getTokenEncoder().encode({
-      mint: escrowMint(expected.cluster), owner: derived.escrow, amount: 1_000_000,
+      mint: escrowMint(expected.cluster), owner: derived.escrow, amount: vaultAmount,
       delegate: null, state: AccountState.Initialized, isNative: null, delegatedAmount: 0, closeAuthority: null,
     }),
   };
@@ -213,6 +214,14 @@ describe("Only the expected confirmed escrow releases generation", () => {
     expect(result.vault.amount).toBe(BigInt(1_000_001));
     expect(result.escrow.units).toBe(4);
     expect(result.depositedMicro).toBe(1_000_000);
+  });
+  it("verifies funded snapshots above the old cap independently of a later Config decrease", async () => {
+    const stored = plan({ treasuryUnitMicro: 12_500_000, artistUnitMicro: 0,
+      artistOwner: EMPTY_RECIPIENT, maxDepositMicro: 1 });
+    const receipt = await funded({ recipientCount: 1, recipientOwners: [treasury.address, EMPTY_RECIPIENT],
+      unitAmounts: [12_500_000, 0] },50_000_000);
+    await expect(verifyFundedEscrow(stored,receipt)).resolves.toHaveProperty("depositedMicro",50_000_000);
+    await expect(prepareEscrowDeposit(stored,lifetime)).rejects.toThrow();
   });
 
   it.each(["version", "state", "bump", "vaultBump", "intentId", "buyer", "mint", "rentPayer", "recipientCount",
@@ -271,7 +280,7 @@ async function configuration(overrides: Partial<ConfigInput> = {}) {
     address: derived.config, programAddress: PROGRAM, executable: false,
     data: getConfigEncoder().encode({
       admin: sponsor.address, guardian: sponsor.address, operator: sponsor.address,
-      treasuryOwner: treasury.address, paused: false, maxDepositMicro: 25_000_000,
+      treasuryOwner: treasury.address, paused: false, maxDepositMicro: 50_000_000,
       minTtlS: 600, maxTtlS: 1800, refundAtaFeeMicro: 1_000_000, bump: derived.configBump, ...overrides,
     }),
   };
@@ -279,6 +288,21 @@ async function configuration(overrides: Partial<ConfigInput> = {}) {
 describe("Current chain configuration gates new deposits", () => {
   it("accepts the matching configured treasury and bounds", async () => {
     await expect(validateEscrowConfiguration(plan(), await configuration())).resolves.toHaveProperty("treasuryOwner", treasury.address);
+  });
+  it("reads the cap from the Chain, including increases and decreases without a code limit", async () => {
+    for (const cap of [50_000_000,60_000_000]) {
+      // An unrelated caller-supplied plan cap cannot replace the verified Config.
+      const quote = plan({ units: 1,treasuryUnitMicro: cap,artistUnitMicro: 0,
+        artistOwner: EMPTY_RECIPIENT,maxDepositMicro: 1 });
+      const config = await validateEscrowConfiguration(quote,await configuration({ maxDepositMicro: cap }));
+      expect(config.maxDepositMicro).toBe(BigInt(cap));
+      const prepared = await prepareEscrowDeposit({ ...quote,maxDepositMicro: Number(config.maxDepositMicro) },lifetime);
+      expect(prepared.depositedMicro).toBe(cap);
+      await expect(validateEscrowConfiguration(quote,await configuration({ maxDepositMicro: cap-1 }))).rejects.toThrow();
+    }
+    for (const cap of [BigInt(0),BigInt(Number.MAX_SAFE_INTEGER)+BigInt(1)]) {
+      await expect(validateEscrowConfiguration(plan(),await configuration({ maxDepositMicro: cap }))).rejects.toThrow();
+    }
   });
   it.each(["paused", "revoked", "treasury", "cap", "ttl", "fee", "bump"])("rejects %s configuration", async (field) => {
     const changes: Partial<ConfigInput> = {};

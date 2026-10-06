@@ -1,11 +1,11 @@
 import { isNone, type Address, type ReadonlyUint8Array } from "@solana/kit";
 import { AccountState, getTokenDecoder, TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import {
-  ESCROW_MAX_DEPOSIT_MICRO, ESCROW_MAX_REFUND_ATA_FEE_MICRO,
-  ESCROW_MIN_TTL_SECONDS, ESCROW_MAX_TTL_SECONDS, escrowAmounts,
+  ESCROW_MAX_REFUND_ATA_FEE_MICRO,
+  ESCROW_MIN_TTL_SECONDS, ESCROW_MAX_TTL_SECONDS,
 } from "../escrow-amounts";
 import { EMPTY_RECIPIENT, escrowAddresses, escrowMint } from "./addresses";
-import { validateEscrowDepositPlan, type EscrowDepositPlan } from "./deposit";
+import { validateEscrowDepositPlan, validateEscrowPaymentSnapshot, type EscrowPaymentSnapshot } from "./deposit";
 import {
   CONFIG_DISCRIMINATOR, ESCROW_DISCRIMINATOR, EscrowState,
   getConfigDecoder, getEscrowDecoder,
@@ -23,26 +23,26 @@ function sameBytes(left: ReadonlyUint8Array | readonly number[], right: Readonly
 }
 
 /** Check the current configuration before preparing a deposit; this performs no RPC. */
-export async function validateEscrowConfiguration(plan: EscrowDepositPlan, account: EscrowChainAccount) {
-  validateEscrowDepositPlan(plan);
+export async function validateEscrowConfiguration(plan: EscrowPaymentSnapshot, account: EscrowChainAccount) {
+  validateEscrowPaymentSnapshot(plan);
   const derived = await escrowAddresses(plan.programAddress, plan.buyer, plan.intentId);
   if (account.address !== derived.config || account.programAddress !== plan.programAddress ||
       account.executable || account.data.length !== getConfigDecoder().fixedSize) {
     throw new Error("The payment configuration is unavailable.");
   }
   const config = getConfigDecoder().decode(account.data);
-  const cap = BigInt(ESCROW_MAX_DEPOSIT_MICRO);
   const ttl = BigInt(plan.expiresAtSeconds - plan.chainNowSeconds);
-  const amount = escrowAmounts(plan.units, plan.treasuryUnitMicro, plan.artistUnitMicro).depositedMicro;
   if (!sameBytes(config.discriminator, CONFIG_DISCRIMINATOR) || config.bump !== derived.configBump ||
       config.admin === EMPTY_RECIPIENT || config.guardian === EMPTY_RECIPIENT ||
       config.operator === EMPTY_RECIPIENT || config.treasuryOwner !== plan.treasuryOwner || config.paused ||
-      config.maxDepositMicro <= BigInt(0) || config.maxDepositMicro > cap || BigInt(amount) > config.maxDepositMicro ||
+      config.maxDepositMicro <= BigInt(0) || config.maxDepositMicro > BigInt(Number.MAX_SAFE_INTEGER) ||
       config.minTtlS < BigInt(ESCROW_MIN_TTL_SECONDS) || config.maxTtlS > BigInt(ESCROW_MAX_TTL_SECONDS) ||
       config.minTtlS > config.maxTtlS || ttl < config.minTtlS || ttl > config.maxTtlS ||
       config.refundAtaFeeMicro > BigInt(ESCROW_MAX_REFUND_ATA_FEE_MICRO)) {
     throw new Error("The payment configuration does not allow this deposit.");
   }
+  // SQL and preparation receive this verified chain value, with no second cap.
+  validateEscrowDepositPlan({ ...plan, maxDepositMicro: Number(config.maxDepositMicro) });
   return config;
 }
 
@@ -51,7 +51,7 @@ export async function validateEscrowConfiguration(plan: EscrowDepositPlan, accou
  * response with minContextSlot at least the deposit confirmation's slot.
  * A transaction signature alone never authorizes generation.
  */
-export async function verifyFundedEscrow(plan: EscrowDepositPlan, receipt: {
+export async function verifyFundedEscrow(plan: EscrowPaymentSnapshot, receipt: {
   commitment: "confirmed" | "finalized";
   contextSlot: bigint;
   minimumSlot: bigint;
@@ -59,7 +59,7 @@ export async function verifyFundedEscrow(plan: EscrowDepositPlan, receipt: {
   escrow: EscrowChainAccount;
   vault: EscrowChainAccount;
 }) {
-  validateEscrowDepositPlan(plan);
+  const amount = validateEscrowPaymentSnapshot(plan).depositedMicro;
   if (!["confirmed", "finalized"].includes(receipt.commitment) || receipt.minimumSlot <= BigInt(0) ||
       receipt.contextSlot < receipt.minimumSlot || !Number.isSafeInteger(receipt.chainNowSeconds) ||
       receipt.chainNowSeconds < 0 || receipt.chainNowSeconds >= plan.expiresAtSeconds) {
@@ -75,7 +75,6 @@ export async function verifyFundedEscrow(plan: EscrowDepositPlan, receipt: {
   }
   const escrow = getEscrowDecoder().decode(account.data);
   const vault = getTokenDecoder().decode(vaultAccount.data);
-  const amount = escrowAmounts(plan.units, plan.treasuryUnitMicro, plan.artistUnitMicro).depositedMicro;
   if (!sameBytes(escrow.discriminator, ESCROW_DISCRIMINATOR) || escrow.version !== 1 ||
       escrow.state !== EscrowState.Funded || escrow.bump !== derived.escrowBump ||
       escrow.vaultBump !== derived.vaultBump || !sameBytes(escrow.intentId, derived.intentBytes) ||

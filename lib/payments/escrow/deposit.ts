@@ -30,7 +30,7 @@ export const ESCROW_MAX_PRIORITY_MICROLAMPORTS = 50_000;
 export const ESCROW_DEPOSIT_COMPUTE_UNITS = 100_000;
 
 /** All values come from the stored server quote and chain RPC, never the buyer. */
-export interface EscrowDepositPlan {
+export interface EscrowPaymentSnapshot {
   programAddress: Address;
   cluster: EscrowCluster;
   intentId: string;
@@ -43,7 +43,11 @@ export interface EscrowDepositPlan {
   artistUnitMicro: number;
   chainNowSeconds: number;
   expiresAtSeconds: number;
-  maxDepositMicro?: number;
+}
+
+export interface EscrowDepositPlan extends EscrowPaymentSnapshot {
+  /** Required value read from the verified current on-chain Config account. */
+  maxDepositMicro: number;
 }
 
 /** Persist this message and lifetime before returning the unsigned wire to a wallet. */
@@ -59,14 +63,23 @@ export interface PreparedEscrowDeposit {
   depositedMicro: number;
 }
 
-export function validateEscrowDepositPlan(plan: EscrowDepositPlan): void {
-  escrowAmounts(plan.units, plan.treasuryUnitMicro, plan.artistUnitMicro, plan.maxDepositMicro);
+/** Validate immutable funded fields without consulting today's deposit policy. */
+export function validateEscrowPaymentSnapshot(plan: EscrowPaymentSnapshot) {
+  const fundedTotal = plan.units * (plan.treasuryUnitMicro + plan.artistUnitMicro);
+  // This bound is the snapshot's own amount, not a policy limit or fallback cap.
+  const amounts = escrowAmounts(plan.units, plan.treasuryUnitMicro, plan.artistUnitMicro, fundedTotal);
   validateEscrowExpiry(plan.chainNowSeconds, plan.expiresAtSeconds);
   escrowMint(plan.cluster);
   if (plan.buyer === plan.rentPayer || plan.treasuryOwner === EMPTY_RECIPIENT ||
       (plan.artistUnitMicro === 0) !== (plan.artistOwner === EMPTY_RECIPIENT)) {
     throw new Error("The payment recipients or payer are invalid.");
   }
+  return amounts;
+}
+
+export function validateEscrowDepositPlan(plan: EscrowDepositPlan): void {
+  validateEscrowPaymentSnapshot(plan);
+  escrowAmounts(plan.units, plan.treasuryUnitMicro, plan.artistUnitMicro, plan.maxDepositMicro);
 }
 
 export async function prepareEscrowDeposit(
@@ -112,7 +125,7 @@ export async function prepareEscrowDeposit(
     vaultAddress: derived.vault,
     blockhash: lifetime.blockhash,
     lastValidBlockHeight: lifetime.lastValidBlockHeight.toString(),
-    depositedMicro: escrowAmounts(plan.units, plan.treasuryUnitMicro, plan.artistUnitMicro).depositedMicro,
+    depositedMicro: escrowAmounts(plan.units, plan.treasuryUnitMicro, plan.artistUnitMicro, plan.maxDepositMicro).depositedMicro,
   };
 }
 
