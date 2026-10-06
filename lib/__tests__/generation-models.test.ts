@@ -31,6 +31,23 @@ describe("model → route resolution", () => {
     expect(routeFor(m, undefined)).toEqual(m.normal);
   });
 
+  it("takes the lowest-priority normal row as the default, in whatever order the rows come", () => {
+    const m = fromRow(
+      {
+        ...NANO,
+        name: "Nano Banana 2",
+        model_providers: [
+          { ...link("normal", "gemini", "gemini-3.1-flash-image"), priority: 20 },
+          { ...link("normal", "wavespeed", "google/nano-banana-2/text-to-image-fast"), priority: 10 },
+          { ...link("boost", "gemini", "gemini-3.1-flash-image"), priority: 10 },
+        ],
+      },
+      "public",
+    );
+    expect(m.normal).toEqual({ provider: "wavespeed", providerModel: "google/nano-banana-2/text-to-image-fast" });
+    expect(m.maxResolution).toBe("4K");
+  });
+
   it("falls back to the slug bridge when the migration has not run", () => {
     const m = fromRow(NANO, "public");
     // Gemini direct on both legs since 2026-09-05 (WaveSpeed raised 1K/2K to

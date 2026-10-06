@@ -219,7 +219,9 @@ const NO_ROUTE: Pick<ResolvedModel, "normal" | "boost" | "supportsResolution" | 
 
 function fromRow(row: ModelRow, audience: Audience): ResolvedModel {
   const bridge = BY_SLUG[slug(row.name ?? "")] ?? NO_ROUTE;
-  const links = row.model_providers ?? [];
+  // Lowest priority first: the default route is the one routing tries first,
+  // not whichever row the database happens to return first.
+  const links = [...(row.model_providers ?? [])].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
 
   // The database is the truth once the providers migration has run; the slug
   // bridge only covers the window before that.
