@@ -13,12 +13,10 @@
  * arithmetic (Terms of Use §4: the price shown is the price charged, network
  * fee included and itemised).
  *
- * Signing goes through lib/cdp-bridge — the window-event indirection exists
- * because CDP hooks throw outside their provider, and an eslint rule bans
- * importing them directly (that import once took the editor down).
+ * The caller passes the signer (hooks/usePaymentSigner): the buyer's own
+ * wallet, external through the wallet adapter or embedded through CDP.
  */
 import { sessionAuthHeaders } from "@/lib/session-headers";
-import { requestCdpSign } from "@/lib/cdp-bridge";
 
 /** The models table stores display names; pricing keys are their slugs. */
 /* Re-exported, not redefined: the server enforces the same key and cannot
@@ -33,6 +31,8 @@ export function microToUsd(micro: string | number): string {
 }
 
 export interface GenerationQuote {
+  /** Integer micro-USDC, for totals over several images. */
+  totalMicro: number;
   totalUsd: string;
   networkFeeUsd: string;
   artistUsd: string;
@@ -40,13 +40,17 @@ export interface GenerationQuote {
   appliedRule: { name: string } | null;
 }
 
+/** The sum of settings the server prices and the intent stores (lib/payments/generation-settings.ts). */
 export interface QuoteRequest {
-  promptId: string;
-  modelFamily: string;
-  resolution?: "1K" | "2K" | "4K"; // 1K accepted since 2026-08-22 (priced as 2K server-side)
+  /** Absent for the buyer's own prompt (the editors). */
+  promptId?: string;
+  /** The exact catalogue row the user selected. */
+  modelId: string;
+  resolution: "1K" | "2K" | "4K";
   /** Boost reprices the model leg at the vendor-direct route's real cost. */
   boost?: boolean;
   quality?: "low" | "medium" | "high";
+  referenceImageCount?: number;
 }
 
 /** Null on any failure: a missing quote greys the paid button, never fakes a price. */
@@ -58,23 +62,51 @@ export async function fetchGenerationQuote(req: QuoteRequest): Promise<Generatio
       body: JSON.stringify(req),
     });
     if (!res.ok) return null;
-    const json = (await res.json()) as {
-      quote?: {
-        expiresAt: string;
-        breakdown: { totalAmount: string; networkFee: string; artistAmount: string };
-        appliedRule: { name: string } | null;
-      };
-    };
-    if (!json.quote) return null;
-    return {
-      totalUsd: microToUsd(json.quote.breakdown.totalAmount),
-      networkFeeUsd: microToUsd(json.quote.breakdown.networkFee),
-      artistUsd: microToUsd(json.quote.breakdown.artistAmount),
-      expiresAt: json.quote.expiresAt,
-      appliedRule: json.quote.appliedRule,
-    };
+    const json = (await res.json()) as { quote?: QuoteBody };
+    return json.quote ? toQuote(json.quote) : null;
   } catch {
     return null;
+  }
+}
+
+interface QuoteBody {
+  expiresAt: string;
+  breakdown: { totalAmount: string; networkFee: string; artistAmount: string };
+  appliedRule: { name: string } | null;
+}
+
+function toQuote(q: QuoteBody): GenerationQuote {
+  return {
+    totalMicro: Number(q.breakdown.totalAmount),
+    totalUsd: microToUsd(q.breakdown.totalAmount),
+    networkFeeUsd: microToUsd(q.breakdown.networkFee),
+    artistUsd: microToUsd(q.breakdown.artistAmount),
+    expiresAt: q.expiresAt,
+    appliedRule: q.appliedRule,
+  };
+}
+
+/**
+ * Many quotes in one request, in order; null where the server gave none.
+ * What every picker shows next to its options (Kev, 2026-10-02: "ich
+ * brauche safe überall den server-quote").
+ */
+export async function fetchGenerationQuotes(reqs: QuoteRequest[]): Promise<Array<GenerationQuote | null>> {
+  if (!reqs.length) return [];
+  try {
+    const res = await fetch("/api/payments/generation/quote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
+      body: JSON.stringify({ items: reqs.slice(0, 24) }),
+    });
+    // A refused request carries no quotes, so every option reads null.
+    const json = ((await res.json().catch(() => null)) ?? {}) as { quotes?: Array<QuoteBody | { error: string }> };
+    return reqs.map((_, i) => {
+      const q = json.quotes?.[i];
+      return q && "breakdown" in q ? toQuote(q) : null;
+    });
+  } catch {
+    return reqs.map(() => null);
   }
 }
 
@@ -102,15 +134,21 @@ async function post(path: string, body: unknown): Promise<Response> {
   });
 }
 
+/** Base64 transaction in, the same transaction with the buyer's signature out. */
+export type PaymentSigner = (transaction: string) => Promise<string>;
+
 const errorOf = async (res: Response, fallback: string) =>
   ((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? fallback;
 
 /**
- * Hold the payment: intent → authorize → sign in the CDP wallet → submit.
+ * Hold the payment: intent → authorize → sign in the buyer's wallet → submit.
  * Returns the intentId to generate with. Throws CheckoutError; no step of it
  * moves money, so every failure leaves the buyer exactly where they started.
  */
-export async function authorizePaidGeneration(req: QuoteRequest): Promise<{ intentId: string }> {
+export async function authorizePaidGeneration(
+  req: QuoteRequest,
+  sign: PaymentSigner,
+): Promise<{ intentId: string }> {
   const intentRes = await post("/api/payments/generation/intent", req);
   if (!intentRes.ok) {
     throw new CheckoutError("intent", await errorOf(intentRes, "Could not prepare the payment"));
@@ -127,8 +165,9 @@ export async function authorizePaidGeneration(req: QuoteRequest): Promise<{ inte
 
   let signed: string;
   try {
-    signed = await requestCdpSign(transaction);
+    signed = await sign(transaction);
   } catch (e) {
+    if (e instanceof CheckoutError) throw e;
     throw new CheckoutError(
       "sign",
       e instanceof Error && /reject|denied|cancel/i.test(e.message)

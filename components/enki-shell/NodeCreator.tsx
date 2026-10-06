@@ -5,34 +5,30 @@
    Nano Banana Pro generation (Puter.js) + best-effort DB persistence. */
 
 import BoostToggle from "@/components/generation/BoostToggle";
-import { apiBoostPricePerImage } from "@/lib/pricing";
-import { toModelFamily } from "@/lib/generation/model-family";
 import { type Quality } from "@/components/generation/QualitySelect";
-import { useModelCatalogue, resolveCatalogueEntry, FALLBACK_RATIOS, tierPrice, tierScale } from "@/hooks/useModelLimits";
+import { useModelCatalogue, resolveCatalogueEntry, FALLBACK_RATIOS, type CatalogueEntry } from "@/hooks/useModelLimits";
+import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
+import type { QuoteRequest } from "@/lib/generation-checkout";
 import { moveToken } from "@/lib/editor/move-token";
 import { TOKEN_SRC, variableRange } from "@/lib/editor/selection-variable";
 import RatioRect from "@/components/generation/RatioRect";
-import { FREE_TIERS, tiersUpTo, TIER_PRICE_MULT } from "@/lib/generation/resolution";
+import { tiersUpTo } from "@/lib/generation/resolution";
 import { useState, useRef, useEffect, useMemo, useCallback, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Maximize2, Gem } from "lucide-react";
 import { Icon } from "./icons";
-import { generateWithModel, persistCreation, placeholderArt } from "./generation";
+import { persistCreation, placeholderArt } from "./generation";
+import { runGeneration } from "@/lib/generation/run-generation";
 import { useModelLimits } from "@/hooks/useModelLimits";
 import DocView from "./DocView";
 import DiceButton from "@/components/DiceButton";
+import WorkflowPicker, { type WorkflowPick } from "./WorkflowPicker";
+import { wfToken, resolveWorkflowTokens } from "@/lib/editor/workflow-tokens";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { usePaymentSigner } from "@/hooks/usePaymentSigner";
 import type { DiceValue } from "@/lib/generation/variable-dice";
 
 /* ── constants ── */
-/**
- * Fallback only — the real list comes from /api/models, so a generator is a
- * row and not a deploy. This constant used to BE the catalogue, with invented
- * prices and a "Seedance 2" that exists nowhere in the database.
- */
-export const NC_MODELS = [
-  { id: "nano-banana-pro", name: "Nano Banana Pro", price: 0.04 },
-];
 /* Ratio options come from the SELECTED MODEL's catalogue entry (DB column
    allowed_ratios) — a literal here was why five of Nano Banana Pro's ten
    ratios never showed (Kev, 2026-08-22). "Any" stays first: it means "let
@@ -85,7 +81,14 @@ const nid = (p: string) => p + NID++;
 export type Kind = "text" | "bool";
 export type NodeT = {
   id: string;
-  type: "prompt" | "ref" | "text" | "output";
+  type: "prompt" | "ref" | "text" | "output" | "workflow";
+  /* A WORKFLOW node embeds another prompt/workflow (Kev, 2026-09-05): its
+     text is read-only IP, its [variables] surface as text nodes owned by it
+     (`wfOf`), and {{wf:<id>}} marks its place in the body. `open` = unfolded
+     inline so the inside is visible. */
+  wf?: { promptId: string | null; title: string; author?: string; price?: number; text: string; vars: string[] };
+  open?: boolean;
+  wfOf?: string;
   x?: number; y?: number;
   index?: number; img?: string | null; userInput?: boolean;
   name?: string; kind?: Kind; pub?: boolean; value?: string; str?: string;
@@ -105,8 +108,10 @@ export type St = {
  * image under a bigger name, and NC_QUALITY_MULT below charged x2 for it.
  * Premium starts at 2K because the quote and intent schemas do.
  */
-export const ncQualities = (mode: St["mode"], maxResolution?: "1K" | "2K" | "4K"): readonly string[] => {
-  if (mode === "free") return FREE_TIERS;
+export const ncQualities = (_mode: St["mode"], maxResolution?: "1K" | "2K" | "4K"): readonly string[] => {
+  /* The tiers the SELECTED MODEL renders, whatever the prompt's release
+     mode: "free" capped every model at Flux's tiers when generation still
+     followed the prompt type. */
   /* Premium: the tiers the SELECTED MODEL genuinely renders, intersected with
      what the paid checkout accepts (2K floor — the quote and intent schemas
      are z.enum(["2K","4K"])). The list used to be hardcoded, so "2K/4K" showed
@@ -118,12 +123,6 @@ export const ncQualities = (mode: St["mode"], maxResolution?: "1K" | "2K" | "4K"
   const cap = maxResolution ?? "2K";
   return tiersUpTo(cap);
 };
-/* Price multiplier per resolution, relative to the model's base 2K price.
-   1K is 1, not 0.5: both hosts charge 1K and 2K identically (Google, 1120
-   tokens either way; WaveSpeed nano-banana-pro, $0.14 either way), and the
-   server prices a 1K request as the 2K tier (lib/pricing.toResolutionTier).
-   Halving it here made the editor's estimate disagree with the real quote. */
-export const NC_QUALITY_MULT = TIER_PRICE_MULT;
 export type TextNode = NodeT & { name: string; kind: Kind; value: string };
 
 const sigOf = (body: string, texts: TextNode[]) => body + "||" + texts.map((t) => t.name + ":" + t.kind).join(",");
@@ -135,13 +134,25 @@ const randVals = (texts: TextNode[]) => {
 
 /* Approximate node footprints (used for tidy row/column placement). */
 const NODE_DIM: Record<string, { w: number; h: number }> = {
-  prompt: { w: 480, h: 360 }, ref: { w: 172, h: 210 }, text: { w: 260, h: 188 }, output: { w: 208, h: 250 },
+  prompt: { w: 480, h: 360 }, ref: { w: 172, h: 210 }, text: { w: 260, h: 188 }, output: { w: 208, h: 250 }, workflow: { w: 300, h: 150 },
 };
 
 /* build the literal prompt sent to Nano Banana Pro: substitute [var] tokens with
    their values, strip [Reference Image N] tokens (txt2img is text-only). */
-function buildPrompt(body: string, texts: TextNode[], valsOverride?: Record<string, string>) {
-  let out = body;
+function buildPrompt(body: string, texts: TextNode[], valsOverride?: Record<string, string>, workflows: NodeT[] = []) {
+  /* Embedded workflows first: each {{wf:id}} becomes the embedded text with
+     ITS variables filled from the text nodes it owns, so the host's own
+     [variables] below see one flat prompt. */
+  const wfVals = (w: NodeT) => {
+    const vals: Record<string, string> = {};
+    for (const v of w.wf?.vars ?? []) {
+      const t = texts.find((x) => x.wfOf === w.id && x.name === v);
+      const raw = valsOverride && t ? valsOverride["[" + t.name + "]"] ?? t.value : t?.value;
+      vals[v] = t?.kind === "bool" ? (raw === "on" || raw === "Yes" ? ((t.str && t.str.trim()) || v) : "") : (raw ?? "");
+    }
+    return vals;
+  };
+  let out = resolveWorkflowTokens(body, workflows.filter((w) => w.type === "workflow" && w.wf).map((w) => ({ id: w.id, text: w.wf!.text, vars: wfVals(w) })));
   texts.forEach((t) => {
     const tok = "[" + t.name + "]";
     const raw = valsOverride ? valsOverride[tok] : t.value;
@@ -281,7 +292,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     const nodes: NodeT[] = [{ id: "prompt", type: "prompt", x, y }];
 
     // Editing an existing released prompt → rebuild its node graph.
-    const ep = editPrompt as { title?: string; promptTemplate?: string; price?: number; variables?: Array<{ name?: string; type?: string; value?: unknown }> } | null;
+    const ep = editPrompt as { title?: string; promptTemplate?: string; price?: number; derivedFrom?: string; variables?: Array<{ name?: string; type?: string; value?: unknown }> } | null;
     if (ep && (ep.promptTemplate || ep.title)) {
       const vars = Array.isArray(ep.variables) ? ep.variables : [];
       let ti = 0;
@@ -297,7 +308,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       });
       return {
         title: String(ep.title || ""), mode: (ep.price ?? 0) > 0 ? "premium" : "free",
-        models: ["nano-banana-pro"], cat: "", ratio: "Any", quality: "2K",
+        models: [], cat: "", ratio: "Any", quality: "2K",
         price: typeof ep.price === "number" ? ep.price : 0.1,
         body: String(ep.promptTemplate || ""),
         cons: [], conSeq: 0, genCount: 4, nodes,
@@ -305,7 +316,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     }
 
     return {
-      title: "", mode: "premium", models: ["nano-banana-pro"], cat: "", ratio: "Any", quality: "2K",
+      title: "", mode: "premium", models: [], cat: "", ratio: "Any", quality: "2K",
       price: 0.1, body: "", cons: [], conSeq: 0, genCount: 4, nodes,
     };
   };
@@ -368,8 +379,8 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const refUploadRef = useRef<HTMLInputElement>(null); // hidden picker for multi reference upload
   // mock-up mode: Generate fills outputs with instant placeholder art (no API)
   // so the whole flow — groups, lightbox, release — can be demoed offline.
-  // The real generator list, from the database. NC_MODELS is only the window
-  // before /api/models answers.
+  // The generator list, from the database. Nothing is preselected: the user
+  // picks (Kev, 2026-10-02: "IMMER DAS AUSGEWÄHLTE").
   const catalogue = useModelCatalogue();
   /* Which way the price is rolling, for the step animation; cleared by
      onAnimationEnd so a held click can re-trigger. */
@@ -380,6 +391,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const [priceEdit, setPriceEdit] = useState(false);
   // Refs, because finalizeOutput is a useCallback: reading these from the
   // render scope would pin it to whatever the catalogue was on first paint.
+  const signPayment = usePaymentSigner();
   const catalogueRef = useRef(catalogue);
   catalogueRef.current = catalogue;
   const [mockMode, setMockMode] = useState(false);
@@ -398,6 +410,10 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const selectedModel = resolveCatalogueEntry(catalogue, st.models[0]);
   const supportsQuality = selectedModel?.supportsQuality ?? false;
   const qualityTiers = ncQualities(st.mode, selectedModel?.maxResolution);
+  /* The tier that runs: the stored pick, or the model's ceiling when the pick
+     is above it. The picker showed this clamped value while the stored one
+     was priced and sent, and the server refused it. */
+  const effTier = qualityTiers.includes(st.quality) ? st.quality : qualityTiers[qualityTiers.length - 1] ?? st.quality;
   const mockModeRef = useRef(false); mockModeRef.current = mockMode;
   // canvas tool: "select" (left = marquee, right = pan) or "hand" (left = pan)
   const [tool, setTool] = useState<"select" | "hand">("select");
@@ -438,7 +454,6 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const canvasRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const ovRef = useRef<HTMLDivElement>(null);
-  const failedOnce = useRef(false);
 
   const pushHist = () => { hist.current.past.push(stRef.current); if (hist.current.past.length > 60) hist.current.past.shift(); hist.current.future = []; };
   const commit = (updater: (p: St) => St) => { pushHist(); setSt(updater); };
@@ -450,8 +465,8 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
      an id, a `type`, a `pos:[x,y]`, and its widget values — plus top-level
      graph metadata. We mirror that shape so the file reads like a Comfy graph,
      while keeping every Enki-specific field needed for a lossless round-trip. */
-  const NTYPE_OUT: Record<NodeT["type"], string> = { prompt: "EnkiPrompt", ref: "EnkiReferenceImage", text: "EnkiTextInput", output: "EnkiOutputImage" };
-  const NTYPE_IN: Record<string, NodeT["type"]> = { EnkiPrompt: "prompt", EnkiReferenceImage: "ref", EnkiTextInput: "text", EnkiOutputImage: "output" };
+  const NTYPE_OUT: Record<NodeT["type"], string> = { prompt: "EnkiPrompt", ref: "EnkiReferenceImage", text: "EnkiTextInput", output: "EnkiOutputImage", workflow: "EnkiWorkflow" };
+  const NTYPE_IN: Record<string, NodeT["type"]> = { EnkiPrompt: "prompt", EnkiReferenceImage: "ref", EnkiTextInput: "text", EnkiOutputImage: "output", EnkiWorkflow: "workflow" };
   const buildExportJSON = () => {
     const s = stRef.current;
     const nodes = s.nodes.map((n) => {
@@ -468,6 +483,9 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       if (n.picked != null) out.picked = n.picked;
       if (n.sig != null) out.sig = n.sig;
       if (n.status != null) out.status = n.status;
+      if (n.wf) out.wf = n.wf;
+      if (n.open != null) out.open = n.open;
+      if (n.wfOf) out.wfOf = n.wfOf;
       if (n.index != null) out.index = n.index;
       if (n.vals != null) out.widgets_values = n.vals;
       return out;
@@ -514,6 +532,9 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       if (o.picked != null) n.picked = !!o.picked;
       if (o.sig != null) n.sig = String(o.sig);
       if (o.status != null) n.status = o.status as NodeT["status"];
+      if (o.wf && typeof o.wf === "object") n.wf = o.wf as NodeT["wf"];
+      if (o.open != null) n.open = !!o.open;
+      if (typeof o.wfOf === "string") n.wfOf = o.wfOf;
       if (o.index != null) n.index = Number(o.index);
       if (o.widgets_values != null) n.vals = o.widgets_values as Record<string, string>;
       return n;
@@ -525,7 +546,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       ...p,
       title: typeof data.title === "string" ? data.title : "",
       mode: s.mode === "free" ? "free" : "premium",
-      models: Array.isArray(s.models) && s.models.length ? (s.models as string[]) : ["nano-banana-pro"],
+      models: Array.isArray(s.models) ? (s.models as string[]) : [],
       cat: typeof s.category === "string" ? s.category : "",
       ratio: typeof s.ratio === "string" ? s.ratio : "Any",
       quality: typeof s.quality === "string" ? s.quality : "2K",
@@ -560,6 +581,51 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     if (!isDirty()) { clearDraft(); onClose(); return; }
     setCloseConfirm(true);
   };
+  /* ── Workflow nodes (Kev, 2026-09-05) ── */
+  const [wfPickerOpen, setWfPickerOpen] = useState(false);
+  const addWorkflow = (pick: WorkflowPick) => {
+    setWfPickerOpen(false);
+    pushHist();
+    setSt((p) => {
+      const base = p.nodes.find((n) => n.id === "prompt");
+      const id = nid("w");
+      const existing = p.nodes.filter((n) => n.type === "workflow").length;
+      const dim = NODE_DIM.workflow;
+      const node: NodeT = {
+        id, type: "workflow", open: false,
+        x: (base?.x || 0) - dim.w - 80, y: (base?.y || 0) + 420 + existing * (dim.h + 18),
+        wf: { promptId: pick.promptId, title: pick.title, author: pick.author, text: pick.text, vars: pick.vars },
+      };
+      // Its inputs become text nodes it owns — fill and wire them like your own.
+      const tdim = NODE_DIM.text;
+      const inputs: NodeT[] = pick.vars.map((v, i) => ({
+        id: nid("t"), type: "text", kind: "text", pub: true, value: "", name: v, wfOf: id,
+        x: (node.x || 0) - tdim.w - 60, y: (node.y || 0) + i * (tdim.h + 14),
+      }));
+      const body = (p.body.trimEnd() + " " + wfToken(id)).trim();
+      return { ...p, body, nodes: [...p.nodes, node, ...inputs] };
+    });
+    onToast("Workflow inserted. Its inputs are the new text nodes; the {{wf}} marker in the prompt is where it speaks.");
+  };
+  const toggleWorkflowOpen = (id: string) => setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === id ? { ...n, open: !n.open } : n)) }));
+  const [libSaving, setLibSaving] = useState(false);
+  const saveToLibrary = async () => {
+    setMenuOpen(false);
+    if (libSaving) return;
+    const name = (stRef.current.title || "").trim() || "Untitled workflow";
+    setLibSaving(true);
+    try {
+      const res = await fetch("/api/library", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
+        body: JSON.stringify({ name, kind: "workflow", graph: buildExportJSON(), promptText: stRef.current.body }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      onToast(res.ok ? `Saved "${name}" to your library` : body.error || "Couldn't save. Are you logged in?");
+    } catch { onToast("Couldn't save to your library"); }
+    finally { setLibSaving(false); }
+  };
+
   const saveDraftAndClose = () => {
     // Quota failures must NOT close the editor while claiming success — with
     // data-URL reference images a draft easily exceeds the ~5MB localStorage cap.
@@ -578,6 +644,10 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
 
   // Restore a saved draft when opening fresh (not when editing a released prompt).
   useEffect(() => {
+    /* Opened from the profile's Library: the saved graph IS the editor
+       state — restore it as-is instead of rebuilding from fields. */
+    const libGraph = (editPrompt as { libraryGraph?: unknown } | null)?.libraryGraph;
+    if (libGraph) { applyImportJSON(libGraph, true); return; }
     if (editPrompt) return;
     try {
       const raw = localStorage.getItem(DRAFT_KEY);
@@ -797,9 +867,12 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const outs = st.nodes.filter((n) => n.type === "output");
   // Can only generate once there's an actual prompt and every text var has a value.
   // Only a prompt is required to generate — unfilled variables just resolve to empty.
-  const canGenerate = st.body.trim().length > 0;
+  const canGenerate = st.body.trim().length > 0 && !!selectedModel;
 
   const curSig = sigOf(st.body, texts);
+  /* spawnOutput fills every empty slot of the current composition (one
+     payment each), so its price and title name that count, not "one". */
+  const fillCount = Math.max(1, outs.filter((o) => o.status === "empty" && (!o.sig || o.sig === curSig)).length);
   const layout = useMemo(() => {
     // First group sits to the RIGHT of the prompt at the same height; every
     // further group stacks below it.
@@ -1285,45 +1358,45 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     // buildExportJSON() reads from refs, so calling it here needs no extra
     // dependency. The server pulls the image bytes and the authored text out
     // of it before storing.
-    /* resolveCatalogueEntry, not an exact-id find. Drafts carry the model as
-       a slug while the catalogue keys by UUID, and a miss here does not throw
-       — generateWithModel reads `isFree = !model || model.price <= 0`, so a
-       null model silently routes the whole generation to /api/generate-free
-       and drops `quality` with it. The user picks GPT-Image-2, sees its price,
-       and gets a free Flux image: exactly the failure the comment at the top
-       of generation.ts describes. */
-    const picked = resolveCatalogueEntry(catalogueRef.current, stRef.current.models[0]) ?? null;
-    const outcome = await generateWithModel({
-      prompt: promptText,
-      aspectRatio: ratio,
-      resolution: stRef.current.quality || "2K",
-      model: picked,
-      boost: boostRef.current,
-      quality: qualityRef.current,
-      workflow: buildExportJSON(),
-    });
+    const picked = resolveCatalogueEntry(catalogueRef.current, stRef.current.models[0]);
+    // Clamped to the picked model's ceiling, exactly as the picker shows it.
+    const tiers = tiersUpTo(picked?.maxResolution ?? "2K");
+    const wanted = stRef.current.quality;
+    const tier = (["1K", "2K", "4K"] as const).find((t) => t === (tiers.includes(wanted as never) ? wanted : tiers[tiers.length - 1]));
+    const outcome = tier
+      ? await runGeneration(
+          {
+            model: picked,
+            resolution: tier,
+            quality: qualityRef.current,
+            boost: boostRef.current,
+            prompt: promptText,
+            aspectRatio: ratio,
+            workflow: buildExportJSON(),
+            authoring: true,
+          },
+          signPayment,
+        )
+      : ({ ok: false, error: "Pick a resolution first. Nothing was generated and nothing was charged." } as const);
 
-    let url = "url" in outcome ? outcome.url : null;
-    if (!url) {
-      url = placeholderArt("fallback" + oid, "4:5");
-      // The real reason, not a generic one: "top up your balance" and "the dev
-      // server is unreachable" need different actions from the user.
-      if (!failedOnce.current) {
-        failedOnce.current = true;
-        onToast("error" in outcome ? outcome.error : "Generation failed — showing a placeholder.");
-      }
-    } else {
-      persistCreation({ prompt: promptText, imageUrl: url, model: stRef.current.models[0], title: stRef.current.title, userKey });
+    if (!outcome.ok) {
+      // The slot stays empty and says why. A placeholder used to stand in as a
+      // finished "ready" image, which could be picked and released as if a
+      // model had made it.
+      onToast(outcome.error);
+      setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === oid ? { ...n, img: null, status: "empty" } : n)) }));
+      return;
     }
-    const finalUrl = url;
-    setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === oid ? { ...n, img: finalUrl, status: "ready" } : n)) }));
-  }, [onToast, userKey]);
+    persistCreation({ prompt: promptText, imageUrl: outcome.imageUrl, model: picked?.id ?? "", title: stRef.current.title, userKey });
+    setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === oid ? { ...n, img: outcome.imageUrl, status: "ready" } : n)) }));
+  }, [onToast, userKey, signPayment]);
 
   /* ▶ generate → new output in the current constellation row.
      Never reassigns/removes an empty slot that belongs to a DIFFERENT prompt
      composition — those are left alone and offered via a co-generate dialog. */
   const spawnOutput = (autofill?: boolean) => {
     if (!stRef.current.body.trim()) return;
+    if (!resolveCatalogueEntry(catalogueRef.current, stRef.current.models[0])) { onToast("Pick a model first"); return; }
     // strict check: node-view buttons pass the click event as the first arg
     const wantsAutofill = autofill === true;
     const baseTx = stRef.current.nodes.filter((n) => n.type === "text") as TextNode[];
@@ -1331,7 +1404,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     const tx: TextNode[] = rv ? baseTx.map((t) => ({ ...t, value: rv["[" + t.name + "]"] ?? t.value })) : baseTx;
     const body = stRef.current.body;
     const vals: Record<string, string> = {}; tx.forEach((t) => { vals["[" + t.name + "]"] = t.value; });
-    const finalPrompt = buildPrompt(body, tx, vals);
+    const finalPrompt = buildPrompt(body, tx, vals, stRef.current.nodes);
     // Mirror the AI-filled values into the editor vars, like runGenerate does.
     const withFill = (nodes: NodeT[]) => (rv ? nodes.map((n) => (n.type === "text" ? { ...n, value: rv["[" + n.name + "]"] ?? n.value } : n)) : nodes);
     const sig = sigOf(body, tx);
@@ -1377,7 +1450,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       const con = (stRef.current.cons || []).find((c) => c.sig === o.sig);
       const bodyC = con?.body || stRef.current.body;
       const txC = stRef.current.nodes.filter((n) => n.type === "text") as TextNode[];
-      const fp = buildPrompt(bodyC, txC, o.vals || {});
+      const fp = buildPrompt(bodyC, txC, o.vals || {}, stRef.current.nodes);
       setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === id ? { ...n, status: "loading" } : n)) }));
       finalizeOutput(id, fp);
     });
@@ -1410,9 +1483,10 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const deleteNodeId = (id: string) => commit((p) => {
     const node = p.nodes.find((n) => n.id === id);
     if (!node || node.type === "prompt") return p;
-    const nodes = p.nodes.filter((n) => n.id !== id);
+    const nodes = p.nodes.filter((n) => n.id !== id && n.wfOf !== id);
     let body = p.body;
     if (node.type === "text") body = body.split("[" + node.name + "]").join("").replace(/\s{2,}/g, " ").trim();
+    if (node.type === "workflow") body = body.split(wfToken(node.id)).join("").replace(/\s{2,}/g, " ").trim();
     if (node.type === "ref") {
       // Drop the deleted image's token and renumber the ones behind it.
       const refs = p.nodes.filter((n) => n.type === "ref");
@@ -1494,7 +1568,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       // the bottom was the old, wrong behavior.)
       nodes = nodes.map((n) => (n.type === "text" && n.name === removed[0] ? { ...n, name: added[0] } : n));
     } else {
-      nodes = nodes.filter((n) => n.type !== "text" || present.has(n.name || ""));
+      nodes = nodes.filter((n) => n.type !== "text" || n.wfOf || present.has(n.name || ""));
       // Typing [brackets] CREATES the variable (both editors promise it) —
       // otherwise the literal token would leak into the generated prompt.
       const toAdd = added.filter((n) => n.trim() && !/^Reference Image \d+$/.test(n));
@@ -1526,20 +1600,48 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   /* Per-model tier scale from the server's own price ladder — the flat x2
      for 4K overstated it (nano-banana-pro's real 4K/2K ratio is ~1.79;
      found by review, 2026-08-22). */
-  const qualityMult = tierScale(selectedModel, st.quality);
-  // Priced from the catalogue, so what is shown is what the server will
-  // charge. It used to come from a constant with invented numbers.
-  const perImage = st.models.reduce((sum, id) => sum + (resolveCatalogueEntry(catalogue, id)?.price ?? 0), 0) * qualityMult;
+  /* Every price shown here is a server quote (Kev, 2026-10-02: "ich brauche
+     safe überall den server-quote"): each model at the current settings for
+     the model picker, each tier of the selected model for the resolution
+     picker, in one request. They were catalogue price x tier scale, without
+     the fee and without quality, so the label was not the charge. The free
+     model reads "Free"; an option without a quote shows no price. */
   const imgCount = st.genCount;
-  const cost = perImage * imgCount;
-  /* Boost price = the BOOST ROUTE's real per-image cost (vendor direct),
-     never a multiplier (Kev, 2026-08-23). Uses the same family key the
-     server prices by; the gpt quality lever feeds in where the model has
-     one. */
-  const boostCost = selectedModel
-    ? apiBoostPricePerImage(toModelFamily(selectedModel.name), st.quality, supportsQuality ? quality : undefined) * imgCount
-    : cost;
-  const shownCost = boost ? boostCost : cost;
+  const asTier = (t: string) => (t === "1K" || t === "2K" || t === "4K" ? t : null);
+  const quoteFor = (m: CatalogueEntry, tier: "1K" | "2K" | "4K"): QuoteRequest => ({
+    modelId: m.id,
+    resolution: tier,
+    quality: m.supportsQuality ? quality : undefined,
+    boost: boost && !!m.boostAvailable,
+  });
+  /* Each model at the tier IT would run: the stored pick, clamped to that
+     model's ceiling, exactly as finalizeOutput clamps it once picked. */
+  const tierFor = (m: CatalogueEntry): "1K" | "2K" | "4K" => {
+    const tiers = tiersUpTo(m.maxResolution ?? "2K");
+    return asTier(tiers.includes(st.quality as never) ? st.quality : tiers[tiers.length - 1]) ?? "2K";
+  };
+  const pricedModels = catalogue.filter((m) => !m.free);
+  const pricedTiers = selectedModel && !selectedModel.free ? qualityTiers.map(asTier).filter((t): t is "1K" | "2K" | "4K" => !!t) : [];
+  const quotes = useServerQuotes([
+    ...pricedModels.map((m) => quoteFor(m, tierFor(m))),
+    ...pricedTiers.map((t) => quoteFor(selectedModel!, t)),
+  ]);
+  const modelPriceLabel = (id: string): string | undefined => {
+    const m = catalogue.find((c) => c.id === id);
+    if (!m) return undefined;
+    if (m.free) return "Free";
+    const i = pricedModels.indexOf(m);
+    return (i >= 0 ? quoteLabel(quotes[i]) : null) ?? undefined;
+  };
+  const tierPriceLabel = (tier: string): string | undefined => {
+    if (selectedModel?.free) return "Free";
+    const i = pricedTiers.indexOf(asTier(tier) as "1K" | "2K" | "4K");
+    return (i >= 0 ? quoteLabel(quotes[pricedModels.length + i]) : null) ?? undefined;
+  };
+  // The selected model's own entry above is priced at tierFor(selected) = effTier.
+  const nowQuote = selectedModel && !selectedModel.free ? quotes[pricedModels.indexOf(selectedModel)] : null;
+  /** The current settings for n images: the quote, "Free", or "…" while none is known. */
+  const priceFor = (n: number) => (selectedModel?.free ? "Free" : quoteLabel(nowQuote, n) ?? "…");
   const pickedOuts = outs.filter((o) => o.picked && o.img); // images marked for public release (always one group)
   const releaseMin = st.mode === "free" ? 1 : 4;            // Free needs ≥1, Premium ≥4 selected
   const canRelease = pickedOuts.length >= releaseMin;
@@ -1547,6 +1649,8 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   /* dock batch generate */
   const runGenerate = (autofill: boolean) => {
     if (!stRef.current.body.trim()) { onToast("Write a prompt first"); return; }
+    const picked = resolveCatalogueEntry(catalogueRef.current, stRef.current.models[0]);
+    if (!picked) { onToast("Pick a model first"); return; }
     pushHist();
     const n = st.genCount;
     const baseTx = stRef.current.nodes.filter((nn) => nn.type === "text") as TextNode[];
@@ -1557,7 +1661,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     const created: { oid: string; vals: Record<string, string>; prompt: string }[] = [];
     for (let i = 0; i < n; i++) {
       const vals: Record<string, string> = {}; resolved.forEach((t) => { vals["[" + t.name + "]"] = t.value; });
-      created.push({ oid: nid("o"), vals, prompt: buildPrompt(body, resolved, vals) });
+      created.push({ oid: nid("o"), vals, prompt: buildPrompt(body, resolved, vals, stRef.current.nodes) });
     }
     setSt((p) => {
       let nodes = p.nodes.map((x) => ({ ...x }));
@@ -1568,8 +1672,18 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       return { ...p, cons, conSeq, nodes };
     });
     created.forEach((c) => finalizeOutput(c.oid, c.prompt));
-    onToast((autofill ? "Auto-filled & generating " : "Generating ") + n + " image" + (n > 1 ? "s" : "") + " · Nano Banana Pro");
+    onToast((autofill ? "Auto-filled & generating " : "Generating ") + n + " image" + (n > 1 ? "s" : "") + " · " + picked.name);
   };
+
+  /* Lineage: when this editor was opened from another prompt ("put prompt
+     to editor"), the parent's id rides along and goes into the release body
+     as derivedFrom — prompts.derived_from_prompt_id is how Kev traces which
+     prompt was built from which (and later, how creator payout splits know
+     their chain). Held in a ref: a draft save/restore may lose it, but a
+     wrong parent is worse than a missing one. */
+  const derivedFromRef = useRef<string | undefined>(
+    (editPrompt as { derivedFrom?: string } | null)?.derivedFrom,
+  );
 
   const release = () => {
     const need = st.mode === "free" ? 1 : 4;
@@ -1577,6 +1691,9 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     const picked = ready.filter((o) => o.picked);
     if (ready.length < need) { onToast("Generate " + need + " example" + (need > 1 ? "s" : "") + " first — fill variables and click ▶ on the prompt (" + ready.length + "/" + need + ")"); return; }
     if (picked.length < need) { onToast("Select " + need + " output" + (need > 1 ? "s" : "") + " to publish — tap the ★ on the ones you want shown (" + picked.length + "/" + need + ")"); return; }
+    /* When this becomes a real API release, derivedFromRef.current MUST ride
+       in the body as derivedFrom — the lineage column already exists. */
+    void derivedFromRef.current;
     onToast(picked.length + " selected output" + (picked.length > 1 ? "s" : "") + " published · prompt released to marketplace");
     clearDraft(); // released — a stale draft must not resurrect the old graph
     onClose();
@@ -1749,9 +1866,11 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const portPos = (n: NodeT, which?: string) => {
     if (n.type === "prompt") {
       if (which === "text") return { x: n.x || 0, y: (n.y || 0) + 123 };
+      if (which === "wf") return { x: n.x || 0, y: (n.y || 0) + 163 };
       return { x: (n.x || 0) + 480, y: (n.y || 0) + 123 };
     }
     if (n.type === "output") return { x: n.x || 0, y: (n.y || 0) + 30 };
+    if (n.type === "workflow") return { x: (n.x || 0) + (n.open ? 340 : 300), y: (n.y || 0) + 25.5 };
     return { x: (n.x || 0) + (n.type === "ref" ? 172 : 250), y: (n.y || 0) + 30 };
   };
   // Shared "bus" lines (like PCB traces): inputs converge on a trunk just left
@@ -1761,7 +1880,13 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   // Output position = its grid/free slot + any drag offset.
   const outPos = (o: NodeT) => { const b = layout.map[o.id] || (o.status === "empty" ? { x: o.x || 0, y: o.y || 0 } : null); return b ? { x: b.x + (o.off?.x || 0), y: b.y + (o.off?.y || 0) } : null; };
   const edges: { from: { x: number; y: number }; to: { x: number; y: number }; trunk: number; c: string }[] = [];
-  texts.forEach((t) => edges.push({ from: portPos(t), to: portPos(prompt, "text"), trunk: IN_TRUNK, c: (textColor[t.name] || TEXT_PALETTE[0]).dot }));
+  const wfNodes = st.nodes.filter((n) => n.type === "workflow");
+  texts.forEach((t) => {
+    const w = t.wfOf ? wfNodes.find((n) => n.id === t.wfOf) : undefined;
+    if (w) edges.push({ from: portPos(t), to: { x: w.x || 0, y: (w.y || 0) + 25.5 }, trunk: (w.x || 0) - 36, c: (textColor[t.name] || TEXT_PALETTE[0]).dot });
+    else edges.push({ from: portPos(t), to: portPos(prompt, "text"), trunk: IN_TRUNK, c: (textColor[t.name] || TEXT_PALETTE[0]).dot });
+  });
+  wfNodes.forEach((w) => edges.push({ from: portPos(w), to: portPos(prompt, "wf"), trunk: IN_TRUNK, c: "var(--enki-turq)" }));
   outs.forEach((o) => { const pos = outPos(o); if (pos) edges.push({ from: portPos(prompt, "out"), to: { x: pos.x, y: pos.y + 30 }, trunk: OUT_TRUNK, c: palOf((st.cons.find((c) => c.sig === o.sig) || { cidx: 0 }).cidx || 0).bar }); });
   // Rounded orthogonal path: run to the shared trunk x, then branch to the target.
   const path = (a: { x: number; y: number }, b: { x: number; y: number }, tx: number) => {
@@ -1834,8 +1959,8 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
               <div className={"nc-pm" + (modelFlipUp ? " nc-pm--up" : "")} onPointerDown={(e) => e.stopPropagation()}>
                 <button ref={modelTrigRef} className={"nc-pm-trigger" + (modelOpen ? " open" : "")} title="Model used for this prompt — price shown is the production cost"
                   onClick={(e) => { e.stopPropagation(); if (!modelOpen) { const r = modelTrigRef.current?.getBoundingClientRect(); const ph = catalogue.length * 38 + 16; if (r) setModelFlipUp(window.innerHeight - r.bottom < ph + 14 && r.top > ph + 14); } setModelOpen((o) => !o); }}>
-                  <span className="nc-pm-name">{(resolveCatalogueEntry(catalogue, st.models[0]) || catalogue[0])?.name ?? "—"}</span>
-                  <span className="nc-pm-price">${((resolveCatalogueEntry(catalogue, st.models[0]) || catalogue[0])?.price ?? 0).toFixed(2)}</span>
+                  <span className="nc-pm-name">{selectedModel?.name ?? "Pick a model"}</span>
+                  <span className="nc-pm-price">{selectedModel ? modelPriceLabel(selectedModel.id) : ""}</span>
                   <Icon name="chevronDown" size={13} stroke={2.4} className="nc-pm-chev" />
                 </button>
                 {modelOpen && (
@@ -1845,7 +1970,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                         className={"nc-pm-opt" + (m.id === st.models[0] ? " on" : "")}
                         onClick={() => { setSt((p) => ({ ...p, models: [m.id] })); setModelOpen(false); }}>
                         <span className="nc-pm-opt-name">{m.name}</span>
-                        <span className="nc-pm-opt-cost"><b>${m.price.toFixed(2)}</b> prod. cost</span>
+                        <span className="nc-pm-opt-cost"><b>{modelPriceLabel(m.id) ?? "—"}</b> per image</span>
                       </button>
                     ))}
                   </div>
@@ -1996,7 +2121,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                     options={ncRatios(selectedModel).map((r) => ({ value: r, label: r, icon: <RatioRect ratio={r} size={15} /> }))} onChange={(v) => setSt((p) => ({ ...p, ratio: v }))} />
                   {qualityTiers.length > 0 && (
                     <NcSelect icon={<Maximize2 size={14} style={{ color: "var(--enki-ink-3)" }} />} value={qualityTiers.includes(st.quality) ? st.quality : qualityTiers[qualityTiers.length - 1]} width={72} grow={false} title="Resolution · does not affect grouping"
-                      options={qualityTiers.map((q) => { const p = tierPrice(st.mode === "premium" ? selectedModel : undefined, q); return { value: q, label: q, sub: p != null ? "$" + p.toFixed(2) : undefined }; })} onChange={(v) => setSt((p) => ({ ...p, quality: v }))} />
+                      options={qualityTiers.map((q) => ({ value: q, label: q, sub: tierPriceLabel(q) }))} onChange={(v) => setSt((p) => ({ ...p, quality: v }))} />
                   )}
                   {/* Model-specific settings belong to the PROMPT, so they are
                       set where the prompt is written (Kev, 2026-08-19) — not
@@ -2021,7 +2146,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                       value={quality}
                       width={84}
                       grow={false}
-                      title="Quality — how much detail GPT-Image-2 renders. Your price is the same on every setting."
+                      title="Quality — how much detail GPT-Image-2 renders. Higher quality costs more; the price shown is the server's quote."
                       options={[
                         { value: "low", label: "Low" },
                         { value: "medium", label: "Mid" },
@@ -2045,7 +2170,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                     headers={sessionAuthHeaders()}
                     onValues={applyDiceValues}
                   />
-                  <button className={"nc-prompt-genbtn nc-prompt-genbtn--stack" + (canGenerate ? "" : " disabled")} title={canGenerate ? "Generate one image at " + st.quality : "Write a prompt first"} onClick={() => spawnOutput()}>
+                  <button className={"nc-prompt-genbtn nc-prompt-genbtn--stack" + (canGenerate ? "" : " disabled")} title={canGenerate ? `Generate ${fillCount} image${fillCount > 1 ? "s" : ""} at ${effTier}` : !selectedModel ? "Pick a model first" : "Write a prompt first"} onClick={() => spawnOutput()}>
                     {/* zap, like every Generate — sparkles is Release's icon.
                         The icon sits BESIDE the Generate/price block, so the
                         flex row centers it against both lines, not just the
@@ -2053,7 +2178,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                     <Icon name="zap" size={16} stroke={2.2} fill={canGenerate ? "var(--cta-ink)" : "none"} />
                     <span className="nc-genbtn-txt">
                       <span className="nc-genbtn-top">Generate</span>
-                      <span className="nc-genbtn-sub">${perImage.toFixed(2)}</span>
+                      <span className="nc-genbtn-sub">{priceFor(fillCount)}</span>
                     </span>
                   </button>
                 </div>
@@ -2066,6 +2191,11 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
             <span className="nc-port-lab nc-port-lab--in" style={{ top: 116 }}>text</span>
             <button className="nc-port-add" style={{ left: -28, top: 115 }} title="Add a text input node"
               onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); addText(); }}><Icon name="plus" size={11} stroke={2.6} /></button>
+            {/* Embed a prompt or workflow as a node (Kev, 2026-09-05). */}
+            <span className="nc-port nc-port--io" style={{ left: -7.5, top: 155.5, background: "var(--enki-turq)" }} title="Workflows: embedded prompts speak here" />
+            <span className="nc-port-lab nc-port-lab--in" style={{ top: 156 }}>workflow</span>
+            <button className="nc-port-add" style={{ left: -28, top: 155 }} title="Insert a prompt or workflow as a node"
+              onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); setWfPickerOpen(true); }}><Icon name="plus" size={11} stroke={2.6} /></button>
             <span className="nc-port nc-port--io" style={{ right: -7.5, top: 115.5, background: "var(--enki-ember)" }}
               title="Generated images output · drag out (or double-click) to render"
               onPointerDown={(e) => startConnect("out", e)} onDoubleClick={(e) => portDbl("out", e)} />
@@ -2076,6 +2206,8 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
               onClick={(e) => { e.stopPropagation(); addOutput(); }}>
               <Icon name="plus" size={11} stroke={2.6} /></button>
           </div>
+
+          {wfPickerOpen && <WorkflowPicker onPick={addWorkflow} onClose={() => setWfPickerOpen(false)} />}
 
           {/* text nodes */}
           {texts.map((t) => { const c = textColor[t.name] || TEXT_PALETTE[0]; return (
@@ -2108,6 +2240,33 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
               <span className="nc-port" style={{ right: -7.5, top: 22.5, background: c.dot }} />
             </div>
           ); })}
+
+          {/* workflow nodes: embedded prompts; a compact card, unfold to see inside */}
+          {st.nodes.filter((n) => n.type === "workflow").map((w) => (
+            <div key={w.id} data-nid={w.id} className={"nc-node nc-workflow" + (sel === w.id || selSet.has(w.id) ? " sel" : "") + (w.open ? " open" : "")} style={{ left: w.x, top: w.y }}
+              onPointerDown={(e) => { if (e.ctrlKey || e.metaKey) { e.stopPropagation(); toggleSel(w.id); } else setSel(w.id); }}>
+              <div className="nc-nhead nc-workflow-head" onPointerDown={(e) => startNodeDrag(w.id, e)}>
+                <Icon name="link" size={13} stroke={2} />
+                <span className="nc-ntitle" title={w.wf?.title}>{w.wf?.title}</span>
+                <button className="nc-ntrash" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); deleteNodeId(w.id); }}><Icon name="trash" size={14} stroke={2} /></button>
+              </div>
+              <div className="nc-workflow-meta">
+                <span>{w.wf?.author ? `by ${w.wf.author}` : "from your library"}</span>
+                <span>{w.wf?.vars.length ?? 0} input{(w.wf?.vars.length ?? 0) === 1 ? "" : "s"}</span>
+              </div>
+              <button type="button" className="nc-workflow-toggle" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); toggleWorkflowOpen(w.id); }} aria-expanded={!!w.open}>
+                <Icon name="expand" size={12} stroke={2.2} /> {w.open ? "Hide inside" : "Show inside"}
+              </button>
+              {w.open && (
+                <div className="nc-workflow-inside" title="Read-only: another artist's work. Its inputs are the text nodes wired into this card.">
+                  {(w.wf?.text ?? "").split(TOKEN_RE).map((part, i) => TOKEN_RE.test(part) && !isRefTok(part)
+                    ? <span key={i} className="nc-workflow-var">{part}</span>
+                    : <span key={i}>{part}</span>)}
+                </div>
+              )}
+              <span className="nc-port nc-port--io nc-workflow-out" title="Speaks into the prompt at its {{wf}} marker" />
+            </div>
+          ))}
 
           {/* output nodes */}
           {outs.map((o, oi) => {
@@ -2258,6 +2417,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                   <span className="nc-menu-state">{mockMode ? "On" : "Off"}</span>
                 </button>
                 <div className="nc-menu-sep" />
+                <button className="nc-menu-item" role="menuitem" onClick={() => void saveToLibrary()}><Icon name="bookmark" size={15} stroke={2} /> Save to my library</button>
                 <button className="nc-menu-item" role="menuitem" onClick={exportPrompt}><Icon name="download" size={15} stroke={2} /> Export prompt as JSON</button>
                 <button className="nc-menu-item" role="menuitem" onClick={importPrompt}><Icon name="upload" size={15} stroke={2} /> Import prompt JSON</button>
                 <div className="nc-menu-sep" />
@@ -2275,10 +2435,10 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       {view === "node" && <div className="nc-gp" role="dialog">
         <div className="nc-gp-row">
           <span className="nc-gp-lab">{imgCount} image{imgCount > 1 ? "s" : ""}</span>
-          <span className="nc-gp-cost">${shownCost.toFixed(2)}</span>
+          <span className="nc-gp-cost">{priceFor(imgCount)}</span>
         </div>
         <div className="nc-gp-gen" style={{ marginBottom: 6 }}>
-          <BoostToggle boost={boost} onChange={setBoost} />
+          <BoostToggle boost={boost} onChange={setBoost} available={!!selectedModel?.boostAvailable} />
         </div>
         <div className="nc-gp-gen">
           <button className="nc-gp-btn" onClick={() => runGenerate(true)} title="Autofill variables & generate"><Icon name="wand" size={12} stroke={2} /> Autofill</button>
@@ -2287,7 +2447,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
               model/resolution, boost included), the same number as the
               header row. "Pay & Gen" named the mechanics; the price itself
               says it costs money (Kev, 2026-08-22). */}
-          <button className="nc-gp-btn nc-gp-btn--go" onClick={() => runGenerate(false)} title={"Generate " + imgCount + " image" + (imgCount > 1 ? "s" : "") + " — total for the whole run"}><Icon name="zap" size={12} stroke={2} fill="currentColor" /> Generate<span className="nc-gp-go-price">${shownCost.toFixed(2)}</span></button>
+          <button className="nc-gp-btn nc-gp-btn--go" onClick={() => runGenerate(false)} title={"Generate " + imgCount + " image" + (imgCount > 1 ? "s" : "") + " — total for the whole run"}><Icon name="zap" size={12} stroke={2} fill="currentColor" /> Generate<span className="nc-gp-go-price">{priceFor(imgCount)}</span></button>
         </div>
         <div className="nc-gp-rel">
           <div className="nc-gp-relh"><Icon name="star" size={10} stroke={2} fill="currentColor" /> To release{pickedOuts.length ? " · " + pickedOuts.length : ""}</div>
@@ -2397,7 +2557,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       {view === "doc" && (
         <DocView api={{
           st, texts, refs, outs, cons: st.cons, curSig, liveTokNames, liveRefCount, pubNames,
-          colorForTok, palOf, perImage, canGenerate, pickedOuts, releaseMin, canRelease,
+          colorForTok, palOf, priceLabel: priceFor(fillCount), modelPriceLabel, tierPriceLabel, effTier, canGenerate, pickedOuts, releaseMin, canRelease,
           modelAccept: modelLimits.accept,
           onBodyChange, pushHist, addText, patchText, setTextKind, renameText, deleteNodeId,
           addRefsFromFiles, onRefFiles, toggleRefUserInput, setRefMax,
@@ -2489,12 +2649,12 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
         const items = genConfirm.ids.map((id) => {
           const o = st.nodes.find((n) => n.id === id);
           const con = (st.cons || []).find((c) => c.sig === o?.sig);
-          const fp = o ? buildPrompt(con?.body || st.body, texts, o.vals || {}) : "";
+          const fp = o ? buildPrompt(con?.body || st.body, texts, o.vals || {}, st.nodes) : "";
           const vars = Object.entries((o?.vals) || {}).filter(([, v]) => v);
           return { id, fp, vars };
         });
         const allOn = genConfirm.checked.size === items.length && items.length > 0;
-        const total = genConfirm.checked.size * perImage;
+        const total = priceFor(genConfirm.checked.size);
         const toggle = (id: string) => setGenConfirm((g) => { if (!g) return g; const n = new Set(g.checked); if (n.has(id)) n.delete(id); else n.add(id); return { ...g, checked: n }; });
         return (
           <div className="nc-gconf-scrim" onPointerDown={() => setGenConfirm(null)}>
@@ -2515,7 +2675,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                 ); })}
               </div>
               <div className="nc-gconf-foot">
-                <span className="nc-gconf-total">Total to pay: <b>${total.toFixed(2)}</b></span>
+                <span className="nc-gconf-total">Total to pay: <b>{total}</b></span>
                 <div className="nc-gconf-btns">
                   <button className="nc-gconf-cancel" onClick={() => setGenConfirm(null)}>Not now</button>
                   <button className="nc-gconf-go" disabled={!genConfirm.checked.size} onClick={confirmCoGen}><Icon name="zap" size={13} stroke={2} fill="var(--cta-ink)" /> Generate {genConfirm.checked.size}</button>

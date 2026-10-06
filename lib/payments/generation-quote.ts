@@ -11,6 +11,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  PRICING_POLICY,
   UnknownModelError,
   computeGenerationSplit,
   getModelCostMicro,
@@ -22,9 +23,12 @@ import {
   resolvePricingRule,
   type AppliedRule,
 } from "@/lib/payments/pricing-rules";
+import { isListed, isPublicText } from "@/lib/prompt-visibility";
+import { resolveOwnerIds } from "@/lib/session-user";
 
 export interface QuoteInput {
-  promptId: string;
+  /** Absent for the buyer's own prompt: no artist, so no artist leg. */
+  promptId?: string;
   modelFamily: string;
   resolution?: "1K" | "2K" | "4K";
   /** Boost = the vendor-direct route; its REAL cost prices the model leg. */
@@ -33,6 +37,8 @@ export interface QuoteInput {
   quality?: "low" | "medium" | "high";
   /** requireAuth's userId (wallet or users.id) — enables DB pricing rules. */
   buyer?: string;
+  /** The buyer's session: lets a creator through to their own prompt that is not live. */
+  sessionToken?: string | null;
 }
 
 export type QuoteResult =
@@ -48,35 +54,54 @@ export type QuoteResult =
 
 export async function computeQuote(
   supabase: SupabaseClient,
-  { promptId, modelFamily, resolution, boost, quality, buyer }: QuoteInput,
+  { promptId, modelFamily, resolution, boost, quality, buyer, sessionToken }: QuoteInput,
 ): Promise<QuoteResult> {
   // 1. Prompt price comes from the DB — never from the client.
   //    Live schema (verified 2026-07-12): prompts has creator_id +
   //    price_usd_cents — NOT user_id/price as older code assumed.
-  const { data: prompt, error: promptError } = await supabase
-    .from("prompts")
-    .select("id, price_usd_cents, creator_id, prompt_type, is_free_showcase")
-    .eq("id", promptId)
-    .maybeSingle();
-  if (promptError) {
-    console.error("[payments/quote] prompt lookup failed:", promptError.message);
-    return { ok: false, status: 500, error: "Failed to load prompt" };
-  }
-  if (!prompt) {
-    return { ok: false, status: 404, error: "Prompt not found" };
+  //    No promptId means the buyer's own prompt: nothing to look up, no artist.
+  let prompt: {
+    price_usd_cents: number | null;
+    creator_id: string | null;
+    prompt_type: string | null;
+    is_free_showcase: boolean | null;
+  } | null = null;
+  if (promptId) {
+    const { data, error: promptError } = await supabase
+      .from("prompts")
+      .select("id, price_usd_cents, creator_id, prompt_type, is_free_showcase, is_listed, listing_status, deleted_at")
+      .eq("id", promptId)
+      .maybeSingle();
+    if (promptError) {
+      console.error("[payments/quote] prompt lookup failed:", promptError.message);
+      return { ok: false, status: 500, error: "Failed to load prompt" };
+    }
+    // Only a live prompt is for sale: a draft, a deleted or a delisted one
+    // answers like a missing one. Every paid path prices through here, so the
+    // intent, the authorisation and the generation inherit it. Its creator is
+    // let through to their own (the generator page opens for it), recognised
+    // the way a save recognises them; a lookup that fails lets nobody through.
+    const mine = async () =>
+      ((await resolveOwnerIds(supabase, sessionToken ?? null).catch(() => null)) ?? []).includes(String(data?.creator_id));
+    if (!data || (!isListed(data) && !(await mine()))) {
+      return { ok: false, status: 404, error: "Prompt not found" };
+    }
+    prompt = data;
   }
 
-  const isFree =
-    prompt.prompt_type === "showcase" ||
-    prompt.prompt_type === "free-prompt" ||
-    prompt.is_free_showcase === true;
-  const priceCents = typeof prompt.price_usd_cents === "number" ? prompt.price_usd_cents : 0;
+  // Free by the database's word ("free", "showcase"), the rule the agent rail
+  // asks too. This compared the client's word "free-prompt", which no row
+  // holds, so a free prompt saved with a price was quoted an artist share.
+  const isFree = !prompt || isPublicText(prompt);
+  const priceCents = typeof prompt?.price_usd_cents === "number" ? prompt.price_usd_cents : 0;
   const artistPriceMicro = isFree ? 0 : usdToMicro(priceCents / 100);
 
   // 2. Model cost comes from server-side pricing — never from the client.
   let modelCostMicro: number;
   try {
     modelCostMicro = getModelCostMicro(modelFamily, resolution, { boost, quality });
+    // Every paid prompt is checked before generating; the buyer pays the check.
+    modelCostMicro += PRICING_POLICY.extractionCheckMicro;
   } catch (error) {
     if (error instanceof UnknownModelError) {
       return { ok: false, status: 400, error: error.message };
@@ -92,7 +117,7 @@ export async function computeQuote(
   //    the split has nowhere to send the artist share.
   let artistWallet: string | null = null;
   if (artistPriceMicro > 0) {
-    if (!prompt.creator_id) {
+    if (!prompt?.creator_id) {
       return { ok: false, status: 422, error: "Prompt has no associated creator" };
     }
     const { data: wallets, error: creatorError } = await supabase

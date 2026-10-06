@@ -55,6 +55,15 @@ async function putBlob(name: string, buf: Buffer, contentType: string): Promise<
   }
 }
 
+/** A file already in our Blob store stays where it is, so its stored URL is the one the client was given. */
+function inOurBlob(url: string): boolean {
+  try {
+    return new URL(url).hostname.endsWith(".public.blob.vercel-storage.com");
+  } catch {
+    return false;
+  }
+}
+
 export async function storeGeneratedImage(providerUrl: string, userId: string): Promise<StoredImage> {
   const passthrough: StoredImage = { imageUrl: providerUrl, previewUrl: null, thumbnailUrl: null };
   if (!process.env.BLOB_READ_WRITE_TOKEN?.trim()) return passthrough;
@@ -67,7 +76,7 @@ export async function storeGeneratedImage(providerUrl: string, userId: string): 
     const base = `generations/${userId}/${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
     const [original, derivatives] = await Promise.all([
-      putBlob(`${base}.${ext}`, fetched.buf, fetched.contentType),
+      inOurBlob(providerUrl) ? Promise.resolve(providerUrl) : putBlob(`${base}.${ext}`, fetched.buf, fetched.contentType),
       tryMakeDerivatives(fetched.buf),
     ]);
 

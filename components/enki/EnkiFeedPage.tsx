@@ -9,6 +9,10 @@ import GenerateLauncher from "@/components/GenerateLauncher";
 import EnkiDetailPanel from "@/components/enki/EnkiDetailPanel";
 import type { EnkiPrompt } from "@/lib/enkiPromptAdapter";
 import { mapMarketplacePromptToEnkiPrompt } from "@/lib/enkiPromptAdapter";
+import { useModelCatalogue } from "@/hooks/useModelLimits";
+import { toModelFamily } from "@/lib/generation/model-family";
+import { useBetaAccess } from "@/components/BetaGate";
+import { sessionHeadersWith } from "@/lib/session-headers";
 
 function useLocalFavorites() {
   const [favs, setFavs] = useState<Record<string, boolean>>(() => {
@@ -35,8 +39,31 @@ function useLocalFavorites() {
 
 export default function EnkiFeedPage() {
   const [tags, setTags] = useState<string[]>([]);
+  /* Which generators feed the wall — ids from the model catalogue, grouped
+     Image/Video for the filter chip (Kev, 2026-08-24). The models table has
+     no media type yet, so every entry is Image; a Video group appears by
+     itself the day a video model lands in the catalogue. */
+  const [genFilter, setGenFilter] = useState<string[]>([]);
+  const catalogue = useModelCatalogue();
+  /* The tree's branches: Image and Video, each carrying the DB's models of
+     that medium (models.media_type). A branch with no models does not
+     render — the Video branch appears by itself the day the first video
+     row (Seedance, Kling, …) lands in the table. */
+  const generatorGroups = useMemo(() => {
+    const branch = (label: string, media: "image" | "video") => {
+      const entries = catalogue.filter((c) => c.mediaType === media).map((c) => ({ id: c.id, name: c.name }));
+      return entries.length ? [{ label, entries }] : [];
+    };
+    return [...branch("Image", "image"), ...branch("Video", "video")];
+  }, [catalogue]);
   const [open, setOpen] = useState<EnkiPrompt | null>(null);
   const { favs, toggleFav } = useLocalFavorites();
+  /* 18+ pill (Kev, 2026-10-03): only a user who confirmed in Settings that
+     they are 18 or older sees it, off until they turn it on, and it belongs
+     to their account (BetaGate). The page asks for exactly what it shows, and
+     the server checks the confirmation again behind the header. */
+  const { adultConfirmed, adultPill, setAdultPill } = useBetaAccess();
+  const showAdult = adultConfirmed && adultPill;
 
   // OPEN counter: opening a prompt fires a fire-and-forget beacon; the server
   // dedupes per viewer for 10 min and increments prompts.opens atomically.
@@ -89,16 +116,33 @@ export default function EnkiFeedPage() {
     hasNextPage,
     isFetchingNextPage,
     isPending,
+    error,
+    refetch,
   } = useInfiniteQuery<Page, Error, { pages: Page[]; pageParams: number[] }, string[], number>({
-    queryKey: ["/api/marketplace/prompts", "home"],
+    queryKey: ["/api/marketplace/prompts", "home", genFilter.join(","), showAdult ? "18+" : "safe"],
     queryFn: async ({ pageParam }) => {
       const params = new URLSearchParams({
         limit: "24",
         sortBy: "trending",
         cursor: String(pageParam),
       });
-      const res = await fetch(`/api/marketplace/prompts?${params.toString()}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load marketplace prompts");
+      /* Generator filter: send EVERY alias of the picked generators — the
+         prompts table's ai_model carries names AND slugs mixed ("Flux
+         (free)", "nano-banana-pro"), so one id would miss half the rows. */
+      for (const id of genFilter) {
+        const entry = catalogue.find((c) => c.id === id);
+        if (!entry) continue;
+        for (const alias of new Set([entry.id, entry.name, toModelFamily(entry.name)])) {
+          if (alias) params.append("models", String(alias));
+        }
+      }
+      const res = await fetch(`/api/marketplace/prompts?${params.toString()}`, { headers: sessionHeadersWith(showAdult), credentials: "include" });
+      if (!res.ok) {
+        // The server's own sentence (e.g. "database unreachable") beats a
+        // generic one — and a failure must never look like an empty feed.
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error || `Couldn't load prompts (HTTP ${res.status}).`);
+      }
       const json = await res.json();
       return json as Page;
     },
@@ -188,6 +232,14 @@ export default function EnkiFeedPage() {
               <div key={`sk-init-${i}`} className="enki-skeleton" />
             ))}
           </section>
+        ) : error ? (
+          <section className="enki-empty-state">
+            <div className="enki-account-card">
+              <div className="serif" style={{ fontSize: 28, marginBottom: 8 }}>Couldn't load the feed.</div>
+              <p style={{ margin: 0, color: "var(--enki-ink-2)" }}>{error.message}</p>
+              <button type="button" className="ek-btn" style={{ marginTop: 16, minHeight: 40 }} onClick={() => void refetch()}>Try again</button>
+            </div>
+          </section>
         ) : showEmpty ? (
           <section className="enki-empty-state">
             <div className="enki-account-card">
@@ -223,7 +275,9 @@ export default function EnkiFeedPage() {
         />
       )}
 
-      <EnkiFilters active={tags} toggle={toggleTag} />
+      <EnkiFilters active={tags} toggle={toggleTag}
+        generators={generatorGroups} generatorFilter={genFilter} onGeneratorFilter={setGenFilter}
+        showAdult={showAdult} onShowAdult={adultConfirmed ? setAdultPill : undefined} />
     </>
   );
 }

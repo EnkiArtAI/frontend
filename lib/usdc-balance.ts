@@ -1,6 +1,6 @@
-import { Connection, PublicKey } from "@solana/web3.js";
+import { PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
-import { PAYMENT_CHAINS, isSolanaChain, type ChainKey } from "@/shared/payment-config";
+import { solanaConnection, usdcMint } from "@/lib/payments/solana";
 
 /**
  * On-chain USDC balance for a Solana wallet, in USD (USDC is 1:1 to the dollar,
@@ -11,31 +11,15 @@ import { PAYMENT_CHAINS, isSolanaChain, type ChainKey } from "@/shared/payment-c
  * Returns 0 when the token account doesn't exist yet or the address is invalid,
  * because "no account" and "empty account" are the same thing to a user.
  *
- * Network is resolved exactly like the generation pay route, so the balance
- * reads the same chain payments settle on: SOLANA_PAYMENT_CHAIN, falling back
- * to SOLANA_FUND_CHAIN (then solana-devnet). RPC overridable with
- * SOLANA_RPC_URL. Nothing hardcoded, no new env vars.
+ * Chain, mint and RPC are the payment rail's own (lib/payments/solana), so a
+ * balance is always read on the chain payments settle on. This file used to
+ * resolve them itself and applied SOLANA_RPC_URL on every chain: a mainnet
+ * URL in a devnet deployment's env then read every balance as $0.
  */
-function getSolanaChain(): { rpcUrl: string; usdc: string } {
-  // || not ??: an empty-string env line (`SOLANA_PAYMENT_CHAIN=`) must count
-  // as unset — same fix as lib/payments/solana.ts, found on the devnet run.
-  const key = (process.env.SOLANA_PAYMENT_CHAIN ||
-    process.env.SOLANA_FUND_CHAIN ||
-    "solana-devnet") as ChainKey;
-  if (!(key in PAYMENT_CHAINS) || !isSolanaChain(key)) {
-    throw new Error(`Not a Solana chain key: ${key}`);
-  }
-  return PAYMENT_CHAINS[key] as { rpcUrl: string; usdc: string };
-}
-
 export async function getUsdcBalance(walletAddress: string): Promise<number> {
   try {
-    const chain = getSolanaChain();
-    const rpcUrl = process.env.SOLANA_RPC_URL || chain.rpcUrl;
-    const owner = new PublicKey(walletAddress);
-    const ata = getAssociatedTokenAddressSync(new PublicKey(chain.usdc), owner);
-    const conn = new Connection(rpcUrl, "confirmed");
-    const res = await conn.getTokenAccountBalance(ata);
+    const ata = getAssociatedTokenAddressSync(usdcMint(), new PublicKey(walletAddress));
+    const res = await solanaConnection().getTokenAccountBalance(ata);
     return res.value.uiAmount ?? 0;
   } catch {
     return 0;

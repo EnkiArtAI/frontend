@@ -67,9 +67,15 @@ export default function HomePage() {
         ref={iframeRef}
         src="/landing.html"
         title="Enki Art"
-        onLoad={() =>
-          iframeRef.current?.contentWindow?.postMessage({ type: "enki-theme", theme }, "*")
-        }
+        onLoad={() => {
+          iframeRef.current?.contentWindow?.postMessage({ type: "enki-theme", theme }, "*");
+          /* /?login=1 — in-app "Log in" buttons (profile gate, creator
+             notice) land straight in the landing's auth modal instead of
+             on the marketing page (Kev, 2026-08-24). */
+          if (new URLSearchParams(window.location.search).get("login") === "1") {
+            iframeRef.current?.contentWindow?.postMessage({ type: "enki-open-login" }, "*");
+          }
+        }}
         style={{ width: "100%", height: "100%", border: "none", display: "block" }}
       />
       <WalletPickerModal open={showWalletPicker} onClose={() => setShowWalletPicker(false)} />

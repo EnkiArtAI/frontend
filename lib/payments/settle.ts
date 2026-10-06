@@ -22,6 +22,7 @@ import {
   captureAuthorization,
   voidAuthorization,
   sweepAbandoned,
+  sweepUnsubmitted,
   type VoidReason,
 } from "@/lib/payments/authorization";
 import { closeNonceAccount } from "@/lib/payments/nonce";
@@ -172,7 +173,8 @@ export async function voidAndFlush(
  */
 export async function sweepAndFlush(supabase: SupabaseClient, limit = 5): Promise<number> {
   try {
-    const flushed = await sweepAbandoned(supabase, limit);
+    // Signed and gone quiet, plus prepared and never signed: both hold a nonce.
+    const flushed = [...(await sweepAbandoned(supabase, limit)), ...(await sweepUnsubmitted(supabase, limit))];
     if (flushed.length === 0) return 0;
 
     const connection = solanaConnection();

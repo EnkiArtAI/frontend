@@ -1,7 +1,13 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { decryptString } from "@/lib/crypto";
-import { requireAuth } from "@/lib/auth";
+import { isListed, isPublicText } from "@/lib/prompt-visibility";
+import { resolveOwnerIds } from "@/lib/session-user";
+import { mayShowAdult, viewer } from "@/lib/adult-content";
+import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
+import { recordModerationEvent } from "@/lib/moderation-enforcement";
+import { checkPrompt } from "@/lib/moderation/prompt-check";
+import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 
 type PatchBody = {
   title?: string;
@@ -38,7 +44,7 @@ const VAR_TYPE_FROM_DB: Record<string, string> = {
 };
 
 export async function GET(
-  _: Request,
+  req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params;
@@ -53,14 +59,20 @@ export async function GET(
     const { data: prompt, error } = await supabase
       .from("prompts")
       .select(
-        "id,title,encrypted_content,encrypted_content_iv,encrypted_content_tag,encrypted_content_kid,creator_id,category,tags,ai_model,ai_settings,price_usd_cents,aspect_ratio,photo_count,prompt_type,showcase_images,resolution,is_free_showcase,is_listed,listing_status,public_prompt_text,description,published_at,created_at,updated_at"
+        "id,title,encrypted_content,encrypted_content_iv,encrypted_content_tag,encrypted_content_kid,creator_id,category,tags,ai_model,ai_settings,price_usd_cents,aspect_ratio,photo_count,prompt_type,showcase_images,resolution,is_free_showcase,is_listed,listing_status,deleted_at,public_prompt_text,description,published_at,created_at,updated_at,is_adult"
       )
       .eq("id", id)
       .maybeSingle();
 
     if (error) throw error;
 
-    if (!prompt) {
+    // The creator, recognised the way a save recognises them: an email
+    // creator's prompt may sit with the user their address was first mapped to.
+    const token = req.headers.get("X-Session-Token");
+    const owns = async (creatorId: unknown) => ((await resolveOwnerIds(supabase, token)) ?? []).includes(String(creatorId));
+
+    // 18+ answers like a missing prompt to anyone who may not see it.
+    if (!prompt || (prompt.is_adult && !mayShowAdult(await viewer(supabase, req), prompt.creator_id) && !(await owns(prompt.creator_id)))) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
 
@@ -111,30 +123,29 @@ export async function GET(
     });
 
     const dbPromptType = String(prompt.prompt_type ?? "");
-    const isFree =
-      dbPromptType === "showcase" ||
-      dbPromptType === "free" ||
-      prompt.is_free_showcase === true;
 
-    // Free/showcase prompts show their full text; decryption goes through
-    // lib/crypto's keyring (the kid names the key that wrote the row). Paid
-    // prompts only ever expose the stored public excerpt.
-    let publicPromptText: string | undefined =
-      typeof prompt.public_prompt_text === "string"
-        ? prompt.public_prompt_text
-        : undefined;
-    if (isFree && prompt.encrypted_content) {
-      try {
-        publicPromptText = decryptString({
-          encrypted: String(prompt.encrypted_content),
-          iv: String(prompt.encrypted_content_iv),
-          authTag: String(prompt.encrypted_content_tag),
-          kid: prompt.encrypted_content_kid
-            ? String(prompt.encrypted_content_kid)
-            : undefined,
-        });
-      } catch (decryptError) {
-        console.warn("Failed to decrypt free prompt content:", decryptError);
+    // Text only for a free prompt, and then in full (decrypted through
+    // lib/crypto's keyring). A paid prompt's body is the artist's secret: its
+    // buyers see the variables, never the words. An unlisted prompt's text is
+    // nobody's business but its creator's yet, who may preview it.
+    const isOwner = isPublicText(prompt) && !isListed(prompt) && (await owns(prompt.creator_id));
+    let publicPromptText: string | undefined;
+    if (isPublicText(prompt) && (isListed(prompt) || isOwner)) {
+      publicPromptText =
+        typeof prompt.public_prompt_text === "string" ? prompt.public_prompt_text : undefined;
+      if (prompt.encrypted_content) {
+        try {
+          publicPromptText = decryptString({
+            encrypted: String(prompt.encrypted_content),
+            iv: String(prompt.encrypted_content_iv),
+            authTag: String(prompt.encrypted_content_tag),
+            kid: prompt.encrypted_content_kid
+              ? String(prompt.encrypted_content_kid)
+              : undefined,
+          });
+        } catch (decryptError) {
+          console.warn("Failed to decrypt free prompt content:", decryptError);
+        }
       }
     }
 
@@ -203,16 +214,21 @@ export async function PATCH(
   // Price and "featured" are deliberately NOT mutable here anymore: price changes
   // must go through the authenticated, ownership-checked /api/prompts/[id]/list
   // endpoint so the payment path can trust the stored price.
-  let userId: string;
+  // The owners behind the session, resolved like a save resolves them: the
+  // account itself (an email login carries the users.id), plus the user its
+  // address was first mapped to; a suspended account edits nothing.
+  const supabase = getSupabaseServerClient();
+  let owners: string[];
   try {
-    ({ userId } = await requireAuth(req));
+    const ids = await resolveOwnerIds(supabase, req.headers.get("X-Session-Token"));
+    if (!ids?.length) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    owners = ids;
   } catch {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
   try {
     const body = (await req.json()) as PatchBody;
-    const supabase = getSupabaseServerClient();
 
     const update: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
@@ -236,27 +252,44 @@ export async function PATCH(
 
     // Ownership is part of the WHERE clause — the service-role client bypasses
     // RLS, so without it any valid session could edit any prompt (IDOR).
-    // requireAuth's userId is the session WALLET ADDRESS; prompts.creator_id
-    // is a users.id uuid, so the address must be mapped through user_wallets —
-    // a raw base58/0x string in a uuid filter is a Postgres type error, not a
-    // miss. A wallet with no user row owns nothing: 404, never an unscoped
-    // update. count:"exact" makes the 0-rows branch real; "not found" covers
-    // both a missing prompt and someone else's prompt (no ownership oracle).
-    const { data: walletRow } = await supabase
-      .from("user_wallets")
-      .select("user_id")
-      .eq("address", userId)
-      .is("removed_at", null)
-      .maybeSingle();
-    if (!walletRow?.user_id) {
-      return NextResponse.json({ error: "not found" }, { status: 404 });
+    // count:"exact" makes the 0-rows branch real; "not found" covers both a
+    // missing prompt and someone else's prompt (no ownership oracle).
+
+    // Edited text is judged like a save (Kev, 2026-10-03): a prompt saved
+    // clean must not turn explicit or 18+ through its title, description or
+    // tags afterwards. Only the owner's edit is judged, so nobody else's
+    // request costs a check or earns a warning. The rest of the prompt was
+    // judged at save, so an 18+ mark is only ever raised here.
+    const edited = Object.fromEntries(
+      Object.entries({ title: body.title, description: body.description, tags: Array.isArray(body.tags) ? body.tags.join(", ") : undefined })
+        .filter((e): e is [string, string] => typeof e[1] === "string" && e[1].trim() !== ""),
+    );
+    if (Object.keys(edited).length > 0) {
+      const { data: own } = await supabase.from("prompts").select("id")
+        .eq("id", id).in("creator_id", owners).maybeSingle();
+      if (!own) return NextResponse.json({ error: "not found" }, { status: 404 });
+      const check = await checkPrompt(edited, { hidden: false, signal: req.signal });
+      if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
+        const outcome = await recordWarning(supabase, {
+          surface: "upload", request: req, category: check.verdict, text: JSON.stringify(edited), confidence: check.confidence,
+        });
+        return NextResponse.json({ error: warningMessage(check.verdict, outcome, "save") }, { status: 422 });
+      }
+      if (check.verdict !== "clear") {
+        return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 });
+      }
+      if (check.adult) update.is_adult = true;
+      const text = Object.values(edited).join("\n");
+      const verdict = await moderate({ prompt: text, surface: "upload", signal: req.signal, adultJudged: true });
+      after(recordModerationEvent(verdict, { surface: "upload", request: req, prompt: text }));
+      if (!verdict.allowed) return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
     }
 
     const { error, count } = await supabase
       .from("prompts")
       .update(update, { count: "exact" })
       .eq("id", id)
-      .eq("creator_id", String(walletRow.user_id));
+      .in("creator_id", owners);
 
     if (error) throw error;
 

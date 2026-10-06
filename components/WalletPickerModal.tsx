@@ -242,8 +242,13 @@ export function WalletPickerModal({ open, onClose }: WalletPickerModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
+      {/* Backdrop = the landing login card's .auth-backdrop, continued: same
+          navy, same blur, same layer (2000, above every piece of app chrome).
+          Reached from the login card, the page therefore stays muted instead
+          of snapping back to full brightness (Kev, 2026-09-05). */}
       <DialogContent
-        className="sm:max-w-[400px] gap-0 border-0 p-0 overflow-hidden"
+        overlayClassName="z-[2000] bg-[rgba(0,4,24,0.75)] backdrop-blur-[10px]"
+        className="sm:max-w-[400px] gap-0 border-0 p-0 overflow-hidden z-[2001]"
         style={{
           background: "#0E0E12",
           border: "1px solid rgba(232,168,58,0.18)",

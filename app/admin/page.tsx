@@ -25,16 +25,22 @@ type Rep = { id: string; target: string; type: "prompt" | "profile"; reason: str
 type Fb = { id: string; name: string; email: string | null; desc: string; images: number; paid: boolean; payoutCents: number | null; at: string };
 type Friend = { id: string; name: string; address: string; type: string; chain: string; notes: string | null };
 type Hunter = { handle: string; total: number; approved: number; denied: number; earningsCents: number };
-type StrikeRow = { userId: string; handle: string; strikes: { id: string; reason: string | null }[]; banned: boolean; permanent: boolean; note: string | null; appeal: { id: string; note: string | null } | null };
+type StrikeRow = { userId: string; handle: string; strikes: { id: string; reason: string | null }[]; banned: boolean; permanent: boolean; note: string | null; appeal: { id: string; note: string | null; against: { reason: string | null; until: string | null } | null } | null };
 type Rec = { id: string; handle: string; wallet: string | null; contact: string | null; explanation: string | null; evidence: { kind: string; matched: boolean | null }[]; status: string; at: string };
 type Proposal = { id: string; kind: string; target: string; targetUserId: string | null; days: number | null; violation: string; proposer: string; status: string; confirms: number; denies: number; myVote: string | null; quorum: number; at: string; expiresAt: string };
 type Council = { ready: boolean; isOwner: boolean; enabled: boolean; quorum: number; ttlDays: number; members: { handle: string; role: string; hasEmail: boolean }[]; myEmail: string | null; proposals: Proposal[] };
-type Automod = { id: string; handle: string | null; surface: string; severity: string; tier: number | null; category: string | null; rules: string[]; topScore: { name: string; value: number } | null; prompt: string | null; state: string; at: string };
+type Automod = { id: string; handle: string | null; surface: string; severity: string; tier: number | null; category: string | null; rules: string[]; topScore: { name: string; value: number } | null; prompt: string | null; withheld: boolean; draft: boolean; state: string; at: string };
 type GenPolicy = { maxConcurrentPerUser: number | null; canEdit: boolean };
-type AdminData = { generation: GenPolicy; imports: Imp[]; reports: Rep[]; feedback: Fb[]; friends: Friend[]; hunters: Hunter[]; strikes: StrikeRow[]; recovery: Rec[]; council: Council; automod: Automod[] };
+type Person = { key: string; userId: string | null; ipHash: string | null; handle: string | null; displayName: string | null; warnings: number; extractionHits: number; childSafety: boolean; pending: number; suspension: { until: string | null } | null; failed7d: number; lastActive: string | null };
+type PersonDetail = {
+  events: { id: string; category: string | null; severity: string; surface: string; rules: string[]; weight: number; confidence: number | null; prompt: string | null; withheld: boolean; draft: boolean; revealable: boolean; state: string; at: string }[];
+  failures: { id: string; surface: string; model: string | null; resolution: string | null; quality: string | null; boost: boolean; aspectRatio: string | null; referenceImageCount: number; error: string; prompt: string | null; draft: boolean; imageUrl: string | null; txSignature: string | null; at: string }[];
+  bans: { id: string; reason: string | null; expiresAt: string | null; liftedAt: string | null; at: string }[];
+};
+type AdminData = { generation: GenPolicy; imports: Imp[]; reports: Rep[]; feedback: Fb[]; friends: Friend[]; hunters: Hunter[]; strikes: StrikeRow[]; recovery: Rec[]; council: Council; automod: Automod[]; people: Person[] };
 const COUNCIL_OFF: Council = { ready: false, isOwner: false, enabled: false, quorum: 3, ttlDays: 7, members: [], myEmail: null, proposals: [] };
 
-type Tab = "imports" | "reports" | "feedback" | "friends" | "hunters" | "strikes" | "automod" | "council" | "recovery" | "settings";
+type Tab = "people" | "imports" | "reports" | "feedback" | "friends" | "hunters" | "strikes" | "automod" | "council" | "recovery" | "settings";
 const REJECT_REASONS = ["Duplicate", "Low quality", "Not a prompt", "Spam", "Policy violation", "Other"];
 
 /* ── the admin sidebar's own palette: inverted warm dark, theme-independent ── */
@@ -43,6 +49,9 @@ const SB = {
   ember: "#c96838", emberText: "#f0b799", emberHover: "#ffd9c2",
 };
 const MONO = "var(--font-mono), monospace";
+/* An artist's words never show in this panel (Kev, 2026-10-03); a record that holds or names them says so. */
+const WITHHELD_NOTE = "An artist's prompt text belongs to this record and is not shown.";
+const DRAFT_NOTE = "The requester marked this as their own editor draft, so its text is not shown.";
 const SERIF = "var(--font-serif), Georgia, serif";
 /* status pill palettes (literal pastels, same family as the rest of the app) */
 const PILL = {
@@ -92,13 +101,14 @@ function Badge({ pal, label }: { pal: { bg: string; ink: string }; label: string
 }
 
 const TABS: { id: Tab; label: string; icon: string; sub: string; search: boolean }[] = [
+  { id: "people", label: "People", icon: "user", sub: "Everyone who was warned, blocked, suspended or whose generations failed this week. Click a row for every event with its prompt and settings.", search: true },
   { id: "imports", label: "Pending imports", icon: "inbox", sub: "Hunt submissions waiting for review before they hit the marketplace.", search: true },
   { id: "reports", label: "Reports", icon: "flag", sub: "User-flagged prompts and profiles, grouped by target.", search: false },
   { id: "feedback", label: "Feedback", icon: "message", sub: "Submissions from the “Earn $100 for feedback” program. Click a row to read it all.", search: true },
   { id: "friends", label: "Friends (whitelist)", icon: "key", sub: "Wallets and collections with early or elevated access.", search: false },
   { id: "hunters", label: "Hunter trust", icon: "target", sub: "Importers ranked by how often their finds get approved.", search: false },
   { id: "strikes", label: "Strikes & bans", icon: "zap", sub: "Users with active strikes, bans, and open appeals.", search: false },
-  { id: "automod", label: "Auto-filter log", icon: "filetext", sub: "Every prompt the filter blocked, with the reason and the score. Read-only — this record is evidence; edit it in Supabase.", search: true },
+  { id: "automod", label: "Auto-filter log", icon: "filetext", sub: "Every prompt the filter blocked, with the reason and the score. Review and overturn them per person in People.", search: true },
   { id: "council", label: "Council", icon: "hand", sub: "Ban decisions the admin council votes on — quorum executes automatically.", search: false },
   { id: "recovery", label: "Recovery requests", icon: "lifebuoy", sub: "People who lost every sign-in method. Click a row to check their evidence.", search: true },
   { id: "settings", label: "Admin settings", icon: "settings", sub: "Your notification email — and, for the owner, the council policy.", search: false },
@@ -134,6 +144,9 @@ export default function AdminPage() {
   const [appealOpen, setAppealOpen] = useState<string | null>(null);
   const [repStrikeId, setRepStrikeId] = useState<string | null>(null);
   const [amOpen, setAmOpen] = useState<string | null>(null);
+  const [pplOpen, setPplOpen] = useState<string | null>(null);
+  const [pplDetail, setPplDetail] = useState<Record<string, PersonDetail>>({});
+  const [revealed, setRevealed] = useState<Record<string, { text: string; source: string }>>({});
   // Empty string IS unlimited here, mirroring the null in the database.
   const [genLimit, setGenLimit] = useState<string>("");
   const [repSev, setRepSev] = useState("1");
@@ -213,9 +226,69 @@ export default function AdminPage() {
     }
   };
 
+  /** One person's events and failures, fetched when the row opens. */
+  const loadPerson = async (id: string) => {
+    try {
+      const res = await fetch(`/api/admin?person=${encodeURIComponent(id)}`, { headers: sessionAuthHeaders() });
+      if (res.ok) {
+        const detail = (await res.json()) as PersonDetail;
+        setPplDetail((cur) => ({ ...cur, [id]: detail }));
+      }
+    } catch { /* keep the current view */ }
+  };
+  const openPerson = async (id: string) => {
+    if (pplOpen === id) { setPplOpen(null); return; }
+    setPplOpen(id);
+    if (!pplDetail[id]) await loadPerson(id);
+  };
+  /** An action changes counts on the server: refresh the list and the open person. */
+  const act = async (payload: Record<string, unknown>, okMsg: string, personId: string) => {
+    if (await post(payload, okMsg, (cur) => cur)) {
+      await reload();
+      await loadPerson(personId);
+    }
+  };
+
+  /* The moderation owner's reveal of an artist's withheld text: the reason is
+     asked here and logged on the server before anything is shown. */
+  const reveal = async (id: string) => {
+    const reason = window.prompt("Why must you read this artist's text? It is logged and every admin is told (10 to 500 characters).")?.trim();
+    if (!reason) return;
+    try {
+      const res = await fetch("/api/admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
+        body: JSON.stringify({ resource: "automod", action: "reveal", id, reason }),
+      });
+      const d = await res.json().catch(() => ({} as { error?: string; text?: string; source?: string }));
+      const text = d.text;
+      if (!res.ok || typeof text !== "string") { say(d.error || "That didn't work."); return; }
+      setRevealed((cur) => ({ ...cur, [id]: { text, source: String(d.source) } }));
+    } catch {
+      say("Network hiccup — nothing was revealed.");
+    }
+  };
+  const withheldBlock = (id: string, draft: boolean, revealable: boolean) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11, fontStyle: "italic", color: "var(--enki-ink-3)" }}>
+        {draft ? DRAFT_NOTE : WITHHELD_NOTE}
+        {revealable && data?.council.isOwner && !revealed[id] && (
+          <Pill kind="plain" label="Reveal (logged)" title="Only for a hard case: your reason is logged and every admin is told" onClick={() => void reveal(id)} />
+        )}
+      </span>
+      {revealed[id] && (
+        <p style={{ margin: 0, fontFamily: MONO, fontSize: 11, color: "var(--enki-ink-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxWidth: 760 }}>
+          {revealed[id].source === "prompt" ? "The prompt's text as it stands now:\n" : ""}{revealed[id].text}
+        </p>
+      )}
+    </div>
+  );
+
   const q = query.trim().toLowerCase();
   const tabDef = TABS.find((t) => t.id === tab)!;
   const counts = useMemo(() => ({
+    // Needs attention: open cases only. A reviewed child-safety case keeps its flag on the row.
+    people: data?.people.filter((p) => p.pending > 0).length ?? 0,
     imports: data?.imports.length ?? 0,
     reports: data?.reports.length ?? 0,
     feedback: data?.feedback.filter((f) => !f.paid).length ?? 0,
@@ -261,7 +334,7 @@ export default function AdminPage() {
     );
   }
 
-  const d: AdminData = data ?? { imports: [], reports: [], feedback: [], friends: [], hunters: [], strikes: [], recovery: [], council: COUNCIL_OFF, automod: [], generation: { maxConcurrentPerUser: null, canEdit: false } };
+  const d: AdminData = data ?? { imports: [], reports: [], feedback: [], friends: [], hunters: [], strikes: [], recovery: [], council: COUNCIL_OFF, automod: [], people: [], generation: { maxConcurrentPerUser: null, canEdit: false } };
   const c = d.council ?? COUNCIL_OFF;
   const filteredImports = d.imports.filter((r) => !q || r.name.toLowerCase().includes(q) || r.hunter.toLowerCase().includes(q));
   const filteredFeedback = d.feedback.filter((r) => !q || r.name.toLowerCase().includes(q) || (r.email ?? "").toLowerCase().includes(q) || r.desc.toLowerCase().includes(q));
@@ -273,6 +346,7 @@ export default function AdminPage() {
     || r.surface.toLowerCase().includes(q)
     || r.rules.some((x) => x.toLowerCase().includes(q))
     || (r.prompt ?? "").toLowerCase().includes(q));
+  const filteredPeople = d.people.filter((p) => !q || (p.handle ?? "").toLowerCase().includes(q) || (p.displayName ?? "").toLowerCase().includes(q) || p.key.includes(q));
   const filteredRecovery = d.recovery.filter((r) => !q || r.handle.toLowerCase().includes(q) || (r.contact ?? "").toLowerCase().includes(q));
 
   const stats: { label: string; value: number; dot: string; go: Tab }[] = [
@@ -663,6 +737,11 @@ export default function AdminPage() {
                         </div>
                         {appealOpen === r.userId && r.appeal && (
                           <div style={{ padding: "2px 0 12px 10px", borderLeft: `3px solid ${PILL.purple.border}`, margin: "0 0 8px 4px" }}>
+                            {r.appeal.against && (
+                              <span style={{ display: "block", marginBottom: 6, fontFamily: MONO, fontSize: 10, color: "var(--enki-ink-3)" }}>
+                                Against: {r.appeal.against.reason ?? "no reason"} · {r.appeal.against.until ? `until ${r.appeal.against.until.slice(0, 10)}` : "for good"}
+                              </span>
+                            )}
                             <span style={{ ...microLabel, display: "block", marginBottom: 4 }}>Appeal note</span>
                             <p style={{ margin: 0, fontSize: 12, fontStyle: "italic", color: "var(--enki-ink-2)", lineHeight: 1.6, maxWidth: 640 }}>
                               “{r.appeal.note ?? "No statement provided."}”
@@ -696,7 +775,91 @@ export default function AdminPage() {
                 </div>
               )}
 
-              {/* ── AUTO-FILTER LOG (read-only: this record is evidence) ── */}
+              {/* ── PEOPLE: one row per person, every warning and failure on expanding ── */}
+              {tab === "people" && (
+                <div style={cardStyle}>
+                  {filteredPeople.length === 0 && (
+                    <div style={{ padding: 30, textAlign: "center", fontSize: 12, color: "var(--enki-ink-3)" }}>
+                      {d.people.length === 0 ? "Nobody was warned, blocked or failed this week ✓" : "Nothing matches that search."}
+                    </div>
+                  )}
+                  {filteredPeople.map((p) => {
+                    const detail = pplDetail[p.key];
+                    const name = p.handle ? `@${p.handle}` : p.displayName ?? (p.userId ? p.userId.slice(0, 8) : `no account · ${p.ipHash?.slice(0, 8)}`);
+                    return (
+                      <div key={p.key}>
+                        <div style={{ ...rowStyle, cursor: "pointer" }} onClick={() => void openPerson(p.key)}>
+                          <span style={{ width: 130, fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: "var(--enki-ink)", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</span>
+                          {p.childSafety && <Badge pal={PILL.red} label="child safety" />}
+                          <span style={{ fontFamily: MONO, fontSize: 10, color: p.warnings > 0 ? "var(--enki-danger)" : "var(--enki-ink-3)" }}>{p.warnings} warnings</span>
+                          {p.extractionHits > 0 && <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--enki-ember)" }}>{p.extractionHits} extraction</span>}
+                          {p.failed7d > 0 && <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--enki-ink-2)" }}>{p.failed7d} failed (7d)</span>}
+                          {p.pending > 0 && <Badge pal={PILL.purple} label={`${p.pending} to review`} />}
+                          {p.suspension && <Badge pal={PILL.red} label={p.suspension.until ? `suspended until ${p.suspension.until.slice(0, 10)}` : "suspended for good"} />}
+                          <span style={{ flex: 1 }} />
+                          {p.suspension && p.userId && (
+                            <span onClick={(e) => e.stopPropagation()}>
+                              <Pill kind="green" label="Lift" title="Lift the running suspension"
+                                onClick={() => void act({ resource: "bans", action: "lift", userId: p.userId }, `${name} reinstated.`, p.key)} />
+                            </span>
+                          )}
+                          <span style={{ width: 52, textAlign: "right", fontFamily: MONO, fontSize: 9, color: "var(--enki-ink-3)" }}>{p.lastActive ? timeAgo(p.lastActive) : "—"}</span>
+                        </div>
+                        {pplOpen === p.key && (
+                          <div style={{ padding: "4px 0 14px 10px", borderLeft: "3px solid var(--enki-rule)", margin: "0 0 8px 4px", display: "flex", flexDirection: "column", gap: 10 }}>
+                            {!detail && <span style={{ fontSize: 11, color: "var(--enki-ink-3)" }}>Loading…</span>}
+                            {detail && detail.events.length === 0 && detail.failures.length === 0 && <span style={{ fontSize: 11, color: "var(--enki-ink-3)" }}>No events.</span>}
+                            {detail?.events.map((e) => (
+                              <div key={e.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                  <Badge pal={e.category && ["minor_sexual", "sexual/minors", "csam"].includes(e.category) ? PILL.red : PILL.purple} label={e.category ?? e.severity} />
+                                  <span style={{ fontFamily: MONO, fontSize: 9.5, color: "var(--enki-ink-3)" }}>
+                                    {e.surface}{e.weight ? ` · weight ${e.weight}` : ""}{e.confidence !== null ? ` · ${e.confidence.toFixed(2)}` : ""}{e.rules.length ? ` · ${e.rules.join(", ")}` : ""} · {e.state} · {timeAgo(e.at)}
+                                  </span>
+                                  {e.state !== "overturned" && e.state !== "upheld" && (
+                                    <>
+                                      <Pill kind="plain" label="Overturn" title="Wrongly caught: take it out of every count"
+                                        onClick={() => void act({ resource: "automod", action: "overturn", id: e.id }, "Overturned.", p.key)} />
+                                      <Pill kind="plain" label="Mark reviewed" title="Correctly caught"
+                                        onClick={() => void act({ resource: "automod", action: "uphold", id: e.id }, "Marked reviewed.", p.key)} />
+                                    </>
+                                  )}
+                                </div>
+                                {(e.prompt !== null || !e.withheld) && <p style={{ margin: 0, fontFamily: MONO, fontSize: 11, color: "var(--enki-ink-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxWidth: 760 }}>{e.prompt ?? "Not readable."}</p>}
+                                {e.withheld && withheldBlock(e.id, e.draft, e.revealable)}
+                              </div>
+                            ))}
+                            {detail?.failures.map((x) => (
+                              <div key={x.id} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                                {/* eslint-disable-next-line @next/next/no-img-element -- admin-only thumbnail of a stored image */}
+                                {x.imageUrl && <img src={x.imageUrl} alt="" style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 6 }} />}
+                                <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                    <Badge pal={PILL.red} label="failed" />
+                                    <span style={{ fontFamily: MONO, fontSize: 9.5, color: "var(--enki-ink-3)" }}>
+                                      {x.surface} · {x.model ?? "?"} · {x.resolution ?? "?"}{x.quality ? ` · ${x.quality}` : ""}{x.boost ? " · boost" : ""}{x.aspectRatio ? ` · ${x.aspectRatio}` : ""}{x.referenceImageCount ? ` · ${x.referenceImageCount} refs` : ""} · {timeAgo(x.at)}
+                                    </span>
+                                  </div>
+                                  <span style={{ fontSize: 11, color: "var(--enki-danger)", wordBreak: "break-word" }}>{x.error}</span>
+                                  <p style={{ margin: 0, fontFamily: MONO, fontSize: 11, color: "var(--enki-ink-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxWidth: 760 }}>{x.prompt ?? (x.draft ? "Marked by the requester as their own editor draft; its text is not stored." : "Not readable.")}</p>
+                                  {x.txSignature && <span style={{ fontFamily: MONO, fontSize: 9, color: "var(--enki-ink-3)" }}>paid: {x.txSignature}</span>}
+                                </div>
+                              </div>
+                            ))}
+                            {detail && detail.bans.length > 0 && (
+                              <span style={{ fontFamily: MONO, fontSize: 9.5, color: "var(--enki-ink-3)" }}>
+                                Bans: {detail.bans.map((b) => `${b.at.slice(0, 10)} ${b.liftedAt ? "lifted" : b.expiresAt ? `until ${b.expiresAt.slice(0, 10)}` : "for good"}`).join(" · ")}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* ── AUTO-FILTER LOG ── */}
               {tab === "automod" && (
                 <div style={cardStyle}>
                   {filteredAutomod.length === 0 && (
@@ -733,15 +896,17 @@ export default function AdminPage() {
                             Blocked prompt
                           </div>
                           <div style={{ fontFamily: SERIF, fontSize: 13.5, lineHeight: 1.5, color: "var(--enki-ink)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                            {r.prompt ?? <em style={{ color: "var(--enki-ink-3)" }}>Not readable — encrypted with a key this server no longer holds.</em>}
+                            {r.prompt ?? (r.withheld ? null : <em style={{ color: "var(--enki-ink-3)" }}>Not readable — encrypted with a key this server no longer holds.</em>)}
                           </div>
+                          {/* Opened only from the warning and ban list (People), never from this log. */}
+                          {r.withheld && <div style={{ marginTop: 6 }}>{withheldBlock(r.id, r.draft, false)}</div>}
                           {r.rules.length > 0 && (
                             <div style={{ marginTop: 10, fontFamily: MONO, fontSize: 10, color: "var(--enki-ink-2)" }}>
                               rules: {r.rules.join(", ")}
                             </div>
                           )}
                           <div style={{ marginTop: 10, fontSize: 11, color: "var(--enki-ink-3)" }}>
-                            Read-only. This row is evidence and cannot be changed or deleted from here — use Supabase.
+                            This row is evidence and is never deleted. Overturn or confirm it per person in People.
                           </div>
                         </div>
                       )}

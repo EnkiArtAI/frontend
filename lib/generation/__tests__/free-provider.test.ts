@@ -74,7 +74,7 @@ describe("free provider: failure classification", () => {
   it("treats a rate limit as retryable, because it is", async () => {
     mockFetch(errorResponse(429, "Too Many Requests"));
 
-    const result = await generateImageWithPollinations("a teapot", "1:1", "2K");
+    const result = await generateImageWithPollinations("a teapot", "1:1", "2K", "flux");
 
     expect(result.success).toBe(false);
     expect(result.retryable).toBe(true);
@@ -84,7 +84,7 @@ describe("free provider: failure classification", () => {
   it("says the generator is busy rather than quoting a status code at the user", async () => {
     mockFetch(errorResponse(429, "Too Many Requests"));
 
-    const result = await generateImageWithPollinations("a teapot", "1:1", "2K");
+    const result = await generateImageWithPollinations("a teapot", "1:1", "2K", "flux");
 
     // The route forwards this string straight to the buyer, so it has to read
     // as a temporary condition and must not carry the raw protocol detail.
@@ -96,7 +96,7 @@ describe("free provider: failure classification", () => {
   it("keeps server errors retryable", async () => {
     mockFetch(errorResponse(503, "Service Unavailable"));
 
-    const result = await generateImageWithPollinations("a teapot", "1:1", "2K");
+    const result = await generateImageWithPollinations("a teapot", "1:1", "2K", "flux");
 
     expect(result.retryable).toBe(true);
     vi.unstubAllGlobals();
@@ -107,7 +107,7 @@ describe("free provider: failure classification", () => {
     // same 400 and burns the user's wait twice.
     mockFetch(errorResponse(400, "Bad Request"));
 
-    const result = await generateImageWithPollinations("a teapot", "1:1", "2K");
+    const result = await generateImageWithPollinations("a teapot", "1:1", "2K", "flux");
 
     expect(result.retryable).toBe(false);
     vi.unstubAllGlobals();
@@ -128,7 +128,7 @@ describe("free provider: requested size", () => {
     for (const resolution of ["1K", "2K", "4K"]) {
       for (const ratio of RATIOS) {
         const seen = mockFetch(imageResponse());
-        await generateImageWithPollinations("a teapot", ratio, resolution);
+        await generateImageWithPollinations("a teapot", ratio, resolution, "flux");
         const { width, height } = dimensionsOf(seen.url);
         vi.unstubAllGlobals();
 
@@ -145,12 +145,12 @@ describe("free provider: requested size", () => {
 
   it("asks for the same size at 4K as at 2K, since the provider returns the same image", async () => {
     const at2K = mockFetch(imageResponse());
-    await generateImageWithPollinations("a teapot", "4:5", "2K");
+    await generateImageWithPollinations("a teapot", "4:5", "2K", "flux");
     const twoK = dimensionsOf(at2K.url);
     vi.unstubAllGlobals();
 
     const at4K = mockFetch(imageResponse());
-    await generateImageWithPollinations("a teapot", "4:5", "4K");
+    await generateImageWithPollinations("a teapot", "4:5", "4K", "flux");
     const fourK = dimensionsOf(at4K.url);
     vi.unstubAllGlobals();
 
@@ -161,12 +161,12 @@ describe("free provider: requested size", () => {
     // The cap must not flatten every choice into one — 1K is a real, cheaper
     // request and stays distinct.
     const at1K = mockFetch(imageResponse());
-    await generateImageWithPollinations("a teapot", "4:5", "1K");
+    await generateImageWithPollinations("a teapot", "4:5", "1K", "flux");
     const oneK = dimensionsOf(at1K.url);
     vi.unstubAllGlobals();
 
     const at2K = mockFetch(imageResponse());
-    await generateImageWithPollinations("a teapot", "4:5", "2K");
+    await generateImageWithPollinations("a teapot", "4:5", "2K", "flux");
     const twoK = dimensionsOf(at2K.url);
     vi.unstubAllGlobals();
 
@@ -189,12 +189,12 @@ describe("free provider: requested size", () => {
     const generous = await import("@/backend/services/pollinations-image-generation");
 
     const at2K = mockFetch(imageResponse());
-    await generous.generateImageWithPollinations("a teapot", "4:5", "2K");
+    await generous.generateImageWithPollinations("a teapot", "4:5", "2K", "flux");
     const twoK = dimensionsOf(at2K.url);
     vi.unstubAllGlobals();
 
     const at4K = mockFetch(imageResponse());
-    await generous.generateImageWithPollinations("a teapot", "4:5", "4K");
+    await generous.generateImageWithPollinations("a teapot", "4:5", "4K", "flux");
     const fourK = dimensionsOf(at4K.url);
     vi.unstubAllGlobals();
 
@@ -207,7 +207,7 @@ describe("free provider: requested size", () => {
 
   it("keeps the aspect ratio the user chose", async () => {
     const seen = mockFetch(imageResponse());
-    await generateImageWithPollinations("a teapot", "16:9", "2K");
+    await generateImageWithPollinations("a teapot", "16:9", "2K", "flux");
     const { width, height } = dimensionsOf(seen.url);
     vi.unstubAllGlobals();
 
@@ -224,7 +224,7 @@ describe("free provider: what it reports back", () => {
     // the one still passing the caller's "2K" label straight through.
     mockFetch(imageResponse(686, 858));
 
-    const result = await generateImageWithPollinations("a teapot", "4:5", "4K");
+    const result = await generateImageWithPollinations("a teapot", "4:5", "4K", "flux");
     vi.unstubAllGlobals();
 
     expect(result.metadata?.resolution).toBe("686x858");
@@ -233,12 +233,12 @@ describe("free provider: what it reports back", () => {
 
   it("keeps what it asked for alongside, so the two can be compared", async () => {
     const seen = mockFetch(imageResponse(686, 858));
-    await generateImageWithPollinations("a teapot", "4:5", "4K");
+    await generateImageWithPollinations("a teapot", "4:5", "4K", "flux");
     const asked = dimensionsOf(seen.url);
     vi.unstubAllGlobals();
 
     mockFetch(imageResponse(686, 858));
-    const result = await generateImageWithPollinations("a teapot", "4:5", "4K");
+    const result = await generateImageWithPollinations("a teapot", "4:5", "4K", "flux");
     vi.unstubAllGlobals();
 
     expect(result.metadata?.requestedSize).toBe(`${asked.width}x${asked.height}`);
@@ -248,11 +248,11 @@ describe("free provider: what it reports back", () => {
     // The provider serves JPEG, and this route's data URL is built from the
     // reported type — a hardcoded "png" would mislabel every image it returns.
     mockFetch(new Response(jpegOf(686, 858), { status: 200 }));
-    const asJpeg = await generateImageWithPollinations("a teapot", "4:5", "2K");
+    const asJpeg = await generateImageWithPollinations("a teapot", "4:5", "2K", "flux");
     vi.unstubAllGlobals();
 
     mockFetch(imageResponse(686, 858));
-    const asPng = await generateImageWithPollinations("a teapot", "4:5", "2K");
+    const asPng = await generateImageWithPollinations("a teapot", "4:5", "2K", "flux");
     vi.unstubAllGlobals();
 
     expect(asJpeg.metadata?.format).toBe("jpeg");
@@ -262,10 +262,26 @@ describe("free provider: what it reports back", () => {
   it("reports no resolution rather than a wrong one when the bytes are unreadable", async () => {
     mockFetch(new Response(bodyOf(Buffer.from([1, 2, 3])), { status: 200 }));
 
-    const result = await generateImageWithPollinations("a teapot", "1:1", "2K");
+    const result = await generateImageWithPollinations("a teapot", "1:1", "2K", "flux");
     vi.unstubAllGlobals();
 
     expect(result.success).toBe(true);
     expect(result.metadata?.resolution).toBeNull();
+  });
+});
+
+describe("the free adapter runs the model it is routed to", () => {
+  it("sends the routed provider model, not a hardcoded one", async () => {
+    const seen = mockFetch(imageResponse());
+    const result = await generateImageWithPollinations("a teapot", "1:1", "2K", "turbo");
+    expect(new URL(seen.url).searchParams.get("model")).toBe("turbo");
+    expect(result.metadata?.model).toBe("turbo");
+  });
+
+  it("refuses to run without one", async () => {
+    const seen = mockFetch(imageResponse());
+    const result = await generateImageWithPollinations("a teapot", "1:1", "2K", "");
+    expect(result).toMatchObject({ success: false, code: "MODEL_REQUIRED" });
+    expect(seen.url).toBe("");
   });
 });

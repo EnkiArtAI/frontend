@@ -10,10 +10,6 @@
  * can move a user's funds. Here the server never sees a buyer signature: the
  * transaction goes from the browser to the user's own wallet and back.
  *
- * Deliberately the SAME shape as TurnkeySolanaSigner so the swap in
- * useSolanaX402Payment is a one-line change in the priority chain rather than a
- * rewrite of the payment flow.
- *
  * ── On "permissionless" ────────────────────────────────────────────────────
  * This is NOT permissionless. Signing is an API call to Coinbase: the key lives
  * in their TEE, and they can suspend the project or a user. It is a large

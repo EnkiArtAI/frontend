@@ -9,11 +9,6 @@ import PromptDetailModal from "@/components/PromptDetailModal";
 import { useQuery, useQueries } from "@tanstack/react-query";
 
 // Dynamically import components that use browser-only hooks to prevent SSR errors
-const CompactPromptCreator = dynamic(
-  () => import("@/components/CompactPromptCreator"),
-  { ssr: false }
-);
-
 const ShowroomUploadZone = dynamic(
   () => import("@/components/ShowroomUploadZone"),
   { ssr: false }
@@ -194,7 +189,6 @@ export default function Showcase() {
             Be the first to create and release a prompt!
           </p>
         </main>
-        <CompactPromptCreator />
         <ShowroomUploadZone />
       </div>
     );
@@ -228,7 +222,6 @@ export default function Showcase() {
               : "You're all caught up."}
         </div>
       </main>
-      <CompactPromptCreator />
       <ShowroomUploadZone />
       <PromptDetailModal
         isOpen={!!selectedPromptData}

@@ -3,7 +3,7 @@
  *
  * This is the piece that was missing: the editor sent `modelIds`, the route
  * used them for ratio validation only, and the generation then ran on whatever
- * the service happened to default to (gemini-2.5-flash-image). So "Nano Banana
+ * the service happened to default to (a hard coded Gemini model). So "Nano Banana
  * Pro" and "GPT-Image-2" produced identical output from a third model, while
  * the price was charged per the user's selection.
  *
@@ -18,9 +18,9 @@ import { loadHealth, breakerVerdict, runProbe } from "@/lib/generation/provider-
 import { canCarryReferenceImages } from "@/lib/generation/provider-capabilities";
 import { maxTier, type ResolutionTier } from "@/lib/generation/resolution";
 import { toModelFamily } from "@/lib/generation/model-family";
-import { MODEL_IMAGE_PRICING, DEFAULT_IMAGE_PRICING } from "@/lib/pricing";
 
-export type Provider = "gemini" | "openai" | "wavespeed" | "pollinations" | "acedata";
+/** "none" = no route at all: a model with no provider rows and no bridge entry. */
+export type Provider = "gemini" | "openai" | "wavespeed" | "pollinations" | "acedata" | "none";
 
 export interface Route {
   provider: Provider;
@@ -97,44 +97,37 @@ export function hasBoost(model: ResolvedModel): boolean {
   );
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
 /**
  * Bridge for rows that predate models.provider_model. Measured 2026-08-06:
- * gemini-3-pro-image honours imageSize (1K 1024², 2K 2048², 4K 4096²);
- * gemini-2.5-flash-image ignores it and always returns 1024².
- *
- * The id here was gemini-3-pro-image-PREVIEW, which Google shut down on
- * 2026-06-25 ("The gemini-3-pro-image-preview models are deprecated and will
- * be shut down on June 25, 2026"). The GA id, released 2026-05-28, is
- * gemini-3-pro-image. The live model_providers rows carried the dead id too;
- * migrations/2026-08-12-reference-image-limits.sql renames them.
+ * gemini-3-pro-image honours imageSize (1K 1024², 2K 2048², 4K 4096²).
+ * The GA id gemini-3-pro-image replaced the preview id Google shut down on
+ * 2026-06-25; migrations/2026-08-12-reference-image-limits.sql renamed the rows.
  */
 const BY_SLUG: Record<string, Pick<ResolvedModel, "normal" | "boost" | "supportsResolution" | "supportsQuality">> = {
   "nano-banana-pro": {
-    normal: { provider: "wavespeed", providerModel: "google/nano-banana-pro/text-to-image" },
+    // Gemini direct is the primary host since 2026-09-05: WaveSpeed raised
+    // 1K/2K to $0.14 while Gemini stays $0.134 — and Gemini was already the
+    // 2-4x faster host boost used to sell. Cheapest and fastest coincide, so
+    // boost === normal and the toggle disappears; the WaveSpeed row in
+    // model_providers stays as the outage fallback.
+    normal: { provider: "gemini", providerModel: "gemini-3-pro-image" },
     boost: { provider: "gemini", providerModel: "gemini-3-pro-image" },
     supportsResolution: true,
     supportsQuality: false,
   },
-  "nano-banana": {
-    // gemini-2.5-flash-image ignores imageSize entirely — measured, it always
-    // returns 1024x1024 — so it must never be charged by resolution.
-    normal: { provider: "gemini", providerModel: "gemini-2.5-flash-image" },
-    boost: { provider: "gemini", providerModel: "gemini-2.5-flash-image" },
-    supportsResolution: false,
-    supportsQuality: false,
-  },
   "gpt-image-2": {
-    // Quality decides the host (Kev, 2026-08-24): OpenAI direct is CHEAPER
-    // below high (measured $0.107 vs WaveSpeed's flat $0.167 at 2K medium),
-    // WaveSpeed's flat price wins at high ($0.167 vs $0.428). The live
-    // model_providers rows carry that split as applies_when conditions; this
-    // fallback answers WaveSpeed. boost === normal on purpose — with every
-    // request already on its cheapest host there is no faster host to sell,
-    // so hasBoost() reports false and the toggle disappears for this model.
-    normal: { provider: "wavespeed", providerModel: "openai/gpt-image-2/text-to-image" },
-    boost: { provider: "wavespeed", providerModel: "openai/gpt-image-2/text-to-image" },
+    // OpenAI direct on every quality since 2026-09-05: WaveSpeed replaced its
+    // flat $0.167/$0.25 with a quality matrix whose high cells ($0.40/$0.72)
+    // would have lost money against what we charged, and its remaining
+    // advantage over OpenAI's measured cells is 1-3 cents in two cells — not
+    // worth a second, unmeasured host. WaveSpeed stays in model_providers as
+    // the outage fallback. boost === normal: the cheapest host is already the
+    // fastest, so hasBoost() is false and the toggle stays hidden.
+    normal: { provider: "openai", providerModel: "gpt-image-2" },
+    boost: { provider: "openai", providerModel: "gpt-image-2" },
     // OpenAI takes pixels rather than a tier; the service converts, so the
     // resolution the user picks really does change the image.
     supportsResolution: true,
@@ -160,15 +153,12 @@ const BY_SLUG: Record<string, Pick<ResolvedModel, "normal" | "boost" | "supports
   },
 };
 
-/** What we fall back to when nothing is selected or the lookup fails. */
-export const DEFAULT_MODEL: ResolvedModel = {
-  id: null,
-  name: "Nano Banana Pro",
-  ...BY_SLUG["nano-banana-pro"],
-  maxResolution: maxTier("wavespeed", "google/nano-banana-pro/text-to-image"),
-  allowedRatios: ["1:1", "16:9", "9:16"],
-  maxRefs: 3,
-};
+/* There is no fallback model (Kev, 2026-10-02): a selection that cannot be
+   resolved is refused, never replaced. These are only column defaults for
+   rows that predate allowed_ratios and max_reference_images. */
+const DEFAULT_RATIOS = ["1:1", "16:9", "9:16"];
+const DEFAULT_MAX_REFS = 3;
+
 
 /** A row of model_providers with its provider embedded. */
 interface LinkRow {
@@ -216,8 +206,19 @@ function linkToRoute(link: LinkRow | undefined, audience: Audience): Route | nul
   };
 }
 
+/* A row the bridge does not know and that has no provider rows gets no route,
+   not Nano Banana Pro's (the old fallback): a paid request never runs on a
+   guessed model (Kev, 2026-09-22). "none" is no implemented provider, so the
+   routes refuse it before any payment step. */
+const NO_ROUTE: Pick<ResolvedModel, "normal" | "boost" | "supportsResolution" | "supportsQuality"> = {
+  normal: { provider: "none", providerModel: "" },
+  boost: { provider: "none", providerModel: "" },
+  supportsResolution: false,
+  supportsQuality: false,
+};
+
 function fromRow(row: ModelRow, audience: Audience): ResolvedModel {
-  const bridge = BY_SLUG[slug(row.name ?? "")] ?? BY_SLUG["nano-banana-pro"];
+  const bridge = BY_SLUG[slug(row.name ?? "")] ?? NO_ROUTE;
   const links = row.model_providers ?? [];
 
   // The database is the truth once the providers migration has run; the slug
@@ -233,15 +234,15 @@ function fromRow(row: ModelRow, audience: Audience): ResolvedModel {
 
   return {
     id: row.id ?? null,
-    name: row.name ?? DEFAULT_MODEL.name,
+    name: row.name ?? "",
     normal,
     boost,
     // The raw rows travel with the model because the ORDERED choice cannot be
     // made here: which route is cheapest depends on the quality and resolution
     // of the request, which fromRow never sees.
     links,
-    allowedRatios: row.allowed_ratios?.length ? row.allowed_ratios : DEFAULT_MODEL.allowedRatios,
-    maxRefs: typeof row.max_reference_images === "number" ? row.max_reference_images : DEFAULT_MODEL.maxRefs,
+    allowedRatios: row.allowed_ratios?.length ? row.allowed_ratios : DEFAULT_RATIOS,
+    maxRefs: typeof row.max_reference_images === "number" ? row.max_reference_images : DEFAULT_MAX_REFS,
     /* Derived from the ROUTE, never from a column and no longer from the
        display-name bridge. Whether a model honours a resolution is a fact
        about the provider and the provider model, and the bridge answered it
@@ -255,33 +256,6 @@ function fromRow(row: ModelRow, audience: Audience): ResolvedModel {
   };
 }
 
-/**
- * Look a model up by display name. For routes that know WHICH model they run
- * but never receive an id — the free path is hard-wired to Flux and has no
- * model picker, yet its generations still belong in the same catalogue.
- */
-export async function resolveModelByName(
-  supabase: SupabaseClient | null,
-  name: string,
-  audience: Audience = "public",
-): Promise<ResolvedModel> {
-  if (!supabase) return DEFAULT_MODEL;
-  try {
-    const { data, error } = await supabase
-      .from("models")
-      .select(
-        "id, name, allowed_ratios, max_reference_images, " +
-        "model_providers(id, role, provider_model, active, priority, applies_when, provider_id, providers(id, key, audience, active))",
-      )
-      .ilike("name", name)
-      .eq("active", true)
-      .limit(1);
-    if (error || !data?.length) return DEFAULT_MODEL;
-    return fromRow(data[0] as unknown as ModelRow, audience);
-  } catch {
-    return DEFAULT_MODEL;
-  }
-}
 
 /**
  * Catalogue rows for /api/models: the raw fields the UI already reads, plus
@@ -302,13 +276,6 @@ export function withCapabilities(rows: ModelRow[], audience: Audience = "public"
     // The embed rides in for fromRow and stays out of the response: the UI
     // needs the answers, not the provider wiring behind them.
     const { model_providers: _links, ...raw } = row as ModelRow & { model_providers?: unknown };
-    /* The checkout prices tiers from MODEL_IMAGE_PRICING (1K charged as
-       2K), and its 4K/2K ratio is per model (~1.79 nano-banana-pro, ~1.50
-       gpt-image-2) — the UI's flat x2 disagreed with what quote actually
-       charges (found by review, 2026-08-22). Shipping the SCALE, applied to
-       the row's own base price, keeps every surface's labels consistent
-       with its own totals and with the ladder's proportions. */
-    const ladder = MODEL_IMAGE_PRICING[toModelFamily(String(row.name ?? ""))] ?? DEFAULT_IMAGE_PRICING;
     /* Ratio capability belongs to the HOST, not the row: pollinations builds
        free-form dimensions from any ratio (backend getDimensions), so a
        curated allowed_ratios list on the free model only narrowed what the
@@ -326,7 +293,9 @@ export function withCapabilities(rows: ModelRow[], audience: Audience = "public"
       // Derived from the provider rows (hasBoost), never stored: a boost
       // toggle may only show where a faster host actually exists.
       boostAvailable: hasBoost(m),
-      tierScale: { "1K": 1, "2K": 1, "4K": ladder["4K"] / ladder["2K"] },
+      // The one fact that sends a generation to /api/generate-free: the model
+      // renders on the free host. Never inferred from a price.
+      free: m.normal.provider === "pollinations",
     };
   });
 }
@@ -336,9 +305,9 @@ export function withCapabilities(rows: ModelRow[], audience: Audience = "public"
  *
  * The paid caller sends { intentId, prompt, aspectRatio } and NO modelIds — it
  * already told the server which model it was buying when it took the quote.
- * resolveModel() with no ids falls back to DEFAULT_MODEL, so comparing that
- * fallback against the paid family refused every purchase of anything except
- * the default. The intent is the source of truth; this reads it.
+ * resolveModel() with no ids used to fall back to a default model, so comparing
+ * that fallback against the paid family refused every purchase of anything
+ * except the default. The intent is the source of truth; this reads it.
  *
  * Returns null rather than a default when the family names nothing active.
  * Quietly generating on some other model is precisely the failure the family
@@ -362,29 +331,35 @@ export async function resolveModelByFamily(
     /* Matched on the slug, not the display name: "GPT-Image-2 (coming soon)"
        and "GPT-Image-2" are the same purchase, and the quote stored the slug
        precisely so that editing a label is not a pricing event. */
-    const row = (data as unknown as ModelRow[]).find(
+    const rows = (data as unknown as ModelRow[]).filter(
       (r) => toModelFamily(String(r.name ?? "")) === family,
     );
-    return row ? fromRow(row, audience) : null;
+    // Two active rows answering to one family is a choice we may not make for
+    // the caller: whichever came first would run with its own routes.
+    return rows.length === 1 ? fromRow(rows[0], audience) : null;
   } catch {
     return null;
   }
 }
 
 /**
- * Resolve the user's selection. Takes the FIRST id that resolves — multi-select
- * exists in the editor for prompt authoring (which models a prompt is meant
- * for), while a single generation runs on exactly one model.
+ * Resolve the user's selection: exactly the FIRST id. A generation runs on
+ * one model, and when that row is missing or inactive the answer is null,
+ * never the next id in the list (Kev, 2026-10-02: "IMMER DAS AUSGEWÄHLTE").
  */
 export async function resolveModel(
   supabase: SupabaseClient | null,
   modelIds: string[] | undefined,
   audience: Audience = "public",
-): Promise<ResolvedModel> {
-  if (!supabase || !modelIds?.length) return DEFAULT_MODEL;
+): Promise<ResolvedModel | null> {
+  // Exact row ids only. A name or slug is not an id, and a failed lookup is
+  // refused by the caller, never replaced by another model (Kev, 2026-10-02).
+  const first = modelIds?.[0];
+  if (!supabase || !first || !UUID.test(first)) return null;
+  const ids = [first];
   try {
     const pick = (cols: string) =>
-      supabase.from("models").select(cols).in("id", modelIds).eq("active", true);
+      supabase.from("models").select(cols).in("id", ids).eq("active", true);
 
     // Embed the provider links. Asking for a relation that does not exist
     // fails the whole query, so the fallback is a plain select — that is the
@@ -401,14 +376,10 @@ export async function resolveModel(
     } else {
       rows = (joined.data ?? []) as unknown as ModelRow[];
     }
-    // Preserve the user's order rather than the database's.
-    for (const wanted of modelIds) {
-      const row = rows.find((r) => r.id === wanted);
-      if (row) return fromRow(row, audience);
-    }
-    return rows.length ? fromRow(rows[0], audience) : DEFAULT_MODEL;
+    const row = rows.find((r) => r.id === first);
+    return row ? fromRow(row, audience) : null;
   } catch {
-    return DEFAULT_MODEL;
+    return null;
   }
 }
 

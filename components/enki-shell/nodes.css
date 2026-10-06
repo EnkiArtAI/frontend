@@ -736,3 +736,33 @@ button.nc-out-var:hover{filter:brightness(.96);}
 
 /* Doc footer: everything on one line — model leads, the enums follow. */
 .ncd-genopts--row{flex-direction:row;align-items:center;gap:7px;flex-wrap:wrap;}
+
+/* ── Workflow node: an embedded prompt/workflow (Kev, 2026-09-05). Collapsed
+   it is a compact card; "Show inside" unfolds the read-only text so you can
+   see how it works. Turquoise = the same signal as a public text input. ── */
+.nc-workflow { width: 300px; border-color: var(--enki-turq, #3aa); }
+.nc-workflow.open { width: 340px; }
+.nc-workflow-head { display: flex; align-items: center; gap: 7px; background: color-mix(in oklab, var(--enki-turq, #3aa) 16%, transparent); }
+.nc-workflow-head .nc-ntitle { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 700; }
+.nc-workflow-meta { display: flex; justify-content: space-between; gap: 8px; padding: 8px 12px 4px; font-size: 11px; color: var(--enki-ink-3); }
+.nc-workflow-toggle { display: inline-flex; align-items: center; gap: 5px; margin: 4px 10px 10px; padding: 4px 8px; border: 1px solid var(--enki-rule); border-radius: 999px; background: transparent; color: var(--enki-ink-3); font: inherit; font-size: 11px; cursor: pointer; }
+.nc-workflow-toggle:hover { color: var(--enki-ink); border-color: var(--enki-turq, #3aa); }
+.nc-workflow-inside { margin: 0 10px 12px; padding: 9px 10px; border-radius: 8px; background: var(--enki-paper-2); border: 1px dashed var(--enki-rule); font-size: 12px; line-height: 1.5; color: var(--enki-ink-2); max-height: 220px; overflow: auto; cursor: default; }
+.nc-workflow-var { padding: 0 5px; border-radius: 4px; background: color-mix(in oklab, var(--enki-turq, #3aa) 18%, transparent); color: var(--enki-ink); font-weight: 600; }
+.nc-workflow-out { position: absolute; right: -7.5px; top: 18px; background: var(--enki-turq, #3aa); }
+
+/* Picker */
+.nc-wfpick { width: min(560px, 94vw); max-height: 78vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.nc-wfpick-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 8px; }
+.nc-wfpick-title { font-weight: 700; font-size: 15px; }
+.nc-wfpick-tabs { display: flex; align-items: center; gap: 6px; padding: 0 16px 10px; border-bottom: 1px solid var(--enki-rule); }
+.nc-wfpick-tabs button { padding: 6px 12px; border: 1px solid var(--enki-rule); border-radius: 999px; background: transparent; color: var(--enki-ink-3); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.nc-wfpick-tabs button.on { color: var(--enki-ink); border-color: var(--enki-ember); }
+.nc-wfpick-tabs input { flex: 1; min-width: 0; margin-left: auto; padding: 6px 10px; border: 1px solid var(--enki-rule); border-radius: 8px; background: var(--enki-paper-2); color: var(--enki-ink); font: inherit; font-size: 12.5px; outline: none; }
+.nc-wfpick-list { overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+.nc-wfpick-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; text-align: left; padding: 9px 10px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.nc-wfpick-row:hover { background: var(--enki-paper-2); border-color: var(--enki-rule); }
+.nc-wfpick-name { font-weight: 700; font-size: 13px; }
+.nc-wfpick-meta { font-size: 11px; color: var(--enki-ink-3); white-space: nowrap; }
+.nc-wfpick-text { grid-column: 1 / -1; font-size: 11.5px; color: var(--enki-ink-3); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.nc-wfpick-empty { padding: 40px 16px; text-align: center; color: var(--enki-ink-3); font-size: 13px; }

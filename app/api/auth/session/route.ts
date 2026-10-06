@@ -1,3 +1,4 @@
+import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 /**
  * POST /api/auth/session
  *
@@ -130,7 +131,14 @@ export async function POST(req: NextRequest) {
 
   // Private-beta whitelist: only allow-listed wallets get in. Checked before
   // the nonce is consumed so a turned-away wallet keeps its nonce.
-  if (whitelistStageActive() && !(await isWalletAllowed(supabase, normalizedWallet))) {
+  let walletAllowed = true;
+  try {
+    walletAllowed = !whitelistStageActive() || (await isWalletAllowed(supabase, normalizedWallet));
+  } catch (e) {
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
+    throw e;
+  }
+  if (!walletAllowed) {
     return NextResponse.json(
       { error: "This wallet isn't on the access list yet. Request access to join.", notWhitelisted: true },
       { status: 403 },
@@ -149,6 +157,7 @@ export async function POST(req: NextRequest) {
     p_nonce: nonce,
   });
   if (nonceError || !consumed) {
+    if (isDbUnreachable(nonceError)) return dbUnavailableResponse();
     return NextResponse.json(
       { error: "Nonce is invalid, expired, or already used. Request a new nonce." },
       { status: 401 }
@@ -176,6 +185,7 @@ export async function POST(req: NextRequest) {
     }));
   }
   if (sessionError) {
+    if (isDbUnreachable(sessionError)) return dbUnavailableResponse();
     console.error("Failed to create auth session:", sessionError);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }

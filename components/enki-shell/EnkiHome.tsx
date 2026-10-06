@@ -18,12 +18,14 @@ import { useRecoveryStatus } from "@/hooks/useRecoveryStatus";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useMessages } from "@/hooks/useMessages";
 import EnkiFeedPage from "@/components/enki/EnkiFeedPage";
+import { openLogin } from "@/lib/openLogin";
 import EnkiSidebar, { type NavItem } from "./EnkiSidebar";
 import ReferModal from "./ReferModal";
 import BookmarksPanel from "./BookmarksPanel";
 import FeedbackModal from "./FeedbackModal";
 import NodeCreator from "./NodeCreator";
 import EnkiPanel from "./EnkiPanel";
+import LoginModal from "@/components/LoginModal";
 import { EDIT_PROMPT_EVENT, consumePromptEdit } from "./editorBridge";
 import { Icon } from "./icons";
 import SettingsView from "@/components/settings/SettingsView";
@@ -121,6 +123,15 @@ export default function EnkiHome() {
      consumed event (preventDefault) tells them the shell took over — only
      surfaces OUTSIDE the shell fall back to the /creators route. */
   const [creatorHandle, setCreatorHandle] = useState<string | null>(null);
+  /* The login popup, IN the shell (Kev, 2026-08-24): profile gate and
+     creator notice raise enki:open-login and the LANDING'S auth modal —
+     embedded, not rebuilt — opens right here. */
+  const [loginOpen, setLoginOpen] = useState(false);
+  useEffect(() => {
+    const onOpenLogin = (e: Event) => { e.preventDefault(); setLoginOpen(true); };
+    window.addEventListener("enki:open-login", onOpenLogin);
+    return () => window.removeEventListener("enki:open-login", onOpenLogin);
+  }, []);
   useEffect(() => {
     const onOpenCreator = (e: Event) => {
       const h = (e as CustomEvent<{ handle?: string }>).detail?.handle;
@@ -156,6 +167,7 @@ export default function EnkiHome() {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   // Balance chip → Payment panel, scrolled to "Add money" with a heartbeat.
   const [payFocus, setPayFocus] = useState(false);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const closePanel = () => {
     setPanel(null); setPayFocus(false);
     /* Whatever the panel covered comes back — a detail hidden by openPanel
@@ -172,6 +184,7 @@ export default function EnkiHome() {
   // specific tab; a plain Settings nav click clears it back to the first page.
   const [settingsTab, setSettingsTab] = useState<string | undefined>(undefined);
   const openPanel = (id: string, tab?: string) => {
+    setMobileDrawerOpen(false);
     /* A menu panel covering the image view HIDES it (kept mounted) — its
        scrim (z 160) sits under the detail panel (z 162), so without this the
        leaderboard opened invisibly beneath the image (Kev, 2026-08-22). */
@@ -228,7 +241,14 @@ export default function EnkiHome() {
   useEffect(() => {
     const onEdit = () => { setEditPrompt(consumePromptEdit()); setPanel(null); setNodeOpen(true); setActiveNav("home"); };
     window.addEventListener(EDIT_PROMPT_EVENT, onEdit);
+    /* A pending edit can predate this mount: "Open in editor" on the
+       standalone /generator page stashes the prompt and navigates here —
+       the event fired before anyone listened, so the mount drains the
+       stash too (Kev, 2026-08-24). */
+    const pending = consumePromptEdit();
+    if (pending) { setEditPrompt(pending); setNodeOpen(true); }
     return () => window.removeEventListener(EDIT_PROMPT_EVENT, onEdit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const searchParams = useSearchParams();
@@ -287,6 +307,7 @@ export default function EnkiHome() {
   };
 
   const onNav = (id: string) => {
+    setMobileDrawerOpen(false);
     if (nodeOpen) closeNode();
     // Guests can browse, but personal areas need an account.
     if (!authed && AUTHED_ONLY.has(id)) { showToast("Sign in to use this."); return; }
@@ -403,8 +424,27 @@ export default function EnkiHome() {
   const rootClass = "ek-app" + (rail ? " ek-root--rail" : "") + (nodeOpen ? " ek-node-open" : "")
     + (showRecoveryBanner ? " ek-with-banner" : "");
 
+  /* The node editor converts screen coordinates into canvas coordinates by
+     subtracting the width of the column the shell reserves on its left. That
+     number lives in --ek-sw, and a media query may change it (phones give the
+     sidebar no column at all), so it is READ from the variable rather than
+     guessed from the rail state — a guess put every click 78px off. */
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [shellOffset, setShellOffset] = useState(0);
+  useEffect(() => {
+    const read = () => {
+      const el = rootRef.current;
+      if (!el) return;
+      const px = parseFloat(getComputedStyle(el).getPropertyValue("--ek-sw"));
+      setShellOffset(Number.isFinite(px) ? px : (rail ? 78 : 256));
+    };
+    read();
+    window.addEventListener("resize", read);
+    return () => window.removeEventListener("resize", read);
+  }, [rail, nodeOpen]);
+
   return (
-    <div className={rootClass}>
+    <div className={rootClass} ref={rootRef}>
       {showRecoveryBanner && (
         <div className="ek-recovery-banner" role="alert">
           <button className="ek-recovery-banner-msg" onClick={openRecoverySettings}>
@@ -419,6 +459,47 @@ export default function EnkiHome() {
           </button>
         </div>
       )}
+      {/* Mobile Top Header (≤ 768px) */}
+      <header className="ek-mobile-header">
+        <div className="ek-mobile-header-left" onClick={() => onNav("home")}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className="ek-mobile-header-logo" src="/enki-art-logo.png" alt="Enki Art" />
+        </div>
+        <div className="ek-mobile-header-right">
+          {/* No balance chip for guests — the same rule the sidebar follows:
+              $0 opens payment settings for someone who cannot pay yet, so
+              login comes first (Kev, 2026-08-24). */}
+          {authed && (
+            <button
+              type="button"
+              className="ek-mobile-balance"
+              onClick={() => { setNodeOpen(false); setPayFocus(true); openPanel("billing"); }}
+              title="Add funds"
+            >
+              <Icon name="dollar" size={12} stroke={2.4} />
+              {(balance ?? 0).toFixed(2)}
+            </button>
+          )}
+          <button
+            type="button"
+            className="ek-mobile-burger-btn"
+            onClick={() => setMobileDrawerOpen((o) => !o)}
+            aria-label="Open menu"
+            aria-expanded={mobileDrawerOpen}
+          >
+            <Icon name={mobileDrawerOpen ? "x" : "menu"} size={18} stroke={2.2} />
+            {authed && (unseen + dmUnread) > 0 && !mobileDrawerOpen && (
+              <span className="ek-mobile-burger-badge">{unseen + dmUnread}</span>
+            )}
+          </button>
+        </div>
+      </header>
+
+      {/* Mobile Drawer Scrim */}
+      {mobileDrawerOpen && (
+        <div className="ek-mobile-drawer-scrim" onClick={() => setMobileDrawerOpen(false)} />
+      )}
+
       <div className="ek-shell">
         <EnkiSidebar
           nav={(authed ? NAV : NAV.filter((n) => !AUTHED_ONLY.has(n.id))).map((n) =>
@@ -452,6 +533,8 @@ export default function EnkiHome() {
           onLogoff={authed ? () => setLogoffOpen(true) : undefined}
           theme={theme}
           setTheme={setTheme}
+          mobileOpen={mobileDrawerOpen}
+          onCloseMobile={() => setMobileDrawerOpen(false)}
         />
 
         <main className="ek-main">
@@ -463,8 +546,75 @@ export default function EnkiHome() {
         </main>
       </div>
 
+      {/* Mobile Bottom Navigation Bar (≤ 768px) */}
+      <nav className="ek-mobile-bottom-nav" aria-label="Mobile navigation">
+        <button
+          type="button"
+          className={"ek-mobile-nav-btn" + (activeNav === "home" && !panel ? " active" : "")}
+          onClick={() => onNav("home")}
+          aria-label="Home"
+        >
+          <Icon name="home" size={20} stroke={activeNav === "home" && !panel ? 2.4 : 1.9} />
+          <span>Home</span>
+        </button>
+        <button
+          type="button"
+          className={"ek-mobile-nav-btn" + (activeNav === "search" && !panel ? " active" : "")}
+          onClick={() => onNav("search")}
+          aria-label="Search"
+        >
+          <Icon name="search" size={20} stroke={activeNav === "search" && !panel ? 2.4 : 1.9} />
+          <span>Search</span>
+        </button>
+        <button
+          type="button"
+          className="ek-mobile-nav-btn ek-mobile-nav-btn--create"
+          onClick={() => {
+            if (!authed) { setCreatorNotice("open"); return; }
+            router.push("/editor");
+          }}
+          aria-label="Create Prompt"
+        >
+          <span className="ek-mobile-nav-create-pill">
+            <Icon name="pen" size={18} stroke={2.4} />
+          </span>
+        </button>
+        {/* Bookmarks are AUTHED_ONLY: the desktop nav filters them out for
+            guests, so the bar must not offer them either (guest honesty). */}
+        {authed && (
+          <button
+            type="button"
+            className={"ek-mobile-nav-btn" + (panel === "favorites" ? " active" : "")}
+            onClick={() => onNav("favorites")}
+            aria-label="Bookmarks"
+          >
+            <Icon name="bookmark" size={20} stroke={panel === "favorites" ? 2.4 : 1.9} />
+            <span>Saved</span>
+          </button>
+        )}
+        <button
+          type="button"
+          className={"ek-mobile-nav-btn" + (panel === "profile" ? " active" : "")}
+          onClick={() => {
+            if (!authed) { openLogin(); return; }
+            setNodeOpen(false); setActiveNav(""); openPanel("profile");
+          }}
+          aria-label={authed ? "Profile" : "Log in"}
+        >
+          <span className="ek-avatar" style={{ width: 22, height: 22, fontSize: 10 }}>
+            {authed && myProfile?.avatarUrl ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img src={myProfile.avatarUrl} alt="" />
+            ) : authed ? initials : <Icon name="user" size={13} stroke={2} />}
+          </span>
+          <span>{authed ? "Profile" : "Log in"}</span>
+          {authed && unseen > 0 && <span className="ek-mobile-nav-badge">{unseen}</span>}
+        </button>
+      </nav>
+
       {panel && (
-        <EnkiPanel title={PANEL_TITLES[panel] || panel} onClose={closePanel} full>
+        <EnkiPanel title={PANEL_TITLES[panel] || panel} onClose={closePanel} full
+          hideClose={panel === "leaderboard"}>
           {/* The key remounts only the CONTENT (fresh state per menu click);
               the panel shell stays mounted, so its fade-in doesn't replay and
               the home feed never flashes through between panels. */}
@@ -475,7 +625,7 @@ export default function EnkiHome() {
       )}
 
       {nodeOpen && (
-        <NodeCreator onClose={closeNode} onToast={showToast} userKey={walletAddress} sidebarW={rail ? 78 : 256} editPrompt={editPrompt} />
+        <NodeCreator onClose={closeNode} onToast={showToast} userKey={walletAddress} sidebarW={shellOffset} editPrompt={editPrompt} />
       )}
 
       {creatorNotice && (
@@ -487,12 +637,13 @@ export default function EnkiHome() {
         >
           <div className="ek-modal ek-notice" style={{ maxWidth: 330 }} onClick={(e) => e.stopPropagation()}>
             <p className="ek-notice-text">The prompt creator is for logged in users. Sign in and it opens right up.</p>
-            <button type="button" className="ek-btn" style={{ minHeight: 36, width: "100%" }} onClick={() => { setCreatorNotice(null); router.push("/"); }}>
+            <button type="button" className="ek-btn" style={{ minHeight: 36, width: "100%" }} onClick={() => { setCreatorNotice(null); openLogin(); }}>
               Sign in
             </button>
           </div>
         </div>
       )}
+      <LoginModal open={loginOpen} prewarm={!authed} onClose={() => setLoginOpen(false)} />
       {referOpen && (
         <ReferModal
           userKey={walletAddress}

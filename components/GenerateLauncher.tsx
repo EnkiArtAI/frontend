@@ -12,7 +12,9 @@ import PromptEngagement from "@/components/PromptEngagement";
 import { addCreation } from "@/lib/creations";
 import EnkiMobileGenerateModal from "@/components/EnkiMobileGenerateModal";
 import type { EnkiPrompt } from "@/lib/enkiPromptAdapter";
-import { sessionAuthHeaders } from "@/lib/session-headers";
+import { runGeneration } from "@/lib/generation/run-generation";
+import { usePaymentSigner } from "@/hooks/usePaymentSigner";
+import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
 import { useGenerationCore } from "@/hooks/useGenerationCore";
 import NftPickerModal from "@/components/enki/NftPickerModal";
 
@@ -28,8 +30,10 @@ import NftPickerModal from "@/components/enki/NftPickerModal";
  * EnkiMobileGenerateModal (Generate-only) on all viewports, with
  * reference-image upload + NFT support.
  *
- * This build has no server-side billing, so generation runs through the free
- * Pollinations endpoint (/api/generate-free) — no balance, no on-chain payment.
+ * Generates the selected model through runGeneration: the free model on the
+ * free route, every other model paid through a payment intent. It used to
+ * post everything to /api/generate-free, so Nano Banana Pro, its price and
+ * its 4K tier were shown and Flux rendered.
  *
  * `seedPrompt` lets the explore feed open this same modal pre-filled with a
  * clicked prompt: free prompts (visibility "full") expose the full editable
@@ -59,7 +63,9 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
   const [boost, setBoost] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [valueByToken, setValueByToken] = useState<Record<string, string>>({});
-  const [model, setModel] = useState("nano-banana-pro");
+  // No preselected model: the user picks (Kev, 2026-10-02: "IMMER DAS AUSGEWÄHLTE").
+  const [model, setModel] = useState("");
+  const signPayment = usePaymentSigner();
   const core = useGenerationCore(model);
   const [resolution, setResolution] = useState("2K");
   const [nftPickerOpen, setNftPickerOpen] = useState(false);
@@ -71,6 +77,24 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
   useEffect(() => { if (!core.loading && core.clampTier(resolution) !== resolution) setResolution(core.clampTier(resolution)); }, [core, resolution]);
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const [nftImages, setNftImages] = useState<string[]>([]);
+
+  /* Every price shown is a server quote (Kev, 2026-10-02: "ich brauche safe
+     überall den server-quote"): the current settings first, then each tier
+     for the resolution options. */
+  const asTier = (t: string) => (t === "1K" || t === "2K" || t === "4K" ? t : null);
+  const refCount = referenceImages.length + nftImages.length;
+  const paidEntry = core.entry && !core.entry.free ? core.entry : null;
+  const quoteTiers = core.tiers.map((t) => t.tier);
+  const quotes = useServerQuotes(
+    paidEntry
+      ? [resolution, ...quoteTiers].flatMap((t) => {
+          const tier = asTier(t);
+          return tier ? [{ modelId: paidEntry.id, resolution: tier, boost: core.boostAvailable && boost, referenceImageCount: refCount }] : [];
+        })
+      : [],
+  );
+  const priceFor = (n: number) => (core.entry?.free ? "Free" : !core.entry ? "" : quoteLabel(quotes[0], n) ?? "…");
+  const tierLabel = (i: number) => (core.entry?.free ? "Free" : quoteLabel(quotes[i + 1]));
   const [results, setResults] = useState<string[]>([]);
   // When opened from a clicked feed prompt: lock the body for paid prompts and
   // carry the creator's exposed variables (which may be checkbox/image types
@@ -147,52 +171,58 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
     return out;
   }, [prompt, valueByToken]);
 
-  const generate = async () => {
+  const generate = async (count: number) => {
     if (generating) return;
     const final = prompt.replace(/\[[^\]]+\]/g, (tok) => valueByToken[tok] || tok);
     if (!final.trim()) {
       toast({ title: "Error", description: "Please enter a prompt.", variant: "destructive" });
       return;
     }
+    const tier = resolution === "1K" || resolution === "2K" || resolution === "4K" ? resolution : null;
+    if (!core.entry || !tier) {
+      toast({ title: "Pick a model", description: "Choose the model to generate with. Nothing was generated.", variant: "destructive" });
+      return;
+    }
     setGenerating(true);
     try {
-      const res = await fetch("/api/generate-free", {
-        method: "POST",
-        /* The session travels with a FREE generation too. Without it
-           resolveRecordingUserId returns null and the route skips its whole
-           recorder block, so a signed-in user's free images belonged to
-           nobody and never reached their history. */
-        headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
-        body: JSON.stringify({
-          prompt: final.trim(),
-          aspectRatio: ratio,
-          resolution, // the user's pick — "2K" was hardcoded while the UI offered a choice
-          boost,
-          // These were collected in the UI and then never sent. The server
-          // caps them by the model's own limit.
-          referenceImages: [...referenceImages, ...nftImages].filter(Boolean),
-        }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        imageUrl?: string;
-        error?: string;
-      };
-      if (!res.ok || !data.imageUrl) {
-        throw new Error(data.error || "Generation failed");
-      }
+      const refs = [...referenceImages, ...nftImages].filter(Boolean);
+      // A clicked feed prompt travels as itself: its artist share is priced
+      // and, for a paid prompt, the server fills the artist's own text.
+      const variableValues = Object.fromEntries(
+        Object.entries(valueByToken).map(([tok, v]) => [tok.replace(/^\[|\]$/g, ""), v]),
+      );
+      // The count the sheet shows and prices is the count generated, one
+      // payment each.
+      for (let n = 0; n < count; n++) {
+        const outcome = await runGeneration(
+          {
+            model: core.entry,
+            resolution: tier,
+            boost: core.boostAvailable && boost,
+            prompt: final.trim(),
+            promptId: seedPrompt?.id || undefined,
+            variableValues: seedPrompt ? variableValues : undefined,
+            aspectRatio: ratio,
+            referenceImages: refs.length ? refs : undefined,
+          },
+          signPayment,
+        );
+        if (!outcome.ok) throw new Error(outcome.error);
+        const data = { imageUrl: outcome.imageUrl };
 
-      // Surface the new image ABOVE the modal (newest first); keep the modal open.
-      setResults((prev) => [data.imageUrl as string, ...prev]);
-      if (userKey) {
-        addCreation(userKey, {
-          id: `gl-${Date.now()}`,
-          imageUrl: data.imageUrl,
-          prompt: final,
-          createdAt: new Date().toISOString(),
-        });
-        window.dispatchEvent(new Event("gallery-refresh"));
+        // Surface the new image ABOVE the modal (newest first); keep the modal open.
+        setResults((prev) => [data.imageUrl as string, ...prev]);
+        if (userKey) {
+          addCreation(userKey, {
+            id: `gl-${Date.now()}`,
+            imageUrl: data.imageUrl,
+            prompt: final,
+            createdAt: new Date().toISOString(),
+          });
+          window.dispatchEvent(new Event("gallery-refresh"));
+        }
       }
-      toast({ title: "Generated & saved to gallery", description: "Your image is ready." });
+      toast({ title: "Generated & saved to gallery", description: `Your ${core.entry.name} image${count > 1 ? "s are" : " is"} ready.` });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       toast({ title: "Generation failed", description: msg, variant: "destructive" });
@@ -276,14 +306,14 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
           setPrompt((prev) => `${prev}${prev && !prev.endsWith(" ") ? " " : ""}[var_${n}]`);
         }}
         onRemoveVariable={(name) => setPrompt((prev) => prev.split(`[${name}]`).join("").replace(/\s{2,}/g, " ").trim())}
-        models={{ available: core.catalogue.map((m) => ({ id: m.id, name: m.name, price: m.price })), selected: [core.entry?.id ?? model] }}
+        models={{ available: core.catalogue.map((m) => ({ id: m.id, name: m.name, price: m.price })), selected: core.entry ? [core.entry.id] : [] }}
         setModel={setModel}
         ratios={{ available: core.ratios, selected: ratio }}
         setRatio={setRatio}
-        pricePerSlot={core.entry?.price ?? 0}
+        priceFor={priceFor}
         resolution={resolution}
         setResolution={setResolution}
-        resolutionOptions={core.tiers.map((t) => ({ value: t.tier, label: t.price != null ? `${t.tier} · $${t.price.toFixed(2)}` : t.tier, short: t.tier }))}
+        resolutionOptions={core.tiers.map((t, i) => ({ value: t.tier, label: tierLabel(i) ? `${t.tier} · ${tierLabel(i)}` : t.tier, short: t.tier }))}
         referenceImages={referenceImages}
         onAddReferenceImages={addReferenceImages}
         onRemoveReferenceImage={(i) =>
@@ -300,7 +330,6 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
         boost={boost}
         onBoostChange={core.boostAvailable ? setBoost : undefined}
         hideReleaseTab
-        balance={null}
         resultImages={results}
         isGenerating={generating}
         onGenerate={generate}

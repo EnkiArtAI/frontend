@@ -17,6 +17,7 @@
  * "wavespeed-nano-banana-pro" while actually running flux-dev.
  */
 import type { ImageGenerationRequest, ImageGenerationResult } from './types';
+import { missingModel } from './model-required';
 import { readImageDimensions } from './gemini-image-generation';
 import { referenceImageLimit } from '@/lib/generation/provider-capabilities';
 
@@ -64,6 +65,8 @@ export async function generateImagesWithWaveSpeed(
   request: WaveSpeedRequest,
 ): Promise<ImageGenerationResult> {
   const startTime = Date.now();
+  const requested = request.modelVersion;
+  if (!requested) return missingModel(startTime);
   const apiKey = process.env.WAVESPEED_API_KEY;
   if (!apiKey) {
     return { success: false, error: 'WAVESPEED_API_KEY is not set', generationTime: 0, retryable: false };
@@ -99,7 +102,6 @@ export async function generateImagesWithWaveSpeed(
     };
   }
 
-  const requested = request.modelVersion || 'google/nano-banana-pro/text-to-image';
   const model = refs > 0 ? toEditModel(requested) : requested;
 
   try {

@@ -6,19 +6,19 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { useActiveAccount, useActiveWalletChain } from "thirdweb/react";
+import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { PAYMENT_CHAINS } from "@/shared/payment-config";
 import { addCreation, getUserKeyFromAccount } from "@/lib/creations";
-import { useX402PaymentProduction } from "@/hooks/useX402PaymentProduction";
-import { useSolanaX402Payment } from "@/hooks/useSolanaX402Payment";
+import { usePaymentSigner } from "@/hooks/usePaymentSigner";
 import { useCdpAddress } from "@/hooks/useCdpAddress";
 import { useCdpSolanaSigner } from "@/hooks/useCdpSolanaSigner";
-import { useModelLimits, FALLBACK_RATIOS } from "@/hooks/useModelLimits";
+import { useModelLimits, useModelCatalogue, FALLBACK_RATIOS, resolveCatalogueEntry } from "@/hooks/useModelLimits";
+import { runGeneration } from "@/lib/generation/run-generation";
+import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
+import { tiersUpTo } from "@/lib/generation/resolution";
 import BoostToggle from "@/components/generation/BoostToggle";
 import QualitySelect, { type Quality } from "@/components/generation/QualitySelect";
-import { useBestPaymentChain } from "@/hooks/useWalletBalance";
-import type { ChainKey } from "@/shared/payment-config";
 import EnkiMobileGenerateModal from "./EnkiMobileGenerateModal";
 import { WalletPickerModal } from "./WalletPickerModal";
 import {
@@ -463,47 +463,22 @@ function EmptyVarIcon() {
 }
 
 /* ─── Component ─── */
+/** A local id for a stored creation. Called from the generate handler, never during render. */
+const creationId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
 export default function EnkiPromptEditor() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const account = useActiveAccount();
-  /* Live EVM chain the user's wallet is currently connected to. Updates
-     when the user switches networks in MetaMask / their wallet, so the
-     "via …" line in the Verify panel always reflects the network the
-     payment will actually go through right now. */
-  const activeWalletChain = useActiveWalletChain();
   const { connected: solanaAdapterConnected } = useWallet();
   const { address: cdpAddress } = useCdpAddress();
   const cdpSolana = useCdpSolanaSigner();
   // Anyone who can sign a Solana transaction counts as "Solana connected":
-  // an external adapter, a CDP embedded wallet, or (until those sessions are
-  // migrated) Turnkey. Without the CDP arm here, a CDP user fell through to
-  // the EVM x402 branch below and could not pay at all despite holding a
-  // perfectly good Solana wallet.
+  // an external adapter or a CDP embedded wallet.
   const solanaConnected = solanaAdapterConnected || cdpSolana.isAvailable || !!cdpAddress;
-  const { generateImage: generateImageWithPayment, isPending: isPaymentPending } = useX402PaymentProduction();
-  const { generateImage: generateImageWithSolana, isPending: isSolanaPaymentPending } = useSolanaX402Payment();
-  // Server-built payments (intent → pay → generate) for Turnkey email users:
-  // no SOL needed, Enki pays the network fee. Kicks in once the prompt is
-  // saved (an intent needs the DB prompt row for pricing).
-  const { chainKey: bestChain } = useBestPaymentChain();
-  const [selectedChain] = useState<ChainKey>(bestChain || "base-sepolia");
-  /* Human-readable name of the network the user is paying on right
-     now. Source-of-truth priority:
-       1. Solana adapter / Turnkey email -> the Solana mainnet/devnet
-          name from PAYMENT_CHAINS (which holds the canonical labels).
-       2. Live EVM chain reported by the connected wallet (changes if
-          the user switches networks in MetaMask).
-       3. The `selectedChain` (best-balance chain) name as a fallback
-          before the wallet has reported its chain.
-     The Verify panel renders this string after "via " so the user
-     always sees the actual network — never the payment-protocol name
-     ("x402") or the wallet-provider name ("Thirdweb"). */
-  const currentNetworkName = solanaConnected
-    ? PAYMENT_CHAINS["solana"].name
-    : activeWalletChain?.name ??
-      PAYMENT_CHAINS[selectedChain]?.name ??
-      selectedChain;
+  const signPayment = usePaymentSigner();
+  // Payments run on Solana only.
+  const currentNetworkName = PAYMENT_CHAINS["solana"].name;
   const { toast } = useToast();
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -757,7 +732,7 @@ export default function EnkiPromptEditor() {
 
   // Per-model reference-image cap from the models table: the user-adjustable
   // maxImages can never exceed what the selected generator supports.
-  const modelLimits = useModelLimits(models.selected[0] || "nano-banana-pro");
+  const modelLimits = useModelLimits(models.selected[0]);
   useEffect(() => {
     setUi((p) => (p.maxImages > modelLimits.maxRefs ? { ...p, maxImages: modelLimits.maxRefs } : p));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -773,7 +748,7 @@ export default function EnkiPromptEditor() {
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const [showWalletPicker, setShowWalletPicker] = useState(false);
   const walletConnected = Boolean(account?.address) || solanaConnected;
-  const isGeneratingPaymentPending = isPaymentPending || isSolanaPaymentPending;
+  const isGeneratingPaymentPending = versions.some((v) => v.status === "generating" || v.status === "queued");
 
   useEffect(() => {
     const handleResize = () => setIsMobileViewport(window.innerWidth <= 768);
@@ -801,7 +776,8 @@ export default function EnkiPromptEditor() {
             currentPromptId: draft.currentPromptId ?? null,
           }));
           if (draft.modelsSelected?.length) {
-            setModels((prev) => ({ ...prev, selected: draft.modelsSelected }));
+            // One model runs and is saved; older drafts may still hold several.
+            setModels((prev) => ({ ...prev, selected: draft.modelsSelected.slice(0, 1) }));
           }
           if (draft.ratioSelected) {
             setRatios((prev) => ({ ...prev, selected: draft.ratioSelected }));
@@ -1055,7 +1031,7 @@ export default function EnkiPromptEditor() {
     isApplyingHistoryRef.current = true;
     setPromptData(snap.promptData);
     setVariables(snap.variables);
-    setModels((prev) => ({ ...prev, selected: snap.modelsSelected }));
+    setModels((prev) => ({ ...prev, selected: snap.modelsSelected.slice(0, 1) }));
     setRatios((prev) => ({ ...prev, selected: snap.ratiosSelected }));
     setReferenceImages(snap.referenceImages);
   }, []);
@@ -1637,16 +1613,50 @@ export default function EnkiPromptEditor() {
     };
   }, [refPreviewIndex, referenceImages.length]);
 
-  /* ─── Model Sync ─── */
+  /* ─── Model Sync ───
+     Nothing is auto-selected. fetchedModels[0] is the cheapest row (Flux),
+     so the auto-pick quietly made the free model "the selection" (Kev,
+     2026-10-02: "IMMER DAS AUSGEWÄHLTE"). */
   useEffect(() => {
     if (fetchedModels.length > 0) {
-      setModels(prev => ({
-        ...prev,
-        available: fetchedModels,
-        selected: prev.selected.length === 0 ? [fetchedModels[0].id] : prev.selected
-      }));
+      setModels(prev => ({ ...prev, available: fetchedModels }));
     }
   }, [fetchedModels]);
+
+  /* The ONE model a generation runs: the selected chip, resolved against the
+     catalogue (which knows whether it is free and what it supports). */
+  const catalogue = useModelCatalogue();
+  const picked = resolveCatalogueEntry(catalogue, models.selected[0]);
+  const genTiers = useMemo(() => (picked ? tiersUpTo(picked.maxResolution) : []), [picked]);
+  const [chosenResolution, setGenResolution] = useState<"1K" | "2K" | "4K">("2K");
+  // A tier the model cannot render runs at its ceiling, derived rather than
+  // written back, so the pick returns when a bigger model is chosen again.
+  const genResolution = genTiers.length && !genTiers.includes(chosenResolution)
+    ? genTiers[genTiers.length - 1]
+    : chosenResolution;
+
+  /* Every price shown is a server quote (Kev, 2026-10-02: "ich brauche safe
+     überall den server-quote"): each paid model at the current settings, one
+     request. The per-slot price was the catalogue price with a $0.10
+     fallback, without the fee and without quality. */
+  const pricedEntries = catalogue.filter((m) => !m.free);
+  const entryQuotes = useServerQuotes(
+    pricedEntries.map((m) => ({
+      modelId: m.id,
+      resolution: genResolution,
+      quality: m.supportsQuality ? quality : undefined,
+      boost: boost && !!m.boostAvailable,
+    })),
+  );
+  const modelPriceLabel = (id: string): string | undefined => {
+    const m = catalogue.find((c) => c.id === id);
+    if (!m) return undefined;
+    if (m.free) return "Free";
+    return quoteLabel(entryQuotes[pricedEntries.indexOf(m)]) ?? undefined;
+  };
+  /** The selected model's server quote for n images, "Free", or "…". */
+  const slotPrice = (n: number): string =>
+    !picked ? "" : picked.free ? "Free" : quoteLabel(entryQuotes[pricedEntries.indexOf(picked)], n) ?? "…";
 
   /* ─── Ratio Sync ─── */
   useEffect(() => {
@@ -1686,15 +1696,9 @@ export default function EnkiPromptEditor() {
   // own default instead.
   const ratioForApi = ratios.selected === "Any ratio" ? undefined : ratios.selected;
 
+  // One model. Several chips used to light up while only the first ran.
   const toggleModel = (modelId: string) => {
-    setModels(prev => {
-      const isSelected = prev.selected.includes(modelId);
-      if (isSelected && prev.selected.length === 1) return prev; // min 1 selected
-      return {
-        ...prev,
-        selected: isSelected ? prev.selected.filter(id => id !== modelId) : [...prev.selected, modelId]
-      };
-    });
+    setModels(prev => ({ ...prev, selected: [modelId] }));
   };
 
   /* ─── Real-time Variable Sync — detects [] brackets only ─── */
@@ -2521,59 +2525,45 @@ export default function EnkiPromptEditor() {
       previewText = previewText.split(placeholder).join(val);
     });
 
+    // Callers queue the card before this runs, so a refusal must mark it,
+    // or it spins on "generating" forever.
+    const refuse = () => setVersions(prev => prev.map(v => v.id === versionId ? { ...v, status: "failed" } : v));
     if (!previewText.trim()) {
       toast({ title: "Error", description: "Please enter a prompt.", variant: "destructive" });
+      refuse();
       return;
     }
-    const isFreePrompt = promptData.type === "free-prompt";
-    if (!isFreePrompt && !walletConnected) {
+    /* Routed by the selected model, never by the prompt type: "free prompt"
+       is a marketplace setting, and routing on it rendered Flux for every
+       chip the user picked. */
+    if (!picked) {
+      toast({ title: "Pick a model", description: "Choose the model to generate with. Nothing was generated.", variant: "destructive" });
+      refuse();
+      return;
+    }
+    if (!picked.free && !walletConnected) {
       setShowWalletPicker(true);
-      toast({ title: "Wallet required", description: "Connect a wallet to generate with x402.", variant: "destructive" });
+      toast({ title: "Wallet required", description: "Connect a wallet to pay for this generation.", variant: "destructive" });
+      refuse();
       return;
     }
     setVersions(prev => prev.map(v => v.id === versionId ? { ...v, status: "generating" } : v));
     try {
-      let data: { imageUrl: string; provider?: string; usedGemini?: boolean };
-      if (isFreePrompt) {
-        const res = await fetch("/api/generate-free", {
-          method: "POST",
-          /* The session travels with a FREE generation too. Without it
-             resolveRecordingUserId returns null and the route skips its whole
-             recorder block, so a signed-in user's free images belonged to
-             nobody and never reached their history. */
-          headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
-          body: JSON.stringify({
-            prompt: previewText,
-            resolution: "2K",
-            aspectRatio: ratioForApi,
-            boost,
-            quality,
-            referenceImages: cardRefs.length ? cardRefs : undefined,
-          }),
-        });
-        if (!res.ok) {
-          const err = (await res.json().catch(() => ({}))) as { error?: string };
-          throw new Error(err.error || "Free generation failed");
-        }
-        data = await res.json() as { imageUrl: string; provider?: string; usedGemini?: boolean };
-      } else {
-        // The server-built path (intent → pay → generate) is gone with Turnkey:
-        // it only ever worked because the server could sign for the buyer.
-        // Everyone now signs their own transaction — external wallet or CDP
-        // embedded wallet — through the x402 flow. Rebuilding the server-built
-        // route on client signing is separate work; the migration that pins the
-        // transaction message for it is already in place.
-        data = solanaConnected
-          ? await generateImageWithSolana({
-              prompt: previewText,
-              resolution: "2K",
-              chain: "solana-devnet",
-            }) as { imageUrl: string; provider?: string; usedGemini?: boolean }
-          : await generateImageWithPayment(
-              { prompt: previewText, resolution: "2K", modelIds: models.selected, ratio: ratioForApi, boost, quality },
-              selectedChain
-            ) as { imageUrl: string; provider?: string; usedGemini?: boolean };
-      }
+      const outcome = await runGeneration(
+        {
+          model: picked,
+          resolution: genResolution,
+          quality,
+          boost,
+          prompt: previewText,
+          aspectRatio: ratioForApi ?? "1:1",
+          referenceImages: cardRefs.length ? cardRefs : undefined,
+          authoring: true,
+        },
+        signPayment,
+      );
+      if (!outcome.ok) throw new Error(outcome.error);
+      const data = outcome.data as { imageUrl: string; provider?: string; usedGemini?: boolean };
       if (!data?.imageUrl) {
         throw new Error("Image generated, but no image URL was returned.");
       }
@@ -2603,7 +2593,7 @@ export default function EnkiPromptEditor() {
         } catch { /* ignore */ }
         try {
           addCreation(userKey, {
-            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            id: creationId(),
             imageUrl: data.imageUrl, prompt: previewText, createdAt: new Date().toISOString(),
           });
         } catch (storageError) {
@@ -2683,6 +2673,10 @@ export default function EnkiPromptEditor() {
 
   /* ─── Batch Generate — assigns queue positions, fires sequentially ─── */
   const handleBatchGenerate = () => {
+    if (!picked) {
+      toast({ title: "Pick a model", description: "Choose the model to generate with.", variant: "destructive" });
+      return;
+    }
     const idleCards = versions.filter(v => v.status === "idle");
     if (idleCards.length === 0) {
       toast({ title: "No idle slots", description: "Stack variables first, then generate." });
@@ -2763,28 +2757,15 @@ export default function EnkiPromptEditor() {
     );
   };
 
-  /* ─── Pricing helpers ─── */
-  const getPricePerSlot = (): number => {
-    if (models.selected.length > 0 && models.available.length > 0) {
-      const m = models.available.find(x => models.selected.includes(x.id));
-      if (m?.price) return parseFloat(String(m.price));
-    }
-    return 0.10; // fallback $0.10 per image
-  };
-
-  const formatCost = (n: number): string => `$${n.toFixed(2)} USDC`;
-
-  const getBatchCost = (slotCount: number): string =>
-    formatCost(getPricePerSlot() * slotCount);
-
-  const getRefillCost = (slotCount: number): string =>
-    formatCost(getPricePerSlot() * slotCount * 0.8);
-
-  /* ─── Pay & Generate — UX shows total cost, fires sequential per-slot x402 ─── */
+  /* ─── Pay & Generate — UX shows total cost, fires one paid generation per slot ─── */
   const handlePayAndGenerate = () => {
-    if (!walletConnected) {
+    if (!picked) {
+      toast({ title: "Pick a model", description: "Choose the model to generate with.", variant: "destructive" });
+      return;
+    }
+    if (!picked.free && !walletConnected) {
       setShowWalletPicker(true);
-      toast({ title: "Wallet required", description: "Connect a wallet to generate with x402.", variant: "destructive" });
+      toast({ title: "Wallet required", description: "Connect a wallet to pay for this generation.", variant: "destructive" });
       return;
     }
     const processableCards = versions.filter(v => v.status === "idle" || v.status === "failed");
@@ -2792,7 +2773,7 @@ export default function EnkiPromptEditor() {
       toast({ title: "No slots ready", description: "Stack variables first." });
       return;
     }
-    const cost = getBatchCost(processableCards.length);
+    const cost = slotPrice(processableCards.length);
     const total = processableCards.length;
     // Mark all as queued immediately
     setVersions(prev => prev.map(v => {
@@ -2803,9 +2784,9 @@ export default function EnkiPromptEditor() {
     setUi(prev => ({ ...prev, queueTotal: total }));
     toast({
       title: `Paying ${cost} for ${total} image${total > 1 ? "s" : ""}`,
-      description: "Each slot will process a micro-payment via Thirdweb.",
+      description: "Each slot is paid separately from your wallet.",
     });
-    // Fire each with 400ms stagger — each triggers its own x402 payment
+    // Fire each with 400ms stagger — each holds its own payment
     processableCards.forEach((card, i) => {
       setTimeout(() => {
         setVersions(prev => prev.map(v =>
@@ -2819,8 +2800,17 @@ export default function EnkiPromptEditor() {
   /* ─── Refill & Generate — delete selected + pay 80% price for those slots ─── */
   const handleRefillAndGenerate = () => {
     if (ui.selectedCards.length === 0) return;
+    if (!picked) {
+      toast({ title: "Pick a model", description: "Choose the model to generate with.", variant: "destructive" });
+      return;
+    }
+    if (!picked.free && !walletConnected) {
+      setShowWalletPicker(true);
+      toast({ title: "Wallet required", description: "Connect a wallet to pay for this generation.", variant: "destructive" });
+      return;
+    }
     const refillCount = ui.selectedCards.length;
-    const cost = getRefillCost(refillCount);
+    const cost = slotPrice(refillCount);
     // Delete selected cards
     setVersions(prev => prev.filter(v => !ui.selectedCards.includes(v.id)));
     setUi(prev => ({ ...prev, selectedCards: [] }));
@@ -2841,7 +2831,7 @@ export default function EnkiPromptEditor() {
     setUi(prev => ({ ...prev, queueTotal: refillCount }));
     toast({
       title: `Refill pack · ${cost}`,
-      description: `${refillCount} slot${refillCount > 1 ? "s" : ""} queued at 20% refill discount.`,
+      description: `${refillCount} slot${refillCount > 1 ? "s" : ""} queued.`,
     });
     refillCards.forEach((card, i) => {
       setTimeout(() => {
@@ -2935,22 +2925,24 @@ export default function EnkiPromptEditor() {
           .slice(0, 4),
         price: promptData.type === "premium-prompt" ? promptPrice : 0,
       };
-      // Forward the Turnkey session so the server records the creator
-      // (user_id) — the intent payment flow can only price prompts whose
-      // creator is known. Same header the publish PATCH already sends.
-      const sessionToken =
-        typeof window !== "undefined" ? localStorage.getItem("turnkey_session_token") : null;
+      // Forward the session so the server records the creator (user_id) —
+      // the intent payment flow can only price prompts whose creator is
+      // known. Same header the publish PATCH sends. It read Turnkey's token
+      // only, which nothing writes since Turnkey was retired, so every save
+      // went out anonymous and was refused.
       const response = await fetch("/api/prompt", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(sessionToken ? { "X-Session-Token": sessionToken } : {}),
-        },
+        headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
         credentials: "include",
         body: JSON.stringify(payload),
       });
       const savedPrompt: unknown = await response.json();
-      if (!response.ok) throw new Error("Failed to save prompt");
+      if (!response.ok) {
+        // The server's own sentence: a refusal with its warning, or "could not
+        // be checked". A generic one hid both from the creator.
+        const reason = (savedPrompt as { error?: unknown } | null)?.error;
+        throw new Error(typeof reason === "string" && reason ? reason : "Failed to save prompt");
+      }
       if (typeof savedPrompt === "object" && savedPrompt !== null && "id" in savedPrompt) {
         setUi(prev => ({ ...prev, currentPromptId: String((savedPrompt as { id?: unknown }).id ?? "") }));
       }
@@ -2976,18 +2968,11 @@ export default function EnkiPromptEditor() {
       // action if the column/route is missing — the prompt is already saved
       // and shows on /showcase regardless.
       try {
-        // The PATCH route now requires a session (it used to accept anonymous
-        // edits), so forward the Turnkey session token.
-        const sessionToken =
-          typeof window !== "undefined"
-            ? localStorage.getItem("turnkey_session_token")
-            : null;
+        // The PATCH route requires a session (it used to accept anonymous
+        // edits), so forward it.
         await fetch(`/api/prompts/${id}`, {
           method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            ...(sessionToken ? { "X-Session-Token": sessionToken } : {}),
-          },
+          headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
           credentials: "include",
           body: JSON.stringify({ published: true }),
         });
@@ -3055,9 +3040,6 @@ export default function EnkiPromptEditor() {
     );
   };
 
-  // Same session header the save/publish fetches send.
-  const diceSessionToken =
-    typeof window !== "undefined" ? localStorage.getItem("turnkey_session_token") : null;
 
   const settingsPristine =
     !promptData.title.trim() &&
@@ -3623,8 +3605,7 @@ export default function EnkiPromptEditor() {
 
             <div ref={setSettingsSectionRef("models")} className={settingsSectionClass("models", settingsMissing.models)}>
             <div className="enk-label">
-              <span>PREFERRED MODELS</span>
-              <span style={{ fontSize: 10, color: "var(--enk-hint)", textTransform: 'lowercase', letterSpacing: 0, fontWeight: 500 }}>multi-select</span>
+              <span>MODEL</span>
             </div>
             <div className={fieldError("models") ? "enk-field--missing-block" : undefined}>
             {models.available.length === 0 ? (
@@ -3641,7 +3622,7 @@ export default function EnkiPromptEditor() {
                     <span className="enk-model-card__name">
                       {model.name}
                     </span>
-                    <span className="enk-model-card__price">${model.price.toFixed(2)}</span>
+                    <span className="enk-model-card__price">{modelPriceLabel(model.id) ?? "—"}</span>
                   </div>
                 );
               })
@@ -3675,11 +3656,11 @@ export default function EnkiPromptEditor() {
                 changes what the generation IS, not just when it starts. */}
             <div className="enk-label">SPEED</div>
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <BoostToggle boost={boost} onChange={setBoost} />
+              <BoostToggle boost={boost} onChange={setBoost} available={!!picked?.boostAvailable} />
               <QualitySelect
                 value={quality}
                 onChange={setQuality}
-                available={/gpt.?image/i.test(models.selected[0] ?? "")}
+                available={!!picked?.supportsQuality}
               />
               <p className="enk-hint-text" style={{ margin: 0 }}>
                 {boost
@@ -4851,7 +4832,7 @@ export default function EnkiPromptEditor() {
                     onClick={handleRefillAndGenerate}
                   >
                     Refill
-                    <span className="enk-refill-bar__cost">{getRefillCost(ui.selectedCards.length)}</span>
+                    <span className="enk-refill-bar__cost">{slotPrice(ui.selectedCards.length)}</span>
                   </button>
                   <button
                     className="enk-refill-bar__cancel"
@@ -4977,7 +4958,7 @@ export default function EnkiPromptEditor() {
                   <span style={{ fontFamily: "var(--font-jetbrains-mono), monospace", fontSize: "clamp(9px, 0.6vw + 6px, 12px)", color: "var(--enk-muted)", letterSpacing: 1, textTransform: "uppercase" }}>Batch cost</span>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
                     <span style={{ fontFamily: "var(--font-jetbrains-mono), monospace", fontSize: "clamp(12px, 0.8vw + 8px, 16px)", fontWeight: 700, color: "var(--enk-dark)" }}>
-                      {getBatchCost(Math.max(versions.filter(v => v.status === "idle" || v.status === "failed").length, variables.filter(v => v.type === "text").length > 0 ? Math.max(...variables.filter(v => v.type === "text").map(v => v.values.length || 1)) : 1))}
+                      {slotPrice(Math.max(versions.filter(v => v.status === "idle" || v.status === "failed").length, variables.filter(v => v.type === "text").length > 0 ? Math.max(...variables.filter(v => v.type === "text").map(v => v.values.length || 1)) : 1))}
                     </span>
                     <span style={{ fontFamily: "var(--font-jetbrains-mono), monospace", fontSize: "clamp(9px, 0.5vw + 6px, 11px)", color: "var(--enk-hint)" }}>
                       via {currentNetworkName}
@@ -5000,7 +4981,7 @@ export default function EnkiPromptEditor() {
                   <DiceButton
                     variables={diceVariables}
                     context={promptData.body.slice(0, DICE_LIMITS.maxContextLen)}
-                    headers={diceSessionToken ? { "X-Session-Token": diceSessionToken } : undefined}
+                    headers={sessionAuthHeaders()}
                     onValues={applyDiceValues}
                     size={12}
                   />
@@ -5094,23 +5075,34 @@ export default function EnkiPromptEditor() {
         }}
         models={models}
         setModel={(id) => setModels(prev => ({ ...prev, selected: [id] }))}
+        resolution={genResolution}
+        setResolution={(v) => { if (v === "1K" || v === "2K" || v === "4K") setGenResolution(v); }}
+        resolutionOptions={genTiers.map((t) => ({ value: t, label: t }))}
         ratios={ratios}
         setRatio={(r) => setRatios(prev => ({ ...prev, selected: r }))}
-        pricePerSlot={getPricePerSlot()}
+        priceFor={slotPrice}
+        modelPriceLabel={modelPriceLabel}
+        requiredVariations={promptData.type === "free-prompt" ? 1 : 4}
         onAutoFill={handleGrokFill}
         isAutoFilling={ui.isGrokFilling}
-        onGenerate={() => {
-          if (!walletConnected) {
+        onGenerate={(count) => {
+          if (!picked) {
+            toast({ title: "Pick a model", description: "Choose the model to generate with.", variant: "destructive" });
+            return;
+          }
+          if (!picked.free && !walletConnected) {
             setShowWalletPicker(true);
-            toast({ title: "Wallet required", description: "Connect a wallet to generate with x402.", variant: "destructive" });
+            toast({ title: "Wallet required", description: "Connect a wallet to pay for this generation.", variant: "destructive" });
             return;
           }
           const snapshot: Record<string, string> = {};
           variables.forEach(v => { snapshot[v.name] = (v.defaultValue as string) || v.name; });
-          const newId = versions.length > 0 ? Math.max(...versions.map(v => v.id)) + 1 : 1;
-          setVersions(prev => [...prev, { id: newId, variableSnapshot: snapshot, imageUrl: null, status: "idle" }]);
-          toast({ title: `Paying ${formatCost(getPricePerSlot())}`, description: "Processing micro-payment for generation..." });
-          setTimeout(() => { handleGenerateVersion(newId); }, 100);
+          // As many images as the sheet shows and prices, one payment each.
+          const base = versions.length > 0 ? Math.max(...versions.map(v => v.id)) + 1 : 1;
+          const ids = Array.from({ length: count }, (_, i) => base + i);
+          setVersions(prev => [...prev, ...ids.map((id) => ({ id, variableSnapshot: snapshot, imageUrl: null, status: "idle" as const }))]);
+          toast({ title: `Paying ${slotPrice(count)}`, description: count > 1 ? "Each image is paid separately from your wallet." : "Processing the payment for this generation..." });
+          ids.forEach((id, i) => setTimeout(() => { handleGenerateVersion(id); }, 100 + i * 400));
         }}
       />
 

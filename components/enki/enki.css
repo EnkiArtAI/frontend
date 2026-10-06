@@ -2248,3 +2248,129 @@
 }
 .enki-catbar-search.open input:focus { border-bottom-color: var(--enki-ember); }
 .enki-catbar-search input::placeholder { color: var(--enki-ink-3); }
+
+/* ── Two-row category bar: rubriken + search on top, the FILTERS in their
+   own row DIRECTLY beneath (Kev, 2026-08-24). Both rows live in the fixed
+   bar, so page scrolling moves neither. ── */
+.enki-catbar--tworow {
+  flex-direction: column;
+  align-items: stretch;
+  height: auto;
+  padding: 0;
+}
+.enki-catbar-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 24px;
+}
+.enki-filterrow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  height: 38px;
+  padding: 0 24px;
+  border-top: 1px solid rgba(127, 127, 127, 0.12);
+}
+
+/* ── Search takeover: the open search OWNS row 1 (Kev, 2026-08-24:
+   "predominant temporarily aufgeklappt über den rubriken") while the
+   filter row below stays reachable beside it. ── */
+.enki-catbar-all, .enki-catbar-divider, .enki-catbar-scroll {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.enki-catbar--searching .enki-catbar-all,
+.enki-catbar--searching .enki-catbar-divider,
+.enki-catbar--searching .enki-catbar-scroll {
+  opacity: 0;
+  transform: translateX(-6px);
+  pointer-events: none;
+}
+.enki-catbar--searching .enki-catbar-search {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: 0;
+  bottom: 0;
+  padding-left: 0;
+}
+.enki-catbar--searching .enki-catbar-search input {
+  width: 100%;
+  flex: 1 1 auto;
+}
+
+/* ── Generator filter, FLAT along the row (Kev, 2026-08-24: "pack alle
+   möglichkeiten längs auf das menü, left aligned"): group labels toggle a
+   whole medium, one chip per generator, everything one click, multiple
+   choice. Fixed bar — the page scrolls, this does not. ── */
+.enki-fltr-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--enki-ink-3);
+  margin-right: 2px;
+  cursor: default;
+  transition: color 0.15s, background 0.15s;
+}
+.enki-fltr-icon.active { color: var(--enki-ember); cursor: pointer; }
+.enki-fltr-icon.active:hover { background: color-mix(in oklab, var(--enki-ember) 12%, transparent); }
+/* One SUPER-SOFT frame per medium (Kev, 2026-08-24): a whisper of a
+   border and an even quieter fill — the eye groups first, reads second. */
+.enki-fltr-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 5px;
+  border: 1px solid color-mix(in oklab, var(--enki-ink-3) 22%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--enki-ink-3) 5%, transparent);
+}
+.enki-fltr-glabel {
+  border: none;
+  background: none;
+  padding: 4px 6px;
+  border-radius: 5px;
+  color: var(--enki-ink-3);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.enki-fltr-glabel:hover { color: var(--enki-ink); }
+.enki-fltr-glabel.active { color: var(--enki-ember); }
+.enki-fltr-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 11px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--enki-ink-3);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.enki-fltr-chip:hover { color: var(--enki-ink); border-color: color-mix(in oklab, var(--enki-ember) 45%, var(--enki-rule)); }
+.enki-fltr-chip.active {
+  color: var(--enki-ember);
+  border-color: var(--enki-ember);
+  background: color-mix(in oklab, var(--enki-ember) 10%, transparent);
+}
+
+/* The bar grew a second row — the wall starts below it. */
+.enki-masonry { padding-top: 44px; }

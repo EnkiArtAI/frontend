@@ -24,11 +24,13 @@ import "./ratio-select.css";
 
 export type Quality = "low" | "medium" | "high";
 
-/** What OpenAI charges per image at 1024x1024, for the hover text. */
+/* No price claims here: the price shown beside Generate is the server's
+   quote for the chosen quality, which also carries the artist share and the
+   fee, so a ratio of model costs ("9x") was not what anyone paid. */
 const HINT: Record<Quality, string> = {
   low: "Fastest and cheapest. Fine for trying an idea out.",
-  medium: "The middle ground — roughly 9x the price of low.",
-  high: "Best detail. Roughly 35x the price of low, so use it on keepers.",
+  medium: "The middle ground in detail and price.",
+  high: "Best detail and the highest price; use it on keepers.",
 };
 
 const LABEL: Record<Quality, string> = { low: "Low", medium: "Mid", high: "High" };

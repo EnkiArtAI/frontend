@@ -9,6 +9,14 @@ import type { NextRequest } from "next/server";
 // Next.js 16 renamed the "middleware" convention to "proxy".
 const COOKIE = "enki_team";
 
+/** The unfurlers that fetch a pasted link's preview — never a browser. */
+const LINK_PREVIEW_BOTS =
+  /Twitterbot|facebookexternalhit|Facebot|Discordbot|Slackbot|LinkedInBot|TelegramBot|WhatsApp|Pinterestbot|redditbot|Embedly|iframely|Applebot|Googlebot|bingbot/i;
+
+function isLinkPreviewBot(ua: string | null): boolean {
+  return !!ua && LINK_PREVIEW_BOTS.test(ua);
+}
+
 function isPublic(pathname: string): boolean {
   // Public marketing landing + the gate flow itself
   if (pathname === "/" || pathname === "/landing.html") return true;
@@ -23,6 +31,9 @@ function isPublic(pathname: string): boolean {
   // (Kev, 2026-08-23: agents shall reach our prompts via x402).
   if (pathname.startsWith("/api/x402/")) return true;
   if (pathname.startsWith("/.well-known/")) return true;
+  // Social preview cards: the image X/Discord/Telegram fetch for a pasted
+  // prompt link. A crawler has no cookie by definition (Kev, 2026-09-05).
+  if (pathname.startsWith("/api/og/")) return true;
   // The landing mosaic feed must stay reachable for the public landing
   if (pathname === "/api/header-images") return true;
   // The wallet vendor's servers fetch our signing keys to validate external JWTs
@@ -77,6 +88,15 @@ export function proxy(req: NextRequest) {
 
   const token = req.cookies.get(COOKIE)?.value;
   if (token && token === code) return NextResponse.next();
+
+  /* Link-preview crawlers may READ a prompt page's <head> (og:title,
+     og:image) so a pasted /generator link unfurls with its showcase images
+     (Kev, 2026-09-05). They get the server-rendered shell only: the page's
+     content is client-rendered behind BetaGate, which a bot never passes.
+     Humans without the code are still redirected to the gate below. */
+  if (pathname.startsWith("/generator/") && isLinkPreviewBot(req.headers.get("user-agent"))) {
+    return NextResponse.next();
+  }
 
   // For API calls, answer with 401 instead of an HTML redirect.
   if (pathname.startsWith("/api/")) {

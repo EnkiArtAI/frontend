@@ -1,3 +1,4 @@
+import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 /**
  * POST /api/auth/nonce
  * Generate a nonce for EIP-712 wallet authentication
@@ -70,6 +71,7 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (nonceError) {
+      if (isDbUnreachable(nonceError)) return dbUnavailableResponse();
       console.error("Error creating nonce:", nonceError);
       return NextResponse.json(
         { success: false, error: "Failed to generate nonce" },
@@ -85,6 +87,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
+    if (isDbUnreachable(error)) return dbUnavailableResponse();
     console.error("Error in nonce generation:", error);
     return NextResponse.json(
       { success: false, error: "Internal server error" },

@@ -2,9 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   apiBoostPricePerImage,
   apiPricePerImage,
-  computeGenerationPrice,
+  MODEL_IMAGE_PRICING,
   effectiveQuality,
-  PLATFORM_FEE_PERCENT,
 } from "@/lib/pricing";
 import { getModelCostMicro } from "@/lib/payments/generation-pricing";
 
@@ -15,27 +14,22 @@ import { getModelCostMicro } from "@/lib/payments/generation-pricing";
  * assertions are the tripwire for the day a table row moves unnoticed.
  * OpenAI cells measured 2026-08-24 (metered bench, billed output tokens).
  */
-describe("apiPricePerImage — gpt routes by quality", () => {
-  it("low and medium run OpenAI direct: the measured token costs", () => {
+describe("apiPricePerImage — gpt runs OpenAI direct on every quality", () => {
+  it("low and medium: the measured OpenAI cells", () => {
     expect(apiPricePerImage("gpt-image-2", "2K", "low")).toBe(0.012);
     expect(apiPricePerImage("gpt-image-2", "4K", "low")).toBe(0.02);
     expect(apiPricePerImage("gpt-image-2", "2K", "medium")).toBe(0.107);
     expect(apiPricePerImage("gpt-image-2", "4K", "medium")).toBe(0.178);
   });
 
-  it("high runs WaveSpeed: its flat price, far below OpenAI's high", () => {
-    expect(apiPricePerImage("gpt-image-2", "2K", "high")).toBe(0.167);
-    expect(apiPricePerImage("gpt-image-2", "4K", "high")).toBe(0.25);
+  it("high: OpenAI's measured cells — WaveSpeed's 2026-09-05 matrix (\$0.40/\$0.72) would have lost money against the old flat \$0.167/\$0.25", () => {
+    expect(apiPricePerImage("gpt-image-2", "2K", "high")).toBe(0.428);
+    expect(apiPricePerImage("gpt-image-2", "4K", "high")).toBe(0.712);
   });
 
-  it("routing saves money on EVERY quality against a single-host ladder", () => {
-    // Below high, OpenAI direct undercuts WaveSpeed's flat price...
-    expect(apiPricePerImage("gpt-image-2", "2K", "medium")).toBeLessThan(0.167);
-    expect(apiPricePerImage("gpt-image-2", "2K", "low")).toBeLessThan(0.167);
-    // ...and at high, WaveSpeed's flat price undercuts OpenAI's measured
-    // $0.428/$0.712 — which is why high does NOT run OpenAI.
-    expect(apiPricePerImage("gpt-image-2", "2K", "high")).toBeLessThan(0.428);
-    expect(apiPricePerImage("gpt-image-2", "4K", "high")).toBeLessThan(0.712);
+  it("the ladder row (picker 'from' price, tier ratio) is the MEDIUM cell — the two tables may never drift apart", () => {
+    expect(MODEL_IMAGE_PRICING["gpt-image-2"]["2K"]).toBe(apiPricePerImage("gpt-image-2", "2K", "medium"));
+    expect(MODEL_IMAGE_PRICING["gpt-image-2"]["4K"]).toBe(apiPricePerImage("gpt-image-2", "4K", "medium"));
   });
 
   it("an unstated quality prices at the tier default the server renders with", () => {
@@ -67,29 +61,18 @@ describe("apiBoostPricePerImage", () => {
     }
   });
 
-  it("models without a boost route answer their normal price", () => {
-    expect(apiBoostPricePerImage("flux", "2K")).toBe(apiPricePerImage("flux", "2K"));
+  it("a family without a price table has no price: it never borrows Nano Banana Pro's", () => {
+    expect(() => apiPricePerImage("flux", "2K")).toThrow(/No price table/);
+    expect(() => apiBoostPricePerImage("flux", "2K")).toThrow(/No price table/);
   });
 });
 
-describe("computeGenerationPrice", () => {
-  it("prices the boost route per image, fee on top, count applied", () => {
-    const p = computeGenerationPrice("nano-banana-pro", "4K", 3, { boost: true });
-    expect(p.perImage).toBe(0.24);
-    expect(p.apiSubtotal).toBeCloseTo(0.72, 10);
-    expect(p.total).toBeCloseTo(0.72 * (1 + PLATFORM_FEE_PERCENT), 10);
-  });
-
-  it("without boost the ladder price is unchanged for nano", () => {
-    const p = computeGenerationPrice("nano-banana-pro", "4K", 1);
-    expect(p.perImage).toBe(apiPricePerImage("nano-banana-pro", "4K"));
-  });
-
-  it("gpt quality feeds the NORMAL price — the route depends on it", () => {
-    expect(computeGenerationPrice("gpt-image-2", "2K", 1, { quality: "high" }).perImage).toBe(0.167);
-    expect(computeGenerationPrice("gpt-image-2", "2K", 1, { quality: "low" }).perImage).toBe(0.012);
-    // No quality: the tier default, same as the server will render.
-    expect(computeGenerationPrice("gpt-image-2", "4K", 1).perImage).toBe(0.25);
+describe("apiPricePerImage by quality", () => {
+  it("gpt quality sets the price, and no quality means the tier default the server renders", () => {
+    expect(apiPricePerImage("gpt-image-2", "2K", "high")).toBe(0.428);
+    expect(apiPricePerImage("gpt-image-2", "2K", "low")).toBe(0.012);
+    expect(apiPricePerImage("gpt-image-2", "4K")).toBe(0.712);
+    expect(apiBoostPricePerImage("nano-banana-pro", "4K")).toBe(0.24);
   });
 });
 
@@ -100,8 +83,8 @@ describe("getModelCostMicro (the CHARGED leg)", () => {
 
   it("gpt charges the quality-routed host, boost flag or not", () => {
     expect(getModelCostMicro("gpt-image-2", "2K", { quality: "medium" })).toBe(107_000);
-    expect(getModelCostMicro("gpt-image-2", "4K", { quality: "high" })).toBe(250_000);
-    expect(getModelCostMicro("gpt-image-2", "4K", { boost: true, quality: "high" })).toBe(250_000);
+    expect(getModelCostMicro("gpt-image-2", "4K", { quality: "high" })).toBe(712_000);
+    expect(getModelCostMicro("gpt-image-2", "4K", { boost: true, quality: "high" })).toBe(712_000);
   });
 
   it("no opts means the tier-default quality — matching what would render", () => {

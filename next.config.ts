@@ -22,9 +22,6 @@ const nextConfig: NextConfig = {
     },
   },
 
-  // Legacy Express server file (backend/app.ts) is preserved for upstream
-  // compatibility but not used in Next.js API routes.
-  // @types/express is installed as dev dependency for TypeScript type checking.
 
   // Webpack configuration
   webpack: (config, { isServer }) => {

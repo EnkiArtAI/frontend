@@ -340,6 +340,15 @@ export default function PaymentPanel({ focusRamp = false }: { focusRamp?: boolea
             <div className="set-item-sub">For collectors who live there.</div>
           </div>
         </div>
+        {/* LUKSO is the achievements chain (Solana pays, LUKSO remembers)
+            — listed as coming so the plan is visible (Kev, 2026-08-24). */}
+        <div className="set-list-item" style={{ opacity: 0.6 }}>
+          <div className="set-item-icon">◈</div>
+          <div className="set-item-content">
+            <div className="set-item-title">LUKSO <span className="set-badge-warn">Coming soon</span></div>
+            <div className="set-item-sub">Achievements and creator identity will live here.</div>
+          </div>
+        </div>
       </details>
     </>
   );

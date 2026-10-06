@@ -1,133 +1,16 @@
 /**
- * Image generation for the Node Creator ("Create Prompt 2").
+ * Node Creator ("Create Prompt 2") helpers that are not a generation.
+ * Generating goes through lib/generation/run-generation.ts like every surface.
  *
- *  - generateNanoBanana(): real, FREE image generation via the project's own
- *    /api/generate-free endpoint (Pollinations) — no key, sign-in, or payment.
- *  - placeholderArt(): the design's deterministic SVG-gradient generator, used
- *    for the decorative seed/reference nodes and as a graceful fallback.
+ *  - placeholderArt(): the design's deterministic SVG-gradient generator, for
+ *    the decorative seed/reference nodes and mock-up mode. Never a stand-in
+ *    for a failed generation.
  *  - persistCreation(): best-effort hook to save a finished render to the
- *    user's database/gallery. Touches no backend code — it just POSTs to the
- *    existing gallery endpoint and to the local creations store, swallowing
- *    errors so an unconfigured DB never breaks the editor.
+ *    user's database/gallery, swallowing errors so an unconfigured DB never
+ *    breaks the editor.
  */
 
 import { addCreation } from "@/lib/creations";
-import { sessionAuthHeaders } from "@/lib/session-headers";
-
-/**
- * ── What this file used to claim, and what it did ───────────────────────
- * `generateNanoBanana()` posted to /api/generate-free, which is Pollinations
- * running flux. So the node editor offered "Nano Banana Pro", showed a price,
- * put "Pay & Gen" on the button — and generated free flux, charged nothing,
- * and ignored the model entirely. Three claims, none of them true.
- *
- * The function is now named for what it does, and generateWithModel() below
- * routes by the model the user actually picked.
- */
-export const NANO_BANANA_MODEL = "gemini-3-pro-image";
-
-/** A model as the catalogue describes it — /api/models, never a constant. */
-export interface CatalogueModel {
-  id: string;
-  name: string;
-  /** USD per image. 0 means the free tier. */
-  price: number;
-}
-
-/**
- * Generate with the model the user chose.
- *
- * A free model goes to /api/generate-free; anything else goes to the paid
- * route with its id, so the server resolves the provider from the catalogue
- * like every other surface. The editor no longer decides which model runs by
- * accident.
- *
- * Returns the image URL, or an { error } the caller can show — a paid
- * generation without a settled payment must say so rather than quietly
- * handing back a free picture from a different model.
- */
-export async function generateWithModel(opts: {
-  prompt: string;
-  aspectRatio?: string;
-  resolution?: string;
-  model: CatalogueModel | null;
-  boost?: boolean;
-  quality?: "low" | "medium" | "high";
-  workflow?: unknown;
-}): Promise<{ url: string } | { error: string }> {
-  const { prompt, aspectRatio = "1:1", resolution = "2K", model, boost, quality, workflow } = opts;
-  const isFree = !model || model.price <= 0;
-  const endpoint = isFree ? "/api/generate-free" : "/api/generate-image";
-
-  try {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt,
-        aspectRatio,
-        resolution,
-        workflow,
-        ...(isFree ? {} : { modelIds: [model!.id], boost: !!boost, quality }),
-      }),
-    });
-
-    if (res.status === 402) {
-      return { error: "This model needs a paid generation — top up your balance first." };
-    }
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      return { error: body.error || `Generation failed (${res.status})` };
-    }
-    const data = await res.json();
-    return typeof data?.imageUrl === "string"
-      ? { url: data.imageUrl }
-      : { error: "No image returned" };
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Generation failed" };
-  }
-}
-
-/**
- * Generate a single image for the node creator via the project's own
- * generation endpoint (`/api/generate-free` → Pollinations), which returns a
- * real image as a data URL with no API key, sign-in, or payment. Returns the
- * URL, or null on failure (the caller falls back to a placeholder).
- *
- * To switch to paid Nano Banana Pro (Gemini) generation, point this at
- * `/api/generate-image` once a balance / x402 payment flow is wired for the
- * editor — that endpoint is payment-gated by design.
- */
-export async function generateNanoBanana(
-  prompt: string,
-  aspectRatio = "1:1",
-  /**
-   * The node graph that produced this prompt, from buildExportJSON(). Sent so
-   * the generation can be re-run later: the server pulls the image bytes and
-   * the authored text out of it, stores the structure as jsonb and the text
-   * encrypted (lib/generation/workflow.ts). Without it a generation records
-   * what came out but not how it was built.
-   */
-  workflow?: unknown,
-): Promise<string | null> {
-  try {
-    const res = await fetch("/api/generate-free", {
-      method: "POST",
-      /* The session travels with a FREE generation too. Without it
-         resolveRecordingUserId returns null and the route skips its whole
-         recorder block, so a signed-in user's free images belonged to
-         nobody and never reached their history. */
-      headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
-      body: JSON.stringify({ prompt, aspectRatio, workflow }),
-    });
-    if (!res.ok) { console.warn("[node-creator] generation failed:", res.status); return null; }
-    const data = await res.json();
-    return typeof data?.imageUrl === "string" ? data.imageUrl : null;
-  } catch (e) {
-    console.warn("[node-creator] generation failed:", e);
-    return null;
-  }
-}
 
 /**
  * Best-effort persistence to the user's gallery/DB + local creations store so

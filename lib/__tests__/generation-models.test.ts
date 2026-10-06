@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { __testing__, routeFor, DEFAULT_MODEL } from "@/lib/generation/models";
+import { __testing__, routeFor } from "@/lib/generation/models";
 
 const { fromRow } = __testing__;
 
@@ -33,7 +33,9 @@ describe("model → route resolution", () => {
 
   it("falls back to the slug bridge when the migration has not run", () => {
     const m = fromRow(NANO, "public");
-    expect(m.normal.provider).toBe("wavespeed");
+    // Gemini direct on both legs since 2026-09-05 (WaveSpeed raised 1K/2K to
+    // $0.14; Gemini stays $0.134 and is the faster host) — boost === normal.
+    expect(m.normal.provider).toBe("gemini");
     expect(m.boost.provider).toBe("gemini");
   });
 
@@ -76,16 +78,19 @@ describe("model → route resolution", () => {
     expect(deadProvider.normal.providerModel).not.toBe("y");
   });
 
-  it("never charges by resolution for a model that ignores it", () => {
-    // gemini-2.5-flash-image always returns 1024x1024 — measured, not assumed.
-    expect(fromRow({ id: "m2", name: "Nano Banana" }, "public").supportsResolution).toBe(false);
+  it("gives a row with no provider rows and no bridge entry no route, never a guessed one", () => {
+    // ENG-01: the old fallback routed any unknown name to Nano Banana Pro.
+    const m = fromRow({ id: "m2", name: "Nano Banana" }, "public");
+    expect(m.normal).toEqual({ provider: "none", providerModel: "" });
+    expect(m.boost).toEqual({ provider: "none", providerModel: "" });
+    expect(m.supportsResolution).toBe(false);
     expect(fromRow(NANO, "public").supportsResolution).toBe(true);
   });
 
   it("keeps per-model limits from the row, not the defaults", () => {
     const m = fromRow(NANO, "public");
     expect(m.maxRefs).toBe(18);
-    expect(m.maxRefs).not.toBe(DEFAULT_MODEL.maxRefs);
+    expect(m.maxRefs).not.toBe(3); // the column default for rows that predate it
     expect(m.allowedRatios).toEqual(["1:1"]);
   });
 });

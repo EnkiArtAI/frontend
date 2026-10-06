@@ -3,13 +3,22 @@ import { generateImageWithPollinations } from "@/backend/services/pollinations-i
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
+import { checkPrompt } from "@/lib/moderation/prompt-check";
+import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
+import { ADULT_REFUSAL, adultConfirmed, promptMarkedAdult } from "@/lib/adult-content";
+import { SILENT_FAILURE, silentFailure } from "@/lib/moderation/extraction-hits";
 import { getSupabaseServerClientSafe } from "@/lib/supabaseServer";
-import { recordGeneration, resolveRecordingUserId } from "@/lib/generation/record";
-import { resolveModelByName } from "@/lib/generation/models";
+import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
+import { resolveModel } from "@/lib/generation/models";
+import { normalizeTier, RESOLUTION_TIERS } from "@/lib/generation/resolution";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
 import { storeReferenceImages } from "@/lib/generation/reference-images";
 import { readImageDimensions } from "@/backend/services/gemini-image-generation";
 import { freeGenerationDecision } from "@/lib/generation/free-quota";
+
+// A silent refusal waits 3-12 s like a failing generation; a platform default
+// of 10-15 s would turn the slow ones into timeouts, which is a tell of its own.
+export const maxDuration = 300;
 
 /**
  * Free image generation endpoint (dev/testing)
@@ -35,6 +44,15 @@ import { freeGenerationDecision } from "@/lib/generation/free-quota";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(request: NextRequest) {
+  // What a failure from the render on is recorded with, for the admin person list.
+  let failCtx: Omit<GenerationFailure, "error"> | null = null;
+  // JSON only. A page elsewhere may send a form or plain text here in a
+  // visitor's name without asking first; every request costs a check and can
+  // earn the visitor's address a warning. JSON from another site has to ask,
+  // and is refused.
+  if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+    return NextResponse.json({ error: "Send the request as JSON." }, { status: 415 });
+  }
   try {
     const body = await request.json();
     const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
@@ -60,12 +78,81 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // No session here, so the limit is per IP.
+    // Per IP: it runs before the account is known.
     const limit = checkRequestRateLimit(rateLimitKey(request, "generate-free"), 10, 60_000);
     if (!limit.allowed) return rateLimitResponse(limit.retryAfterSeconds);
 
-    const verdict = await moderate({ prompt, surface: "generate-free", signal: request.signal });
-    after(recordModerationEvent(verdict, { surface: "generate-free", request, prompt }));
+    /* The selected model, and only if it is the free one. This route used to
+       read no model at all and render Flux for whatever the caller picked, so
+       every client that guessed "free" from a price or a prompt type handed a
+       Nano Banana Pro pick a Flux picture (Kev, 2026-10-02: "es darf NIEMALS
+       IRGENDEIN standardmodell durchgeschickt werden sondern IMMER DAS
+       AUSGEWÄHLTE"). */
+    const model = UUID_RE.test(String(body?.modelId ?? ""))
+      ? await resolveModel(getSupabaseServerClientSafe(), [String(body.modelId)])
+      : null;
+    if (!model) {
+      return NextResponse.json(
+        { error: "The chosen model is unknown or not available right now. Nothing was generated." },
+        { status: 422 },
+      );
+    }
+    if (model.normal.provider !== "pollinations") {
+      return NextResponse.json(
+        { error: `${model.name} is a paid model and needs a payment. Nothing was generated and nothing was charged.` },
+        { status: 402 },
+      );
+    }
+    const resolution = body.resolution == null ? model.maxResolution : normalizeTier(body.resolution);
+    if (!resolution || RESOLUTION_TIERS.indexOf(resolution) > RESOLUTION_TIERS.indexOf(model.maxResolution)) {
+      return NextResponse.json(
+        { error: `${model.name} renders up to ${model.maxResolution}. Nothing was generated.` },
+        { status: 422 },
+      );
+    }
+    if (body.boost === true) {
+      return NextResponse.json({ error: `${model.name} has no boost. Nothing was generated.` }, { status: 422 });
+    }
+
+    // The free generator renders whatever it is given and filters nothing
+    // itself, so the prompt is judged here first, like every paid one. Only
+    // an account generates here, and an account is stopped by its own ban:
+    // the address ladder would only have silenced every other account on a
+    // shared address (an office, a mobile network) for one stranger's warnings.
+    const supabaseForChecks = getSupabaseServerClientSafe();
+    if (!supabaseForChecks) return NextResponse.json(SILENT_FAILURE, { status: 500 });
+    // An artist's draft from an editor: no moderator may read it, marked as
+    // withheld on the requester's word (lib/moderation/evidence). Any session
+    // token counts, live, expired or suspended: a draft must never be shown.
+    // Text withheld by a stranger's made-up token stays labelled as theirs and
+    // counts on the ladder as before; the owner opens it where it is a
+    // warning or a child-safety case, and other blocks stay closed.
+    const authoring = body?.authoring === true && Boolean(request.headers.get("X-Session-Token"));
+    const check = await checkPrompt({ prompt }, { hidden: false, signal: request.signal });
+    if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
+      const outcome = await recordWarning(supabaseForChecks, {
+        surface: "generate-free", request, category: check.verdict, confidence: check.confidence,
+        ...(authoring ? { text: "", withheld: prompt, draft: true } : { text: prompt }),
+      });
+      return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
+    }
+    if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
+    // Refused silently only where a real generation fails, after the sign-in
+    // and quota answers below; earlier, a signed-out caller could tell.
+    const silent = check.verdict !== "clear";
+    // 18+ (a suggestive prompt, or a prompt marked 18+) is for confirmed adults
+    // only; an anonymous visitor cannot confirm.
+    const marked = await promptMarkedAdult(supabaseForChecks, UUID_RE.test(String(body?.promptId ?? "")) ? String(body.promptId) : null);
+    if (marked === null) {
+      return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was generated." }, { status: 503 });
+    }
+    const adult = (check.verdict === "clear" && check.adult === true) || marked;
+    if (adult && !(await adultConfirmed(supabaseForChecks, await resolveRecordingUserId(supabaseForChecks, request)))) {
+      return NextResponse.json(ADULT_REFUSAL, { status: 403 });
+    }
+
+    const verdict = await moderate({ prompt, surface: "generate-free", signal: request.signal, adultJudged: true });
+    after(recordModerationEvent(verdict, { surface: "generate-free", request, ...(authoring ? { prompt: "", withheld: prompt, draft: true } : { prompt }) }));
     if (!verdict.allowed) {
       return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
     }
@@ -77,12 +164,8 @@ export async function POST(request: NextRequest) {
      * than after generating so an account over its limit does not cost a
      * render, and so the answer arrives in a second rather than a minute.
      *
-     * Signed-out callers are deliberately NOT limited here, because they
-     * cannot be counted: this route stays unauthenticated, and the only thing
-     * standing behind an anonymous caller is the per-IP rate limit above.
-     * That is a real gap in the allowance and it is named rather than papered
-     * over — closing it means requiring a session, which is a product
-     * decision, not a patch.
+     * A caller without an account is asked to sign in here: only accounts
+     * generate on this route, and an account is stopped by its own ban.
      */
     const quotaClient = getSupabaseServerClientSafe();
     const quotaUserId = await resolveRecordingUserId(quotaClient, request);
@@ -116,22 +199,27 @@ export async function POST(request: NextRequest) {
     console.log('🎨 Free generation request:', {
       chars: prompt.length,
       aspectRatio: body.aspectRatio || '1:1',
-      resolution: body.resolution || '2K',
+      resolution,
     });
 
-    // Generate image using Pollinations.ai (free)
+    if (silent) return silentFailure();
+
+    failCtx = {
+      request, surface: "generate-free", modelId: model.id, resolution, quality: null, boost: false,
+      aspectRatio: body.aspectRatio || "1:1", referenceImageCount: 0, prompt: authoring ? null : prompt,
+    };
     const result = await generateImageWithPollinations(
       prompt,
       body.aspectRatio || '1:1',
-      body.resolution || '2K',
+      resolution,
+      model.normal.providerModel,
     );
 
     if (!result.success || !result.imageBuffers || result.imageBuffers.length === 0) {
       console.error('❌ Image generation failed:', result.error);
-      return NextResponse.json(
-        { error: result.error || 'Image generation failed' },
-        { status: 500 }
-      );
+      after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: result.error || "Image generation failed" }));
+      // Same answer as a caught request, so the two cannot be told apart.
+      return NextResponse.json(SILENT_FAILURE, { status: 500 });
     }
 
     // Convert to base64 data URL (no blob storage needed).
@@ -160,12 +248,12 @@ export async function POST(request: NextRequest) {
       const recUserId = quotaUserId;
       if (supabase && recUserId) {
         const stripped = stripWorkflowImages(body?.workflow ?? {});
-        const model = await resolveModelByName(supabase, "Flux (free)");
         // Measured once, above, for the media type. Measuring the same
         // buffer a second time here could only ever agree with itself.
         const dims = measured;
         after(
           recordGeneration(supabase, {
+            adult,
             userId: recUserId,
             /* Which prompt this came from.
              *
@@ -188,7 +276,7 @@ export async function POST(request: NextRequest) {
             route: model.normal,
             boost: false,
             aspectRatio: body.aspectRatio || "1:1",
-            resolution: body.resolution || "2K",
+            resolution,
             // The service generates one and throws it away — the only seed in
             // the whole stack, and it never reaches us.
             seed: null,
@@ -213,7 +301,7 @@ export async function POST(request: NextRequest) {
       imageUrl,
       prompt,
       provider: "pollinations",
-      model: "flux",
+      model: model.normal.providerModel,
       generationTime: result.generationTime,
       free: true,
       /* The size that actually came back, measured from the bytes.
@@ -230,12 +318,13 @@ export async function POST(request: NextRequest) {
       height: measured?.height ?? null,
       bytes: buffer.length,
       format: measured?.format ?? null,
-      requestedResolution: body.resolution || "2K",
+      requestedResolution: resolution,
     });
 
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("Generate free image error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: message }));
+    return NextResponse.json(SILENT_FAILURE, { status: 500 });
   }
 }

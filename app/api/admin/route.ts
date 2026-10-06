@@ -20,8 +20,16 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { decryptString, encryptString, type EncryptedPayload } from "@/lib/crypto";
 import { notifyAdmins } from "@/lib/admin-notify";
+import { CHILD_SAFETY, hasChildSafetyCase, inWarningOrBanList, listPeople, parsePersonKey, personDetail } from "@/lib/admin/people";
+import { readEvidence, withheldEvidence } from "@/lib/moderation/evidence";
+import { loadPromptText } from "@/lib/generation/prompt-text";
+import { banUntil } from "@/lib/moderation/bans";
+
+/** A ban counts while it is not lifted and has not run out, as activeBanFor reads it. */
+const unexpired = () => `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`;
 
 type Supabase = ReturnType<typeof getSupabaseServerClient>;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // The role comes back too: mods and admins share this panel, but not every
 // control in it. Throttling generation is an admin decision — a mod moderates
@@ -153,20 +161,13 @@ async function executeProposal(supabase: Supabase, p: ProposalRow, now: string):
     }, { onConflict: "ip_hash", ignoreDuplicates: true });
     if (error) return error;
   } else {
-    const { data: active } = await supabase.from("bans")
-      .select("id").eq("user_id", String(p.target_user_id)).is("lifted_at", null).limit(1);
-    if (active?.length) {
-      if (p.kind === "ban_perm") {
-        const { error } = await supabase.from("bans").update({ expires_at: null }).eq("id", active[0].id);
-        if (error) return error;
-      } // ban_temp on an already-banned user: nothing to stack
-    } else {
-      const { error } = await supabase.from("bans").insert({
-        user_id: String(p.target_user_id), issued_by: String(p.proposed_by), scope: "full", reason,
-        expires_at: p.kind === "ban_perm" ? null : new Date(Date.now() + Number(p.days ?? 7) * 86400_000).toISOString(),
-      });
-      if (error) return error;
-    }
+    const until = p.kind === "ban_perm" ? null : new Date(Date.now() + Number(p.days ?? 7) * 86400_000).toISOString();
+    // Its own row beside any running ban (lib/moderation/bans.ts), so each
+    // keeps its reason and appeal; nothing new if this same ban already runs as long.
+    const issued = await banUntil(supabase, {
+      userId: String(p.target_user_id), issuedBy: String(p.proposed_by), reason, expiresAt: until,
+    }).catch(() => null);
+    if (!issued) return { message: "the ban could not be issued" };
   }
   const { error } = await supabase.from("mod_proposals")
     .update({ status: "approved", decided_at: now, executed_at: now }).eq("id", String(p.id));
@@ -198,7 +199,15 @@ export async function GET(req: NextRequest) {
   if (gate instanceof NextResponse) return gate;
   const { userId, role } = gate;
 
-  const [imp, rep, fb, fr, hu, st, ba, ap, rec, council, genPolicy, automod] = await Promise.all([
+  // One person, expanded in the person list: every event with its prompt and settings.
+  const person = req.nextUrl.searchParams.get("person");
+  if (person !== null) {
+    const who = parsePersonKey(person);
+    if (!who) return NextResponse.json({ error: "Bad person id" }, { status: 400 });
+    return NextResponse.json(await personDetail(supabase, who, (ct, iv, tag, kid) => tryDecrypt(ct, iv, tag, kid, [undefined])));
+  }
+
+  const [imp, rep, fb, fr, hu, st, ba, ap, rec, council, genPolicy, automod, people] = await Promise.all([
     supabase.from("hunt_submissions")
       .select("id, hunter_user_id, source_url, suggested_title, suggested_tags, submitted_at")
       .eq("status", "pending").order("submitted_at", { ascending: false }).limit(100),
@@ -219,9 +228,12 @@ export async function GET(req: NextRequest) {
       .is("revoked_at", null).order("created_at", { ascending: false }).limit(200),
     supabase.from("bans")
       .select("id, user_id, reason, scope, expires_at, created_at")
-      .is("lifted_at", null).limit(100),
+      // In activeBanFor's order: the ban that holds comes first per user and
+      // survives the limit; ties go to the newest.
+      .is("lifted_at", null).or(unexpired())
+      .order("expires_at", { ascending: false, nullsFirst: true }).order("created_at", { ascending: false }).limit(100),
     supabase.from("appeals")
-      .select("id, user_id, user_statement, status, created_at")
+      .select("id, user_id, user_statement, status, target_uuid, created_at")
       .eq("status", "pending").order("created_at", { ascending: false }).limit(100),
     supabase.from("recovery_requests")
       .select("id, user_id, claimed_handle, claimed_wallet, contact_email_ct, contact_email_iv, contact_email_tag, contact_email_kid, explanation_ct, explanation_iv, explanation_tag, explanation_kid, layer, status, rejection_reason, created_at")
@@ -235,6 +247,7 @@ export async function GET(req: NextRequest) {
       .select("id, user_id, surface, severity, tier, category, matched_rules, scores, prompt_hash, evidence_ct, evidence_iv, evidence_tag, evidence_kid, review_state, created_at")
       .eq("decision", "block")
       .order("created_at", { ascending: false }).limit(150),
+    listPeople(supabase),
   ]);
 
   // attachments per feedback + evidence per recovery request
@@ -276,13 +289,28 @@ export async function GET(req: NextRequest) {
   }
 
   // strikes tab: one row per user with active strikes, ban state and appeal
-  const banByUser = new Map<string, { reason: string | null; permanent: boolean }>();
-  for (const b of (ba.data ?? []) as { user_id: string; reason: string | null; expires_at: string | null }[]) {
-    banByUser.set(String(b.user_id), { reason: b.reason, permanent: !b.expires_at });
+  // A user can hold several bans (each sanction is its own row); the one that
+  // lasts longest holds, and is the one shown.
+  const banByUser = new Map<string, { id: string; reason: string | null; permanent: boolean }>();
+  const banById = new Map<string, { reason: string | null; until: string | null }>();
+  for (const b of (ba.data ?? []) as { id: string; user_id: string; reason: string | null; expires_at: string | null }[]) {
+    banById.set(String(b.id), { reason: b.reason, until: b.expires_at });
+    if (!banByUser.has(String(b.user_id))) banByUser.set(String(b.user_id), { id: String(b.id), reason: b.reason, permanent: !b.expires_at });
   }
-  const appealByUser = new Map<string, { id: string; note: string | null }>();
-  for (const a of (ap.data ?? []) as { id: string; user_id: string; user_statement: string | null }[]) {
-    appealByUser.set(String(a.user_id), { id: String(a.id), note: a.user_statement });
+  // Of several pending appeals, the one against the ban that holds; else the
+  // newest. Each carries the ban it is against, so the admin approves knowing
+  // which one it lifts.
+  const appealByUser = new Map<string, { id: string; note: string | null; target: string | null; against: { reason: string | null; until: string | null } | null }>();
+  for (const a of (ap.data ?? []) as { id: string; user_id: string; user_statement: string | null; target_uuid: string | null }[]) {
+    const k = String(a.user_id);
+    const holding = banByUser.get(k)?.id;
+    const cur = appealByUser.get(k);
+    if (!cur || (a.target_uuid === holding && cur.target !== holding)) {
+      appealByUser.set(k, {
+        id: String(a.id), note: a.user_statement, target: a.target_uuid ?? null,
+        against: a.target_uuid ? banById.get(a.target_uuid) ?? null : null,
+      });
+    }
   }
   const strikeRows = new Map<string, { userId: string; strikes: { id: string; reason: string | null }[] }>();
   for (const s of (st.data ?? []) as { id: string; user_id: string; reason: string | null }[]) {
@@ -294,6 +322,7 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json({
+    people,
     imports: (imp.data ?? []).map((r) => ({
       id: String(r.id),
       name: (r.suggested_title as string) || "Untitled",
@@ -357,11 +386,15 @@ export async function GET(req: NextRequest) {
     },
     automod: (automod.data ?? []).map((r) => {
       const scores = (r.scores as Record<string, number> | null) ?? null;
+      const evidence = readEvidence(r);
       // The single number a moderator needs: what the classifier was most
-      // sure about. Everything else is in `scores` if they open the row.
-      const worst = scores
-        ? Object.entries(scores).sort((a, b) => b[1] - a[1])[0] ?? null
-        : null;
+      // sure about. Everything else is in `scores` if they open the row. A
+      // warning's weight is no score, and its confidence stands in only when
+      // no classifier score came with it: jsonb returns keys shortest first,
+      // so a tie must not decide which one shows.
+      const ranked = Object.entries(scores ?? {}).filter(([k]) => k !== "weight");
+      const classifier = ranked.filter(([k]) => k !== "confidence");
+      const worst = (classifier.length ? classifier : ranked).sort((a, b) => b[1] - a[1])[0] ?? null;
       return {
         id: String(r.id),
         handle: r.user_id ? (handles.get(String(r.user_id)) ?? "unknown") : null,
@@ -371,9 +404,11 @@ export async function GET(req: NextRequest) {
         category: (r.category as string) ?? null,
         rules: Array.isArray(r.matched_rules) ? (r.matched_rules as string[]) : [],
         topScore: worst ? { name: worst[0], value: worst[1] } : null,
-        // The blocked prompt itself. Encrypted at rest; a moderator judging a
-        // block has to be able to read what was actually written.
-        prompt: tryDecrypt(r.evidence_ct, r.evidence_iv, r.evidence_tag, r.evidence_kid, [undefined]),
+        // What was blocked, as far as a moderator may read it: a user's own
+        // text and a buyer's values, never an artist's words.
+        prompt: evidence.text,
+        withheld: evidence.withheld,
+        draft: evidence.draft,
         state: (r.review_state as string) ?? "none",
         at: r.created_at,
       };
@@ -509,11 +544,64 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── moderation events: review from the person list (Kev, 2026-10-03) ──
+  // Overturning takes a warning or hit out of every count; the event itself
+  // stays, append-only. A child-safety case is an admin's call, never a mod's.
+  if (body.resource === "automod" && body.id && (body.action === "overturn" || body.action === "uphold")) {
+    const { data: ev } = await supabase.from("automod_events")
+      .select("category").eq("id", body.id).eq("decision", "block").maybeSingle();
+    if (!ev) return NextResponse.json({ error: "Event not found" }, { status: 404 });
+    if (CHILD_SAFETY.includes(String(ev.category)) && role !== "admin") {
+      return NextResponse.json({ error: "Only an admin can review a child-safety case" }, { status: 403 });
+    }
+    const { error } = await supabase.from("automod_events").update({
+      review_state: body.action === "overturn" ? "overturned" : "upheld",
+      reviewed_by: userId, reviewed_at: now, review_notes: body.reason?.slice(0, 500) ?? null,
+    }).eq("id", body.id);
+    return error ? fail(error, "review the event") : NextResponse.json({ ok: true });
+  }
+
+  // An artist's withheld words, for the moderation owner alone, one record
+  // of the warning and ban list at a time (Kev, 2026-10-03: only the most
+  // important admins, in hard cases, and only there). The reason is logged
+  // before anything shows: no log, no text.
+  if (body.resource === "automod" && body.action === "reveal" && body.id) {
+    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+    if (reason.length < 10 || reason.length > 500) {
+      return NextResponse.json({ error: "Say why, in 10 to 500 characters." }, { status: 400 });
+    }
+    const { data: policy } = await supabase.from("moderation_policy").select("owner_user_id").eq("id", 1).maybeSingle();
+    if (role !== "admin" || !policy?.owner_user_id || String(policy.owner_user_id) !== userId) {
+      return NextResponse.json({ error: "Only the moderation owner can reveal an artist's text." }, { status: 403 });
+    }
+    const { data: ev } = await supabase.from("automod_events")
+      .select("id, surface, category, scores, ban_id, evidence_ct, evidence_iv, evidence_tag, evidence_kid").eq("id", body.id).maybeSingle();
+    if (!ev) return NextResponse.json({ error: "Event not found" }, { status: 404 });
+    if (!inWarningOrBanList(ev)) {
+      return NextResponse.json({ error: "Only a warning, an extraction hit, a child-safety case or a record behind a ban can be opened." }, { status: 403 });
+    }
+    // The record's own copy, or else the named prompt's text as it stands now.
+    const part = withheldEvidence(ev);
+    const fromPrompt = part.text === null && part.promptId !== null;
+    const loaded = fromPrompt ? await loadPromptText(supabase, String(part.promptId)) : null;
+    const text = fromPrompt ? (loaded?.ok ? loaded.text : null) : part.text;
+    if (text === null) return NextResponse.json({ error: "This record holds no artist text that can be read." }, { status: 404 });
+    const { error } = await supabase.from("artist_text_reveals").insert({ event_id: ev.id, prompt_id: part.promptId, revealed_by: userId, reason });
+    if (error) return NextResponse.json({ error: "The reveal could not be logged, so nothing is shown." }, { status: 503 });
+    const { data: me } = await supabase.from("users").select("handle").eq("id", userId).maybeSingle();
+    await notifyAdmins(supabase, {
+      exceptUserId: userId,
+      subject: "[Enki Admin] Withheld moderation text was revealed",
+      text: [
+        `@${(me?.handle as string) ?? "the moderation owner"} revealed the withheld text of moderation record ${ev.id}${part.promptId ? ` (prompt ${part.promptId})` : ""}.`,
+        "",
+        `Reason: ${reason}`,
+      ].join("\n"),
+    }).catch(() => {});
+    return NextResponse.json({ text, source: fromPrompt ? "prompt" : "record" });
+  }
+
   // ── strikes ──
-  // No automod write action on purpose (Kev, 2026-08-05): the panel shows the
-  // filter's record, and every change to it happens in Supabase directly. That
-  // keeps the one surface reachable from the internet read-only, so a stolen
-  // admin session can read the evidence but never touch it.
 
   // Generation throttle — ADMIN ONLY. A mod moderates content; slowing the
   // whole product down for every user is not a moderation decision, and the
@@ -561,22 +649,23 @@ export async function POST(req: NextRequest) {
       const permanent = body.permanent === true;
       const days = Number.isInteger(body.days) && body.days! >= 1 && body.days! <= 365 ? body.days! : null;
       if (!permanent && !days) return NextResponse.json({ error: "days (1–365) or permanent required" }, { status: 400 });
-      const { data: active } = await supabase.from("bans")
-        .select("id").eq("user_id", targetId).is("lifted_at", null).limit(1);
-      if (active?.length) {
-        if (!permanent) return NextResponse.json({ error: "Already banned" }, { status: 400 });
-        // escalate the active ban instead of stacking a second one
-        const { error } = await supabase.from("bans").update({ expires_at: null }).eq("id", active[0].id);
-        return error ? fail(error, "make the ban permanent") : NextResponse.json({ ok: true });
+      const until = permanent ? null : new Date(Date.now() + days! * 86400_000).toISOString();
+      // Its own row beside any running ban, so each keeps its reason and
+      // appeal; refused when this same ban already runs as long.
+      const issued = await banUntil(supabase, {
+        userId: targetId, issuedBy: userId, reason: (body.reason ?? "Banned from the admin panel").slice(0, 200), expiresAt: until,
+      }).catch(() => null);
+      if (!issued) return fail(null, "ban the user");
+      if (!issued.issued) {
+        return NextResponse.json({ error: issued.until ? `Already banned until ${issued.until.slice(0, 10)}` : "Already banned for good" }, { status: 400 });
       }
-      const { error } = await supabase.from("bans").insert({
-        user_id: targetId, issued_by: userId, scope: "full",
-        reason: (body.reason ?? "Banned from the admin panel").slice(0, 200),
-        expires_at: permanent ? null : new Date(Date.now() + days! * 86400_000).toISOString(),
-      });
-      return error ? fail(error, "ban the user") : NextResponse.json({ ok: true });
+      return NextResponse.json({ ok: true });
     }
     if (body.action === "lift") {
+      // A ban that follows a child-safety case is an admin's to lift, like the case itself.
+      if (role !== "admin" && (await hasChildSafetyCase(supabase, targetId))) {
+        return NextResponse.json({ error: "Only an admin can lift a ban after a child-safety case" }, { status: 403 });
+      }
       const { error } = await supabase.from("bans")
         .update({ lifted_at: now, lifted_by: userId, lifted_reason: "Reinstated from the admin panel" })
         .eq("user_id", targetId).is("lifted_at", null);
@@ -592,6 +681,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Appeal not found or already decided" }, { status: 400 });
     }
     const approve = body.action === "approve";
+    if (approve && ap.target_type !== "strike" && role !== "admin") {
+      const { data: ban, error: banErr } = await supabase.from("bans").select("user_id").eq("id", ap.target_uuid).maybeSingle();
+      if (banErr) return fail(banErr, "check the appealed ban");
+      if (ban && (await hasChildSafetyCase(supabase, String(ban.user_id)))) {
+        return NextResponse.json({ error: "Only an admin can lift a ban after a child-safety case" }, { status: 403 });
+      }
+    }
     const { error } = await supabase.from("appeals")
       .update({ status: approve ? "approved" : "denied", decided_by: userId, decided_at: now })
       .eq("id", body.id).eq("status", "pending");

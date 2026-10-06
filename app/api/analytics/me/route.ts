@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
+import { isPublicText } from "@/lib/prompt-visibility";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -150,9 +151,7 @@ export async function GET(req: NextRequest) {
 
   const prompts = summaryOnly ? [] : (myPrompts ?? []).map((p) => {
     const id = String(p.id);
-    const isFree =
-      p.is_free_showcase === true || p.prompt_type === "showcase" || p.prompt_type === "free-prompt" ||
-      (typeof p.price_usd_cents === "number" ? p.price_usd_cents : 0) === 0;
+    const isFree = isPublicText(p) || (typeof p.price_usd_cents === "number" ? p.price_usd_cents : 0) === 0;
     const e = earningsByPrompt.get(id);
     return {
       id,

@@ -6,7 +6,7 @@ import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useCdpAddress } from "@/hooks/useCdpAddress";
 import { useSolanaAuth } from "@/hooks/useSolanaAuth";
-import { sessionAuthHeaders } from "@/lib/session-headers";
+import { sessionAuthHeaders, viewerHeaders } from "@/lib/session-headers";
 import EnkiCard from "@/components/enki/EnkiCard";
 import EnkiDetailPanel from "@/components/enki/EnkiDetailPanel";
 import {
@@ -15,6 +15,7 @@ import {
 import type { EnkiPrompt } from "@/lib/enkiPromptAdapter";
 import { requestPromptEdit } from "@/components/enki-shell/editorBridge";
 import { useBetaAccess } from "@/components/BetaGate";
+import { openLogin } from "@/lib/openLogin";
 import { listCreations, subscribeCreations, type StoredCreation } from "@/lib/creations";
 import { useSearchParams, useRouter } from "next/navigation";
 import { ArrowLeft, ChevronDown, Sparkles, ImageOff, User, Pencil, Loader2, ZoomIn, Heart } from "lucide-react";
@@ -444,8 +445,10 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
   // Likes is PRIVATE like History: only the owner's view carries the tab,
   // and the route it reads derives the list from the SESSION — a visitor
   // cannot request anyone else's likes (Kev, 2026-08-23).
+  /* Library is PRIVATE too (Kev, 2026-09-05): the owner's saved prompts and
+     workflows, one click from the editor. */
   const TABS = own
-    ? ["Released", "Gallery", "Likes", "Reviews", "About", "History"]
+    ? ["Released", "Gallery", "Library", "Likes", "Reviews", "About", "History"]
     : ["Released", "Gallery", "Reviews", "About"];
   const router = useRouter();
   const [activeTab, setActiveTab] = useState("Released");
@@ -453,12 +456,34 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
   const [myLikes, setMyLikes] = useState<Array<{ promptId: string; title: string; imageUrl: string | null }> | null>(null);
   useEffect(() => {
     if (activeTab !== "Likes" || myLikes !== null) return;
-    fetch("/api/prompts/likes/mine", { headers: { ...sessionAuthHeaders() } })
+    fetch("/api/prompts/likes/mine", { headers: viewerHeaders() })
       .then((r) => (r.ok ? r.json() : { likes: [] }))
       .then((d) => setMyLikes(d.likes ?? []))
       .catch(() => setMyLikes([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
+  // The private library — fetched lazily the first time its tab opens.
+  type LibItem = { id: string; name: string; kind: string; updated_at: string; graph: unknown; prompt_text: string | null };
+  const [library, setLibrary] = useState<LibItem[] | null>(null);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
+  const loadLibrary = async () => {
+    setLibraryError(null);
+    try {
+      const r = await fetch("/api/library", { headers: { ...sessionAuthHeaders() } });
+      const d = (await r.json().catch(() => ({}))) as { items?: LibItem[]; error?: string };
+      if (!r.ok) { setLibrary([]); setLibraryError(d.error || `Couldn't load your library (HTTP ${r.status}).`); return; }
+      setLibrary(Array.isArray(d.items) ? d.items : []);
+    } catch { setLibrary([]); setLibraryError("Couldn't load your library."); }
+  };
+  useEffect(() => {
+    if (activeTab !== "Library" || library !== null) return;
+    void loadLibrary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+  const deleteLibraryItem = async (id: string) => {
+    const res = await fetch(`/api/library?id=${encodeURIComponent(id)}`, { method: "DELETE", headers: { ...sessionAuthHeaders() } });
+    if (res.ok) setLibrary((l) => (l ?? []).filter((x) => x.id !== id));
+  };
   const [open, setOpen] = useState<EnkiPrompt | null>(null);
   const searchParams = useSearchParams();
 
@@ -494,7 +519,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
     let dead = false;
     (async () => {
       try {
-        const res = await fetch(`/api/creators/${encodeURIComponent(handle)}/profile`);
+        const res = await fetch(`/api/creators/${encodeURIComponent(handle)}/profile`, { headers: viewerHeaders() });
         if (!res.ok || dead) return;
         const d = await res.json();
         if (dead) return;
@@ -591,7 +616,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
       // Foreign: only this creator's shelf — same query and mapping as the
       // feed, narrowed server-side by ?creator.
       if (handle) params.set("creator", handle);
-      const res = await fetch(`/api/marketplace/prompts?${params.toString()}`, { credentials: "include" });
+      const res = await fetch(`/api/marketplace/prompts?${params.toString()}`, { headers: viewerHeaders(), credentials: "include" });
       if (!res.ok) throw new Error("Failed to load prompts");
       return res.json();
     },
@@ -620,7 +645,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
       // Local (unsynced) creations exist only for the device's own user.
       const local = handle ? [] : listCreations(galleryWallet);
       try {
-        const res = await fetch(`/api/generations?userId=${encodeURIComponent(galleryWallet)}&limit=50`);
+        const res = await fetch(`/api/generations?userId=${encodeURIComponent(galleryWallet)}&limit=50`, { headers: viewerHeaders() });
         if (!res.ok) throw new Error("Failed");
         const json = await res.json();
         const raw = json?.data?.generations ?? json?.generations ?? json?.items ?? [];
@@ -663,7 +688,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
           <p style={{ fontSize: 14, lineHeight: 1.6, color: "var(--enki-ink-3)", margin: "0 0 22px" }}>
             Log in and this page fills with your prompts, your gallery and your numbers.
           </p>
-          <a href="/" style={{
+          <a href="/?login=1" onClick={(e) => { e.preventDefault(); openLogin(); }} style={{
             display: "inline-block", padding: "12px 26px", borderRadius: 12, textDecoration: "none",
             background: "linear-gradient(135deg,#d9863f,#e8a83a)", color: "#181209", fontSize: 14, fontWeight: 700,
           }}>
@@ -925,6 +950,39 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
                     }}>
                       {c.prompt}
                     </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        ) : activeTab === "Library" ? (
+          library === null ? (
+            <div style={{ padding: "60px 0", textAlign: "center", color: "var(--enki-ink-3)" }}>Loading…</div>
+          ) : libraryError ? (
+            <div style={{ padding: "80px 0", textAlign: "center" }}>
+              <div className="serif" style={{ fontSize: 24, color: "var(--enki-ink-3)" }}>Couldn't load your library.</div>
+              <p style={{ fontSize: 14, color: "var(--enki-ink-3)", maxWidth: 440, margin: "8px auto 0" }}>{libraryError}</p>
+              <button type="button" className="ek-btn" style={{ marginTop: 16, minHeight: 40 }} onClick={() => void loadLibrary()}>Try again</button>
+            </div>
+          ) : library.length === 0 ? (
+            <div style={{ padding: "80px 0", textAlign: "center" }}>
+              <div className="serif" style={{ fontSize: 24, color: "var(--enki-ink-3)" }}>Your library is empty.</div>
+              <p style={{ fontSize: 14, color: "var(--enki-ink-3)", maxWidth: 440, margin: "8px auto 0" }}>
+                Only you see this tab. In the prompt editor, choose “Save to my library” — saved prompts and workflows open here in one click and can be inserted into other prompts as workflow nodes.
+              </p>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12, padding: "18px 0" }}>
+              {library.map((it) => (
+                <div key={it.id} style={{ border: "1px solid var(--enki-rule)", borderRadius: 12, background: "var(--enki-paper-2)", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <span style={{ fontWeight: 700, fontSize: 14, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{it.name}</span>
+                    <span className="mono" style={{ fontSize: 10.5, color: "var(--enki-ink-3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{it.kind}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--enki-ink-3)", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{it.prompt_text || "—"}</div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+                    <button type="button" className="ek-btn" style={{ minHeight: 32, flex: 1 }} onClick={() => requestPromptEdit({ title: it.name, libraryGraph: it.graph })}>Open in editor</button>
+                    <button type="button" style={{ minHeight: 32, padding: "0 10px", border: "1px solid var(--enki-rule)", borderRadius: 8, background: "transparent", color: "var(--enki-ink-3)", cursor: "pointer" }} title="Delete from library" onClick={() => void deleteLibraryItem(it.id)}>Delete</button>
                   </div>
                 </div>
               ))}

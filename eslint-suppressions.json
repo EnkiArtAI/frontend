@@ -90,9 +90,9 @@
       "count": 1
     }
   },
-  "app/generate/page.tsx": {
+  "app/generator/[id]/GeneratorClient.tsx": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 1
+      "count": 3
     }
   },
   "app/generator/[id]/page.tsx": {
@@ -149,61 +149,6 @@
       "count": 2
     }
   },
-  "app/test/TestPageClient.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "backend/__tests__/oracle-resolver.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
-  "backend/__tests__/payment-system.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
-  "backend/app.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
-  "backend/database/db.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
-  "backend/gemini.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
-  "backend/oracles/chainlink-oracle.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
-  "backend/oracles/oracle-resolver.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
-  "backend/oracles/uniswap-twap-oracle.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
-  "backend/price-oracle-complex.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
-  "backend/routes/generations.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 5
-    }
-  },
   "backend/scripts/migrate.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
@@ -239,31 +184,8 @@
       "count": 3
     }
   },
-  "backend/services/gemini-rate-limiter.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
-  "backend/services/gemini-retry-handler.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 5
-    }
-  },
-  "backend/services/generation-processor.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 4
-    }
-  },
   "backend/services/pollinations-image-generation.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
-  "backend/services/test-gemini.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    },
-    "@typescript-eslint/no-require-imports": {
       "count": 1
     }
   },
@@ -298,17 +220,6 @@
     }
   },
   "components/BetaGate.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "components/CompactPromptCreator.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "react-hooks/refs": {
-      "count": 2
-    },
     "react-hooks/set-state-in-effect": {
       "count": 1
     }
@@ -350,15 +261,7 @@
   },
   "components/GenerateLauncher.tsx": {
     "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "components/GeneratorInterface.tsx": {
-    "@typescript-eslint/no-explicit-any": {
       "count": 3
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 2
     }
   },
   "components/HuntPromptPopover.tsx": {
@@ -367,6 +270,11 @@
     }
   },
   "components/ImageLightbox.tsx": {
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "components/LoginModal.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 1
     }
@@ -394,11 +302,6 @@
       "count": 2
     }
   },
-  "components/PromptEditor.tsx": {
-    "react-hooks/purity": {
-      "count": 4
-    }
-  },
   "components/PromptEngagement.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 1
@@ -409,7 +312,7 @@
       "count": 1
     },
     "react-hooks/set-state-in-effect": {
-      "count": 3
+      "count": 7
     }
   },
   "components/ReviewForm.tsx": {
@@ -441,14 +344,25 @@
       "count": 1
     }
   },
+  "components/enki-shell/BookmarksPanel.tsx": {
+    "react-hooks/refs": {
+      "count": 1
+    },
+    "react/no-unescaped-entities": {
+      "count": 1
+    }
+  },
   "components/enki-shell/DocView.tsx": {
     "react-hooks/refs": {
       "count": 11
     }
   },
   "components/enki-shell/EnkiHome.tsx": {
+    "react-hooks/immutability": {
+      "count": 1
+    },
     "react-hooks/set-state-in-effect": {
-      "count": 2
+      "count": 4
     }
   },
   "components/enki-shell/MessagesPanel.tsx": {
@@ -461,12 +375,22 @@
       "count": 1
     },
     "react-hooks/immutability": {
-      "count": 17
+      "count": 19
     },
     "react-hooks/refs": {
-      "count": 25
+      "count": 26
     },
     "react-hooks/set-state-in-effect": {
+      "count": 2
+    }
+  },
+  "components/enki/EnkiDetailPanel.tsx": {
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "components/enki/EnkiFeedPage.tsx": {
+    "react/no-unescaped-entities": {
       "count": 1
     }
   },
@@ -489,7 +413,10 @@
       "count": 2
     },
     "react-hooks/set-state-in-effect": {
-      "count": 3
+      "count": 4
+    },
+    "react/no-unescaped-entities": {
+      "count": 1
     }
   },
   "components/settings/RecoveryPanel.tsx": {
@@ -535,20 +462,10 @@
       "count": 1
     }
   },
-  "hooks/useSolanaX402Payment.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
   "hooks/useWalletInfo.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
     },
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "hooks/useX402PaymentProduction.ts": {
     "react-hooks/set-state-in-effect": {
       "count": 1
     }

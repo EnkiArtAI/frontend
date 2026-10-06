@@ -35,27 +35,33 @@ export const PRICING_POLICY: {
   feeMode: FeeMode;
   quoteTtlSeconds: number;
   networkFeeMicro: number;
+  extractionCheckMicro: number;
 } = {
   enkiFeeBps: 1000,
   feeBase: "subtotal",
   feeMode: "addOn",
   quoteTtlSeconds: 300,
   /**
-   * The Solana network cost of one paid generation, passed to the buyer
-   * (Kev, 2026-08-12 — reversing ToS §4's "currently paid by Enki", which
-   * reserved exactly this and requires the fee to be SHOWN before the order
-   * is confirmed; splitToBreakdown carries it for that).
+   * The Solana network cost of one paid generation. ZERO since 2026-09-05
+   * (Kev: "i want to charge just 10% on top of the API call") — Enki carries
+   * the chain cost itself again, which is exactly what ToS §4's "currently
+   * paid by Enki" states. Measured cost is ~25-30k lamports per generation
+   * (nonce create ~10k, close ~5k, the payment ~10-15k, base fee
+   * 5k/signature) ≈ $0.002 at SOL $75; the 10% fee absorbs it.
    *
-   * Charged in USDC because buyers hold no SOL — Enki still pays the chain
-   * and collects the equivalent here. Flat rather than metered per
-   * transaction: measured cost is ~25-30k lamports per generation (nonce
-   * create ~10k, close ~5k, the payment itself ~10-15k, base fee 5k/signature)
-   * ≈ $0.002 at SOL $75, plus occasional priority fees. Half a cent covers
-   * that with margin, and a flat, displayed number is honest in the ToS §4
-   * sense — a per-request SOL-price conversion would show the buyer a fee
-   * that jitters between quote and capture.
+   * Kept as a knob (and carried through splitToBreakdown) so passing it on
+   * again is a one-number change that the checkout displays automatically.
    */
-  networkFeeMicro: 5_000,
+  networkFeeMicro: 0,
+  /**
+   * The prompt check before every paid generation (lib/moderation/
+   * prompt-check), passed on to the buyer (Kev, 2026-10-02: "den openAI
+   * checker können wir ruhig auch als kosten dem kunden auferlegen"). One
+   * gpt-6-luna call is about $0.000055 at 500 tokens in and 10 out; $0.0001
+   * per image covers a longer answer and EU processing. Part of the model
+   * cost, so the fee applies to it like to the rest of the API bill.
+   */
+  extractionCheckMicro: 100,
 };
 
 export const MICRO_PER_USDC = 1_000_000;

@@ -1,0 +1,60 @@
+# Code owners = required reviewers (GitHub: Settings > Branches > main >
+# "Require review from Code Owners"). Later rules win over earlier ones.
+#
+# ROSTER (edit here only; CONTRIBUTING.md refers to these roles)
+#   Backend owner ....... TODO GitHub handle (Kev decides: Pavel proposed)
+#   Backend dev ......... TODO GitHub handle (Andre)
+#   Frontend owner ...... @KiriKev (Kev) plus TODO handles (Bevan, Utsav)
+#   Config, CI, docs .... @KiriKev
+#
+# Replace each TODO-* below with real handles before enabling the rule.
+# GitHub silently ignores lines with unknown handles, so an unfilled TODO
+# means "no required reviewer" for that path.
+
+# Default: Kev sees everything that no later rule claims.
+*                                   @KiriKev
+
+# Frontend
+/components/                        @KiriKev @TODO-frontend
+/hooks/                             @KiriKev @TODO-frontend
+/providers/                         @KiriKev @TODO-frontend
+/public/                            @KiriKev @TODO-frontend
+/app/**/page.tsx                    @KiriKev @TODO-frontend
+/app/**/layout.tsx                  @KiriKev @TODO-frontend
+/app/**/*.css                       @KiriKev @TODO-frontend
+/lib/editor/                        @KiriKev @TODO-frontend
+
+# Backend
+/app/api/                           @TODO-backend
+/lib/                               @TODO-backend
+/migrations/                        @TODO-backend
+/backend/                           @TODO-backend
+/shared/                            @TODO-backend
+/proxy.ts                           @TODO-backend @KiriKev
+
+# Money and security: backend owner AND Kev
+/lib/payments/                      @TODO-backend @KiriKev
+/app/api/payments/                  @TODO-backend @KiriKev
+/app/api/x402/                      @TODO-backend @KiriKev
+/app/api/auth/                      @TODO-backend @KiriKev
+/lib/webauthn.ts                    @TODO-backend @KiriKev
+/lib/crypto.ts                      @TODO-backend @KiriKev
+/lib/wallet-jwt.ts                  @TODO-backend @KiriKev
+/lib/allowlist.ts                   @TODO-backend @KiriKev
+/lib/session-user.ts                @TODO-backend @KiriKev
+/lib/auth.ts                        @TODO-backend @KiriKev
+/lib/moderation/                    @TODO-backend @KiriKev
+/lib/moderation-enforcement.ts      @TODO-backend @KiriKev
+
+# Config, CI, docs
+/.github/                           @KiriKev
+/package.json                       @KiriKev
+/package-lock.json                  @KiriKev
+/tsconfig*.json                     @KiriKev
+/next.config.*                      @KiriKev
+/vercel.json                        @KiriKev
+/eslint.config.*                    @KiriKev
+/vitest*.ts                         @KiriKev
+/*.md                               @KiriKev
+/docs/                              @KiriKev
+/scripts/                           @KiriKev

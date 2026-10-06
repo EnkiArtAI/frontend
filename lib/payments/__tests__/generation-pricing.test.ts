@@ -49,9 +49,10 @@ describe("computeGenerationSplit", () => {
     }
   });
 
-  it("fees are 10% of the subtotal plus the flat network fee", () => {
-    // $1 premium prompt + $0.07 model → 10% on $1.07, plus $0.005 network
-    // (Kev, 2026-08-12: the chain cost is the buyer's, shown at checkout).
+  it("fees are exactly 10% of the subtotal — the network fee is 0", () => {
+    // $1 premium prompt + $0.07 model → 10% on $1.07 and nothing else
+    // (Kev, 2026-09-05: "just 10% on top of the API call"; the chain cost
+    // is Enki's again, as ToS §4 states).
     const s = computeGenerationSplit(1_000_000, 70_000);
     expect(s.enkiFeeMicro).toBe(107_000 + PRICING_POLICY.networkFeeMicro);
     expect(s.networkFeeMicro).toBe(PRICING_POLICY.networkFeeMicro);
@@ -59,13 +60,14 @@ describe("computeGenerationSplit", () => {
     expect(s.totalMicro).toBe(1_177_000 + PRICING_POLICY.networkFeeMicro);
   });
 
-  it("pins the network fee at half a cent, inside the fee component", () => {
-    // Flat by design: a per-request SOL conversion would show the buyer a fee
-    // that jitters between quote and capture. Covers the measured ~25-30k
-    // lamports (~$0.002) with margin.
-    expect(PRICING_POLICY.networkFeeMicro).toBe(5_000);
+  it("pins the network fee at ZERO — the buyer pays 10%, nothing more", () => {
+    // Kev, 2026-09-05. The knob stays so passing the chain cost on again is
+    // a one-number change the checkout would display automatically.
+    expect(PRICING_POLICY.networkFeeMicro).toBe(0);
     const s = computeGenerationSplit(1_000_000, 70_000);
-    expect(s.networkFeeMicro).toBeLessThanOrEqual(s.enkiFeeMicro);
+    expect(s.networkFeeMicro).toBe(0);
+    expect(s.enkiFeeMicro).toBe(107_000);
+    expect(s.totalMicro).toBe(1_177_000);
   });
 
   it("free prompts have no artist leg", () => {

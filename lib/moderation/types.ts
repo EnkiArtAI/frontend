@@ -38,6 +38,13 @@ export interface ModerationInput {
   surface: "generate-image" | "generate-free" | "upload" | "quote" | "x402-generate";
   /** Chained so a client disconnect cancels the Tier 2 call. */
   signal?: AbortSignal;
+  /**
+   * The prompt check already judged this text for sexual content: explicit and
+   * child-safety requests were refused there, and suggestive ones are allowed
+   * for adults and marked 18+. Tier 2 then leaves its plain "sexual" flag to
+   * that judgement; sexual/minors and every other category still block.
+   */
+  adultJudged?: boolean;
 }
 
 export interface ModerationVerdict {
