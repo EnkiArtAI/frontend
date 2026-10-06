@@ -69,7 +69,8 @@ export async function GET(req: Request) {
     // Uploads are images nothing has checked yet: no 18+ mark, no child-safety
     // check (the image check is stage 2). Their owner sees them; nobody else
     // does until that check exists.
-    if (v.userId !== ownerId) gallery = gallery.eq("is_uploaded", false);
+    // Images are recorded private; a visitor sees only what its owner published.
+    if (v.userId !== ownerId) gallery = gallery.eq("is_uploaded", false).eq("visibility", "public");
     const { data, error, count } = await hideAdult(gallery, v, ownerId);
 
     if (error) {

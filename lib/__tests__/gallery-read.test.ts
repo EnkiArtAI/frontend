@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
  * A user's gallery (GET /api/generations): other people's 18+ only for a
  * confirmed adult with the pill on, and uploads — images nothing has checked
  * yet — only for their owner until the image check exists (2026-10-03).
+ * Images are recorded private: a visitor sees only published ones (ENG-02).
  */
 
 type Row = Record<string, unknown>;
@@ -45,9 +46,10 @@ beforeEach(() => {
   tables = {
     users: [{ id: "adult", adult_confirmed_at: "2026-10-03T10:00:00Z" }, { id: OWNER, adult_confirmed_at: null }],
     generated_images: [
-      { id: "plain", user_id: OWNER, is_adult: false, is_uploaded: false, deleted_at: null },
-      { id: "adult-render", user_id: OWNER, is_adult: true, is_uploaded: false, deleted_at: null },
-      { id: "upload", user_id: OWNER, is_adult: false, is_uploaded: true, deleted_at: null },
+      { id: "plain", user_id: OWNER, is_adult: false, is_uploaded: false, visibility: "public", deleted_at: null },
+      { id: "adult-render", user_id: OWNER, is_adult: true, is_uploaded: false, visibility: "public", deleted_at: null },
+      { id: "upload", user_id: OWNER, is_adult: false, is_uploaded: true, visibility: "public", deleted_at: null },
+      { id: "private", user_id: OWNER, is_adult: false, is_uploaded: false, visibility: "private", deleted_at: null },
     ],
   };
 });
@@ -62,6 +64,6 @@ describe("a gallery", () => {
   });
 
   it("shows its owner everything", async () => {
-    expect(await gallery({ "X-Session-Token": "owner-tok" })).toEqual(["plain", "adult-render", "upload"]);
+    expect(await gallery({ "X-Session-Token": "owner-tok" })).toEqual(["plain", "adult-render", "upload", "private"]);
   });
 });
