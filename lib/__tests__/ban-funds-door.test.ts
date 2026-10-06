@@ -7,9 +7,9 @@ import { DbUnreachableError } from "@/lib/db-error";
 /**
  * BAN-6. A ban locks the marketplace, never the wallet. requireAuth refuses a
  * banned session; the routes that read auth_sessions themselves need their own
- * answer: buying credit and mapping new wallets close, selling stays open, and
- * the wallet JWT stays ban tolerant so a suspended account still signs and
- * exports its key.
+ * answer: the ramp (both ways) and mapping new wallets close, and the wallet
+ * JWT stays ban tolerant so a suspended account still signs its sends and
+ * exports its key on /banned.
  */
 
 const USER = "11111111-1111-4111-8111-111111111111";
@@ -108,19 +108,14 @@ describe("the ramp", () => {
     expect(coinbase).not.toHaveBeenCalled();
   });
 
-  it("refuses buying for a suspended account, before Coinbase is asked", async () => {
+  it("closes buying and selling for a suspended account, before Coinbase is asked", async () => {
     banned = true;
-    const res = await ramp(post({ side: "buy", address: SOL }));
-    expect(res.status).toBe(403);
-    expect(await res.json()).toMatchObject({ banned: true });
+    for (const side of ["buy", "sell"]) {
+      const res = await ramp(post({ side, address: SOL }));
+      expect(res.status, side).toBe(403);
+      expect(await res.json()).toMatchObject({ banned: true });
+    }
     expect(coinbase).not.toHaveBeenCalled();
-  });
-
-  it("keeps selling open for a suspended account: its funds stay its own", async () => {
-    banned = true;
-    const res = await ramp(post({ side: "sell", address: SOL }));
-    expect(res.status).toBe(200);
-    expect(coinbase).toHaveBeenCalledTimes(1);
   });
 
   it("answers a dead database with the honest 503", async () => {

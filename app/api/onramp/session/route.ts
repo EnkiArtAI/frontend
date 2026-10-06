@@ -87,10 +87,14 @@ export async function POST(req: NextRequest) {
   }
   const { userId, ban, wallet } = session;
   if (!wallet) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  // A ban closes buying: a suspended account has nothing to spend credit on.
-  // Selling stays open, because a ban locks the marketplace, never the wallet.
-  if (ban && side === "buy") {
-    return NextResponse.json({ error: "This account is suspended, so it cannot buy credit.", banned: true }, { status: 403 });
+  // A ban closes the ramp both ways (Kev, 2026-10-06: no offramp, we do not
+  // know who the person is). The funds stay reachable: Send and the key
+  // export on /banned.
+  if (ban) {
+    return NextResponse.json(
+      { error: "This account is suspended, so buying and selling are closed. Send or export your funds on the suspension page.", banned: true },
+      { status: 403 },
+    );
   }
 
   // The requested address must be the session wallet or one of the user's
