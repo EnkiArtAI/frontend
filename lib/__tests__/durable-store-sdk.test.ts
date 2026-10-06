@@ -44,7 +44,7 @@ afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 const BYTES = Buffer.from([137, 80, 78, 71]);
 
 describe("putDurably on the real SDK", () => {
-  it("returns at the deadline while the store is down, though the SDK would retry for minutes", async () => {
+  it("returns at the deadline while the store is down, though the SDK would retry for minutes", { timeout: 10_000, retry: 2 }, async () => {
     mode = "down";
     const started = Date.now();
     // The SDK's second retry cannot start before 3 s (1 s, then 2 s of backoff),
@@ -54,7 +54,7 @@ describe("putDurably on the real SDK", () => {
     expect(hits).toBeGreaterThan(0);
     // Wall-clock: a loaded full run can delay timers past the 0.5 s margin.
     // A retry cannot hide the bug: without the race it takes 3 s every time.
-  }, { timeout: 10_000, retry: 2 });
+  });
 
   it("leaves no abandoned put calling the store after the deadline", async () => {
     mode = "down";
