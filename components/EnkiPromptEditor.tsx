@@ -2853,7 +2853,10 @@ export default function EnkiPromptEditor() {
     }));
   };
 
-  /* ─── Grok auto-fill empty variables ─── */
+  /* ─── Grok auto-fill empty variables ───
+     Through the dice endpoint, which checks the session, limits the rate and
+     validates every value. /api/grok-fill did none of that, so anyone past
+     the team gate could spend our xAI key freely (Kev, 2026-10-06). */
   const handleGrokFill = async () => {
     const emptyVars = variables.filter(v => v.type === "text" && !v.defaultValue);
     if (emptyVars.length === 0) {
@@ -2861,18 +2864,21 @@ export default function EnkiPromptEditor() {
       handleCreateEmptySlots();
       return;
     }
+    const emptyIds = new Set(emptyVars.map(v => v.id));
     setUi(prev => ({ ...prev, isGrokFilling: true }));
     try {
-      const res = await fetch("/api/grok-fill", {
+      const res = await fetch("/api/workflow/variables", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: promptData.body, variables: emptyVars.map(v => v.name) }),
+        headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
+        body: JSON.stringify({
+          variables: diceVariables.filter(v => emptyIds.has(v.id)),
+          context: promptData.body.slice(0, DICE_LIMITS.maxContextLen),
+        }),
       });
-      const filled = await res.json() as Record<string, string>;
-      setVariables(prev => prev.map(v =>
-        filled[v.name] ? { ...v, defaultValue: filled[v.name] } : v
-      ));
-      toast({ title: "Auto filled variables", description: `Filled ${Object.keys(filled).length} variable(s).` });
+      if (!res.ok) throw new Error(`auto fill answered ${res.status}`);
+      const { values = {} } = await res.json() as { values?: Record<string, DiceValue> };
+      applyDiceValues(values);
+      toast({ title: "Auto filled variables", description: `Filled ${Object.keys(values).length} variable(s).` });
     } catch {
       toast({ title: "Auto fill failed", description: "Could not auto-fill. Try again.", variant: "destructive" });
     } finally {

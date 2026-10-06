@@ -37,11 +37,6 @@
       "count": 3
     }
   },
-  "app/api/grok-fill/route.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
   "app/api/marketplace/prompts/route.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 8
