@@ -65,6 +65,7 @@ import { generateImagesWithOpenAI } from "@/backend/services/openai-image-genera
 import { generateImagesWithGemini } from "@/backend/services/gemini-image-generation";
 import type { ImageGenerationRequest } from "@/backend/services/types";
 import { PublicKey } from "@solana/web3.js";
+import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 
 export const maxDuration = 300;
 
@@ -249,6 +250,20 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   const reqs = await requirementsFor(input);
   if (reqs.status !== 402) return NextResponse.json(reqs.body, { status: reqs.status });
 
+  // ── Verify the agent's transaction offline, before anything is judged ──
+  // Free, and the same answer for everyone: a header that is not a signed
+  // transaction paying exactly these legs is refused here, so it can no
+  // longer buy a metered prompt check or the address lookups below (Kev,
+  // 2026-10-06). Moved up from after the routing, unchanged.
+  const parsed = parseXPayment(paymentHeader);
+  if (!parsed.ok) return rejectPayment(reqs, parsed.error);
+  const verified = verifyAgentPayment(parsed.tx, {
+    legs: reqs.legs.map((l) => ({ owner: new PublicKey(l.recipient), amountMicro: l.amountMicro })),
+    mint: usdcMint(),
+    feePayer: feePayer.publicKey,
+  });
+  if (!verified.ok) return rejectPayment(reqs, verified.error);
+
   const supabase = getSupabaseServerClient();
 
   // Prompt text: sent directly, or loaded from the prompt row. A PAID
@@ -274,7 +289,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // more; explicit and child-safety requests get a warning, everything else
   // that is refused reads like any failure.
   // A blocked address, like a caught request, fails silently once its
-  // payment is verified (below); before that, a junk header told them apart.
+  // payment is simulated (below); a junk header never gets this far.
   const blocked = (await agentBlocked(supabase, request)) || (await addressWarnedOut(supabase, request));
   const checked = input.promptId ? textValues(input.variableValues) : { prompt: promptText };
   // A blocked address is still judged, so its answers and their timing match
@@ -338,16 +353,6 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   if (!route.providerModel) {
     return NextResponse.json({ error: "This model has no provider model configured — nothing was charged" }, { status: 503 });
   }
-
-  // ── Verify the agent's transaction offline ──────────────────────────────
-  const parsed = parseXPayment(paymentHeader);
-  if (!parsed.ok) return rejectPayment(reqs, parsed.error);
-  const verified = verifyAgentPayment(parsed.tx, {
-    legs: reqs.legs.map((l) => ({ owner: new PublicKey(l.recipient), amountMicro: l.amountMicro })),
-    mint: usdcMint(),
-    feePayer: feePayer.publicKey,
-  });
-  if (!verified.ok) return rejectPayment(reqs, verified.error);
 
   // A leg can point at a wallet with no USDC account yet (a new artist).
   // TransferChecked to a missing ATA fails the whole payment, so the fee
@@ -538,7 +543,19 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   );
 }
 
+/**
+ * This route is public (proxy.ts) and every paying request costs a metered
+ * prompt check: agents hold no session, so the address is the only handle
+ * (Kev, 2026-10-06).
+ */
+function ipLimited(req: NextRequest): NextResponse | null {
+  const limit = checkRequestRateLimit(rateLimitKey(req, "x402:ip"), 60, 60_000);
+  return limit.allowed ? null : rateLimitResponse(limit.retryAfterSeconds);
+}
+
 export async function GET(req: NextRequest) {
+  const limited = ipLimited(req);
+  if (limited) return limited;
   const promptId = req.nextUrl.searchParams.get("promptId") ?? undefined;
   const parsed = bodySchema.safeParse({
     prompt: req.nextUrl.searchParams.get("prompt") ?? (promptId ? undefined : "probe"),
@@ -552,6 +569,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const limited = ipLimited(req);
+  if (limited) return limited;
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid request" }, { status: 400 });
