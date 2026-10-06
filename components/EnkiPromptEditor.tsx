@@ -16,6 +16,7 @@ import { useCdpSolanaSigner } from "@/hooks/useCdpSolanaSigner";
 import { useModelLimits, useModelCatalogue, FALLBACK_RATIOS, resolveCatalogueEntry } from "@/hooks/useModelLimits";
 import { runGeneration } from "@/lib/generation/run-generation";
 import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
+import { useReferenceReads, REFS_LOADING } from "@/hooks/useReferenceReads";
 import { tiersUpTo } from "@/lib/generation/resolution";
 import BoostToggle from "@/components/generation/BoostToggle";
 import QualitySelect, { type Quality } from "@/components/generation/QualitySelect";
@@ -581,6 +582,13 @@ export default function EnkiPromptEditor() {
 
   const [variables, setVariables] = useState<PromptVariable[]>([]);
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
+  const { loading: refsLoading, pending: refsPending, read: readRef } = useReferenceReads();
+  /** Refuses while a reference image is still being read (Kev, 2026-10-06). */
+  const refsStillLoading = () => {
+    if (!refsLoading) return false;
+    toast({ title: "Images still loading", description: REFS_LOADING });
+    return true;
+  };
   const [refImageDrag, setRefImageDrag] = useState<{
     from: number | null;
     over: number | null;
@@ -1354,12 +1362,9 @@ export default function EnkiPromptEditor() {
       });
       return;
     }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const dataUrl = String(e.target?.result || "");
+    void readRef(file).then((dataUrl) => {
       if (dataUrl) setReferenceImages((prev) => [...prev, dataUrl]);
-    };
-    reader.readAsDataURL(file);
+    });
   };
 
   const pickReferenceImages = () => {
@@ -2726,9 +2731,7 @@ export default function EnkiPromptEditor() {
     input.onchange = (ev) => {
       const files = Array.from((ev.target as HTMLInputElement).files || []);
       files.forEach((file) => {
-        const reader = new FileReader();
-        reader.onload = (e) => addVerifyCardRef(slotId, String(e.target?.result || ""));
-        reader.readAsDataURL(file);
+        void readRef(file).then((dataUrl) => { if (dataUrl) addVerifyCardRef(slotId, dataUrl); });
       });
     };
     input.click();
@@ -2746,6 +2749,7 @@ export default function EnkiPromptEditor() {
 
   /* ─── Pay & Generate — UX shows total cost, fires one paid generation per slot ─── */
   const handlePayAndGenerate = () => {
+    if (refsStillLoading()) return;
     if (!picked) {
       toast({ title: "Pick a model", description: "Choose the model to generate with.", variant: "destructive" });
       return;
@@ -2787,6 +2791,7 @@ export default function EnkiPromptEditor() {
   /* ─── Refill & Generate — delete selected + pay 80% price for those slots ─── */
   const handleRefillAndGenerate = () => {
     if (ui.selectedCards.length === 0) return;
+    if (refsStillLoading()) return;
     if (!picked) {
       toast({ title: "Pick a model", description: "Choose the model to generate with.", variant: "destructive" });
       return;
@@ -3697,7 +3702,7 @@ export default function EnkiPromptEditor() {
                   >
                     <Plus size={16} />
                   </button>
-                  {referenceImages.length === 0 && (
+                  {referenceImages.length + refsPending.length === 0 && (
                     <span
                       className={`enk-ref-hint${externalDragActive ? " enk-ref-hint--drop" : ""}`}
                     >
@@ -3706,7 +3711,7 @@ export default function EnkiPromptEditor() {
                         : "Click or drag images here for reference"}
                     </span>
                   )}
-                  {referenceImages.length > 0 && (
+                  {referenceImages.length + refsPending.length > 0 && (
                     /* Cascading card-stack — each slot overlaps the
                        previous one by a fixed offset (see CSS for the
                        `--enk-ref-overlap` math). Hovering or focusing a
@@ -3794,6 +3799,11 @@ export default function EnkiPromptEditor() {
                           </div>
                         );
                       })}
+                      {refsPending.map((src) => (
+                        <div key={src} className="enk-ref-slot enki-ref-pending" aria-label="Reference image loading">
+                          <img src={src} alt="" draggable={false} />
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -4823,6 +4833,7 @@ export default function EnkiPromptEditor() {
                   <button
                     className="enk-refill-bar__refill"
                     onClick={handleRefillAndGenerate}
+                    disabled={refsLoading}
                   >
                     Refill
                     <span className="enk-refill-bar__cost">{slotPrice(ui.selectedCards.length)}</span>
@@ -4982,7 +4993,8 @@ export default function EnkiPromptEditor() {
                     className="enk-pay-btn"
                     onClick={handlePayAndGenerate}
                     disabled={
-                      isGeneratingPaymentPending || 
+                      refsLoading ||
+                      isGeneratingPaymentPending ||
                       versions.filter(v => v.status === "idle" || v.status === "failed").length === 0 ||
                       (promptData.type === "premium-prompt" && variables.some(v => !v.name))
                     }
@@ -5078,7 +5090,9 @@ export default function EnkiPromptEditor() {
         requiredVariations={promptData.type === "free-prompt" ? 1 : 4}
         onAutoFill={handleGrokFill}
         isAutoFilling={ui.isGrokFilling}
+        generateBlocked={refsLoading}
         onGenerate={(count) => {
+          if (refsStillLoading()) return;
           if (!picked) {
             toast({ title: "Pick a model", description: "Choose the model to generate with.", variant: "destructive" });
             return;
