@@ -134,7 +134,7 @@ describe("the endpoints", () => {
 describe("a payment", () => {
   it("settles through the second provider while the first is unreachable", async () => {
     primary = "down";
-    expect(await submitAndConfirm(solanaConnection(), signedTx())).toEqual({ ok: true });
+    expect(await submitAndConfirm(solanaConnection(), signedTx())).toMatchObject({ ok: true });
     expect(sentTo()).toEqual(["primary.example", "second.example"]);
   });
 
@@ -143,7 +143,7 @@ describe("a payment", () => {
       primary = mode;
       hits.length = 0;
       resetRpcHealth();
-      expect(await submitAndConfirm(solanaConnection(), signedTx()), mode).toEqual({ ok: true });
+      expect(await submitAndConfirm(solanaConnection(), signedTx()), mode).toMatchObject({ ok: true });
       expect(sentTo(), mode).toEqual(["primary.example", "second.example"]);
     }
   });
@@ -163,7 +163,7 @@ describe("a payment", () => {
     landed = false;
     const started = Date.now();
     const res = await submitAndConfirm(solanaConnection(), signedTx());
-    expect(res).toEqual({ ok: false, error: expect.stringMatching(/insufficient funds/), pending: false });
+    expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/insufficient funds/), pending: false });
     expect(sentTo()).toEqual(["primary.example"]);
     expect(hits.filter((h) => h.method === "getSignatureStatuses")).toHaveLength(1); // one look, no waiting
     expect(Date.now() - started).toBeLessThan(1_000);
@@ -171,7 +171,7 @@ describe("a payment", () => {
 
   it("reports a payment that failed on chain as refused, not pending", async () => {
     onChainErr = { InstructionError: [0, { Custom: 1 }] };
-    expect(await submitAndConfirm(solanaConnection(), signedTx())).toEqual({ ok: false, error: expect.stringMatching(/failed on-chain/), pending: false });
+    expect(await submitAndConfirm(solanaConnection(), signedTx())).toMatchObject({ ok: false, error: expect.stringMatching(/failed on-chain/), pending: false });
   });
 
   it("counts as settled when a lagging node refuses what the first endpoint forwarded", async () => {
@@ -179,7 +179,7 @@ describe("a payment", () => {
     primary = "forwarded-lagging";
     const settled = submitAndConfirm(solanaConnection(), signedTx());
     await vi.advanceTimersByTimeAsync(11_000);
-    expect(await settled).toEqual({ ok: true });
+    expect(await settled).toMatchObject({ ok: true });
   });
 
   it("leaves the payment pending, not refused, when no endpoint can answer the confirmation", async () => {
@@ -193,7 +193,7 @@ describe("a payment", () => {
     primary = "forwarded";
     const settled = submitAndConfirm(solanaConnection(), signedTx());
     await vi.advanceTimersByTimeAsync(11_000);
-    expect(await settled).toEqual({ ok: true });
+    expect(await settled).toMatchObject({ ok: true });
   });
 
   it("reports a send that never landed as a timeout, the case the agent route keeps the signature for", async () => {
@@ -202,7 +202,7 @@ describe("a payment", () => {
     landed = false;
     const settled = submitAndConfirm(solanaConnection(), signedTx(), 5_000);
     await vi.advanceTimersByTimeAsync(7_000);
-    expect(await settled).toEqual({ ok: false, error: "Timed out waiting for confirmation", pending: true });
+    expect(await settled).toMatchObject({ ok: false, error: "Timed out waiting for confirmation", pending: true });
   });
 });
 

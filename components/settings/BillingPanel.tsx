@@ -107,7 +107,7 @@ export default function BillingPanel() {
     <>
       {/* ── Deposit crypto — wallet users only ── */}
       {walletLogin && (
-        <SettingsSection num="03" title="Deposit Crypto">
+        <SettingsSection num="04" title="Deposit Crypto">
           <div className="set-section-desc" style={{ paddingBottom: 16 }}>
             Got USDC in another wallet? Send it straight to your address here.
             Use the Solana network only, anything else can get lost.

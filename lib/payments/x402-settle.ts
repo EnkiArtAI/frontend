@@ -26,7 +26,7 @@
  * forged client signature fails simulation before anything lands.
  */
 import {
-  Connection, Keypair, PublicKey, VersionedTransaction,
+  Connection, Keypair, PublicKey, Transaction, VersionedTransaction,
 } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import bs58 from "bs58";
@@ -249,21 +249,27 @@ export async function paymentLanded(connection: Connection, signature: string): 
  * Submit WITH preflight (unlike the durable-nonce rails): this is a normal
  * recent-blockhash transaction, and preflight simulation is what rejects a
  * forged client signature or an empty payer balance before anything lands.
+ *
+ * The signature is fixed before the send and travels with every outcome. A
+ * send that failed in transit, or was answered "already processed" after a
+ * failover, is confirmed rather than believed (broadcastAndConfirm). Only a
+ * rejection means nothing moved; anything else is pending: it may yet land.
  */
+export type SubmitOutcome =
+  | { ok: true; signature: string }
+  | { ok: false; error: string; pending: boolean; signature: string };
+
 export async function submitAndConfirm(
   connection: Connection,
-  tx: VersionedTransaction,
+  tx: VersionedTransaction | Transaction,
   timeoutMs = 45_000,
-): Promise<{ ok: true } | { ok: false; error: string; pending: boolean }> {
-  // The signature is fixed before the send, so a send that failed in transit
-  // (or was answered "already processed" after a failover) is still confirmed
-  // (broadcastAndConfirm). Only a rejection means no funds moved; anything
-  // else is pending: the payment may yet land.
+): Promise<SubmitOutcome> {
+  const signature = bs58.encode(tx instanceof VersionedTransaction ? tx.signatures[0] : tx.signature!);
   try {
-    await broadcastAndConfirm(connection, tx.serialize(), bs58.encode(tx.signatures[0]), { timeoutMs, maxRetries: 3 });
-    return { ok: true };
+    await broadcastAndConfirm(connection, tx.serialize(), signature, { timeoutMs, maxRetries: 3 });
+    return { ok: true, signature };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Transaction submission failed", pending: !(e instanceof Rejected) };
+    return { ok: false, error: e instanceof Error ? e.message : "Transaction submission failed", pending: !(e instanceof Rejected), signature };
   }
 }
 
