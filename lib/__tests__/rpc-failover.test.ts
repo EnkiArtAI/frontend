@@ -15,19 +15,20 @@ const notifyAdmins = vi.fn(async () => {});
 vi.mock("@/lib/admin-notify", () => ({ notifyAdmins }));
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClientSafe: () => ({}) }));
 
-import { confirmSignature, solanaConnection, solanaRpcUrls } from "@/lib/payments/solana";
+import { confirmSignature, resetRpcHealth, solanaConnection, solanaRpcUrls } from "@/lib/payments/solana";
 import { submitAndConfirm } from "@/lib/payments/x402-settle";
 import { closeNonceAccount, createNonceAccount } from "@/lib/payments/nonce";
 import { getUsdcBalance } from "@/lib/usdc-balance";
 
 const PRIMARY = "https://primary.example/?api-key=KEY-THAT-MUST-NOT-BE-LOGGED";
 const SECOND = "https://second.example/";
-type Mode = "ok" | "down" | "500" | "401" | "403" | "429" | "hang" | "reject" | "forwarded";
+type Mode = "ok" | "down" | "500" | "401" | "403" | "429" | "hang" | "reject" | "forwarded" | "forwarded-lagging" | "status-down";
 
 let primary: Mode = "ok";
 let blockHeight = 10;
 let landed = true;
-const hits: { host: string; method: string }[] = [];
+let onChainErr: unknown = null;
+const hits: { host: string; method: string; params: unknown[] }[] = [];
 const BLOCKHASH = Keypair.generate().publicKey.toBase58();
 const AUTHORITY = Keypair.generate().publicKey;
 
@@ -44,7 +45,7 @@ function answer(method: string, id: unknown) {
   const ctx = { context: { slot: 1 } };
   const result =
     method === "sendTransaction" ? "5".repeat(64)
-    : method === "getSignatureStatuses" ? { ...ctx, value: [landed ? { slot: 1, confirmations: null, err: null, confirmationStatus: "confirmed" } : null] }
+    : method === "getSignatureStatuses" ? { ...ctx, value: [landed ? { slot: 1, confirmations: null, err: onChainErr, confirmationStatus: "confirmed" } : null] }
     : method === "getTokenAccountBalance" ? { ...ctx, value: { amount: "5000000", decimals: 6, uiAmount: 5, uiAmountString: "5" } }
     : method === "getLatestBlockhash" ? { ...ctx, value: { blockhash: BLOCKHASH, lastValidBlockHeight: 100 } }
     : method === "getBlockHeight" ? blockHeight
@@ -60,27 +61,33 @@ beforeEach(() => {
   primary = "ok";
   blockHeight = 10;
   landed = true;
+  onChainErr = null;
   hits.length = 0;
+  resetRpcHealth();
   notifyAdmins.mockClear();
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.stubEnv("SOLANA_PAYMENT_CHAIN", "solana");
   vi.stubEnv("SOLANA_RPC_URL", PRIMARY);
   vi.stubEnv("SOLANA_RPC_URL_FALLBACK", SECOND);
   vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
-    const { method, id } = JSON.parse(String(init.body));
+    const { method, id, params } = JSON.parse(String(init.body));
     const host = new URL(url).host;
-    hits.push({ host, method });
+    hits.push({ host, method, params });
+    if (primary === "status-down" && method === "getSignatureStatuses") return Promise.reject(new TypeError("fetch failed"));
     if (host === "primary.example") {
       if (primary === "down") return Promise.reject(new TypeError("fetch failed"));
       if (["500", "401", "403", "429"].includes(primary)) return Promise.resolve(new Response("refused", { status: Number(primary) }));
-      if (primary === "hang" || (primary === "forwarded" && method === "sendTransaction")) {
+      if (primary === "hang" || (primary.startsWith("forwarded") && method === "sendTransaction")) {
         // Hangs until the failover gives up on it; "forwarded" has passed the transaction on first.
         return new Promise((_r, reject) => init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))));
       }
-      if (primary === "reject") return Promise.resolve(rpcError(id, "Transaction simulation failed: insufficient funds"));
+      if (primary === "reject" && method === "sendTransaction") return Promise.resolve(rpcError(id, "Transaction simulation failed: insufficient funds"));
     }
     if (host === "second.example" && primary === "forwarded" && method === "sendTransaction") {
       return Promise.resolve(rpcError(id, "Transaction simulation failed: This transaction has already been processed"));
+    }
+    if (host === "second.example" && primary === "forwarded-lagging" && method === "sendTransaction") {
+      return Promise.resolve(rpcError(id, "Transaction simulation failed: Blockhash not found"));
     }
     return Promise.resolve(answer(method, id));
   });
@@ -135,6 +142,7 @@ describe("a payment", () => {
     for (const mode of ["500", "401", "403", "429"] as const) {
       primary = mode;
       hits.length = 0;
+      resetRpcHealth();
       expect(await submitAndConfirm(solanaConnection(), signedTx()), mode).toEqual({ ok: true });
       expect(sentTo(), mode).toEqual(["primary.example", "second.example"]);
     }
@@ -150,11 +158,34 @@ describe("a payment", () => {
     expect(await balance).toBe(5);
   });
 
-  it("is never re-sent elsewhere when the first endpoint rejected it", async () => {
+  it("is never re-sent elsewhere when the first endpoint rejected it, and the rejection is final", async () => {
     primary = "reject";
+    landed = false;
+    const started = Date.now();
     const res = await submitAndConfirm(solanaConnection(), signedTx());
-    expect(res.ok).toBe(false);
-    expect(hits.map((h) => h.host)).toEqual(["primary.example"]);
+    expect(res).toEqual({ ok: false, error: expect.stringMatching(/insufficient funds/), pending: false });
+    expect(sentTo()).toEqual(["primary.example"]);
+    expect(hits.filter((h) => h.method === "getSignatureStatuses")).toHaveLength(1); // one look, no waiting
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it("reports a payment that failed on chain as refused, not pending", async () => {
+    onChainErr = { InstructionError: [0, { Custom: 1 }] };
+    expect(await submitAndConfirm(solanaConnection(), signedTx())).toEqual({ ok: false, error: expect.stringMatching(/failed on-chain/), pending: false });
+  });
+
+  it("counts as settled when a lagging node refuses what the first endpoint forwarded", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    primary = "forwarded-lagging";
+    const settled = submitAndConfirm(solanaConnection(), signedTx());
+    await vi.advanceTimersByTimeAsync(11_000);
+    expect(await settled).toEqual({ ok: true });
+  });
+
+  it("leaves the payment pending, not refused, when no endpoint can answer the confirmation", async () => {
+    primary = "status-down";
+    const res = await submitAndConfirm(solanaConnection(), signedTx());
+    expect(res).toMatchObject({ ok: false, pending: true });
   });
 
   it("counts as settled when the first endpoint forwarded it and the second says already processed", async () => {
@@ -171,7 +202,7 @@ describe("a payment", () => {
     landed = false;
     const settled = submitAndConfirm(solanaConnection(), signedTx(), 5_000);
     await vi.advanceTimersByTimeAsync(7_000);
-    expect(await settled).toEqual({ ok: false, error: "Timed out waiting for confirmation" });
+    expect(await settled).toEqual({ ok: false, error: "Timed out waiting for confirmation", pending: true });
   });
 });
 
@@ -184,10 +215,28 @@ describe("the nonce accounts of the human rail", () => {
     expect(sentTo().filter((h) => h === "second.example")).toHaveLength(2);
   });
 
+  it("leave the rebroadcast to the RPC until expiry, as before; the agent rail keeps its 3 retries", async () => {
+    await createNonceAccount(solanaConnection(), Keypair.generate());
+    const nonceSend = hits.find((h) => h.method === "sendTransaction");
+    expect((nonceSend?.params[1] as { maxRetries?: number }).maxRetries).toBeUndefined();
+    hits.length = 0;
+    await submitAndConfirm(solanaConnection(), signedTx());
+    const agentSend = hits.find((h) => h.method === "sendTransaction");
+    expect((agentSend?.params[1] as { maxRetries?: number }).maxRetries).toBe(3);
+  });
+
   it("an expired blockhash ends the wait instead of hanging", async () => {
     landed = false;
     blockHeight = 101;
     await expect(confirmSignature(solanaConnection(), "5".repeat(64), { lastValidBlockHeight: 100 })).rejects.toThrow(/expired/);
+  });
+
+  it("the capture confirms a send lost in transit and closes the nonce after the answer", () => {
+    const settle = readSource(join(__dirname, "..", "..", "lib", "payments", "settle.ts"));
+    expect(settle).toMatch(/const signature = bs58\.encode\(tx\.signature!\);/);
+    expect(settle).toMatch(/if \(e instanceof SendTransactionError\) throw e;\s+await confirmSignature\(connection, signature, \{ timeoutMs: 10_000 \}\);/);
+    expect(settle).toMatch(/after\(\(\) => closeNonceAccount\(connection, account, feePayerKeypair\(\)\)/);
+    expect(settle).not.toMatch(/await closeNonceAccount\(connection, held\.nonceAccount/);
   });
 
   it("no payment path waits on a websocket confirmation", () => {
@@ -195,6 +244,23 @@ describe("the nonce accounts of the human rail", () => {
     for (const f of [["lib", "payments", "nonce.ts"], ["lib", "payments", "x402-settle.ts"], ["app", "api", "x402", "generate", "route.ts"]]) {
       expect(readSource(join(ROOT, ...f)), f.join("/")).not.toMatch(/sendAndConfirmTransaction|confirmTransaction\(/);
     }
+  });
+});
+
+describe("an endpoint that did not answer", () => {
+  it("is skipped for 30 s on this instance, so only the first call pays for it", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    primary = "down";
+    const addr = Keypair.generate().publicKey.toBase58();
+    await getUsdcBalance(addr);
+    expect(hits.map((h) => h.host)).toEqual(["primary.example", "second.example"]);
+    hits.length = 0;
+    await getUsdcBalance(addr);
+    expect(hits.map((h) => h.host)).toEqual(["second.example"]);
+    hits.length = 0;
+    vi.setSystemTime(Date.now() + 31_000);
+    await getUsdcBalance(addr);
+    expect(hits[0].host).toBe("primary.example");
   });
 });
 

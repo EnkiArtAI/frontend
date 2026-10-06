@@ -30,7 +30,7 @@ import {
 } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import bs58 from "bs58";
-import { broadcastAndConfirm } from "@/lib/payments/solana";
+import { broadcastAndConfirm, Rejected } from "@/lib/payments/solana";
 
 const COMPUTE_BUDGET_PROGRAM = "ComputeBudget111111111111111111111111111111";
 const MEMO_PROGRAM = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
@@ -254,15 +254,16 @@ export async function submitAndConfirm(
   connection: Connection,
   tx: VersionedTransaction,
   timeoutMs = 45_000,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true } | { ok: false; error: string; pending: boolean }> {
   // The signature is fixed before the send, so a send that failed in transit
   // (or was answered "already processed" after a failover) is still confirmed
-  // rather than reported as "no funds moved" (broadcastAndConfirm).
+  // (broadcastAndConfirm). Only a rejection means no funds moved; anything
+  // else is pending: the payment may yet land.
   try {
-    await broadcastAndConfirm(connection, tx.serialize(), bs58.encode(tx.signatures[0]), { timeoutMs });
+    await broadcastAndConfirm(connection, tx.serialize(), bs58.encode(tx.signatures[0]), { timeoutMs, maxRetries: 3 });
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Transaction submission failed" };
+    return { ok: false, error: e instanceof Error ? e.message : "Transaction submission failed", pending: !(e instanceof Rejected) };
   }
 }
 

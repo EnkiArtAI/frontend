@@ -112,32 +112,48 @@ export function solanaConnection(): Connection {
  * confirms rather than believes a failed send (broadcastAndConfirm).
  */
 const RPC_ATTEMPT_MS = 10_000;
+/** How long this instance skips an endpoint that did not answer, so only the first call pays RPC_ATTEMPT_MS. */
+const DOWN_FOR_MS = 30_000;
 const UNANSWERED = new Set([401, 403, 429]);
+const downUntil = new Map<string, number>();
 function failover(urls: string[]): typeof fetch {
   return async (_input, init) => {
+    const live = urls.filter((u) => (downUntil.get(u) ?? 0) <= Date.now());
+    const order = live.length ? live : urls;
     for (let i = 0; ; i++) {
-      const last = i === urls.length - 1;
+      const last = i === order.length - 1;
       const ac = last ? null : new AbortController();
       const timer = ac && setTimeout(() => ac.abort(), RPC_ATTEMPT_MS);
       try {
-        const res = await fetch(urls[i], ac ? { ...init, signal: ac.signal } : init);
+        const res = await fetch(order[i], ac ? { ...init, signal: ac.signal } : init);
         if (last || (res.status < 500 && !UNANSWERED.has(res.status))) return res;
       } catch (e) {
         if (last) throw e;
       } finally {
         if (timer) clearTimeout(timer);
       }
-      reportDown(urls[i]);
+      downUntil.set(order[i], Date.now() + DOWN_FOR_MS);
+      reportDown(order[i]);
     }
   };
 }
 
+/** Tests and a provider fix: forget which endpoints were down and which were reported. */
+export function resetRpcHealth(): void {
+  downUntil.clear();
+  reported.clear();
+}
+
+/** A transaction that did not land and never will: refused before it moved, failed on chain, or expired. */
+export class Rejected extends Error {}
+
 /**
  * Wait for "confirmed" by asking over HTTP. web3.js confirms on the FIRST
  * endpoint's websocket, which is down exactly when the failover is needed;
- * these questions go through the failover like every other call. Throws when
- * the transaction failed on chain, when its blockhash expired (it can no
- * longer land), or at the timeout, whose message the agent route reads.
+ * these questions go through the failover like every other call. Throws
+ * Rejected when the transaction failed on chain or its blockhash expired;
+ * anything else (the timeout, an endpoint that cannot answer) leaves the
+ * outcome open.
  */
 export async function confirmSignature(
   connection: Connection,
@@ -147,10 +163,10 @@ export async function confirmSignature(
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const s = (await connection.getSignatureStatuses([signature])).value[0];
-    if (s?.err) throw new Error(`Transaction failed on-chain: ${JSON.stringify(s.err)}`);
+    if (s?.err) throw new Rejected(`Transaction failed on-chain: ${JSON.stringify(s.err)}`);
     if (s?.confirmationStatus === "confirmed" || s?.confirmationStatus === "finalized") return;
     if (lastValidBlockHeight !== undefined && (await connection.getBlockHeight("confirmed")) > lastValidBlockHeight) {
-      throw new Error("Transaction expired before it landed");
+      throw new Rejected("Transaction expired before it landed");
     }
     if (Date.now() >= deadline) throw new Error("Timed out waiting for confirmation");
     await new Promise((r) => setTimeout(r, 1_500));
@@ -159,23 +175,36 @@ export async function confirmSignature(
 
 /**
  * Send a signed transaction and confirm it (confirmSignature). A rejection
- * is final, except "already processed": the failover re-sends after an
- * endpoint that cannot answer, and one that timed out may have forwarded it
- * first. A send that failed in transit may have landed too, so both are
- * confirmed rather than believed.
+ * is final (Rejected, with the node's message) unless the network already
+ * has the transaction: the failover re-sends after an endpoint that cannot
+ * answer, and one that timed out may have forwarded it first, so "already
+ * processed", or a refusal from a lagging node, is checked against the
+ * signature's status. A send that failed in transit is confirmed, not
+ * believed. maxRetries unset leaves the rebroadcast to the RPC until expiry.
  */
 export async function broadcastAndConfirm(
   connection: Connection,
   raw: Uint8Array,
   signature: string,
-  opts?: { lastValidBlockHeight?: number; timeoutMs?: number },
+  { maxRetries, ...wait }: { lastValidBlockHeight?: number; timeoutMs?: number; maxRetries?: number } = {},
 ): Promise<void> {
   try {
-    await connection.sendRawTransaction(raw, { preflightCommitment: "confirmed", maxRetries: 3 });
+    await connection.sendRawTransaction(raw, { preflightCommitment: "confirmed", maxRetries });
   } catch (e) {
-    if (e instanceof SendTransactionError && !/already been processed/i.test(e.message)) throw e;
+    if (e instanceof SendTransactionError && !/already been processed/i.test(e.message) && !(await networkHas(connection, signature))) {
+      throw new Rejected(e.message);
+    }
   }
-  await confirmSignature(connection, signature, opts);
+  await confirmSignature(connection, signature, wait);
+}
+
+/** Whether any endpoint knows the signature; a lookup that fails counts as yes, to be confirmed rather than believed. */
+async function networkHas(connection: Connection, signature: string): Promise<boolean> {
+  try {
+    return Boolean((await connection.getSignatureStatuses([signature])).value[0]);
+  } catch {
+    return true;
+  }
 }
 
 const reported = new Set<string>();

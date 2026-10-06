@@ -374,7 +374,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
       }).compileToV0Message();
       const fronted = new VersionedTransaction(msg);
       fronted.sign([feePayer]);
-      await broadcastAndConfirm(conn, fronted.serialize(), bs58.encode(fronted.signatures[0]), { lastValidBlockHeight, timeoutMs: 30_000 });
+      await broadcastAndConfirm(conn, fronted.serialize(), bs58.encode(fronted.signatures[0]), { lastValidBlockHeight, timeoutMs: 30_000, maxRetries: 3 });
       console.warn(`[x402] fronted ${missing.length} USDC account(s) for payment legs — rent on the fee payer`);
     }
   } catch (e) {
@@ -425,23 +425,22 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   }
   const settled = await submitAndConfirm(solanaConnection(), parsed.tx);
   if (!settled.ok) {
-    // Preflight/on-chain rejection means no funds moved; a confirmation
-    // timeout is the one ambiguous case, so the signature travels with the
-    // error for the agent to check.
-    const timedOut = settled.error.includes("Timed out");
-    if (timedOut) {
+    // A rejection (preflight, on chain, expired) means no funds moved; every
+    // other failure is pending, the payment may still land, so the signature
+    // travels with the error for the agent to check.
+    if (settled.pending) {
       // The payment may still land with no image for it: recorded with its
       // signature so support can make it right.
       after(recordGenerationFailure(supabase, {
         request, surface: "x402-generate", modelId: model.id, resolution: input.resolution, quality: effQuality, boost: false,
         aspectRatio: input.aspectRatio ?? null, referenceImageCount: 0,
         prompt: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
-        error: "Payment confirmation timed out", txSignature: signature,
+        error: "Payment outcome unknown", txSignature: signature,
       }));
     }
     return NextResponse.json(
       { error: settled.error, transaction: signature },
-      { status: timedOut ? 504 : 402 },
+      { status: settled.pending ? 504 : 402 },
     );
   }
 
