@@ -49,8 +49,9 @@ export const maxDuration = 300;
 //
 //   285s  this timeout      give up in-process, with time left to upload,
 //                           record and answer inside the platform budget
-//   290s  storeDeadline     (lib/generation/derivative-store.ts) the stored
-//                           image must have landed; capture and answer follow
+//   285s  storeDeadline     (lib/generation/derivative-store.ts) counted from
+//                           the request, not the provider call: the stored
+//                           image must have landed, or nothing is captured
 //   300s  maxDuration       the platform kills the function here
 //   330s  SLOT_TTL_MS       (lib/generation/concurrency.ts) a killed function
 //                           must not free its slot before it is truly gone
@@ -733,7 +734,9 @@ export async function POST(request: NextRequest) {
       (generatedImageBuffer.length <= INLINE_MAX_BYTES
         ? `data:image/png;base64,${generatedImageBuffer.toString("base64")}`
         : null);
-    if (!imageUrl) {
+    // Past the deadline even an inline image is refused: the capture after it
+    // would run into the platform's kill with the buyer's money moving.
+    if (!imageUrl || Date.now() > storeDeadline(startedAt)) {
       if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: "image could not be stored" }));
       await releaseIfConsumed();
       await releaseHeldSlot();

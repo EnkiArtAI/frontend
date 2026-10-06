@@ -82,5 +82,7 @@ describe("putDurably on the real SDK", () => {
     const started = Date.now();
     expect(await putDurably("generations/a.png", BYTES, "image/png", started - 1)).toBeNull();
     expect(Date.now() - started).toBeLessThan(500);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(hits).toBe(0);
   });
 });

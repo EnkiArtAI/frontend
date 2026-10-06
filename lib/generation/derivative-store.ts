@@ -90,7 +90,7 @@ export function storeDeadline(startedAt: number): number {
  * carries the same bytes. Null without a token.
  */
 export async function putDurably(name: string, buf: Buffer, contentType: string, deadline: number): Promise<string | null> {
-  if (!process.env.BLOB_READ_WRITE_TOKEN?.trim()) return null;
+  if (!process.env.BLOB_READ_WRITE_TOKEN?.trim() || deadline <= Date.now()) return null;
   const blob = await loadBlob();
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), Math.max(0, deadline - Date.now()));
@@ -138,18 +138,20 @@ export async function storeGeneratedImage(providerUrl: string, userId: string, d
     const ext = fetched.contentType.includes("png") ? "png" : fetched.contentType.includes("webp") ? "webp" : "jpg";
     const base = `generations/${userId}/${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-    const store = (name: string, buf: Buffer, type: string) =>
-      deadline ? putDurably(name, buf, type, deadline) : putBlob(name, buf, type);
+    const store = (name: string, buf: Buffer, type: string, by = deadline) =>
+      by ? putDurably(name, buf, type, by) : putBlob(name, buf, type);
     const [original, derivatives] = await Promise.all([
       inOurBlob(providerUrl) ? Promise.resolve(providerUrl) : store(`${base}.${ext}`, fetched.buf, fetched.contentType),
       tryMakeDerivatives(fetched.buf),
     ]);
 
-    // Renditions of an original that did not land would only spend the time the answer needs.
+    // Renditions are optional: none without a stored original, and never more
+    // than 10 s of a paying caller's wait.
+    const renditionsBy = deadline && Math.min(deadline, Date.now() + 10_000);
     const [previewUrl, thumbnailUrl] = derivatives && original
       ? await Promise.all([
-          store(`${base}.preview.webp`, derivatives.preview.buffer, "image/webp"),
-          store(`${base}.thumb.webp`, derivatives.thumb.buffer, "image/webp"),
+          store(`${base}.preview.webp`, derivatives.preview.buffer, "image/webp", renditionsBy),
+          store(`${base}.thumb.webp`, derivatives.thumb.buffer, "image/webp", renditionsBy),
         ])
       : [null, null];
 
