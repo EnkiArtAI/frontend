@@ -248,6 +248,20 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   const reqs = await requirementsFor(input);
   if (reqs.status !== 402) return NextResponse.json(reqs.body, { status: reqs.status });
 
+  // ── Verify the agent's transaction offline, before anything is judged ──
+  // Free, and the same answer for everyone: a header that is not a signed
+  // transaction paying exactly these legs is refused here, so it can no
+  // longer buy a metered prompt check or the address lookups below (Kev,
+  // 2026-10-06). Moved up from after the routing, unchanged.
+  const parsed = parseXPayment(paymentHeader);
+  if (!parsed.ok) return rejectPayment(reqs, parsed.error);
+  const verified = verifyAgentPayment(parsed.tx, {
+    legs: reqs.legs.map((l) => ({ owner: new PublicKey(l.recipient), amountMicro: l.amountMicro })),
+    mint: usdcMint(),
+    feePayer: feePayer.publicKey,
+  });
+  if (!verified.ok) return rejectPayment(reqs, verified.error);
+
   const supabase = getSupabaseServerClient();
 
   // Prompt text: sent directly, or loaded from the prompt row. A PAID
@@ -273,7 +287,7 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   // more; explicit and child-safety requests get a warning, everything else
   // that is refused reads like any failure.
   // A blocked address, like a caught request, fails silently once its
-  // payment is verified (below); before that, a junk header told them apart.
+  // payment is simulated (below); a junk header never gets this far.
   const blocked = (await agentBlocked(supabase, request)) || (await addressWarnedOut(supabase, request));
   const checked = input.promptId ? textValues(input.variableValues) : { prompt: promptText };
   // A blocked address is still judged, so its answers and their timing match
@@ -337,16 +351,6 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   if (!route.providerModel) {
     return NextResponse.json({ error: "This model has no provider model configured — nothing was charged" }, { status: 503 });
   }
-
-  // ── Verify the agent's transaction offline ──────────────────────────────
-  const parsed = parseXPayment(paymentHeader);
-  if (!parsed.ok) return rejectPayment(reqs, parsed.error);
-  const verified = verifyAgentPayment(parsed.tx, {
-    legs: reqs.legs.map((l) => ({ owner: new PublicKey(l.recipient), amountMicro: l.amountMicro })),
-    mint: usdcMint(),
-    feePayer: feePayer.publicKey,
-  });
-  if (!verified.ok) return rejectPayment(reqs, verified.error);
 
   // A leg can point at a wallet with no USDC account yet (a new artist).
   // TransferChecked to a missing ATA fails the whole payment, so the fee

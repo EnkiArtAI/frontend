@@ -196,9 +196,15 @@ describe("the agent rail", () => {
     expect(AGENT).toMatch(/error: "Image generation failed after your payment settled\.",/);
   });
 
-  it("checks before any payment is read", () => {
-    expect(check).toBeGreaterThan(-1);
-    expect(AGENT.indexOf("parseXPayment(paymentHeader)")).toBeGreaterThan(check);
+  it("verifies the payment offline before anything is judged", () => {
+    // Kev, 2026-10-06: a junk X-PAYMENT header must not buy a metered prompt
+    // check. The offline verification is free and answers everyone alike.
+    const verify = AGENT.indexOf("if (!verified.ok) return rejectPayment(reqs, verified.error);");
+    expect(verify).toBeGreaterThan(AGENT.indexOf("const reqs = await requirementsFor(input);"));
+    expect(AGENT.indexOf("const blocked = (await agentBlocked(supabase, request))")).toBeGreaterThan(verify);
+    expect(check).toBeGreaterThan(verify);
+    expect(AGENT.split("parseXPayment(paymentHeader)").length - 1).toBe(1);
+    expect(AGENT.split("verifyAgentPayment(parsed.tx,").length - 1).toBe(1);
   });
 
   it("warns, and fails closed otherwise", () => {
