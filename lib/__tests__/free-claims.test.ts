@@ -25,18 +25,24 @@ describe("the migration", () => {
 
   beforeAll(async () => {
     db = await PGlite.create();
-    // The live shape it relies on (probed 2026-10-06), plus Supabase's roles.
+    // The live shape it relies on (probed 2026-10-06), plus Supabase's roles
+    // and its default privileges, which hand every new function to anon and
+    // authenticated unless the migration takes it back.
     await db.exec(`
       create role anon; create role authenticated; create role service_role;
+      alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;
       create table public.users (id uuid primary key default gen_random_uuid());
       create table public.generations (
         id uuid primary key default gen_random_uuid(),
         user_id uuid not null references public.users(id),
+        provider text,
         amount_paid_cents integer,
         created_at timestamptz not null default now()
       );
       insert into public.users (id) values ('${A}'), ('${B}');
-      insert into public.generations (user_id, amount_paid_cents) values ('${A}', null), ('${A}', null), ('${A}', 7), ('${B}', 5);
+      -- Paid renders as live writes them: amount_paid_cents NULL, a paid provider.
+      insert into public.generations (user_id, provider) values
+        ('${A}', 'pollinations'), ('${A}', 'pollinations'), ('${A}', 'gemini'), ('${B}', 'wavespeed'), ('${B}', 'openai');
     `);
     await db.exec(MIGRATION);
     // PGlite boots a whole Postgres; under a full parallel run that takes longer than the default hook timeout.
@@ -80,6 +86,15 @@ describe("the migration", () => {
 
 describe("the free route", () => {
   const FREE = readSource(join(ROOT, "app", "api", "generate-free", "route.ts"));
+
+  it("bounds the free render below maxDuration, so a stalled one still gives its claim back", async () => {
+    const { POLLINATIONS_TIMEOUT_MS } = await import("@/backend/services/pollinations-image-generation");
+    const max = Number(FREE.match(/export const maxDuration = (\d+);/)?.[1]) * 1000;
+    expect(POLLINATIONS_TIMEOUT_MS).toBeLessThanOrEqual(max - 30_000);
+    expect(readSource(join(ROOT, "backend", "services", "pollinations-image-generation.ts"))).toMatch(
+      /await fetch\(imageUrl, \{\s+signal: AbortSignal\.timeout\(POLLINATIONS_TIMEOUT_MS\),/,
+    );
+  });
 
   it("claims before the render, on every database, with no branch that skips it", () => {
     const claimed = FREE.search(/const decision = await freeGenerationDecision\(supabaseForChecks, quotaUserId\);/);

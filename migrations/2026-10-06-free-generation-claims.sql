@@ -7,7 +7,7 @@
 -- the render fails, and is the count the allowance reads.
 --
 -- Probed live 2026-10-06: no table of this name; users.id uuid; generations
--- holds 9 free rows (amount_paid_cents IS NULL), all from one account.
+-- holds 9 rows, all provider 'pollinations' (the free one), from one account.
 -- Additive and idempotent. Run BEFORE deploying the code that calls
 -- claim_free_generation: without it every free generation is refused.
 BEGIN;
@@ -22,10 +22,12 @@ CREATE INDEX IF NOT EXISTS free_generation_claims_user_idx ON public.free_genera
 ALTER TABLE public.free_generation_claims ENABLE ROW LEVEL SECURITY;
 
 -- Every free generation already made is a claim spent. Once, on the first run.
+-- By provider, not amount_paid_cents: no path writes that column, so paid
+-- renders carry NULL there too and would read as free.
 INSERT INTO public.free_generation_claims (user_id, created_at)
 SELECT g.user_id, g.created_at
 FROM public.generations g
-WHERE g.amount_paid_cents IS NULL
+WHERE g.provider = 'pollinations'
   AND NOT EXISTS (SELECT 1 FROM public.free_generation_claims);
 
 -- Returns the new claim's id, or NULL when the account has used p_limit.
