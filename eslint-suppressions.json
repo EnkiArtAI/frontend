@@ -4,19 +4,6 @@
       "count": 2
     }
   },
-  "app/api-test/page.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 36
-    },
-    "react/no-unescaped-entities": {
-      "count": 4
-    }
-  },
-  "app/api/creators/[id]/profile/route.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
   "app/api/gallery/upload/route.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
@@ -45,38 +32,13 @@
       "count": 1
     }
   },
-  "app/api/prompts/[id]/reviews/route.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
   "app/api/prompts/route.ts": {
     "prefer-const": {
       "count": 1
     }
   },
-  "app/api/users/[id]/earnings/route.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
-  "app/api/users/[id]/purchases/route.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
   "app/banned/page.tsx": {
     "@next/next/no-html-link-for-pages": {
-      "count": 1
-    }
-  },
-  "app/creators/[id]/page.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
-  "app/dashboard/page.tsx": {
-    "react/no-unescaped-entities": {
       "count": 1
     }
   },
@@ -86,11 +48,6 @@
     }
   },
   "app/generator/[id]/GeneratorClient.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 3
-    }
-  },
-  "app/generator/[id]/page.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 3
     }
@@ -118,19 +75,6 @@
       "count": 1
     }
   },
-  "app/my-purchases/page.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "react/no-unescaped-entities": {
-      "count": 1
-    }
-  },
-  "app/recovery/status/page.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
   "app/reset-password/page.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 1
@@ -141,31 +85,6 @@
       "count": 8
     },
     "react-hooks/set-state-in-effect": {
-      "count": 2
-    }
-  },
-  "backend/scripts/migrate.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
-  "backend/scripts/run-migration.ts": {
-    "@typescript-eslint/no-require-imports": {
-      "count": 2
-    }
-  },
-  "backend/scripts/test-generations-api.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
-  "backend/scripts/test-phase-2a-integration.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
-  "backend/scripts/test-phase-2b-integration.ts": {
-    "@typescript-eslint/no-explicit-any": {
       "count": 2
     }
   },
@@ -209,11 +128,6 @@
       "count": 5
     }
   },
-  "components/AnalyticsChart.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
   "components/BetaGate.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 1
@@ -244,11 +158,6 @@
       "count": 9
     }
   },
-  "components/FeedbackPopover.tsx": {
-    "react/no-unescaped-entities": {
-      "count": 1
-    }
-  },
   "components/FilterBar.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
@@ -259,36 +168,8 @@
       "count": 3
     }
   },
-  "components/HuntPromptPopover.tsx": {
-    "react/no-unescaped-entities": {
-      "count": 3
-    }
-  },
-  "components/ImageLightbox.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
   "components/LoginModal.tsx": {
     "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "components/MarketplaceFilters.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "components/Navbar.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 2
-    }
-  },
-  "components/PromptAnalyticsView.tsx": {
-    "@typescript-eslint/no-explicit-any": {
       "count": 1
     }
   },
@@ -307,26 +188,7 @@
       "count": 1
     },
     "react-hooks/set-state-in-effect": {
-      "count": 7
-    }
-  },
-  "components/ReviewForm.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "react/no-unescaped-entities": {
-      "count": 2
-    }
-  },
-  "components/SearchInterface.tsx": {
-    "react-hooks/immutability": {
-      "count": 2
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    },
-    "react/no-unescaped-entities": {
-      "count": 2
+      "count": 6
     }
   },
   "components/ShowroomUploadZone.tsx": {
@@ -389,14 +251,6 @@
       "count": 1
     }
   },
-  "components/enki/EnkiQuickCreate.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 3
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
   "components/profile/ProfileView.tsx": {
     "@next/next/no-html-link-for-pages": {
       "count": 1
@@ -425,16 +279,6 @@
     },
     "react-hooks/set-state-in-effect": {
       "count": 4
-    }
-  },
-  "hooks/use-mobile.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "hooks/useAnalytics.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
     }
   },
   "hooks/useCdpAddress.ts": {
@@ -483,19 +327,6 @@
   "lib/payments/__tests__/authorization.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 5
-    }
-  },
-  "lib/prompt-consistency.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
-  "lib/solanaAnchor.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 3
-    },
-    "prefer-const": {
-      "count": 1
     }
   }
 }
