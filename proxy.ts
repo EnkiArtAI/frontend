@@ -42,6 +42,18 @@ function isPublic(pathname: string): boolean {
   // — neither can have the team cookie. The pages/APIs are token- or
   // code-gated and rate-limited themselves.
   if (pathname === "/guardian" || pathname === "/reset-password") return true;
+  // A banned account gets no team cookie, so its one door stays open
+  // without it: the /banned page and exactly the APIs it calls (status,
+  // appeal, balance, send). Each of those checks the session itself.
+  if (
+    pathname === "/banned" ||
+    pathname === "/api/ban/me" ||
+    pathname === "/api/ban/appeal" ||
+    pathname === "/api/billing/balance" ||
+    pathname.startsWith("/api/wallet/withdraw/")
+  ) {
+    return true;
+  }
   if (
     pathname === "/api/recovery/guardians/confirm" ||
     pathname === "/api/recovery/request" ||

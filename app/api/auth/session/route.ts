@@ -227,9 +227,10 @@ export async function POST(req: NextRequest) {
   // appeal, funds). The banned flag routes the client to /banned.
   const banned = walletRow?.user_id ? !!(await activeBanFor(supabase, String(walletRow.user_id))) : false;
 
-  // Whitelisted login → grant app access (sets the gate cookie the proxy checks).
+  // Whitelisted login → grant app access (sets the gate cookie the proxy
+  // checks). Never to a banned account: /banned is public without it.
   const res = NextResponse.json({ sessionToken, expiresAt, walletAddress: storedWallet, walletType, ...(banned ? { banned: true } : {}) });
-  return grantGateCookie(res);
+  return banned ? res : grantGateCookie(res);
 }
 
 export async function DELETE(req: NextRequest) {

@@ -17,7 +17,7 @@ import { SHOW_ADULT_KEY, isSessionStorageKey, pillSurvives, sessionAuthHeaders, 
 import { useQueryClient } from "@tanstack/react-query";
 import AccessGate from "@/components/enki-shell/AccessGate";
 
-const PUBLIC_PATHS = new Set(["/", "/landing", "/gate", "/guardian", "/reset-password"]);
+const PUBLIC_PATHS = new Set(["/", "/landing", "/gate", "/guardian", "/reset-password", "/banned"]);
 const BETA_ROLES = new Set(["beta", "mod", "admin"]);
 
 /** Profile bits the gate check already fetches — pages (profile) reuse them

@@ -98,6 +98,8 @@ export async function POST(req: NextRequest) {
   // appeal, funds). The banned flag routes the client to /banned.
   const banned = !!(await activeBanFor(supabase, cred.user_id));
   const session = await mintUserSession(cred.user_id, ipHash);
-  // Whitelisted login → grant app access (gate cookie).
-  return grantGateCookie(NextResponse.json({ email: cred.email, ...session, ...(banned ? { banned: true } : {}) }));
+  const res = NextResponse.json({ email: cred.email, ...session, ...(banned ? { banned: true } : {}) });
+  // Whitelisted login → grant app access (gate cookie). Never to a banned
+  // account: the cookie opens every page, /banned is public without it.
+  return banned ? res : grantGateCookie(res);
 }
