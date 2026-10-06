@@ -54,6 +54,18 @@ jobs:
 
   tests:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: enki_escrow_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d enki_escrow_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -63,6 +75,12 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Unit tests (money math, moderation)
         run: npm test
+      - name: Escrow recovery migration (offline PostgreSQL)
+        run: npm run test:migrations
+      - name: Escrow recovery concurrency (isolated PostgreSQL)
+        run: npm run test:migrations -- --postgres
+        env:
+          ENKI_ESCROW_TEST_DATABASE_URL: postgresql://postgres:ci@127.0.0.1:5432/enki_escrow_test
 
   # Full production build. tsc --noEmit misses a whole class of errors that
   # only `next build` catches: PageProps violations (a page.tsx default export
