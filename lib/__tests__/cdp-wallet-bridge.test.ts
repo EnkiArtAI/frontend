@@ -251,6 +251,13 @@ describe("a second tab, after another account's login", () => {
     expect(cdp.signIns).toBe(1);
   });
 
+  it("signs out a previous user whose wallet setup stopped halfway, with its secret", async () => {
+    cdp.user = { solanaAccountObjects: [], evmAccountObjects: [{ address: `0x${"0".repeat(39)}2` }] };
+    cdp.secret = A; // registered for A before its Solana account could be created
+    await mountFor("b@example.com");
+    await expect(requestCdpSign("tx")).resolves.toBe(`tx signed by ${B}`);
+  });
+
   it("shows nothing of it either while the new account's wallet is locked", async () => {
     cdp.user = wallet(A);
     cdp.secret = A;

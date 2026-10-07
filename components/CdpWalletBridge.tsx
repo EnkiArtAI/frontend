@@ -67,8 +67,8 @@ export function CdpWalletBridge({ email }: { email: string }) {
   // wallet secret with it; this mount's own stays, an action may be using it.
   const signIn = useCallback(
     () => (signingIn.current ??= (async () => {
-      const held = solanaOf(await getCurrentUser());
-      if (held && held !== own.current) await signOut().catch(() => { /* already gone */ });
+      const held = await getCurrentUser(); // with or without a Solana account yet
+      if (held && solanaOf(held) !== own.current) await signOut().catch(() => { /* already gone */ });
       const { user } = await authenticateWithJWT();
       live();
       const address = solanaOf(user);
