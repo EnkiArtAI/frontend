@@ -15,9 +15,11 @@ import { useEmailAuth } from "@/hooks/useEmailAuth";
 // session exists — visitors and wallet-only users never download it.
 const CdpRuntime = dynamic(() => import("./CdpProvider"), { ssr: false });
 
+// One runtime per account: another account's login remounts it, and the new
+// bridge signs in to CDP itself (see CdpWalletBridge).
 function CdpLauncher() {
-  const { isAuthed } = useEmailAuth();
-  return isAuthed ? <CdpRuntime /> : null;
+  const { email } = useEmailAuth();
+  return email ? <CdpRuntime key={email} email={email} /> : null;
 }
 import { Toaster } from "@/components/ui/toaster";
 import BetaGate from "@/components/BetaGate";

@@ -62,3 +62,29 @@ describe("an action the server cannot see (a key export)", () => {
     expect(ask).not.toHaveBeenCalled();
   });
 });
+
+describe("the dialog", () => {
+  it("sits above every layer of the app, so no editor or overlay hides it", async () => {
+    const { readdirSync, readFileSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const ROOT = join(__dirname, "..", "..");
+    const src = readFileSync(join(ROOT, "components", "StepUpProvider.tsx"), "utf8");
+    const content = Number(/<DialogContent className="[^"]*\bz-\[(\d+)\]/.exec(src)?.[1]);
+    const overlay = Number(/overlayClassName="[^"]*\bz-\[(\d+)\]/.exec(src)?.[1]);
+    expect(content).toBeGreaterThan(overlay);
+    const layers: [string, number][] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) { if (name !== "__tests__") walk(path); continue; }
+        if (!/\.(css|tsx?)$/.test(name) || path.endsWith("StepUpProvider.tsx")) continue;
+        for (const m of readFileSync(path, "utf8").matchAll(/z-index:\s*(\d+)|z-\[(\d+)\]|zIndex:\s*(\d+)/g)) {
+          layers.push([path, Number(m[1] ?? m[2] ?? m[3])]);
+        }
+      }
+    };
+    ["app", "components", "hooks", "providers"].forEach((d) => walk(join(ROOT, d)));
+    expect(layers.length).toBeGreaterThan(50);
+    expect(layers.filter(([, z]) => z >= overlay)).toEqual([]);
+  });
+});

@@ -65,7 +65,7 @@ export async function runGeneration(req: GenerationRequest, sign: PaymentSigner)
     } else {
       // An embedded wallet that is locked asks first: the intent needs the
       // session's wallet attached, the signature needs it unlocked.
-      await ensureCdpWallet();
+      await ensureCdpWallet({ attached: true });
       const { intentId } = await authorizePaidGeneration(
         {
           promptId: req.promptId,
