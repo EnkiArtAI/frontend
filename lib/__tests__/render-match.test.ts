@@ -17,7 +17,7 @@ import { showsAdultRender, promptMarkedAdult } from "@/lib/adult-content";
 
 beforeEach(() => {
   puts.length = 0;
-  vi.stubEnv("BLOB_READ_WRITE_TOKEN", "test-token");
+  vi.stubEnv("BLOB_READ_WRITE_TOKEN", "vercel_blob_rw_store_test"); // names the store the URLs below live in
   vi.stubGlobal("fetch", async () => new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "content-type": "image/png" } }));
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });

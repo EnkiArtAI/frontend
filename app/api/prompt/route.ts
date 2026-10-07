@@ -8,6 +8,7 @@ import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { showsAdultRender } from "@/lib/adult-content";
 import { resolveOwnerIds, resolveSessionUserId, resolveSessionUserWithBan } from "@/lib/session-user";
 import { isPublicText } from "@/lib/prompt-visibility";
+import { ownShowcaseImages } from "@/lib/generation/derivative-store";
 
 type VariableType =
   | "text"
@@ -325,6 +326,7 @@ export async function POST(req: Request) {
     // The description is not part of this save (it is edited through the
     // PATCH route) but is shown with the prompt, so an update judges it too.
     let storedDescription: string | null = null;
+    let savedShowcase: string[] = [];
     if (body.id) {
       const owners = await resolveOwnerIds(supabase, req.headers.get("X-Session-Token"));
       if (!owners) {
@@ -333,9 +335,10 @@ export async function POST(req: Request) {
       // A session whose wallet maps to no user row owns no prompts, and
       // .in() with an empty list is a PostgREST parse error, not a no-op.
       if (owners.length === 0) return NextResponse.json({ error: "not found" }, { status: 404 });
-      const { data: own } = await supabase.from("prompts").select("id, description").eq("id", body.id).in("creator_id", owners).maybeSingle();
+      const { data: own } = await supabase.from("prompts").select("id, description, showcase_images").eq("id", body.id).in("creator_id", owners).maybeSingle();
       if (!own) return NextResponse.json({ error: "not found" }, { status: 404 });
       storedDescription = (own.description as string | null) ?? null;
+      savedShowcase = Array.isArray(own.showcase_images) ? own.showcase_images.filter((u: unknown): u is string => typeof u === "string") : [];
       ownerIds = owners;
     } else {
       creatorId = await resolveCreatorId(supabase, req);
@@ -396,6 +399,12 @@ export async function POST(req: Request) {
       }
     }
 
+    // Stored only now, so a refused save leaves nothing behind.
+    const showcase = await ownShowcaseImages(uploadedPhotos, creatorId ?? ownerIds[0], savedShowcase);
+    if (!showcase) {
+      return NextResponse.json({ error: "Your showcase images could not be stored right now. Nothing was saved." }, { status: 503 });
+    }
+
     const promptRow = {
       is_adult: adult,
       title: body.title,
@@ -414,7 +423,7 @@ export async function POST(req: Request) {
       aspect_ratio: body.aspectRatio ?? null,
       photo_count: typeof body.photoCount === "number" ? body.photoCount : 1,
       prompt_type: dbPromptType,
-      showcase_images: uploadedPhotos,
+      showcase_images: showcase,
       resolution: body.resolution ?? null,
       is_free_showcase: isFreeShowcase,
       // The first 220 characters, verbatim: only a free prompt may carry its
@@ -523,7 +532,7 @@ export async function POST(req: Request) {
       aspectRatio: body.aspectRatio ?? null,
       photoCount: typeof body.photoCount === "number" ? body.photoCount : 1,
       promptType: clientPromptType,
-      uploadedPhotos: body.uploadedPhotos ?? [],
+      uploadedPhotos: showcase,
       resolution: body.resolution ?? null,
       isFreeShowcase: Boolean(body.isFreeShowcase ?? false),
     });
