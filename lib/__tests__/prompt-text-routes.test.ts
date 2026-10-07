@@ -62,6 +62,14 @@ async function detailOf(row: Row, token?: string) {
   return (await res.json()).prompt;
 }
 
+describe("a prompt's before images (CUR-2)", () => {
+  it("are served beside the showcase on the card and on the prompt's page", async () => {
+    const row = { ...showcase, showcase_images: ["https://img/after.png"], showcase_before_images: ["https://img/before.png"] };
+    expect((await card(row)).beforeImages).toEqual([{ url: "https://img/before.png" }]);
+    expect((await detailOf(row)).beforeImages).toEqual([{ url: "https://img/before.png" }]);
+  });
+});
+
 describe("the marketplace feed", () => {
   it("never puts a paid prompt's text in its card", async () => {
     expect(JSON.stringify(await card(paid))).not.toContain("secret words");

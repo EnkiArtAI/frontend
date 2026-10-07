@@ -8,7 +8,7 @@ import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { showsAdultRender } from "@/lib/adult-content";
 import { resolveOwnerIds, resolveSessionUserId, resolveSessionUserWithBan } from "@/lib/session-user";
 import { isPublicText } from "@/lib/prompt-visibility";
-import { ownShowcaseImages } from "@/lib/generation/derivative-store";
+import { keepableImage, ownShowcaseImages } from "@/lib/generation/derivative-store";
 import { extractTags, storedTags } from "@/lib/search/tags";
 import { artistPayoutWallet } from "@/lib/payments/generation-quote";
 import { DEFAULT_PROMPT_PRICE_USD } from "@/shared/revenue-config";
@@ -24,6 +24,9 @@ type VariableType =
 
 type PromptType = "showcase" | "free-prompt" | "paid-prompt" | string;
 
+/** The most reference images any model takes (Nano Banana 2: 14). */
+const REFERENCE_IMAGES_MAX = 14;
+
 type PromptPayload = {
   id?: string | null;
   title: string;
@@ -36,6 +39,7 @@ type PromptPayload = {
   photoCount?: number;
   promptType?: PromptType;
   uploadedPhotos?: string[];
+  referenceImages?: string[];
   resolution?: string | null;
   isFreeShowcase?: boolean;
 };
@@ -279,6 +283,11 @@ export async function POST(req: Request) {
     const uploadedPhotos = Array.isArray(body.uploadedPhotos)
       ? body.uploadedPhotos.filter((p): p is string => typeof p === "string")
       : [];
+    // The images the prompt starts from, shown beside its showcase as the
+    // "before" (CUR-2). A client that sends none keeps what is stored.
+    const referenceImages = Array.isArray(body.referenceImages)
+      ? body.referenceImages.filter((p): p is string => typeof p === "string")
+      : null;
 
     const supabase = getSupabaseServerClient();
 
@@ -383,6 +392,7 @@ export async function POST(req: Request) {
     // PATCH route) but is shown with the prompt, so an update judges it too.
     let storedDescription: string | null = null;
     let savedShowcase: string[] = [];
+    let savedBefore: string[] = [];
     // The model is kept when a save sends none, and is handed out with a
     // listed prompt like the description: judged with the rest as well.
     let storedModel = "";
@@ -406,7 +416,7 @@ export async function POST(req: Request) {
       // A session whose wallet maps to no user row owns no prompts, and
       // .in() with an empty list is a PostgREST parse error, not a no-op.
       if (owners.length === 0) return NextResponse.json({ error: "not found" }, { status: 404 });
-      const { data: own } = await supabase.from("prompts").select("id, creator_id, description, ai_model, encrypted_content_iv, is_listed, delisted_at, listed_at, published_at, showcase_images").eq("id", body.id).in("creator_id", owners).maybeSingle();
+      const { data: own } = await supabase.from("prompts").select("id, creator_id, description, ai_model, encrypted_content_iv, is_listed, delisted_at, listed_at, published_at, showcase_images, showcase_before_images").eq("id", body.id).in("creator_id", owners).maybeSingle();
       if (!own) return NextResponse.json({ error: "not found" }, { status: 404 });
       // What a moderator took down stays down: releasing it again would undo the takedown.
       if (body.release === true && own.delisted_at) {
@@ -419,6 +429,7 @@ export async function POST(req: Request) {
       readIv = (own.encrypted_content_iv as string | null) ?? null;
       storedDescription = (own.description as string | null) ?? null;
       savedShowcase = Array.isArray(own.showcase_images) ? own.showcase_images.filter((u: unknown): u is string => typeof u === "string") : [];
+      savedBefore = Array.isArray(own.showcase_before_images) ? own.showcase_before_images.filter((u: unknown): u is string => typeof u === "string") : [];
       storedModel = typeof own.ai_model === "string" ? own.ai_model : "";
       ownerIds = owners;
     } else {
@@ -455,6 +466,17 @@ export async function POST(req: Request) {
       }
     }
 
+    // Reference images keep their places: "Reference image N" in the text is
+    // the N-th. One that cannot be kept is refused by its number, never
+    // dropped, and before the check, so a refused save costs no call.
+    if (referenceImages && referenceImages.length > REFERENCE_IMAGES_MAX) {
+      return NextResponse.json({ error: `At most ${REFERENCE_IMAGES_MAX} reference images can be saved. Nothing was saved.` }, { status: 422 });
+    }
+    const unkept = referenceImages ? referenceImages.findIndex((url) => !keepableImage(url, savedBefore)) : -1;
+    if (unkept >= 0) {
+      return NextResponse.json({ error: `Reference image ${unkept + 1} must be a PNG, JPEG or WebP image. Nothing was saved.` }, { status: 422 });
+    }
+
     // Judged like a generation before it is stored, and whole: everything a
     // saved prompt can put into an image or show a buyer — title, text,
     // every variable's default and options. Explicit and child-safety text is
@@ -481,7 +503,8 @@ export async function POST(req: Request) {
     if (check.verdict !== "clear") {
       return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 });
     }
-    const shownAdult = await showsAdultRender(supabase, uploadedPhotos);
+    // A reference image can be an 18+ render too, and it is shown as well.
+    const shownAdult = await showsAdultRender(supabase, [...uploadedPhotos, ...(referenceImages ?? savedBefore)]);
     if (shownAdult === null) {
       return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 });
     }
@@ -519,6 +542,10 @@ export async function POST(req: Request) {
     const showcase = await ownShowcaseImages(uploadedPhotos, creatorId ?? ownerIds[0], savedShowcase);
     if (!showcase) {
       return NextResponse.json({ error: "Your showcase images could not be stored right now. Nothing was saved." }, { status: 503 });
+    }
+    const before = referenceImages === null ? savedBefore : await ownShowcaseImages(referenceImages, creatorId ?? ownerIds[0], savedBefore, REFERENCE_IMAGES_MAX);
+    if (!before) {
+      return NextResponse.json({ error: "Your reference images could not be stored right now. Nothing was saved." }, { status: 503 });
     }
     /* Search tags, ours alone (Kev, 2026-09-24: zero cost search; 2026-10-07:
        automatic, private, no distilling). The vocabulary matcher runs HERE,
@@ -560,6 +587,7 @@ export async function POST(req: Request) {
       photo_count: typeof body.photoCount === "number" ? body.photoCount : 1,
       prompt_type: dbPromptType,
       showcase_images: showcase,
+      showcase_before_images: before,
       resolution: body.resolution ?? null,
       is_free_showcase: isFreeShowcase,
       // The first 220 characters, verbatim: only a free prompt may carry its
@@ -711,6 +739,7 @@ export async function POST(req: Request) {
       photoCount: typeof body.photoCount === "number" ? body.photoCount : 1,
       promptType: clientPromptType,
       uploadedPhotos: showcase,
+      referenceImages: before,
       resolution: body.resolution ?? null,
       isFreeShowcase: Boolean(body.isFreeShowcase ?? false),
       // The check marks a prompt 18+ by itself; its artist is told, since an
@@ -751,7 +780,7 @@ export async function GET(req: Request) {
     const { data: prompt, error: promptError } = await supabase
       .from("prompts")
       .select(
-        "id,title,encrypted_content,encrypted_content_iv,encrypted_content_tag,encrypted_content_kid,creator_id,category,tags,ai_model,price_usd_cents,aspect_ratio,photo_count,prompt_type,showcase_images,resolution,is_free_showcase"
+        "id,title,encrypted_content,encrypted_content_iv,encrypted_content_tag,encrypted_content_kid,creator_id,category,tags,ai_model,price_usd_cents,aspect_ratio,photo_count,prompt_type,showcase_images,showcase_before_images,resolution,is_free_showcase"
       )
       .eq("id", id)
       .maybeSingle();
@@ -813,6 +842,11 @@ export async function GET(req: Request) {
       promptType: PROMPT_TYPE_FROM_DB[dbPromptType] ?? dbPromptType,
       uploadedPhotos: Array.isArray(prompt.showcase_images)
         ? (prompt.showcase_images as unknown[]).filter(
+            (p): p is string => typeof p === "string"
+          )
+        : [],
+      referenceImages: Array.isArray(prompt.showcase_before_images)
+        ? (prompt.showcase_before_images as unknown[]).filter(
             (p): p is string => typeof p === "string"
           )
         : [],

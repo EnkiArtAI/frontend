@@ -12,7 +12,7 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { useCdpAddress } from "@/hooks/useCdpAddress";
 import { usePaymentSigner } from "@/hooks/usePaymentSigner";
 import { useToast } from "@/hooks/use-toast";
-import { addCreation } from "@/lib/creations";
+import { addCreation, serverUrls } from "@/lib/creations";
 import {
   Star,
   Heart,
@@ -607,8 +607,8 @@ export default function PromptGeneratorView({
   /* Fetch user's generations — API returns { data: { generations, total } } via createSuccessResponse */
   const genQueryKey = ["user-generations", userKey, promptId];
   const { data: genData } = useQuery<{
-    data?: { generations?: Array<{ id: string; image_urls?: string[]; created_at: string; prompt_id?: string }> };
-    generations?: Array<{ id: string; image_urls?: string[]; created_at: string; prompt_id?: string }>;
+    data?: { generations?: Array<{ id: string; image_url?: string; image_urls?: string[]; created_at: string; prompt_id?: string }> };
+    generations?: Array<{ id: string; image_url?: string; image_urls?: string[]; created_at: string; prompt_id?: string }>;
   }>({
     queryKey: genQueryKey,
     queryFn: async () => {
@@ -627,15 +627,18 @@ export default function PromptGeneratorView({
       .flatMap(g => g.image_urls as string[]);
   }, [genData]);
 
-  /* Merge local (immediate) + DB history, deduplicate, cap at 20 */
+  /* Merge local (immediate) + DB history, deduplicate, cap at 20. A local
+     render the server recorded is that row (kept as the original, shown as
+     the preview), not a second image. */
   const history = useMemo(() => {
+    const recorded = serverUrls(genData?.data?.generations ?? genData?.generations ?? []);
     const seen = new Set<string>();
-    return [...localHistory, ...dbHistory].filter(url => {
+    return [...localHistory.filter(url => !recorded.has(url)), ...dbHistory].filter(url => {
       if (seen.has(url)) return false;
       seen.add(url);
       return true;
     }).slice(0, 20);
-  }, [localHistory, dbHistory]);
+  }, [localHistory, dbHistory, genData]);
 
   /* Init */
   useEffect(() => { setFav(getFavs().includes(promptId)); }, [promptId]);

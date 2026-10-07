@@ -26,6 +26,9 @@ vi.hoisted(() => {
 import { POST as register } from "../../app/api/auth/password/register/route";
 import { POST as walletJwt } from "../../app/api/auth/wallet/jwt/route";
 
+// Every password hash runs Argon2id (64 MiB, 3 passes): under a full parallel run one test takes seconds.
+vi.setConfig({ testTimeout: 60_000 });
+
 const EMAIL = "new@example.com";
 const U = "11111111-1111-4111-8111-111111111111";
 const post = (url: string, body: unknown, token?: string) =>

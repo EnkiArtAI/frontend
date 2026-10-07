@@ -37,6 +37,12 @@ beforeEach(() => {
 });
 
 describe("a prompt's showcase images", () => {
+  it("keeps at most four, unless the caller allows more (reference images: 14)", async () => {
+    const six = Array.from({ length: 6 }, () => PNG);
+    expect((await ownShowcaseImages(six, USER))!).toHaveLength(4);
+    expect((await ownShowcaseImages(six, USER, [], 14))!).toHaveLength(6);
+  });
+
   it("keeps what our stores already hold, without uploading it again", async () => {
     expect(await ownShowcaseImages([OURS, BUCKET], USER)).toEqual([OURS, BUCKET]);
     expect(put).not.toHaveBeenCalled();
@@ -85,7 +91,7 @@ describe("the prompt save", () => {
 
   it("stores the showcase only after the checks, refuses when it cannot, and saves our URLs", () => {
     const stored = SAVE.indexOf("const showcase = await ownShowcaseImages(uploadedPhotos, creatorId ?? ownerIds[0], savedShowcase);");
-    expect(SAVE).toMatch(/\.select\("id, [^"]*\bshowcase_images"\)\.eq\("id", body\.id\)\.in\("creator_id", owners\)/);
+    expect(SAVE).toMatch(/\.select\("id, [^"]*\bshowcase_images\b[^"]*"\)\.eq\("id", body\.id\)\.in\("creator_id", owners\)/);
     expect(stored).toBeGreaterThan(SAVE.indexOf("if (!verdict.allowed)"));
     expect(stored).toBeLessThan(SAVE.indexOf("const promptRow = {"));
     expect(SAVE).toMatch(/if \(!showcase\) \{\n\s+return NextResponse\.json\(\{ error: "Your showcase images could not be stored right now\. Nothing was saved\." \}, \{ status: 503 \}\);/);
