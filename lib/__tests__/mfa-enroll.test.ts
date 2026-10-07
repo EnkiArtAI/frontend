@@ -104,6 +104,17 @@ describe("a further factor", () => {
   });
 });
 
+describe("an email account", () => {
+  it("cannot set up the email code as a factor: its inbox resets its password", async () => {
+    sessionAge(1);
+    db.current!.tables.password_credentials = [{ user_id: U, email: "me@example.com" }];
+    const res = await setup(req("/api/auth/mfa/email", "POST", { email: "other@example.com" }), kind("email"));
+    expect(res.status).toBe(403);
+    expect(db.current!.tables.mfa_factors).toHaveLength(0);
+    expect(mails).toHaveLength(0);
+  });
+});
+
 describe("confirming a further factor", () => {
   it("takes the step-up too: the inbox alone never confirms one", async () => {
     await withTotp();
