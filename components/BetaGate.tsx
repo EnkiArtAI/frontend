@@ -17,7 +17,7 @@ import { SHOW_ADULT_KEY, isSessionStorageKey, pillSurvives, sessionAuthHeaders, 
 import { useQueryClient } from "@tanstack/react-query";
 import AccessGate from "@/components/enki-shell/AccessGate";
 
-const PUBLIC_PATHS = new Set(["/", "/landing", "/gate", "/guardian", "/reset-password"]);
+export const PUBLIC_PATHS = new Set(["/", "/landing", "/gate", "/guardian", "/reset-password"]);
 const BETA_ROLES = new Set(["beta", "mod", "admin"]);
 
 /** Profile bits the gate check already fetches — pages (profile) reuse them
@@ -105,7 +105,9 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let dead = false;
-    // A new check is a possibly new account: nothing 18+ until it answers.
+    // A new check is a possibly new account: nothing 18+ until it answers,
+    // and its 2FA state is read again (the red bar).
+    queryClient.removeQueries({ queryKey: ["stepup-factors"] });
     const forgetPill = () => { try { localStorage.removeItem(SHOW_ADULT_KEY); } catch { /* none */ } };
     setAdultConfirmedState(false);
     setAdultPillState(false);
@@ -166,7 +168,7 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
       }
     })();
     return () => { dead = true; };
-  }, [tick]);
+  }, [tick, queryClient]);
 
   const isPublic = PUBLIC_PATHS.has(pathname ?? "/");
 

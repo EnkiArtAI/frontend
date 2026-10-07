@@ -1,0 +1,43 @@
+import { describe, it, expect, vi } from "vitest";
+import { join } from "node:path";
+import { readSource } from "@/lib/__tests__/_read-source";
+
+/**
+ * The red bar (Kev, 2026-10-07): 2FA stays optional, but every signed-in
+ * account without a second factor sees a permanent bar at the top, without a
+ * close button. An outage never reads as "no 2FA", and an email account is
+ * never offered its own inbox as a factor.
+ */
+
+vi.mock("@/components/BetaGate", () => ({ useBetaAccess: () => ({}) }));
+import { fetchStepUpFactors, missingSecondFactor } from "@/hooks/useSecondFactor";
+
+const ROOT = join(__dirname, "..", "..");
+const BAR = readSource(join(ROOT, "components", "SecondFactorBar.tsx"));
+const CODES = readSource(join(ROOT, "components", "settings", "CodeFactors.tsx"));
+
+describe("the red bar", () => {
+  it("shows for a signed-in account without a factor, and for no one else", () => {
+    expect(missingSecondFactor(true, { factors: [] })).toBe(true);
+    expect(missingSecondFactor(true, { factors: ["totp"] })).toBe(false);
+    expect(missingSecondFactor(true, undefined)).toBe(false);
+    expect(missingSecondFactor(false, { factors: [] })).toBe(false);
+  });
+
+  it("never takes a failed read for \"no 2FA\"", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 503 })));
+    await expect(fetchStepUpFactors()).rejects.toThrow(/security settings/);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ factors: ["passkey"], emailCodes: true }))));
+    await expect(fetchStepUpFactors()).resolves.toEqual({ factors: ["passkey"], emailCodes: true });
+  });
+
+  it("cannot be closed, stays off public pages and /banned, and moves the page down", () => {
+    expect(BAR).not.toMatch(/aria-label="Close"|onClose|dismiss|×|✕/);
+    expect(BAR).toMatch(/!PUBLIC_PATHS\.has\(pathname\) && !pathname\.startsWith\("\/banned"\)/);
+    expect(BAR).toMatch(/setProperty\("--ek-banner-h", "30px"\)/);
+  });
+
+  it("offers no email code to an account whose email is its login", () => {
+    expect(CODES).toMatch(/\{data\?\.emailCodes && row\("email",/);
+  });
+});

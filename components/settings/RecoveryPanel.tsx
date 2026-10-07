@@ -6,6 +6,9 @@ import { QRCodeSVG } from "qrcode.react";
 
 import { usePasskey, StepUpNeeded } from "@/hooks/usePasskey";
 import { useStepUp } from "@/components/StepUpProvider";
+import { useQueryClient } from "@tanstack/react-query";
+import { STEPUP_FACTORS_KEY, useStepUpFactors } from "@/hooks/useSecondFactor";
+import { openLogin } from "@/lib/openLogin";
 import CodeFactors from "@/components/settings/CodeFactors";
 import { useToast } from "@/hooks/use-toast";
 import { sessionAuthHeaders } from "@/lib/session-headers";
@@ -50,6 +53,8 @@ export default function RecoveryPanel({ focus = false }: { focus?: boolean } = {
   const { toast } = useToast();
   const { enroll: enrollPasskey, busy: passkeyBusy } = usePasskey();
   const { guarded, tokenFor, confirm } = useStepUp();
+  const queryClient = useQueryClient();
+  const emailCodes = useStepUpFactors().data?.emailCodes ?? false;
 
   // When arrived here via the red "no recovery" banner: scroll the Guardians
   // area into view and pulse it (same heartbeat as the Payment "Add money").
@@ -166,7 +171,10 @@ export default function RecoveryPanel({ focus = false }: { focus?: boolean } = {
       }
       toast({ title: "Passkey added", description: "We'll ask for it before risky actions." });
       loadPasskeys();
+      void queryClient.invalidateQueries({ queryKey: STEPUP_FACTORS_KEY });
     } catch (e) {
+      // The first factor needs a login younger than ten minutes: offer it here.
+      if (e instanceof StepUpNeeded && e.reauth) openLogin();
       const msg = e instanceof Error ? e.message : "Could not add passkey";
       if (!/cancel|abort|NotAllowed/i.test(msg)) toast({ title: "Couldn't add passkey", description: msg, variant: "destructive" });
     }
@@ -178,7 +186,7 @@ export default function RecoveryPanel({ focus = false }: { focus?: boolean } = {
       headers: { "Content-Type": "application/json", ...sessionAuthHeaders(), ...h },
       body: JSON.stringify({ id }),
     }));
-    if (res.ok) { toast({ title: "Passkey removed" }); loadPasskeys(); }
+    if (res.ok) { toast({ title: "Passkey removed" }); loadPasskeys(); void queryClient.invalidateQueries({ queryKey: STEPUP_FACTORS_KEY }); }
     else toast({ title: "Couldn't remove passkey", variant: "destructive" });
   };
 
@@ -424,9 +432,9 @@ export default function RecoveryPanel({ focus = false }: { focus?: boolean } = {
       <SettingsSection num="01" title="Two-step check (2FA)">
         <div className="set-section-desc" style={{ paddingBottom: 16 }}>
           A passkey is the fingerprint, face or PIN lock of one of your devices, used for this site.
-          An authenticator app or a code by email works too. Add any of them and we&apos;ll ask for
-          one before anything serious happens: deleting your work, changing these factors or your
-          guardians.
+          An authenticator app works too{emailCodes ? ", and so does a code by email" : ""}. Add any of
+          them and we&apos;ll ask for one before anything serious happens: using your wallet, deleting
+          your work, changing these factors or your guardians.
         </div>
         <div className="set-list-item set-soft">
           <div className="set-item-icon"><Key size={14} /></div>

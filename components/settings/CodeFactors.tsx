@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useStepUpFactors } from "@/hooks/useSecondFactor";
+import { openLogin } from "@/lib/openLogin";
 import { Mail, Smartphone } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useToast } from "@/hooks/use-toast";
 import { sessionAuthHeaders } from "@/lib/session-headers";
-import { useStepUp, type Factor } from "@/components/StepUpProvider";
+import { useStepUp } from "@/components/StepUpProvider";
 
 /**
  * The two code factors beside the passkey (Kev, 2026-10-07): an
@@ -31,17 +32,14 @@ export default function CodeFactors({ onChange }: { onChange?: () => void }) {
   // The add-factor step-up of the setup, sent again with its confirm (valid 5 min).
   const [stepUp, setStepUp] = useState<Record<string, string>>({});
 
-  const { data: factors, refetch: load } = useQuery({
-    queryKey: ["stepup-factors"],
-    queryFn: async () => {
-      const res = await fetch("/api/auth/stepup", { headers: sessionAuthHeaders() });
-      return res.ok ? (((await res.json()) as { factors: Factor[] }).factors ?? []) : [];
-    },
-  });
+  const { data, refetch: load } = useStepUpFactors();
+  const factors = data?.factors;
 
   const say = async (res: Response, fallback: string) => {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    const body = (await res.json().catch(() => ({}))) as { error?: string; reauth?: boolean };
     toast({ title: body.error || fallback, variant: "destructive" });
+    // The first factor needs a login younger than ten minutes: offer it here.
+    if (body.reauth) openLogin();
   };
 
   const start = async (kind: Kind) => {
@@ -152,7 +150,8 @@ export default function CodeFactors({ onChange }: { onChange?: () => void }) {
   return (
     <>
       {row("totp", "Authenticator app", "A 6-digit code from Google Authenticator, Authy, 1Password or similar.")}
-      {row("email", "Code by email", "A 6-digit code sent to an address you confirm once.")}
+      {/* An email account's inbox resets its password: its code is no second factor. */}
+      {data?.emailCodes && row("email", "Code by email", "A 6-digit code sent to an address you confirm once.")}
     </>
   );
 }
