@@ -47,7 +47,7 @@ export function explorerTxUrl(chain: unknown, signature: string): string | null 
   return url.toString();
 }
 
-export type WithdrawFailure = { status: number; body: { error?: unknown; code?: unknown } | null };
+export type WithdrawFailure = { status: number; body: { error?: unknown; code?: unknown; stepUp?: unknown } | null };
 
 /**
  * One honest sentence per server answer. Only our own route's `error` string
@@ -63,6 +63,7 @@ export function withdrawErrorMessage(f: WithdrawFailure, fallback: string): stri
   if (code === "FROM_MISMATCH") return "The signed in wallet is not the one shown here, reload and try again.";
   if (code === "EXPIRED") return "Signing took too long, start again.";
   if (code === "WITHDRAWALS_NOT_MIGRATED") return serverText ?? fallback;
+  if (f.body?.stepUp === true) return "Not confirmed, nothing moved.";
   if (f.status === 401) return "Your session has ended, sign in again to send.";
   return serverText ?? fallback;
 }

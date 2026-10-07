@@ -59,8 +59,9 @@ function isPublic(pathname: string): boolean {
     pathname === "/api/auth/session" ||
     pathname === "/api/auth/wallet/jwt" ||
     pathname.startsWith("/api/auth/password/") ||
-    // Step-ups: a banned account has no team cookie and confirms its own
-    // withdrawals with them (each route checks the session itself).
+    // Step-ups, public like the withdraw routes: a banned account loses its
+    // gate cookie yet may still withdraw its own money, which takes a step-up
+    // (each route checks the session itself).
     pathname === "/api/auth/stepup" ||
     pathname === "/api/auth/stepup/email" ||
     pathname.startsWith("/api/auth/passkey/stepup/")
