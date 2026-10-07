@@ -200,10 +200,39 @@ describe("the landing login", () => {
       if (!fields.has(id)) fields.set(id, { value: "", style: { display: "" }, classList: { toggle() {} } });
       return fields.get(id)!;
     };
-    const run = new Function("document", `var firstLogin = { email: "e", password: "K7QM2XWB9RTPHDZA4NVC" };\n${fn("switchAuthTab")}\n}\nswitchAuthTab('login');\nreturn firstLogin;`);
+    const run = new Function("document", `var firstLogin = { email: "e", password: "K7QM2XWB9RTPHDZA4NVC" };\n${fn("switchAuthTab")}\n}\n${fn("forgetFirstLogin")}\n}\nswitchAuthTab('login');\nreturn firstLogin;`);
     el("firstPass").value = el("firstPass2").value = "half typed";
     expect(run({ getElementById: el })).toBeNull();
     expect([el("firstPass").value, el("firstPass2").value, el("formFirstLogin").style.display]).toEqual(["", "", "none"]);
+  });
+
+  it("forgets it on every way the modal closes, and never on a click inside it", () => {
+    const closed = (code: string, act: (h: { doc: Record<string, unknown>; key?: (e: unknown) => void; msg?: (e: unknown) => void }) => void) => {
+      let forgot = 0;
+      const backdrop = { classList: { remove() {}, contains: () => true } };
+      const h: { doc: Record<string, unknown>; key?: (e: unknown) => void; msg?: (e: unknown) => void } = {
+        doc: {
+          getElementById: (id: string) => (id === "authBackdrop" ? backdrop : null),
+          body: { style: {} },
+          addEventListener: (_t: string, f: (e: unknown) => void) => { h.key = f; },
+        },
+      };
+      const win = { addEventListener: (_t: string, f: (e: unknown) => void) => { h.msg = f; } };
+      new Function("document", "window", "forgetFirstLogin", "hideResetFrame", "openAuth", code)(h.doc, win, () => forgot++, () => {}, () => {});
+      act(h);
+      return forgot;
+    };
+    const handler = (from: string) => {
+      const start = LANDING.indexOf(from);
+      expect(start).toBeGreaterThan(-1);
+      return LANDING.slice(start, LANDING.indexOf("\n});\n", start) + 5);
+    };
+    expect(closed(`${fn("closeAuth")}\n}\ncloseAuth();`, () => {})).toBe(1); // the close button
+    expect(closed(`${fn("closeAuth")}\n}\ncloseAuth({ target: document.getElementById('authBackdrop') });`, () => {})).toBe(1);
+    expect(closed(`${fn("closeAuth")}\n}\ncloseAuth({ target: {} });`, () => {})).toBe(0); // a click inside the modal
+    expect(closed(`${fn("closeAuthHard")}\n}\ncloseAuthHard();`, () => {})).toBe(1);
+    expect(closed(handler("// Close on Escape"), (h) => h.key!({ key: "Escape" }))).toBe(1);
+    expect(closed(handler("window.addEventListener('message', function (e) {\n  if (!e || !e.data) return;"), (h) => h.msg!({ data: { type: "enki-esc" } }))).toBe(1);
   });
 
   it("no longer sends anyone to a wallet email code that does not exist, nor ships an email list", () => {
