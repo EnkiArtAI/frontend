@@ -41,6 +41,6 @@ export async function POST(req: NextRequest) {
   });
 
   const res = NextResponse.json(options);
-  setChallengeCookie(res, "pk_auth_challenge", options.challenge);
+  setChallengeCookie(res, "pk_auth_challenge", options.challenge, userId);
   return res;
 }
