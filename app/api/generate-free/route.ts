@@ -13,6 +13,7 @@ import { resolveModel } from "@/lib/generation/models";
 import { normalizeTier, RESOLUTION_TIERS } from "@/lib/generation/resolution";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
 import { storeReferenceImages } from "@/lib/generation/reference-images";
+import { storeDeadline, storeGeneratedImage } from "@/lib/generation/derivative-store";
 import { readImageDimensions } from "@/backend/services/gemini-image-generation";
 import { freeGenerationDecision, releaseFreeClaim } from "@/lib/generation/free-quota";
 
@@ -45,6 +46,8 @@ export const maxDuration = 300;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(request: NextRequest) {
+  // The clock maxDuration runs on; the stored image and its record must fit inside it.
+  const startedAt = Date.now();
   // What a failure from the render on is recorded with, for the admin person list.
   let failCtx: Omit<GenerationFailure, "error"> | null = null;
   // The free allowance this request holds; every path that renders nothing gives it back.
@@ -261,9 +264,17 @@ export async function POST(request: NextRequest) {
         // Measured once, above, for the media type. Measuring the same
         // buffer a second time here could only ever agree with itself.
         const dims = measured;
-        after(
-          recordGeneration(supabase, {
+        // Everything here runs after the response. The image is stored first,
+        // with the paid route's retries and fallback bucket: without our copy
+        // the row would carry megabytes of data URL, and without the row the
+        // image never reaches its owner's gallery (ENG-07). A render can take
+        // 240 s, so the store gets what is left of the function's own clock
+        // and the record is written either way.
+        after(async () => {
+          const stored = await storeGeneratedImage(imageUrl, recUserId, Math.min(Date.now() + 120_000, storeDeadline(startedAt)));
+          await recordGeneration(supabase, {
             adult,
+            ...(stored.imageUrl.startsWith("data:") ? {} : stored),
             userId: recUserId,
             /* Which prompt this came from.
              *
@@ -294,7 +305,7 @@ export async function POST(request: NextRequest) {
               ? {
                   width: dims.width,
                   height: dims.height,
-                  bytes: result.imageBuffers[0].length,
+                  bytes: buffer.length,
                   format: dims.format,
                 }
               : null,
@@ -302,8 +313,8 @@ export async function POST(request: NextRequest) {
             workflow: stripped.workflow,
             workflowTexts: stripped.texts,
             references: await storeReferenceImages(stripped.images, recUserId),
-          }),
-        );
+          });
+        });
       }
     }
 

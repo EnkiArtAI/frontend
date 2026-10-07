@@ -214,8 +214,10 @@ export async function recordGeneration(
     if (rec.imageUrl) {
       /* Our copy + WebP renditions. Token-graceful (no BLOB token = the
          provider URL passes through) and never throwing — the paid image
-         always lands in the row, optimised or not. */
-      const stored = rec.previewUrl
+         always lands in the row, optimised or not. A caller that passes
+         previewUrl, even null, stored the image itself: storing it again
+         here would be unbounded work in after(). */
+      const stored = rec.previewUrl !== undefined
         ? { imageUrl: rec.imageUrl, previewUrl: rec.previewUrl, thumbnailUrl: rec.thumbnailUrl ?? null }
         : await storeGeneratedImage(rec.imageUrl, rec.userId);
       const { error: imgErr } = await supabase.from("generated_images").insert({
