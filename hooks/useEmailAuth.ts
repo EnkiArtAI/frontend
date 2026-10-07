@@ -64,6 +64,9 @@ export function useEmailAuth() {
   }, []);
 
   const logout = useCallback(() => {
+    // The session dies on the server too: a copied token must not outlive the logout.
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (token) void fetch("/api/auth/session", { method: "DELETE", headers: { "X-Session-Token": token }, keepalive: true }).catch(() => {});
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(EMAIL_KEY);
     // Kill the Dynamic SDK session too: its runtime unmounts on logout (lazy
