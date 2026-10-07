@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { gateNext } from "@/lib/gate-next";
 
 // Decorative, non-interactive copy of the app's left menu — shown ONLY as an
 // ultra-blurred backdrop so the gate reads as "the app, locked", without ever
@@ -39,8 +40,8 @@ export default function GatePage() {
         body: JSON.stringify({ code: code.trim() }),
       });
       if (r.ok) {
-        const next = new URLSearchParams(window.location.search).get("next") || "/home";
-        window.location.href = next;
+        // Only a page of this site: ?next= is written by whoever made the link.
+        window.location.href = gateNext(new URLSearchParams(window.location.search).get("next"));
         return;
       }
       const j = await r.json().catch(() => ({}));
