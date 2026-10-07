@@ -8,6 +8,8 @@
  *   email; the wallet waits for that step. It never expires (Kev), so it
  *   carries 100 bits: 20 characters from a 32-letter alphabet.
  * - A wallet goes on the access list; it logs in by its own signature.
+ * - A request can be rejected: it leaves the queue, nothing is mailed and
+ *   nobody is added to the access list.
  *
  * Inviting an email again mails a fresh one-time password while the account
  * has not chosen its own; one that has is left alone. The one-time password
@@ -150,6 +152,20 @@ export async function approveRequest(supabase: Supabase, id: string): Promise<Em
     if (reopenErr) throw new AccessError(`${e instanceof Error ? e.message : "The invite failed"}; the request could not be reopened`, 503);
     throw e;
   }
+}
+
+/** Rejects a pending access request. Only a pending one: an approved
+    request already has its account. */
+export async function rejectRequest(supabase: Supabase, id: string): Promise<{ rejected: true }> {
+  const { data, error } = await supabase
+    .from("access_requests")
+    .update({ status: "rejected", updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("status", "pending")
+    .select("id");
+  if (error) throw new AccessError("Could not update the request", 503);
+  if (!data?.length) throw new AccessError("No pending request with this id", 404);
+  return { rejected: true };
 }
 
 /** The Access tab's data, for admins only: it holds applicants' emails. */
