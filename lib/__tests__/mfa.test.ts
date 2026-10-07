@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { fakePostgrest } from "./_fake-postgrest";
 
 /**
  * MFA core (Kev, 2026-10-07): an authenticator app and an email code beside
@@ -8,42 +9,8 @@ import { NextRequest } from "next/server";
  * factor however fast they arrive, and the gate fails closed.
  */
 
-type Row = Record<string, unknown>;
-let tables: Record<string, Row[]>;
-let failing: { table: string; code: string } | null;
-
-// A PostgREST-shaped fake: filters, conditional updates, upsert on a key.
-function from(table: string) {
-  const filters: ((r: Row) => boolean)[] = [];
-  let op: { kind: "select" | "update" | "upsert"; values?: Row; head?: boolean } = { kind: "select" };
-  let one = false;
-  const rows = () => (tables[table] ??= []);
-  const q: Record<string, unknown> = {
-    select: (_cols?: string, opts?: { head?: boolean }) => { if (op.kind === "select") op = { kind: "select", head: opts?.head }; return q; },
-    update: (values: Row) => { op = { kind: "update", values }; return q; },
-    upsert: (values: Row) => { op = { kind: "upsert", values }; return q; },
-    eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
-    not: (c: string, _op: string, v: unknown) => { filters.push((r) => (r[c] ?? null) !== v); return q; },
-    maybeSingle: () => { one = true; return q; },
-    single: () => { one = true; return q; },
-    then: (ok: (v: unknown) => unknown) => {
-      if (failing?.table === table) return Promise.resolve({ data: null, error: { code: failing.code, message: "boom" }, count: null }).then(ok);
-      if (op.kind === "upsert") {
-        const v = op.values!;
-        let r = rows().find((x) => x.user_id === v.user_id && x.kind === v.kind);
-        if (!r) { r = { id: `f${rows().length + 1}`, lockouts: 0, sends_count: 0, failed_attempts: 0, last_step: null, code_sent_at: null, sends_day: null, ...v }; rows().push(r); }
-        else Object.assign(r, v);
-        return Promise.resolve({ data: { ...r }, error: null }).then(ok);
-      }
-      const hit = rows().filter((r) => filters.every((f) => f(r)));
-      if (op.kind === "update") hit.forEach((r) => Object.assign(r, op.values));
-      const data = one ? (hit[0] ? { ...hit[0] } : null) : hit.map((r) => ({ ...r }));
-      return Promise.resolve({ data: op.head ? null : data, error: null, count: hit.length }).then(ok);
-    },
-  };
-  return q;
-}
-const supabase = { from } as never;
+const db = fakePostgrest();
+const supabase = db.client;
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => supabase }));
 
 const mails: { to: string; text: string }[] = [];
@@ -61,7 +28,7 @@ import { POST as stepUp, GET as factors } from "../../app/api/auth/stepup/route"
 import { POST as emailCode } from "../../app/api/auth/stepup/email/route";
 
 const U = "u1";
-const factor = (kind: string) => tables.mfa_factors.find((r) => r.user_id === U && r.kind === kind)!;
+const factor = (kind: string) => db.tables.mfa_factors.find((r) => r.user_id === U && r.kind === kind)!;
 const lastCode = () => mails.at(-1)!.text.match(/\b(\d{6})\b/)![1];
 const scope = "delete-work:1a2b3c4d-1111-4222-8333-444455556666";
 
@@ -73,8 +40,11 @@ async function confirmedTotp() {
 }
 
 beforeEach(() => {
-  tables = { webauthn_credentials: [], mfa_factors: [] };
-  failing = null;
+  for (const k of Object.keys(db.tables)) delete db.tables[k];
+  db.tables.webauthn_credentials = [];
+  db.tables.mfa_factors = [];
+  db.state.failing = null;
+  db.state.pauseNextRead = null;
   mails.length = 0;
   session.userId = U;
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -181,14 +151,81 @@ describe("an email code", () => {
   });
 });
 
+/** Hands the next read of the factor row its snapshot now and the caller the answer later. */
+function staleRead() {
+  let release!: () => void;
+  db.state.pauseNextRead = { table: "mfa_factors", until: new Promise<void>((r) => { release = r; }) };
+  return () => release();
+}
+
+describe("racing requests", () => {
+  it("spend a code once, however many carry it at the same time", async () => {
+    const secret = await confirmedTotp();
+    vi.setSystemTime(new Date("2026-10-07T12:00:31Z"));
+    const code = totpCode(secret);
+    const release = staleRead();
+    const late = checkCode(supabase, U, "totp", code);
+    expect(await checkCode(supabase, U, "totp", code)).toBe("ok");
+    release();
+    expect(await late).not.toBe("ok");
+  });
+
+  it("spend an email code once too", async () => {
+    await beginEmail(supabase, U, "me@example.com");
+    await checkCode(supabase, U, "email", lastCode(), { confirm: true });
+    vi.setSystemTime(new Date("2026-10-07T12:02:00Z"));
+    await sendEmailCode(supabase, U);
+    const code = lastCode();
+    const release = staleRead();
+    const late = checkCode(supabase, U, "email", code);
+    expect(await checkCode(supabase, U, "email", code)).toBe("ok");
+    release();
+    expect(await late).not.toBe("ok");
+  });
+
+  it("get no guess in while the factor is locked, even from a read made before the lock", async () => {
+    const secret = await confirmedTotp();
+    vi.setSystemTime(new Date("2026-10-07T12:00:31Z"));
+    const release = staleRead();
+    const late = checkCode(supabase, U, "totp", totpCode(secret));
+    for (let i = 0; i < MAX_ATTEMPTS; i++) await checkCode(supabase, U, "totp", "000000");
+    release();
+    expect(await late).not.toBe("ok");
+    expect(Number(factor("totp").lockouts)).toBe(1);
+  });
+
+  it("send one code a minute even when sends race", async () => {
+    await beginEmail(supabase, U, "me@example.com");
+    vi.setSystemTime(new Date("2026-10-07T12:02:00Z"));
+    mails.length = 0;
+    const release = staleRead();
+    const late = sendEmailCode(supabase, U);
+    expect(await sendEmailCode(supabase, U)).toBe("sent");
+    release();
+    expect(await late).toBe("cooldown");
+    expect(mails).toHaveLength(1);
+  });
+
+  it("never confirm a re-begun authenticator with the old secret's code", async () => {
+    const first = await beginTotp(supabase, U, "me");
+    if (first === "exists") throw new Error();
+    const release = staleRead();
+    const late = checkCode(supabase, U, "totp", totpCode(first.secret), { confirm: true });
+    await beginTotp(supabase, U, "me");
+    release();
+    expect(await late).not.toBe("ok");
+    expect(factor("totp").confirmed_at ?? null).toBeNull();
+  });
+});
+
 describe("the step-up gate", () => {
   const req = (token?: string) => new NextRequest("http://enki.test/x", { headers: token ? { "X-StepUp-Token": token } : {} });
 
   it("fails closed without a user and on a broken lookup", async () => {
     expect((await requireStepUp(req(), null, scope))!.status).toBe(401);
-    failing = { table: "webauthn_credentials", code: "08006" };
+    db.state.failing = { table: "webauthn_credentials", code: "08006" };
     expect((await requireStepUp(req(), U, scope))!.status).toBe(503);
-    failing = { table: "mfa_factors", code: "08006" };
+    db.state.failing = { table: "mfa_factors", code: "08006" };
     expect((await requireStepUp(req(), U, scope))!.status).toBe(503);
   });
 
@@ -210,10 +247,10 @@ describe("the step-up gate", () => {
   });
 
   it("treats a factors table that is not migrated yet as empty, and nothing else", async () => {
-    tables.webauthn_credentials.push({ id: "p", user_id: U });
-    failing = { table: "mfa_factors", code: "PGRST205" };
+    db.tables.webauthn_credentials.push({ id: "p", user_id: U });
+    db.state.failing = { table: "mfa_factors", code: "PGRST205" };
     expect(await enrolledFactors(supabase, U)).toEqual(["passkey"]);
-    failing = { table: "mfa_factors", code: "42501" };
+    db.state.failing = { table: "mfa_factors", code: "42501" };
     await expect(enrolledFactors(supabase, U)).rejects.toMatchObject({ code: "42501" });
   });
 });

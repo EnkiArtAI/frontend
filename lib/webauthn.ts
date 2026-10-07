@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { hkdfSync } from "crypto";
+import { createHmac, hkdfSync, timingSafeEqual } from "crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { enrolledFactors, type Factor } from "@/lib/mfa";
@@ -109,11 +109,24 @@ export async function requireStepUp(
   return NextResponse.json({ error: "Step-up verification required", scope, stepUp: true, factors }, { status: 401 });
 }
 
-// ── challenge cookie (single-use, httpOnly; no DB row needed) ──────────────
+// ── challenge cookie (httpOnly; no DB row needed) ───────────────────────────
+// Signed for one user, one purpose and five minutes. Unsigned, the server took
+// whatever challenge the client sent: a script with a stolen session could
+// verify a self-made attestation, and a captured assertion could be replayed
+// with its own challenge for any scope.
 const COOKIE_PATH = "/api/auth/passkey";
 
-export function setChallengeCookie(res: NextResponse, name: string, challenge: string) {
-  res.cookies.set(name, challenge, {
+function challengeMac(name: string, userId: string, challenge: string, expiry: string): Buffer {
+  const p = process.env.AUTH_PEPPER;
+  if (!p) throw new Error("AUTH_PEPPER not configured");
+  const key = hkdfSync("sha256", Buffer.from(p, "base64"), new Uint8Array(0), Buffer.from("enki-webauthn-challenge-v1"), 32);
+  return createHmac("sha256", Buffer.from(key)).update(`${name}|${userId}|${challenge}|${expiry}`).digest();
+}
+
+export function setChallengeCookie(res: NextResponse, name: string, challenge: string, userId: string) {
+  const expiry = String(Date.now() + CHALLENGE_TTL_S * 1000);
+  const mac = challengeMac(name, userId, challenge, expiry).toString("base64url");
+  res.cookies.set(name, `${challenge}.${expiry}.${mac}`, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "strict",
@@ -122,10 +135,16 @@ export function setChallengeCookie(res: NextResponse, name: string, challenge: s
   });
 }
 
-export function readChallengeCookie(req: NextRequest, name: string): string | undefined {
-  return req.cookies.get(name)?.value;
+/** The challenge this server issued to this user for this purpose, still fresh; otherwise undefined. */
+export function readChallengeCookie(req: NextRequest, name: string, userId: string): string | undefined {
+  const [challenge, expiry, mac] = (req.cookies.get(name)?.value ?? "").split(".");
+  if (!challenge || !expiry || !mac || Number(expiry) < Date.now()) return undefined;
+  const expected = challengeMac(name, userId, challenge, expiry);
+  const given = Buffer.from(mac, "base64url");
+  return given.length === expected.length && timingSafeEqual(given, expected) ? challenge : undefined;
 }
 
-export function clearChallengeCookie(res: NextResponse, name: string) {
+export function clearChallengeCookie(res: NextResponse, name: string): NextResponse {
   res.cookies.set(name, "", { path: COOKIE_PATH, maxAge: 0 });
+  return res;
 }
