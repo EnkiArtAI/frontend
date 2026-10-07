@@ -42,7 +42,12 @@ export async function POST(req: NextRequest) {
     if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
     const result = await checkCode(supabase, userId, body.factor, body.code);
     if (result === "ok") {
-      await afterStepUp(supabase, req.headers.get("X-Session-Token"), userId, body.scope);
+      try {
+        await afterStepUp(supabase, req.headers.get("X-Session-Token"), userId, body.scope);
+      } catch {
+        // The code is spent by now: say so, or a retry with it reads as a wrong guess.
+        return NextResponse.json({ error: "Could not unlock the wallet. Get a new code and try again." }, { status: 503 });
+      }
       return NextResponse.json({ token: await mintStepUpToken(userId, body.scope) });
     }
     if (result === "none") return NextResponse.json({ error: "That factor is not set up" }, { status: 404 });

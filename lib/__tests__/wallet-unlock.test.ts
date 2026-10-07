@@ -143,6 +143,14 @@ describe("a step-up", () => {
     expect((await mint("other")).status).toBe(403);
   });
 
+  it("that cannot stamp the session says the code is spent, and mints nothing", async () => {
+    const secret = await totpFactor();
+    db.current!.state.failing = { table: "auth_sessions", code: "XX000" };
+    const res = await codeStepUp(secret, "wallet");
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toMatch(/new code/);
+  });
+
   it("for an export unlocks too and tells the owner by mail; anything else does neither", async () => {
     const secret = await totpFactor();
     expect((await codeStepUp(secret, "add-factor")).status).toBe(200);
@@ -174,6 +182,20 @@ describe("a step-up", () => {
     expect(res.status).toBe(200);
     expect(session("sess").stepup_at).toBe("2026-10-07T12:00:00.000Z");
   });
+  // Last in its block: the rate limiter lives in the process, and this fills U's bucket.
+  it("mails the export notice to a verified address only, three an hour", async () => {
+    const secret = await totpFactor();
+    db.current!.tables.password_credentials[0].email_verified_at = null;
+    at("2026-10-07T20:00:00Z");
+    expect((await codeStepUp(secret, "export")).status).toBe(200);
+    expect(mails).toEqual([]);
+    db.current!.tables.password_credentials[0].email_verified_at = "2026-10-01T00:00:00.000Z";
+    for (let i = 1; i <= 4; i++) {
+      at(new Date(Date.parse("2026-10-07T20:00:00Z") + i * 31_000).toISOString());
+      expect((await codeStepUp(secret, "export")).status).toBe(200);
+    }
+    expect(mails).toHaveLength(3);
+  });
 });
 
 describe("the last factor of an embedded wallet", () => {
@@ -196,6 +218,13 @@ describe("the last factor of an embedded wallet", () => {
     expect((await removeTotp()).status).toBe(200);
     expect((await removeKey(PK)).status).toBe(409);
     expect(db.current!.tables.webauthn_credentials).toHaveLength(1);
+  });
+
+  it("stays when two removals race", async () => {
+    db.current!.tables.webauthn_credentials = [{ id: PK, user_id: U }];
+    const answers = await Promise.all([removeTotp(), removeKey(PK)]);
+    expect(answers.map((r) => r.status)).toContain(409);
+    expect(db.current!.tables.mfa_factors.length + db.current!.tables.webauthn_credentials.length).toBeGreaterThan(0);
   });
 
   it("goes as before for an account that signs in with its own wallet", async () => {

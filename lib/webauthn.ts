@@ -4,6 +4,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { enrolledFactors, type Factor } from "@/lib/mfa";
 import { sendMail } from "@/lib/mailer";
+import { checkRequestRateLimit } from "@/lib/rate-limit";
 
 /**
  * App-side WebAuthn passkeys for STEP-UP 2FA. Opt-in: a user who registers a
@@ -86,8 +87,11 @@ export async function afterStepUp(
     if (error) throw error;
   }
   if (scope !== "export") return;
-  const { data } = await supabase.from("password_credentials").select("email").eq("user_id", userId).maybeSingle();
-  if (!data?.email) return;
+  const { data } = await supabase.from("password_credentials").select("email, email_verified_at").eq("user_id", userId).maybeSingle();
+  // Only to an address its owner proved, and three an hour: the notice must
+  // never mail a stranger whose address was typed in at signup, nor use up
+  // the mail quota every code and reset depends on.
+  if (!data?.email_verified_at || !checkRequestRateLimit(`export-notice:${userId}`, 3, 3600_000).allowed) return;
   await sendMail({
     to: data.email,
     subject: "Your Enki wallet key is being exported",
