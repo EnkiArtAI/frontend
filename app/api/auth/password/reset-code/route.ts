@@ -13,7 +13,7 @@ import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/ra
 import { completePasswordReset, sha256 } from "@/lib/password-reset";
 import { loginRefusal } from "@/lib/password-login";
 import { activeBanFor } from "@/lib/session-user";
-import { grantGateCookie } from "@/lib/allowlist";
+import { grantGateCookie, revokeGateCookie } from "@/lib/allowlist";
 
 const bodySchema = z.object({
   email: z.string().email().max(320),
@@ -64,5 +64,7 @@ export async function POST(req: NextRequest) {
   const result = await completePasswordReset(supabase, row.user_id, parsed.data.password, { inboxProven: true, ipHash: gate.ipHash });
   if ("error" in result) return NextResponse.json({ error: result.error }, { status: 500 });
   // Enters like a login: the gate cookie, and /banned for a banned account.
-  return grantGateCookie(NextResponse.json({ ...result, ...(banned ? { banned: true } : {}) }));
+  const res = NextResponse.json({ ...result, ...(banned ? { banned: true } : {}) });
+  // A banned account loses the gate cookie, as at every login (BAN-1).
+  return banned ? revokeGateCookie(res) : grantGateCookie(res);
 }

@@ -192,6 +192,19 @@ describe("a password reset", () => {
     const code = /\b(\d{7})\b/.exec(mails[0].text)![1];
     const res = await resetCode(post("/api/auth/password/reset-code", { email: EMAIL, code, password: "my own password" }));
     expect(await res.json()).toMatchObject({ banned: true });
+    // The team cookie opens every page: a banned account loses it (BAN-1).
+    expect(res.headers.get("set-cookie")).toMatch(/enki_team=;.*Max-Age=0/i);
+  });
+
+  it("a banned invitee's first login is routed to /banned and loses the team cookie", async () => {
+    net.banned = true;
+    // Past the per-email window of the first logins above.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 11 * 60_000);
+    const res = await firstLogin(post("/api/auth/password/first-login", { email: EMAIL, password: ONE_TIME, newPassword: "my own password" }))
+      .finally(() => clock.mockRestore());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ banned: true });
+    expect(res.headers.get("set-cookie")).toMatch(/enki_team=;.*Max-Age=0/i);
   });
 
   it("by guardians confirms nothing: they prove no inbox", async () => {

@@ -8,7 +8,7 @@ import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { mintUserSession } from "@/lib/user-session";
 import { activeBanFor } from "@/lib/session-user";
-import { whitelistStageActive, isEmailAllowed, grantGateCookie } from "@/lib/allowlist";
+import { whitelistStageActive, isEmailAllowed, grantGateCookie, revokeGateCookie } from "@/lib/allowlist";
 import { getClientIp, hashIp, isIpBanned } from "@/lib/ip-hash";
 
 type Supabase = ReturnType<typeof getSupabaseServerClient>;
@@ -38,9 +38,11 @@ export async function loginRefusal(
 
 /** Opens the session. Banned users still get one: it only opens /api/ban/*
     (status, appeal, funds), and the banned flag routes the client to /banned.
-    The gate cookie grants app access during the whitelist stage. */
+    The gate cookie grants app access during the whitelist stage; a banned
+    account loses it (the cookie opens every page, /banned is public without it). */
 export async function openLoginSession(supabase: Supabase, userId: string, email: string, ipHash: string | null): Promise<NextResponse> {
   const banned = !!(await activeBanFor(supabase, userId));
   const session = await mintUserSession(userId, ipHash);
-  return grantGateCookie(NextResponse.json({ email, ...session, ...(banned ? { banned: true } : {}) }));
+  const res = NextResponse.json({ email, ...session, ...(banned ? { banned: true } : {}) });
+  return banned ? revokeGateCookie(res) : grantGateCookie(res);
 }
