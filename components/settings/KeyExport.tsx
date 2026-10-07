@@ -1,17 +1,19 @@
 "use client";
 
-/* Self-custody key export for embedded (email) wallets: the account password
-   is re-checked, the key is shown once, and the dialog says what to do with
-   it. Settings and /banned share it: a ban locks the marketplace, never the
-   wallet. Wallet logins (Phantom & co) hold their keys themselves already. */
+/* Self-custody key export for embedded (email) wallets: the user confirms with
+   a second factor (step-up "export", which also mails them a notice), the key
+   is shown once, and the dialog says what to do with it. Settings and /banned
+   share it: a ban locks the marketplace, never the wallet. Wallet logins
+   (Phantom & co) hold their keys themselves already. */
 
 import { useState } from "react";
 import { Check, Copy, KeyRound, Loader2, X } from "lucide-react";
 import { requestCdpKeyExport } from "@/lib/cdp-bridge";
+import { useStepUp } from "@/components/StepUpProvider";
 
-export default function KeyExport({ email, ready }: { email: string | null; ready: boolean }) {
-  const [step, setStep] = useState<null | "password" | "reveal">(null);
-  const [pw, setPw] = useState("");
+export default function KeyExport({ ready }: { ready: boolean }) {
+  const { tokenFor } = useStepUp();
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [key, setKey] = useState<string | null>(null);
@@ -19,24 +21,20 @@ export default function KeyExport({ email, ready }: { email: string | null; read
 
   const close = () => {
     // The key never outlives the dialog.
-    setStep(null); setPw(""); setErr(null); setKey(null); setCopied(false);
+    setOpen(false); setErr(null); setKey(null); setCopied(false);
   };
-  const confirm = async () => {
+  const reveal = async () => {
     setBusy(true);
     setErr(null);
     try {
-      // Re-check the account password — nobody walks up to an open laptop
-      // and walks away with the key.
-      const res = await fetch("/api/auth/password/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password: pw }),
-      });
-      if (!res.ok) throw new Error("Wrong password");
+      // A second factor first: nobody walks up to an open laptop and walks
+      // away with the key. Asked before the overlay opens, which would cover
+      // the step-up dialog.
+      if (!(await tokenFor("export"))) return;
+      setOpen(true);
       setKey(await requestCdpKeyExport());
-      setStep("reveal");
-      setPw("");
     } catch (e) {
+      setOpen(true);
       setErr(e instanceof Error ? e.message : "Export failed");
     } finally {
       setBusy(false);
@@ -63,48 +61,26 @@ export default function KeyExport({ email, ready }: { email: string | null; read
         </div>
         <button
           className="set-btn set-btn-outline"
-          onClick={() => setStep("password")}
-          disabled={!ready || !email}
+          onClick={() => void reveal()}
+          disabled={!ready || busy}
           title={ready ? "Export your private key" : "Wallet is still being set up"}
         >
           Export
         </button>
       </div>
 
-      {step && (
+      {open && (
         <div className="set-pay-overlay" onClick={() => !busy && close()}>
           <div className="set-pay-card set-pay-card--fiat" onClick={(e) => e.stopPropagation()}>
             <button className="set-pay-close" onClick={close} aria-label="Close" disabled={busy}>
               <X size={16} />
             </button>
-            {step === "password" ? (
+            {!key ? (
               <div>
-                <div className="set-item-title" style={{ marginBottom: 6 }}>Confirm it&apos;s you</div>
-                <p className="set-item-sub" style={{ marginBottom: 14 }}>
-                  Enter your account password to reveal the private key.
-                  Anyone with this key controls the money in the wallet. Never share it.
-                </p>
-                <input
-                  type="password"
-                  value={pw}
-                  onChange={(e) => setPw(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && pw && !busy) void confirm(); }}
-                  placeholder="Your password"
-                  autoFocus
-                  style={{
-                    width: "100%", height: 40, padding: "0 12px", borderRadius: 8, fontSize: 14,
-                    border: "1px solid var(--enki-rule)", background: "transparent", color: "var(--enki-ink)", outline: "none",
-                  }}
-                />
-                {err && <p style={{ fontSize: 12.5, color: "#e0584f", marginTop: 8 }}>{err}</p>}
-                <button
-                  className="set-btn set-btn-dark"
-                  style={{ width: "100%", justifyContent: "center", marginTop: 14 }}
-                  onClick={() => void confirm()}
-                  disabled={busy || !pw}
-                >
-                  {busy ? <Loader2 size={14} className="set-spin" /> : "Reveal key"}
-                </button>
+                <div className="set-item-title" style={{ marginBottom: 6 }}>Your private key</div>
+                {err
+                  ? <p style={{ fontSize: 12.5, color: "#e0584f" }}>{err}</p>
+                  : <Loader2 size={16} className="set-spin" />}
               </div>
             ) : (
               <div>

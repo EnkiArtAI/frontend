@@ -13,7 +13,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserWithBan } from "@/lib/session-user";
 import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
 import { checkCode, enrolledFactors } from "@/lib/mfa";
-import { isStepUpScope, mintStepUpToken, stampUnlock } from "@/lib/webauthn";
+import { isStepUpScope, mintStepUpToken, afterStepUp } from "@/lib/webauthn";
 
 async function sessionUser(req: NextRequest) {
   const supabase = getSupabaseServerClient();
@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
     const result = await checkCode(supabase, userId, body.factor, body.code);
     if (result === "ok") {
-      await stampUnlock(supabase, req.headers.get("X-Session-Token"), body.scope);
+      await afterStepUp(supabase, req.headers.get("X-Session-Token"), userId, body.scope);
       return NextResponse.json({ token: await mintStepUpToken(userId, body.scope) });
     }
     if (result === "none") return NextResponse.json({ error: "That factor is not set up" }, { status: 404 });

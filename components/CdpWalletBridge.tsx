@@ -42,7 +42,7 @@ export function CdpWalletBridge() {
   }, [solanaAddress]);
 
   // Self-custody: answer key-export requests (Payment → "Your private key").
-  // The password re-check happens on the requesting side BEFORE the request.
+  // The requesting side asks for an "export" step-up BEFORE the request.
   useEffect(() => {
     const onRequest = async () => {
       let detail: { privateKey?: string; error?: string };

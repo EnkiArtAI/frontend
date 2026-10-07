@@ -98,6 +98,8 @@ export default function RecoveryPanel({ focus = false }: { focus?: boolean } = {
       const me = meRes.ok ? ((await meRes.json()) as { id?: string }) : {};
       if (!me.id) throw new Error("Could not confirm who you are — try signing in again.");
 
+      // The key leaves the wallet only after a second factor, as in Payment.
+      if (!(await tokenFor("export"))) return;
       const privateKey = await requestCdpKeyExport();
       const file = await buildRecoveryFile({
         privateKey,

@@ -3,6 +3,7 @@ import { createHmac, hkdfSync, timingSafeEqual } from "crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { enrolledFactors, type Factor } from "@/lib/mfa";
+import { sendMail } from "@/lib/mailer";
 
 /**
  * App-side WebAuthn passkeys for STEP-UP 2FA. Opt-in: a user who registers a
@@ -67,16 +68,34 @@ export function isStepUpScope(scope: unknown): scope is string {
 const UNLOCK_MAX_MS = 2 * 3600_000;
 const UNLOCK_IDLE_MS = 15 * 60_000;
 
-/** Stamps the session that just passed a wallet or export step-up as unlocked. */
-export async function stampUnlock(
+/**
+ * What a passed step-up does beyond its token: a wallet or export step-up
+ * unlocks the session it came from, and an export one tells the owner by
+ * mail, since the key itself leaves through CDP where we cannot see it.
+ */
+export async function afterStepUp(
   supabase: ReturnType<typeof getSupabaseServerClient>,
   token: string | null,
+  userId: string,
   scope: string,
 ): Promise<void> {
-  if ((scope !== "wallet" && scope !== "export") || !token) return;
-  const now = new Date().toISOString();
-  const { error } = await supabase.from("auth_sessions").update({ stepup_at: now, stepup_seen_at: now }).eq("token", token);
-  if (error) throw error;
+  if (scope !== "wallet" && scope !== "export") return;
+  if (token) {
+    const now = new Date().toISOString();
+    const { error } = await supabase.from("auth_sessions").update({ stepup_at: now, stepup_seen_at: now }).eq("token", token);
+    if (error) throw error;
+  }
+  if (scope !== "export") return;
+  const { data } = await supabase.from("password_credentials").select("email").eq("user_id", userId).maybeSingle();
+  if (!data?.email) return;
+  await sendMail({
+    to: data.email,
+    subject: "Your Enki wallet key is being exported",
+    text:
+      `Someone just confirmed an export of your Enki wallet's private key (${new Date().toUTCString()}). ` +
+      `If that was you, there is nothing to do.\n\n` +
+      `If it was not, move your funds to a new wallet right away, sign out on every device and change your password.`,
+  }).catch(() => { /* the notice is best effort; the step-up stands */ });
 }
 
 /** Whether a session row is unlocked for the wallet now. A row never stamped

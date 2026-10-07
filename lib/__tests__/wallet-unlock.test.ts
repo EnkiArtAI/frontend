@@ -14,7 +14,8 @@ import { fakePostgrest } from "./_fake-postgrest";
 
 const db = vi.hoisted(() => ({ current: null as ReturnType<typeof import("./_fake-postgrest").fakePostgrest> | null }));
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => db.current!.client }));
-vi.mock("@/lib/mailer", () => ({ sendMail: async () => ({ ok: true }) }));
+const mails = vi.hoisted(() => [] as { to: string; subject: string }[]);
+vi.mock("@/lib/mailer", () => ({ sendMail: async (m: { to: string; subject: string }) => { mails.push(m); return { ok: true }; } }));
 const sessionWallet = (token: string | null) =>
   (db.current!.tables.auth_sessions ?? []).find((s) => s.token === token)?.wallet_address as string | undefined;
 vi.mock("@/lib/session-user", () => ({
@@ -68,6 +69,7 @@ beforeEach(() => {
   ];
   t.webauthn_credentials = [];
   t.mfa_factors = [{ id: "f1", user_id: U, kind: "totp", confirmed_at: "2026-10-01T00:00:00.000Z" }];
+  mails.length = 0;
 });
 afterEach(() => vi.useRealTimers());
 
@@ -141,13 +143,23 @@ describe("a step-up", () => {
     expect((await mint("other")).status).toBe(403);
   });
 
-  it("for an export unlocks too; for anything else, nothing", async () => {
+  it("for an export unlocks too and tells the owner by mail; anything else does neither", async () => {
+    const secret = await totpFactor();
+    expect((await codeStepUp(secret, "add-factor")).status).toBe(200);
+    at("2026-10-07T12:01:01Z");
+    expect((await codeStepUp(secret, "wallet")).status).toBe(200);
+    expect(mails).toEqual([]);
+    session("sess").stepup_at = null;
+    at("2026-10-07T12:01:31Z");
+    expect((await codeStepUp(secret, "export")).status).toBe(200);
+    expect(session("sess").stepup_at).toBe("2026-10-07T12:01:31.000Z");
+    expect(mails.map((m) => [m.to, m.subject])).toEqual([["me@example.com", "Your Enki wallet key is being exported"]]);
+  });
+
+  it("for anything but the wallet or an export unlocks nothing", async () => {
     const secret = await totpFactor();
     expect((await codeStepUp(secret, "add-factor")).status).toBe(200);
     expect(session("sess").stepup_at ?? null).toBeNull();
-    at("2026-10-07T12:01:01Z");
-    expect((await codeStepUp(secret, "export")).status).toBe(200);
-    expect(session("sess").stepup_at).toBe("2026-10-07T12:01:01.000Z");
   });
 
   it("with a passkey unlocks the wallet the same way", async () => {
