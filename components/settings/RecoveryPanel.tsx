@@ -392,15 +392,9 @@ export default function RecoveryPanel({ focus = false }: { focus?: boolean } = {
   const confirmedCount = guardians?.filter((g) => g.status === "confirmed").length ?? 0;
   const maxThreshold = Math.max(confirmedCount, 1);
 
-  // The dropdown only ever offers REACHABLE values (1..confirmed). If the
-  // stored threshold exceeds that (a guardian was removed), it is clamped AND
-  // persisted, so what the user sees is always what recovery actually needs.
-  useEffect(() => {
-    if (guardians !== null && confirmedCount > 0 && threshold > confirmedCount) {
-      saveThreshold(confirmedCount);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [guardians, threshold, confirmedCount]);
+  // The dropdown only offers reachable values (1..confirmed); the server caps
+  // the stored threshold the same way (lib/recovery/threshold.ts), so saving
+  // the cap here would only ask for a step-up nobody started.
 
   const reInvite = async (id: string) => {
     const res = await fetch("/api/recovery/guardians", {

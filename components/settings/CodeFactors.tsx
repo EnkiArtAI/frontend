@@ -137,7 +137,9 @@ export default function CodeFactors({ onChange }: { onChange?: () => void }) {
           <button className="set-btn set-btn-dark" onClick={() => start(kind)} disabled={busy || (kind === "email" && !email.includes("@"))}>
             Set up
           </button>
-        ) : null}
+        ) : (
+          <button className="set-btn set-btn-outline" onClick={() => setSetup(null)} disabled={busy}>Cancel</button>
+        )}
       </div>
     );
   };
