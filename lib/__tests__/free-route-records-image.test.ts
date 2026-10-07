@@ -15,7 +15,9 @@ const block = ROUTE.slice(ROUTE.indexOf("after(async () => {"), ROUTE.indexOf("r
 
 describe("a free render reaches its owner's gallery", () => {
   it("is stored durably, after the response", () => {
-    expect(block).toMatch(/const stored = await storeGeneratedImage\(imageUrl, recUserId, Date\.now\(\) \+ 120_000\);/);
+    expect(block).toMatch(/const stored = await storeGeneratedImage\(imageUrl, recUserId, Math\.min\(Date\.now\(\) \+ 120_000, storeDeadline\(startedAt\)\)\);/);
+    // The clock starts with the request, not with the response.
+    expect(ROUTE).toMatch(/export async function POST\(request: NextRequest\) \{\n(\s*\/\/.*\n)*\s+const startedAt = Date\.now\(\);/);
   });
 
   it("records our copy and never a data URL", () => {
