@@ -44,6 +44,7 @@ function runSignup(open: boolean) {
   const answers = new Map<string, { ok: boolean; body: unknown }>();
   const posts: { url: string; body: unknown }[] = [];
   const adopted: unknown[] = [];
+  const switched: string[] = [];
   const fetch = vi.fn(async (url: string, init: { body: string }) => {
     posts.push({ url, body: JSON.parse(init.body) });
     const a = answers.get(url) ?? { ok: true, body: {} };
@@ -56,9 +57,9 @@ function runSignup(open: boolean) {
   const page = new Function(
     "document", "fetch", "adoptSession", "switchAuthTab", "showAuthSuccess",
     `${script}\nreturn { submitAuth, submitFirstLogin, step: () => signupStep };`,
-  )({ getElementById: el, createElement: make }, fetch, (d: unknown) => adopted.push(d), () => {}, () => {});
+  )({ getElementById: el, createElement: make }, fetch, (d: unknown) => adopted.push(d), (tab: string) => switched.push(tab), () => {});
   return {
-    el, posts, adopted,
+    el, posts, adopted, switched,
     step: page.step as () => string,
     submit: () => page.submitAuth({ preventDefault() {} }, "signup"),
     login: () => page.submitAuth({ preventDefault() {} }, "login"),
@@ -157,6 +158,7 @@ describe("the landing login", () => {
     page.login();
     await settle();
     expect([page.el("formLogin").style.display, page.el("formFirstLogin").style.display]).toEqual(["none", ""]);
+    expect(page.el("loginPass").value).toBe(""); // the one-time password left the login field
     expect(page.adopted).toEqual([]);
 
     page.el("firstPass").value = "my own password";
@@ -175,6 +177,33 @@ describe("the landing login", () => {
       body: { email: "new@example.com", password: "K7QM2XWB9RTPHDZA4NVC", newPassword: "my own password" },
     });
     expect(page.adopted).toEqual([{ token: "t", email: "new@example.com" }]);
+  });
+
+  it("sends a user whose password got set, but no session, back to log in with it", async () => {
+    const page = runSignup(false);
+    page.answer("/api/auth/password/login", true, { setPassword: true });
+    page.el("loginEmail").value = "new@example.com";
+    page.el("loginPass").value = "K7QM2XWB9RTPHDZA4NVC";
+    page.login();
+    await settle();
+    page.el("firstPass").value = page.el("firstPass2").value = "my own password";
+    page.answer("/api/auth/password/first-login", false, { error: "Your password is set. Log in with it.", passwordSet: true });
+    page.firstLogin();
+    await settle();
+    expect(page.switched).toEqual(["login"]);
+    expect(page.el("formLogin").note?.textContent).toBe("Your password is set. Log in with it.");
+  });
+
+  it("forgets the one-time password when the first-login step is left, or the modal opens again", () => {
+    const fields = new Map<string, { value: string; style: { display: string }; classList: { toggle(): void } }>();
+    const el = (id: string) => {
+      if (!fields.has(id)) fields.set(id, { value: "", style: { display: "" }, classList: { toggle() {} } });
+      return fields.get(id)!;
+    };
+    const run = new Function("document", `var firstLogin = { email: "e", password: "K7QM2XWB9RTPHDZA4NVC" };\n${fn("switchAuthTab")}\n}\nswitchAuthTab('login');\nreturn firstLogin;`);
+    el("firstPass").value = el("firstPass2").value = "half typed";
+    expect(run({ getElementById: el })).toBeNull();
+    expect([el("firstPass").value, el("firstPass2").value, el("formFirstLogin").style.display]).toEqual(["", "", "none"]);
   });
 
   it("no longer sends anyone to a wallet email code that does not exist, nor ships an email list", () => {

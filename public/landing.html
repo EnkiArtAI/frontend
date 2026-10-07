@@ -4534,7 +4534,12 @@ function switchAuthTab(tab) {
   document.getElementById('tabSignup').classList.toggle('active', tab === 'signup');
   document.getElementById('formLogin').style.display  = tab === 'login'  ? '' : 'none';
   document.getElementById('formSignup').style.display = tab === 'signup' ? '' : 'none';
+  // Leaving the first-login step (every reopen of the modal comes here too)
+  // forgets the one-time password: it never expires.
   document.getElementById('formFirstLogin').style.display = 'none';
+  firstLogin = null;
+  document.getElementById('firstPass').value = '';
+  document.getElementById('firstPass2').value = '';
 }
 function togglePass(id, btn) {
   const inp = document.getElementById(id);
@@ -4715,23 +4720,31 @@ function submitAuth(e, type) {
     })
     .catch(() => fail('Network error. Please try again.'));
 }
-// The one-time password, kept in memory between the two steps only.
-let firstLogin = null;
+// The one-time password, kept in memory between the two steps only (var:
+// switchAuthTab clears it and may run while the page still loads).
+var firstLogin = null;
 function showFirstLogin(email, password) {
   firstLogin = { email: email, password: password };
+  document.getElementById('loginPass').value = '';
   document.getElementById('formLogin').style.display = 'none';
   document.getElementById('formFirstLogin').style.display = '';
 }
 function submitFirstLogin(e) {
   e.preventDefault();
   const btn = document.getElementById('submitFirstLogin');
-  const fail = (msg) => { btn.classList.remove('loading'); btn.disabled = false; showInlineNote('firstLogin', msg || 'Something went wrong. Please try again.'); };
+  const done = () => { btn.classList.remove('loading'); btn.disabled = false; };
+  const fail = (msg) => { done(); showInlineNote('firstLogin', msg || 'Something went wrong. Please try again.'); };
   const password = document.getElementById('firstPass').value;
   if (password !== document.getElementById('firstPass2').value) return fail('The two passwords differ.');
   btn.classList.add('loading');
   btn.disabled = true;
   postJson('/api/auth/password/first-login', { email: firstLogin.email, password: firstLogin.password, newPassword: password })
-    .then(({ ok, data }) => (ok && data.token ? adoptSession(data) : fail(data.error)))
+    .then(({ ok, data }) => {
+      if (ok && data.token) return adoptSession(data);
+      // Set, but no session opened: the new password logs in now.
+      if (data.passwordSet) return (done(), switchAuthTab('login'), showInlineNote('login', data.error));
+      fail(data.error);
+    })
     .catch(() => fail('Network error. Please try again.'));
 }
 function showInlineNote(form, msg) {

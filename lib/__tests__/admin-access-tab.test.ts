@@ -18,12 +18,18 @@ describe("the admin's Access tab", () => {
 
   it("approves a request and invites an email or a wallet through the access resource", () => {
     expect(PAGE).toMatch(/body: JSON\.stringify\(\{ resource: "access", \.\.\.payload \}\)/);
-    expect(PAGE).toMatch(/grant\(\{ action: "approve", id: r\.id \}\)/);
-    expect(PAGE).toMatch(/grant\(\{ action: "inviteEmail", email: invEmail \}\)/);
-    expect(PAGE).toMatch(/grant\(\{ action: "inviteWallet", address: invWallet \}\)/);
+    expect(PAGE).toMatch(/grant\(\{ action: "approve", id: r\.id \}, r\.email\)/);
+    expect(PAGE).toMatch(/grant\(\{ action: "inviteEmail", email: invEmail \}, invEmail\.trim\(\)\)/);
+    expect(PAGE).toMatch(/grant\(\{ action: "inviteWallet", address: invWallet \}, invWallet\.trim\(\)\)/);
   });
 
-  it("says when the mail did not go out, so the admin can send it again", () => {
-    expect(PAGE).toMatch(/: r\.mailed \? "Invited: the one-time password is on its way\."\s*: "Account ready, but the mail did not go out\. Invite the email again to resend\."/);
+  it("grants one at a time, so a double click mails nothing twice", () => {
+    expect(PAGE).toMatch(/if \(granting\) return false;\s*setGranting\(true\);/);
+    expect(PAGE).toMatch(/\} finally \{\s*setGranting\(false\);\s*\}/);
+  });
+
+  it("says to whom the mail did not go out, and that a re-invite voids the earlier password", () => {
+    expect(PAGE).toMatch(/: !r\.mailed \? `Account ready for \$\{who\}, but the mail did not go out\. Invite the email again to resend\.`/);
+    expect(PAGE).toMatch(/: r\.outcome === "reinvited" \? `Invited \$\{who\} again: a fresh one-time password is on its way, the earlier one no longer works\.`/);
   });
 });

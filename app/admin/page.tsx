@@ -145,6 +145,7 @@ export default function AdminPage() {
   const [flAdd, setFlAdd] = useState(false);
   const [invEmail, setInvEmail] = useState("");
   const [invWallet, setInvWallet] = useState("");
+  const [granting, setGranting] = useState(false);
   const [flName, setFlName] = useState(""); const [flAddr, setFlAddr] = useState("");
   const [flType, setFlType] = useState("EOA"); const [flNotes, setFlNotes] = useState("");
   const [delPending, setDelPending] = useState<Friend | null>(null);
@@ -233,8 +234,11 @@ export default function AdminPage() {
     }
   };
 
-  /** Grants access (approve, invite an email or a wallet) and says what happened. */
-  const grant = async (payload: Record<string, unknown>) => {
+  /** Grants access (approve, invite an email or a wallet) and says what
+      happened to whom. One at a time: a double click must not mail twice. */
+  const grant = async (payload: Record<string, unknown>, who: string) => {
+    if (granting) return false;
+    setGranting(true);
     try {
       const res = await fetch("/api/admin", {
         method: "POST",
@@ -245,14 +249,17 @@ export default function AdminPage() {
       if (!res.ok) { say(r.error || "That didn't work."); return false; }
       say(r.listed === true ? "Wallet added to the access list."
         : r.listed === false ? "That wallet is on the access list already."
-        : r.outcome === "has-password" ? "That email has an account with its own password already; it is on the access list."
-        : r.mailed ? "Invited: the one-time password is on its way."
-        : "Account ready, but the mail did not go out. Invite the email again to resend.");
+        : r.outcome === "has-password" ? `${who} has an account with its own password already; it is on the access list.`
+        : !r.mailed ? `Account ready for ${who}, but the mail did not go out. Invite the email again to resend.`
+        : r.outcome === "reinvited" ? `Invited ${who} again: a fresh one-time password is on its way, the earlier one no longer works.`
+        : `Invited ${who}: the one-time password is on its way.`);
       await reload();
       return true;
     } catch {
       say("Network hiccup — nothing was changed.");
       return false;
+    } finally {
+      setGranting(false);
     }
   };
 
@@ -635,9 +642,9 @@ export default function AdminPage() {
                 <>
                   <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 7, border: "1px solid var(--enki-rule-2, var(--enki-rule))", borderRadius: 11, background: "var(--enki-paper)", padding: "10px 12px", marginBottom: 8 }}>
                     <input placeholder="Invite an email" value={invEmail} onChange={(e) => setInvEmail(e.target.value)} style={{ flex: 1, minWidth: 180, height: 28, border: "1px solid var(--enki-rule)", borderRadius: 8, background: "var(--enki-paper-2)", color: "var(--enki-ink)", fontSize: 11.5, padding: "0 9px", outline: "none" }} />
-                    <Pill kind="green" label="Invite email" onClick={() => { if (invEmail.trim()) void grant({ action: "inviteEmail", email: invEmail }).then((ok) => { if (ok) setInvEmail(""); }); }} />
+                    <Pill kind="green" label="Invite email" onClick={() => { if (invEmail.trim()) void grant({ action: "inviteEmail", email: invEmail }, invEmail.trim()).then((ok) => { if (ok) setInvEmail(""); }); }} />
                     <input placeholder="Invite a wallet (Solana or EVM)" value={invWallet} onChange={(e) => setInvWallet(e.target.value)} style={{ flex: 1.4, minWidth: 220, height: 28, border: "1px solid var(--enki-rule)", borderRadius: 8, background: "var(--enki-paper-2)", color: "var(--enki-ink)", fontSize: 11.5, padding: "0 9px", fontFamily: MONO, outline: "none" }} />
-                    <Pill kind="green" label="Invite wallet" onClick={() => { if (invWallet.trim()) void grant({ action: "inviteWallet", address: invWallet }).then((ok) => { if (ok) setInvWallet(""); }); }} />
+                    <Pill kind="green" label="Invite wallet" onClick={() => { if (invWallet.trim()) void grant({ action: "inviteWallet", address: invWallet }, invWallet.trim()).then((ok) => { if (ok) setInvWallet(""); }); }} />
                   </div>
                   <div style={cardStyle}>
                     {d.access.requests.length === 0 && <div style={{ padding: 30, textAlign: "center", fontSize: 12, color: "var(--enki-ink-3)" }}>No pending requests.</div>}
@@ -646,7 +653,7 @@ export default function AdminPage() {
                         <span style={{ width: 210, fontSize: 12.5, fontWeight: 600, color: "var(--enki-ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.email}</span>
                         <span title={r.about} style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: "var(--enki-ink-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.about}</span>
                         <span style={{ width: 160, fontSize: 11, color: "var(--enki-ink-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.socials ?? "—"}</span>
-                        <Pill kind="green" label="Approve" onClick={() => void grant({ action: "approve", id: r.id })} />
+                        <Pill kind="green" label="Approve" onClick={() => void grant({ action: "approve", id: r.id }, r.email)} />
                       </div>
                     ))}
                   </div>
