@@ -8,7 +8,7 @@ import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { showsAdultRender } from "@/lib/adult-content";
 import { resolveOwnerIds, resolveSessionUserId, resolveSessionUserWithBan } from "@/lib/session-user";
 import { isPublicText } from "@/lib/prompt-visibility";
-import { ownShowcaseImages } from "@/lib/generation/derivative-store";
+import { keepableImage, ownShowcaseImages } from "@/lib/generation/derivative-store";
 import { extractTags, storedTags } from "@/lib/search/tags";
 import { artistPayoutWallet } from "@/lib/payments/generation-quote";
 import { DEFAULT_PROMPT_PRICE_USD } from "@/shared/revenue-config";
@@ -23,6 +23,9 @@ type VariableType =
   | "slider";
 
 type PromptType = "showcase" | "free-prompt" | "paid-prompt" | string;
+
+/** The most reference images any model takes (Nano Banana 2: 14). */
+const REFERENCE_IMAGES_MAX = 14;
 
 type PromptPayload = {
   id?: string | null;
@@ -463,6 +466,17 @@ export async function POST(req: Request) {
       }
     }
 
+    // Reference images keep their places: "Reference image N" in the text is
+    // the N-th. One that cannot be kept is refused by its number, never
+    // dropped, and before the check, so a refused save costs no call.
+    if (referenceImages && referenceImages.length > REFERENCE_IMAGES_MAX) {
+      return NextResponse.json({ error: `At most ${REFERENCE_IMAGES_MAX} reference images can be saved. Nothing was saved.` }, { status: 422 });
+    }
+    const unkept = referenceImages ? referenceImages.findIndex((url) => !keepableImage(url, savedBefore)) : -1;
+    if (unkept >= 0) {
+      return NextResponse.json({ error: `Reference image ${unkept + 1} must be a PNG, JPEG or WebP image. Nothing was saved.` }, { status: 422 });
+    }
+
     // Judged like a generation before it is stored, and whole: everything a
     // saved prompt can put into an image or show a buyer — title, text,
     // every variable's default and options. Explicit and child-safety text is
@@ -529,7 +543,7 @@ export async function POST(req: Request) {
     if (!showcase) {
       return NextResponse.json({ error: "Your showcase images could not be stored right now. Nothing was saved." }, { status: 503 });
     }
-    const before = referenceImages === null ? savedBefore : await ownShowcaseImages(referenceImages, creatorId ?? ownerIds[0], savedBefore);
+    const before = referenceImages === null ? savedBefore : await ownShowcaseImages(referenceImages, creatorId ?? ownerIds[0], savedBefore, REFERENCE_IMAGES_MAX);
     if (!before) {
       return NextResponse.json({ error: "Your reference images could not be stored right now. Nothing was saved." }, { status: 503 });
     }

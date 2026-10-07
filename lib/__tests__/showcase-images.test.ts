@@ -37,6 +37,12 @@ beforeEach(() => {
 });
 
 describe("a prompt's showcase images", () => {
+  it("keeps at most four, unless the caller allows more (reference images: 14)", async () => {
+    const six = Array.from({ length: 6 }, () => PNG);
+    expect((await ownShowcaseImages(six, USER))!).toHaveLength(4);
+    expect((await ownShowcaseImages(six, USER, [], 14))!).toHaveLength(6);
+  });
+
   it("keeps what our stores already hold, without uploading it again", async () => {
     expect(await ownShowcaseImages([OURS, BUCKET], USER)).toEqual([OURS, BUCKET]);
     expect(put).not.toHaveBeenCalled();

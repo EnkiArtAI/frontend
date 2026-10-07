@@ -91,15 +91,16 @@ const check = vi.fn();
 const warn = vi.fn(async () => ({ total: 1, suspendedUntil: null, nextStepAt: 10 }));
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), after: () => {} }));
 // Our store: a data URL comes back as our copy, BROKEN fails it, the rest goes through the real helper.
-const stored = vi.hoisted(() => ({ calls: [] as string[][] }));
+const stored = vi.hoisted(() => ({ calls: [] as string[][], max: [] as (number | undefined)[] }));
 vi.mock("@/lib/generation/derivative-store", async (original) => {
   const real = await original<typeof import("@/lib/generation/derivative-store")>();
   return {
     ...real,
-    ownShowcaseImages: async (urls: string[], userId: string, saved: string[] = []) => {
+    ownShowcaseImages: async (urls: string[], userId: string, saved: string[] = [], max?: number) => {
       stored.calls.push(urls);
+      stored.max.push(max);
       if (urls.includes("data:image/png;base64,BROKEN")) return null;
-      if (urls.some((u) => u.startsWith("data:"))) return urls.map((u) => (u.startsWith("data:") ? `https://abc.public.blob.vercel-storage.com/showcase/${userId}/ref.png` : u));
+      if (urls.some((u) => u.startsWith("data:"))) return urls.map((u, i) => (u.startsWith("data:") ? `https://abc.public.blob.vercel-storage.com/showcase/${userId}/ref-${i}.png` : u));
       return real.ownShowcaseImages(urls, userId, saved);
     },
   };
@@ -200,8 +201,10 @@ describe("saving a prompt", () => {
   });
 
   it("marks a prompt 18+ when a reference image is an 18+ render", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    tables.prompts.push({ id, creator_id: "u1", is_adult: false, showcase_before_images: ["https://blob/z.png"] });
     tables.generated_images.push({ id: "g1", storage_url: "https://blob/z.png", is_adult: true });
-    await save({ ...BASE, referenceImages: ["https://blob/z.png"] });
+    expect((await save({ ...BASE, id, referenceImages: ["https://blob/z.png"] })).status).toBe(200);
     expect(tables.prompts[0].is_adult).toBe(true);
   });
 
@@ -468,7 +471,8 @@ describe("releasing a prompt", () => {
 
 describe("a prompt's reference images (CUR-2)", () => {
   const REF = "data:image/png;base64,iVBORw0KGgo=";
-  const OUR_REF = "https://abc.public.blob.vercel-storage.com/showcase/u1/ref.png";
+  const OUR_REF = "https://abc.public.blob.vercel-storage.com/showcase/u1/ref-0.png";
+  const JPG = "data:image/jpeg;base64,/9j/4AAQ";
 
   it("are stored like the showcase and served back as the before", async () => {
     const res = await save({ ...BASE, referenceImages: [REF] });
@@ -485,6 +489,25 @@ describe("a prompt's reference images (CUR-2)", () => {
     expect(tables.prompts[0].showcase_before_images).toEqual([OUR_REF]);
     expect((await save({ ...BASE, id, referenceImages: [] })).status).toBe(200);
     expect(tables.prompts[0].showcase_before_images).toEqual([]);
+  });
+
+  it("keep their places, up to fourteen", async () => {
+    const refs = Array.from({ length: 6 }, (_, i) => (i % 2 ? JPG : REF));
+    stored.max.length = 0;
+    expect((await save({ ...BASE, referenceImages: refs })).status).toBe(200);
+    expect(stored.max).toEqual([undefined, 14]); // the showcase keeps its 4
+    expect(tables.prompts[0].showcase_before_images).toEqual(refs.map((_, i) => `https://abc.public.blob.vercel-storage.com/showcase/u1/ref-${i}.png`));
+  });
+
+  it("refuse more than fourteen, and an image that cannot be kept, by its number", async () => {
+    const many = await save({ ...BASE, referenceImages: Array.from({ length: 15 }, () => REF) });
+    expect(many.status).toBe(422);
+    expect((await many.json()).error).toMatch(/At most 14 reference images/);
+    const gif = await save({ ...BASE, referenceImages: [REF, "data:image/gif;base64,R0lGOD", JPG] });
+    expect(gif.status).toBe(422);
+    expect((await gif.json()).error).toBe("Reference image 2 must be a PNG, JPEG or WebP image. Nothing was saved.");
+    expect(tables.prompts).toHaveLength(0);
+    expect(check).not.toHaveBeenCalled();
   });
 
   it("save nothing when they cannot be stored", async () => {

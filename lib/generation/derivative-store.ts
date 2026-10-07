@@ -241,12 +241,18 @@ export async function storeGeneratedImage(providerUrl: string, userId: string, d
  * share card drops it. Any other address is dropped, so the share card never
  * fetches a URL a creator typed, except one the prompt already holds (`saved`):
  * an edit must not silently lose a picture saved before this rule.
- * null when a data URL could not be stored.
+ * null when a data URL could not be stored. At most `max` are kept (4 for a
+ * showcase).
  */
-export async function ownShowcaseImages(urls: string[], userId: string, saved: string[] = []): Promise<string[] | null> {
+/** An image a prompt can keep: one this prompt or our stores already hold, or a PNG, JPEG or WebP data URL we store. */
+export function keepableImage(url: string, saved: string[] = []): boolean {
+  return saved.includes(url) || inOurBlob(url) || /^data:image\/(png|jpeg|webp)[;,]/.test(url);
+}
+
+export async function ownShowcaseImages(urls: string[], userId: string, saved: string[] = [], max = 4): Promise<string[] | null> {
   const deadline = Date.now() + 20_000;
   const keptAsIs = (url: string) => saved.includes(url) || inOurBlob(url);
-  const wanted = urls.filter((url) => keptAsIs(url) || /^data:image\/(png|jpeg|webp)[;,]/.test(url)).slice(0, 4);
+  const wanted = urls.filter((url) => keepableImage(url, saved)).slice(0, max);
   const kept = await Promise.all(wanted.map(async (url) => {
     if (keptAsIs(url)) return url;
     const bytes = await fetchBytes(url);
