@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateRegistrationOptions } from "@simplewebauthn/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { requireAuth } from "@/lib/auth";
-import { RP_NAME, rp, resolveStableUserId, setChallengeCookie } from "@/lib/webauthn";
+import { RP_NAME, rp, resolveStableUserId, setChallengeCookie, requireAddFactor } from "@/lib/webauthn";
 
 type Transport = "ble" | "hybrid" | "internal" | "nfc" | "usb" | "cable" | "smart-card";
 
@@ -21,6 +21,10 @@ export async function POST(req: NextRequest) {
   const supabase = getSupabaseServerClient();
   const userId = await resolveStableUserId(supabase, walletAddress);
   if (!userId) return NextResponse.json({ error: "No user for session" }, { status: 404 });
+  // Without this gate a stolen session registered its own passkey and then
+  // owned every step-up. /verify needs this route's challenge cookie.
+  const blocked = await requireAddFactor(req, userId);
+  if (blocked) return blocked;
 
   const { data: cred } = await supabase.from("password_credentials").select("email").eq("user_id", userId).maybeSingle();
   const { data: existing } = await supabase

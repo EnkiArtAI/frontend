@@ -55,7 +55,7 @@ function stepUpKey(): Uint8Array {
 
 /* What a step-up can be for. A scope names one action, and where the action
    has a target, that target: one tap deletes one image, never another. */
-const SCOPE = /^delete-work:[0-9a-f-]{36}$/i;
+const SCOPE = /^(add-factor|guardians|delete-work:[0-9a-f-]{36}|remove-factor:([0-9a-f-]{36}|totp|email))$/i;
 export function isStepUpScope(scope: unknown): scope is string {
   return typeof scope === "string" && SCOPE.test(scope);
 }
@@ -77,6 +77,37 @@ async function verifyStepUpToken(token: string, userId: string, scope: string): 
   } catch {
     return false;
   }
+}
+
+// How old a session may be to set up a user's FIRST factor. A factor someone
+// else plants locks the owner out of every gated action and lets the planter
+// through them, so it takes a fresh login, not just any live session.
+const FIRST_FACTOR_SESSION_MS = 10 * 60_000;
+
+/**
+ * Gate for adding a factor (passkey, authenticator, email). With a factor
+ * already in place it is a step-up like any other; the first one needs a
+ * session younger than ten minutes, answering 403 { reauth } otherwise.
+ */
+export async function requireAddFactor(req: NextRequest, userId: string): Promise<NextResponse | null> {
+  const supabase = getSupabaseServerClient();
+  let factors: Factor[];
+  try {
+    factors = await enrolledFactors(supabase, userId);
+  } catch {
+    return NextResponse.json({ error: "Could not verify security settings" }, { status: 503 });
+  }
+  if (factors.length > 0) return requireStepUp(req, userId, "add-factor", { mandatory: true });
+  const { data, error } = await supabase
+    .from("auth_sessions")
+    .select("created_at")
+    .eq("token", req.headers.get("X-Session-Token") ?? "")
+    .maybeSingle();
+  if (error) return NextResponse.json({ error: "Could not verify security settings" }, { status: 503 });
+  if (!data || Date.now() - Date.parse(String(data.created_at)) > FIRST_FACTOR_SESSION_MS) {
+    return NextResponse.json({ error: "Sign in again to set up your first security factor", reauth: true }, { status: 403 });
+  }
+  return null;
 }
 
 /**
