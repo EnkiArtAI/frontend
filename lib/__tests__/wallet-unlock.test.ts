@@ -36,7 +36,7 @@ import { POST as stepUp } from "../../app/api/auth/stepup/route";
 import { POST as passkeyStepUp } from "../../app/api/auth/passkey/stepup/verify/route";
 import { DELETE as removeCode } from "../../app/api/auth/mfa/[kind]/route";
 import { DELETE as removePasskey } from "../../app/api/auth/passkey/credentials/route";
-import { beginTotp, checkCode, removeFactor } from "../mfa";
+import { beginEmail, beginTotp, checkCode, removeFactor } from "../mfa";
 import { totpCode } from "../totp";
 import { mintStepUpToken, setChallengeCookie } from "../webauthn";
 
@@ -182,11 +182,25 @@ describe("a step-up", () => {
     expect(res.status).toBe(200);
     expect(session("sess").stepup_at).toBe("2026-10-07T12:00:00.000Z");
   });
+  it("mails the export notice to the confirmed email factor when the login email is unproven", async () => {
+    const secret = await totpFactor();
+    db.current!.tables.password_credentials[0].email_verified_at = null;
+    await beginEmail(db.current!.client, U, "factor@example.com");
+    const code = (mails[mails.length - 1] as unknown as { text: string }).text.match(/\b(\d{6})\b/)![1];
+    expect(await checkCode(db.current!.client, U, "email", code, { confirm: true })).toBe("ok");
+    mails.length = 0;
+    at("2026-10-07T12:01:01Z");
+    expect((await codeStepUp(secret, "export")).status).toBe(200);
+    expect(mails.map((m) => m.to)).toEqual(["factor@example.com"]);
+  });
+
   // Last in its block: the rate limiter lives in the process, and this fills U's bucket.
-  it("mails the export notice to a verified address only, three an hour", async () => {
+  it("mails the export notice to a proven address only, three an hour", async () => {
     const secret = await totpFactor();
     db.current!.tables.password_credentials[0].email_verified_at = null;
     at("2026-10-07T20:00:00Z");
+    await beginEmail(db.current!.client, U, "pending@example.com"); // typed in, never confirmed
+    mails.length = 0;
     expect((await codeStepUp(secret, "export")).status).toBe(200);
     expect(mails).toEqual([]);
     db.current!.tables.password_credentials[0].email_verified_at = "2026-10-01T00:00:00.000Z";

@@ -226,6 +226,12 @@ async function factorKeys(supabase: SupabaseClient, userId: string): Promise<str
   ];
 }
 
+/** The address of the user's confirmed email factor; null without one. */
+export async function confirmedEmail(supabase: SupabaseClient, userId: string): Promise<string | null> {
+  const row = await factorRow(supabase, userId, "email");
+  return row?.confirmed_at ? opened(userId, row) : null;
+}
+
 /** The address of the user's email factor, pending or confirmed; null without one. */
 export async function emailFactorAddress(supabase: SupabaseClient, userId: string): Promise<string | null> {
   const row = await factorRow(supabase, userId, "email");

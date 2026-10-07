@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHmac, hkdfSync, timingSafeEqual } from "crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
-import { enrolledFactors, type Factor } from "@/lib/mfa";
+import { confirmedEmail, enrolledFactors, type Factor } from "@/lib/mfa";
 import { sendMail } from "@/lib/mailer";
 import { checkRequestRateLimit } from "@/lib/rate-limit";
 
@@ -88,12 +88,13 @@ export async function afterStepUp(
   }
   if (scope !== "export") return;
   const { data } = await supabase.from("password_credentials").select("email, email_verified_at").eq("user_id", userId).maybeSingle();
-  // Only to an address its owner proved, and three an hour: the notice must
-  // never mail a stranger whose address was typed in at signup, nor use up
-  // the mail quota every code and reset depends on.
-  if (!data?.email_verified_at || !checkRequestRateLimit(`export-notice:${userId}`, 3, 3600_000).allowed) return;
+  // Only to an address its owner proved (the verified login email, else the
+  // confirmed email factor), and three an hour: never a stranger whose address
+  // was typed in at signup, nor the mail quota every code and reset needs.
+  const to = data?.email_verified_at ? data.email : await confirmedEmail(supabase, userId).catch(() => null);
+  if (!to || !checkRequestRateLimit(`export-notice:${userId}`, 3, 3600_000).allowed) return;
   await sendMail({
-    to: data.email,
+    to,
     subject: "Your Enki wallet key is being exported",
     text:
       `Someone just confirmed an export of your Enki wallet's private key (${new Date().toUTCString()}). ` +
