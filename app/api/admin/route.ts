@@ -24,6 +24,7 @@ import { CHILD_SAFETY, hasChildSafetyCase, inWarningOrBanList, listPeople, parse
 import { readEvidence, withheldEvidence } from "@/lib/moderation/evidence";
 import { loadPromptText } from "@/lib/generation/prompt-text";
 import { banUntil } from "@/lib/moderation/bans";
+import { AccessError, approveRequest, inviteEmail, inviteWallet, loadAccess } from "@/lib/access-invite";
 
 /** A ban counts while it is not lifted and has not run out, as activeBanFor reads it. */
 const unexpired = () => `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`;
@@ -207,7 +208,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(await personDetail(supabase, who, (ct, iv, tag, kid) => tryDecrypt(ct, iv, tag, kid, [undefined])));
   }
 
-  const [imp, rep, fb, fr, hu, st, ba, ap, rec, council, genPolicy, automod, people] = await Promise.all([
+  const [imp, rep, fb, fr, hu, st, ba, ap, rec, council, genPolicy, automod, people, access] = await Promise.all([
     supabase.from("hunt_submissions")
       .select("id, hunter_user_id, source_url, suggested_title, suggested_tags, submitted_at")
       .eq("status", "pending").order("submitted_at", { ascending: false }).limit(100),
@@ -248,6 +249,8 @@ export async function GET(req: NextRequest) {
       .eq("decision", "block")
       .order("created_at", { ascending: false }).limit(150),
     listPeople(supabase),
+    // Who may enter: applicants' emails, so admins only (they alone grant access).
+    role === "admin" ? loadAccess(supabase) : null,
   ]);
 
   // attachments per feedback + evidence per recovery request
@@ -427,6 +430,7 @@ export async function GET(req: NextRequest) {
       at: r.created_at,
     })),
     council,
+    access,
   });
 }
 
@@ -541,6 +545,20 @@ export async function POST(req: NextRequest) {
       // soft delete — the row stays for the audit trail
       const { error } = await supabase.from("friends_whitelist").update({ is_active: false }).eq("id", body.id);
       return error ? fail(error, "remove the entry") : NextResponse.json({ ok: true });
+    }
+  }
+
+  // ── private-beta access (Kev, 2026-10-07): approve a request, invite an
+  // email (account + mailed one-time password) or a wallet. Admins only. ──
+  if (body.resource === "access") {
+    if (role !== "admin") return NextResponse.json({ error: "Only admins grant access" }, { status: 403 });
+    try {
+      if (body.action === "approve" && body.id) return NextResponse.json(await approveRequest(supabase, body.id));
+      if (body.action === "inviteEmail" && body.email) return NextResponse.json(await inviteEmail(supabase, body.email));
+      if (body.action === "inviteWallet" && body.address) return NextResponse.json(await inviteWallet(supabase, body.address));
+    } catch (e) {
+      if (e instanceof AccessError) return NextResponse.json({ error: e.message }, { status: e.status });
+      throw e;
     }
   }
 

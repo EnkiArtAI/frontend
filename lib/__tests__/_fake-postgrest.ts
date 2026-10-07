@@ -34,7 +34,7 @@ const DEFAULTS: Record<string, Row> = {
   mfa_factors: { lockouts: 0, sends_count: 0, failed_attempts: 0, last_step: null, code_sent_at: null, sends_day: null },
 };
 // Unique keys the fake enforces on insert (23505), as the migrations declare them.
-const UNIQUE: Record<string, string[]> = { mfa_factors: ["user_id", "kind"] };
+const UNIQUE: Record<string, string[]> = { mfa_factors: ["user_id", "kind"], access_allowlist: ["kind", "value"] };
 
 export function fakePostgrest() {
   const tables: Record<string, Row[]> = {};
@@ -65,6 +65,7 @@ export function fakePostgrest() {
       gt: (c: string, v: string) => { filters.push((r) => r[c] != null && String(r[c]) > v); return q; },
       in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return q; },
       or: (expr: string) => { filters.push(orFilter(expr)); return q; },
+      order: () => q, // rows come back in insertion order
       maybeSingle: () => { one = true; return q; },
       single: () => { one = true; return q; },
       then: (ok: (v: unknown) => unknown): unknown => {
