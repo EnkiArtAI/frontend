@@ -5,7 +5,8 @@ import { fakePostgrest } from "./_fake-postgrest";
 
 /**
  * Signup is email + password, straight in (Kev, 2026-10-07): no code, no
- * factor; 2FA stays optional and a red bar asks for it. The wallet JWT says
+ * factor; 2FA stays optional and a red bar asks for it. During the private
+ * beta it is wired but closed, on the server too (SIGNUP_OPEN). The wallet JWT says
  * nothing about the email being verified: nobody verified it, and CDP reads
  * only iss, sub, exp and iat.
  */
@@ -48,10 +49,24 @@ beforeEach(() => {
   db.current.tables.mfa_factors = [];
   mails.length = 0;
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
 
 describe("signing up", () => {
-  it("lets the account straight in: a session, no mail, no factor", async () => {
+  it.each([undefined, "0"])("is closed during the private beta (SIGNUP_OPEN=%s), whatever the form shows: nothing is created", async (open) => {
+    vi.stubEnv("SIGNUP_OPEN", open);
+    const res = await register(post("/api/auth/password/register", { email: EMAIL, password: "a long password" }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ closed: true });
+    expect(db.current!.tables.users).toEqual([]);
+    expect(db.current!.tables.password_credentials).toEqual([]);
+    expect(db.current!.tables.auth_sessions).toEqual([]);
+  });
+
+  it("once open, lets the account straight in: a session, no mail, no factor", async () => {
+    vi.stubEnv("SIGNUP_OPEN", "1");
     const res = await register(post("/api/auth/password/register", { email: EMAIL, password: "a long password" }));
     expect(res.status).toBe(200);
     const body = await res.json();
