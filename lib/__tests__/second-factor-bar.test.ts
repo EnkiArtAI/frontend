@@ -43,6 +43,10 @@ describe("the red bar", () => {
     expect(CODES).toMatch(/\{data\?\.emailCodes && row\("email",/);
   });
 
+  it("is a plain button for screen readers, not a status region", () => {
+    expect(BAR).toMatch(/<button\s+type="button"/);
+    expect(BAR).not.toMatch(/role=/);
+  });
 });
 
 describe("the 2FA state behind the bar", () => {

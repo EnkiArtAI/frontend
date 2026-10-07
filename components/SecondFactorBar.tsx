@@ -32,7 +32,6 @@ export default function SecondFactorBar() {
   return (
     <button
       type="button"
-      role="status"
       onClick={open}
       style={{
         position: "fixed", top: 0, left: 0, right: 0, height: 30, zIndex: 300,
