@@ -630,7 +630,6 @@ export default function AdminPage() {
                 </div>
               )}
 
-              {/* ── FRIENDS (WHITELIST) ── */}
               {/* ── ACCESS: approve requests, invite an email or a wallet (admins) ── */}
               {tab === "access" && d.access && (
                 <>
