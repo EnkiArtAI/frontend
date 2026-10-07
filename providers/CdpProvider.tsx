@@ -5,6 +5,7 @@ import type { Config } from "@coinbase/cdp-core";
 import { useMemo } from "react";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import { CdpWalletBridge } from "@/components/CdpWalletBridge";
+import { setCdpLocked } from "@/lib/cdp-bridge";
 
 /**
  * Standalone Coinbase CDP runtime: headless embedded-wallet provider + bridge,
@@ -31,7 +32,11 @@ export default function CdpRuntime() {
       customAuth: {
         getJwt: async () => {
           const res = await fetch("/api/auth/wallet/jwt", { method: "POST", headers: sessionAuthHeaders() });
+          // 403 { locked }: the account has a second factor and this session
+          // has not unlocked the wallet; the bridge asks when the user acts.
+          if (res.status === 403) setCdpLocked(Boolean(((await res.json().catch(() => ({}))) as { locked?: boolean }).locked));
           if (!res.ok) return undefined;
+          setCdpLocked(false);
           const { jwt } = (await res.json()) as { jwt?: string };
           return jwt;
         },

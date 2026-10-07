@@ -63,10 +63,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
                 {/* Closed-beta wall around EVERY page (public paths excepted). */}
                 <StepUpProvider>
                   <BetaGate>{children}</BetaGate>
+                  {/* Inside the step-up provider: the wallet unlock asks through its dialog. */}
+                  <CdpLauncher />
                 </StepUpProvider>
                 {/* Without this, every toast() (errors included) went nowhere. */}
                 <Toaster />
-                <CdpLauncher />
               </TooltipProvider>
             </SolanaWalletProvider>
 

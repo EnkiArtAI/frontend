@@ -15,6 +15,7 @@
  *   anything else     a payment intent for exactly these settings, then
  *                     /api/generate-image, which runs what was paid for
  */
+import { ensureCdpWallet } from "@/lib/cdp-bridge";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import { authorizePaidGeneration, type PaymentSigner } from "@/lib/generation-checkout";
 import type { CatalogueEntry } from "@/hooks/useModelLimits";
@@ -62,6 +63,9 @@ export async function runGeneration(req: GenerationRequest, sign: PaymentSigner)
         }),
       });
     } else {
+      // An embedded wallet that is locked asks first: the intent needs the
+      // session's wallet attached, the signature needs it unlocked.
+      await ensureCdpWallet();
       const { intentId } = await authorizePaidGeneration(
         {
           promptId: req.promptId,

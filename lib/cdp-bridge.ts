@@ -14,6 +14,52 @@ export const CDP_SIGN_RESULT = "enki-cdp-sign-result";
 
 let solanaAddress: string | null = null;
 
+/* The wallet unlock (Kev, 2026-10-07). Once an account has a second factor,
+   CDP may act only for a session that passed a wallet step-up (the JWT route
+   answers 403 { locked } otherwise). The runtime records the lock here and
+   registers how to get past it; a wallet action awaits ensureCdpWallet()
+   before it starts, so no timeout runs while the user answers the dialog. */
+let locked = false;
+let ensure: (() => Promise<void>) | null = null;
+
+export function setCdpLocked(value: boolean) {
+  locked = value;
+}
+
+export function isCdpLocked(): boolean {
+  return locked;
+}
+
+export function registerCdpEnsure(fn: (() => Promise<void>) | null) {
+  ensure = fn;
+}
+
+/** Resolves once the embedded wallet can act: at once without a CDP runtime
+    (wallet logins, guests), after the unlock dialog when it is locked.
+    Rejects when the user cancels. */
+export function ensureCdpWallet(): Promise<void> {
+  return ensure ? ensure() : Promise.resolve();
+}
+
+/* The last address per email: CDP forgets it while the wallet is locked, and
+   every wallet screen needs it to offer the action that unlocks. Public data,
+   cleared on logout. */
+const ADDRESS_KEY = "enki-cdp-address:";
+
+export function rememberCdpAddress(email: string, address: string) {
+  try { localStorage.setItem(ADDRESS_KEY + email, address); } catch { /* storage off: no memory */ }
+}
+
+export function rememberedCdpAddress(email: string): string | null {
+  try { return localStorage.getItem(ADDRESS_KEY + email); } catch { return null; }
+}
+
+export function forgetCdpAddresses() {
+  try {
+    Object.keys(localStorage).filter((k) => k.startsWith(ADDRESS_KEY)).forEach((k) => localStorage.removeItem(k));
+  } catch { /* nothing stored */ }
+}
+
 export function setCdpSolanaAddress(addr: string | null) {
   solanaAddress = addr;
   if (typeof window !== "undefined") window.dispatchEvent(new Event(CDP_ADDRESS_EVENT));
@@ -24,7 +70,8 @@ export function getCdpSolanaAddress(): string | null {
 }
 
 /** Ask the CDP runtime to export the Solana private key (resolves with it). */
-export function requestCdpKeyExport(timeoutMs = 30_000): Promise<string> {
+export async function requestCdpKeyExport(timeoutMs = 30_000): Promise<string> {
+  await ensureCdpWallet();
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();
@@ -52,7 +99,8 @@ let signSeq = 0;
  * base64 out). Same request/response shape as the export above, for the same
  * reason: the signing hook only exists inside the lazily-mounted provider.
  */
-export function requestCdpSign(transaction: string, timeoutMs = 60_000): Promise<string> {
+export async function requestCdpSign(transaction: string, timeoutMs = 60_000): Promise<string> {
+  await ensureCdpWallet();
   const id = String(++signSeq);
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {

@@ -1,5 +1,6 @@
 "use client";
 
+import { forgetCdpAddresses } from "@/lib/cdp-bridge";
 import { useCallback, useEffect, useState } from "react";
 
 /**
@@ -69,6 +70,7 @@ export function useEmailAuth() {
     if (token) void fetch("/api/auth/session", { method: "DELETE", headers: { "X-Session-Token": token }, keepalive: true }).catch(() => {});
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(EMAIL_KEY);
+    forgetCdpAddresses();
     // Kill the Dynamic SDK session too: its runtime unmounts on logout (lazy
     // mount, see providers), so it can't log itself out — clearing its storage
     // keeps wallet sessions from leaking into the next account's login.
