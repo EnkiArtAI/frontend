@@ -44,6 +44,7 @@ beforeEach(() => {
   db.tables.webauthn_credentials = [];
   db.tables.mfa_factors = [];
   db.state.failing = null;
+  db.state.pauseNextRead = null;
   mails.length = 0;
   session.userId = U;
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -147,6 +148,73 @@ describe("an email code", () => {
     for (let i = 0; i < MAX_ATTEMPTS; i++) await checkCode(supabase, U, "email", "000000", { confirm: true });
     vi.setSystemTime(new Date("2026-10-07T12:20:00Z"));
     expect(await checkCode(supabase, U, "email", code, { confirm: true })).toBe("wrong");
+  });
+});
+
+/** Hands the next read of the factor row its snapshot now and the caller the answer later. */
+function staleRead() {
+  let release!: () => void;
+  db.state.pauseNextRead = { table: "mfa_factors", until: new Promise<void>((r) => { release = r; }) };
+  return () => release();
+}
+
+describe("racing requests", () => {
+  it("spend a code once, however many carry it at the same time", async () => {
+    const secret = await confirmedTotp();
+    vi.setSystemTime(new Date("2026-10-07T12:00:31Z"));
+    const code = totpCode(secret);
+    const release = staleRead();
+    const late = checkCode(supabase, U, "totp", code);
+    expect(await checkCode(supabase, U, "totp", code)).toBe("ok");
+    release();
+    expect(await late).not.toBe("ok");
+  });
+
+  it("spend an email code once too", async () => {
+    await beginEmail(supabase, U, "me@example.com");
+    await checkCode(supabase, U, "email", lastCode(), { confirm: true });
+    vi.setSystemTime(new Date("2026-10-07T12:02:00Z"));
+    await sendEmailCode(supabase, U);
+    const code = lastCode();
+    const release = staleRead();
+    const late = checkCode(supabase, U, "email", code);
+    expect(await checkCode(supabase, U, "email", code)).toBe("ok");
+    release();
+    expect(await late).not.toBe("ok");
+  });
+
+  it("get no guess in while the factor is locked, even from a read made before the lock", async () => {
+    const secret = await confirmedTotp();
+    vi.setSystemTime(new Date("2026-10-07T12:00:31Z"));
+    const release = staleRead();
+    const late = checkCode(supabase, U, "totp", totpCode(secret));
+    for (let i = 0; i < MAX_ATTEMPTS; i++) await checkCode(supabase, U, "totp", "000000");
+    release();
+    expect(await late).not.toBe("ok");
+    expect(Number(factor("totp").lockouts)).toBe(1);
+  });
+
+  it("send one code a minute even when sends race", async () => {
+    await beginEmail(supabase, U, "me@example.com");
+    vi.setSystemTime(new Date("2026-10-07T12:02:00Z"));
+    mails.length = 0;
+    const release = staleRead();
+    const late = sendEmailCode(supabase, U);
+    expect(await sendEmailCode(supabase, U)).toBe("sent");
+    release();
+    expect(await late).toBe("cooldown");
+    expect(mails).toHaveLength(1);
+  });
+
+  it("never confirm a re-begun authenticator with the old secret's code", async () => {
+    const first = await beginTotp(supabase, U, "me");
+    if (first === "exists") throw new Error();
+    const release = staleRead();
+    const late = checkCode(supabase, U, "totp", totpCode(first.secret), { confirm: true });
+    await beginTotp(supabase, U, "me");
+    release();
+    expect(await late).not.toBe("ok");
+    expect(factor("totp").confirmed_at ?? null).toBeNull();
   });
 });
 
