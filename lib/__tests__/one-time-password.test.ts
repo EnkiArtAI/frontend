@@ -92,10 +92,11 @@ describe("the mailed one-time password", () => {
     expect(db.current!.tables.auth_sessions).toEqual([]);
   });
 
-  it("does not let the first-login step change a password the user chose", async () => {
+  it("checks no password the user chose: such an account gets the wrong-password answer, unchanged", async () => {
     seed("their own password", false);
     const res = await firstLogin(post("/api/auth/password/first-login", { email: EMAIL, password: "their own password", newPassword: "taken over" }));
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(401);
+    expect((await res.json()).error).toBe("Wrong login or password");
     const ok = await login(post("/api/auth/password/login", { identifier: EMAIL, password: "their own password" }));
     expect(await ok.json()).toMatchObject({ token: expect.any(String) });
   });
@@ -109,6 +110,14 @@ describe("the mailed one-time password", () => {
     expect(db.current!.tables.auth_sessions).toHaveLength(1);
     const winner = a.status === 200 ? "first choice" : "second choice";
     expect((await login(post("/api/auth/password/login", { identifier: EMAIL, password: winner }))).status).toBe(200);
+  });
+
+  it("says the password is set when the session cannot open after it", async () => {
+    db.current!.state.failNext = { table: "auth_sessions", op: "insert", code: "XX000" };
+    const res = await firstLogin(post("/api/auth/password/first-login", { email: EMAIL, password: ONE_TIME, newPassword: "my own password" }));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ passwordSet: true });
+    expect(cred().must_change_password).toBe(false);
   });
 
   it("still needs the access list during the beta", async () => {
@@ -134,13 +143,32 @@ describe("the mailed one-time password", () => {
 });
 
 describe("a password reset", () => {
-  it("through the inbox confirms the email and retires a one-time password", async () => {
+  it("through the inbox confirms the email, retires a one-time password and enters like a login", async () => {
     await forgot(post("/api/auth/password/forgot", { email: EMAIL }));
     const code = /\b(\d{7})\b/.exec(mails[0].text)![1];
     const res = await resetCode(post("/api/auth/password/reset-code", { email: EMAIL, code, password: "my own password" }));
     expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie")).toMatch(/enki_team=/);
     expect(cred().must_change_password).toBe(false);
     expect(cred().email_verified_at).toEqual(expect.any(String));
+  });
+
+  it("through the inbox is refused off the access list, and the code stays usable", async () => {
+    await forgot(post("/api/auth/password/forgot", { email: EMAIL }));
+    const code = /\b(\d{7})\b/.exec(mails[0].text)![1];
+    db.current!.tables.access_allowlist = [];
+    const before = { ...cred() };
+    expect((await resetCode(post("/api/auth/password/reset-code", { email: EMAIL, code, password: "my own password" }))).status).toBe(401);
+    expect(cred()).toEqual(before);
+    expect(db.current!.tables.password_reset_tokens).toHaveLength(1);
+  });
+
+  it("through the inbox sends a banned account to /banned, like a login", async () => {
+    net.banned = true;
+    await forgot(post("/api/auth/password/forgot", { email: EMAIL }));
+    const code = /\b(\d{7})\b/.exec(mails[0].text)![1];
+    const res = await resetCode(post("/api/auth/password/reset-code", { email: EMAIL, code, password: "my own password" }));
+    expect(await res.json()).toMatchObject({ banned: true });
   });
 
   it("by guardians confirms nothing: they prove no inbox", async () => {
