@@ -170,68 +170,6 @@ function sendRefusal(row: Row, now: number): "cooldown" | "daily_cap" | null {
 }
 
 /**
- * Removes one factor, but never an embedded wallet's last (Kev, 2026-10-07):
- * the wallet JWT needs one, and a banned account cannot enroll a new one.
- * The last one is refused before anything is deleted, so no request ever
- * sees the account without a factor. Two removals racing past that check
- * count what is left after deleting, and one that finds nothing puts its
- * factor back; one that cannot count puts it back and reports the error.
- */
-export async function removeFactor(
-  supabase: SupabaseClient,
-  userId: string,
-  target: { passkey: string } | { kind: FactorKind },
-): Promise<"removed" | "none" | "last"> {
-  const { count: hasPassword, error: credErr } = await supabase
-    .from("password_credentials")
-    .select("user_id", { count: "exact", head: true })
-    .eq("user_id", userId);
-  if (credErr) throw credErr;
-  const key = "passkey" in target ? `passkey:${target.passkey}` : `code:${target.kind}`;
-  if (hasPassword) {
-    const before = await factorKeys(supabase, userId);
-    if (before.length === 1 && before[0] === key) return "last";
-  }
-  const table = "passkey" in target ? "webauthn_credentials" : "mfa_factors";
-  const del = supabase.from(table).delete().eq("user_id", userId);
-  const { data: gone, error } = await ("passkey" in target ? del.eq("id", target.passkey) : del.eq("kind", target.kind)).select("*");
-  if (error) throw error;
-  if (!gone?.length) return "none";
-  if (!hasPassword) return "removed";
-  const putBack = async () => {
-    const { error: back } = await supabase.from(table).insert(gone);
-    if (back) {
-      console.error(`[mfa] could not put back the last factor of ${userId} (${table}):`, back.message);
-      throw back;
-    }
-  };
-  let left: string[];
-  try {
-    left = await factorKeys(supabase, userId);
-  } catch (e) {
-    await putBack();
-    throw e;
-  }
-  if (left.length) return "removed";
-  await putBack();
-  return "last";
-}
-
-/** The user's confirmed factors, one key each: every passkey, every confirmed code factor. */
-async function factorKeys(supabase: SupabaseClient, userId: string): Promise<string[]> {
-  const [passkeys, codes] = await Promise.all([
-    supabase.from("webauthn_credentials").select("id").eq("user_id", userId),
-    supabase.from("mfa_factors").select("kind").eq("user_id", userId).not("confirmed_at", "is", null),
-  ]);
-  if (passkeys.error) throw passkeys.error;
-  if (codes.error && !missingTable(codes.error)) throw codes.error;
-  return [
-    ...((passkeys.data ?? []) as { id: string }[]).map((p) => `passkey:${p.id}`),
-    ...((codes.data ?? []) as { kind: FactorKind }[]).map((c) => `code:${c.kind}`),
-  ];
-}
-
-/**
  * A fresh code to the user's email factor, pending or confirmed. A new code
  * replaces the last. `begun` is the row a restart just wrote: the send is then
  * conditional on that row, not on a later read.
