@@ -32,6 +32,25 @@ describe("the payment sweep cron", () => {
     expect(sweep).toHaveBeenCalledTimes(1);
   });
 
+  it("voids and closes one row of each kind per round until nothing is left", async () => {
+    sweep.mockResolvedValueOnce(2).mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+    const res = await call("Bearer cron-secret");
+    expect(await res.json()).toEqual({ swept: 3 });
+    expect(sweep).toHaveBeenCalledTimes(3);
+    for (const args of sweep.mock.calls) expect((args as unknown[])[1]).toBe(1);
+  });
+
+  it("starts no new round after two minutes, so the last one ends inside the function's limit", async () => {
+    let now = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    sweep.mockImplementation(async () => { now += 50_000; return 2; });
+    const res = await call("Bearer cron-secret");
+    clock.mockRestore();
+    sweep.mockImplementation(async () => 0);
+    expect(sweep).toHaveBeenCalledTimes(3); // started at 0, 50 and 100 s; none at 150 s
+    expect(await res.json()).toEqual({ swept: 6 });
+  });
+
   it("refuses anyone else", async () => {
     for (const auth of [undefined, "Bearer wrong", "cron-secret", "Bearer cron-secretX"]) {
       expect((await call(auth)).status, String(auth)).toBe(401);
