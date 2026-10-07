@@ -164,6 +164,8 @@ interface EnkiMobileGenerateModalProps {
   /** Boost: same model on a priority host. Omit onBoostChange to hide it. */
   boost?: boolean;
   onBoostChange?: (next: boolean) => void;
+  /** Nothing to boost at the chosen size: the toggle shows disabled and says so. */
+  boostSameHost?: boolean;
   /** Resolution, owned by the parent when provided — with the option list
       derived from the model's real ceiling and prices (useGenerationCore).
       Absent, the modal keeps its internal 2K/4K fallback (legacy editor). */
@@ -301,6 +303,7 @@ export default function EnkiMobileGenerateModal({
   generateLabel,
   boost,
   onBoostChange,
+  boostSameHost,
   resolution: resolutionProp,
   setResolution: setResolutionProp,
   resolutionOptions,
@@ -1369,7 +1372,7 @@ export default function EnkiMobileGenerateModal({
                 <span className="mobile-modal-pay-inline-price">{priceFor(genCountNum)}</span>
               </div>
               {onBoostChange && (
-                <BoostToggle boost={!!boost} onChange={onBoostChange} disabled={isGenerating} />
+                <BoostToggle boost={!!boost} onChange={onBoostChange} sameHost={boostSameHost} disabled={isGenerating} />
               )}
               {/* 🎲 — invents one coherent set of variable values. Without an
                   onVariableChange there is nowhere to put a roll, so no dice.

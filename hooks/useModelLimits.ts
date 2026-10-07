@@ -50,6 +50,7 @@ interface ModelRow {
   maxResolution?: string;
   supportsQuality?: boolean;
   boostAvailable?: boolean;
+  boostTiers?: string[];
   free?: boolean;
 }
 
@@ -152,8 +153,10 @@ export interface CatalogueEntry {
    * database!").
    */
   ratios: string[];
-  /** Whether a faster host exists for this model — server-derived (hasBoost). */
+  /** Whether a faster host exists for this model at any size — server-derived. */
   boostAvailable?: boolean;
+  /** The sizes at which that host is not already the regular one (server-derived boostTiers). */
+  boostTiers?: Array<"1K" | "2K" | "4K">;
   /** How many reference images the model takes (models.max_reference_images). */
   maxRefs?: number;
   /** Renders on the free host (server-derived). The only thing that makes a generation free. */
@@ -171,6 +174,19 @@ export interface CatalogueEntry {
  * (Kev's screenshot, 2026-08-19). Matching falls back to the name's family
  * slug, which is exactly what those stored slugs are.
  */
+
+/**
+ * Is boost a real choice for this model at this size? False where the regular
+ * host at that size is already the boost host (Nano Banana 2 at 1K), so the
+ * toggle shows disabled and the request does not carry the flag. A catalogue
+ * answer from before boostTiers existed falls back to the model-level flag.
+ */
+export function boostAt(
+  entry: Pick<CatalogueEntry, "boostTiers" | "boostAvailable"> | null | undefined,
+  tier: string,
+): boolean {
+  return entry?.boostTiers?.includes(tier as "1K" | "2K" | "4K") ?? entry?.boostAvailable ?? false;
+}
 
 export function resolveCatalogueEntry(
   catalogue: CatalogueEntry[],
@@ -246,6 +262,9 @@ function toCatalogue(rows: ModelRow[]): CatalogueEntry[] {
         : "2K") as CatalogueEntry["maxResolution"],
       ratios: Array.isArray(r.allowed_ratios) && r.allowed_ratios.length > 0 ? r.allowed_ratios : FALLBACK_RATIOS,
       boostAvailable: typeof r.boostAvailable === "boolean" ? r.boostAvailable : undefined,
+      boostTiers: Array.isArray(r.boostTiers)
+        ? r.boostTiers.filter((t): t is "1K" | "2K" | "4K" => t === "1K" || t === "2K" || t === "4K")
+        : undefined,
       maxRefs: typeof r.max_reference_images === "number" ? r.max_reference_images : undefined,
       free: r.free === true,
     }));

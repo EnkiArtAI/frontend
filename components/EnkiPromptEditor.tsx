@@ -12,7 +12,7 @@ import { addCreation, getUserKeyFromAccount } from "@/lib/creations";
 import { usePaymentSigner } from "@/hooks/usePaymentSigner";
 import { useCdpAddress } from "@/hooks/useCdpAddress";
 import { useCdpSolanaSigner } from "@/hooks/useCdpSolanaSigner";
-import { useModelLimits, useModelCatalogue, FALLBACK_RATIOS, resolveCatalogueEntry } from "@/hooks/useModelLimits";
+import { useModelLimits, useModelCatalogue, FALLBACK_RATIOS, resolveCatalogueEntry, boostAt } from "@/hooks/useModelLimits";
 import { runGeneration } from "@/lib/generation/run-generation";
 import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
 import { useReferenceReads, REFS_LOADING } from "@/hooks/useReferenceReads";
@@ -1645,7 +1645,7 @@ export default function EnkiPromptEditor() {
       modelId: m.id,
       resolution: genResolution,
       quality: m.supportsQuality ? quality : undefined,
-      boost: boost && !!m.boostAvailable,
+      boost: boost && boostAt(m, genResolution),
     })),
   );
   const modelPriceLabel = (id: string): string | undefined => {
@@ -2545,7 +2545,7 @@ export default function EnkiPromptEditor() {
           model: picked,
           resolution: genResolution,
           quality,
-          boost,
+          boost: boost && boostAt(picked, genResolution),
           prompt: previewText,
           aspectRatio: ratioForApi ?? "1:1",
           referenceImages: cardRefs.length ? cardRefs : undefined,
@@ -3647,14 +3647,16 @@ export default function EnkiPromptEditor() {
                 changes what the generation IS, not just when it starts. */}
             <div className="enk-label">SPEED</div>
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <BoostToggle boost={boost} onChange={setBoost} available={!!picked?.boostAvailable} />
+              <BoostToggle boost={boost} onChange={setBoost} available={!!picked?.boostAvailable} sameHost={!boostAt(picked, genResolution)} />
               <QualitySelect
                 value={quality}
                 onChange={setQuality}
                 available={!!picked?.supportsQuality}
               />
               <p className="enk-hint-text" style={{ margin: 0 }}>
-                {boost
+                {!boostAt(picked, genResolution)
+                  ? "Already on the fastest host at this size."
+                  : boost
                   ? "Priority provider · about 3x faster · priced at the vendor's own rate"
                   : "Standard queue. Turn on Boost for a priority provider."}
               </p>

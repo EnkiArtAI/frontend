@@ -56,7 +56,9 @@ export function normalizeTier(value: unknown): ResolutionTier | null {
 const MAX_BY_ROUTE: ReadonlyArray<{ provider: string; model: RegExp; max: ResolutionTier }> = [
   { provider: "gemini", model: /^gemini-3-pro-image(-preview)?$/, max: "4K" },
   { provider: "gemini", model: /^gemini-2\.5-flash-image$/, max: "1K" },
+  { provider: "gemini", model: /^gemini-3\.1-flash-image$/, max: "4K" },
   { provider: "wavespeed", model: /^google\/nano-banana-pro\/(text-to-image|edit)$/, max: "4K" },
+  { provider: "wavespeed", model: /^google\/nano-banana-2\/(text-to-image|edit)(-fast)?$/, max: "4K" },
   { provider: "wavespeed", model: /^openai\/gpt-image-2\/(text-to-image|edit)$/, max: "4K" },
   { provider: "openai", model: /^gpt-image-2/, max: "4K" },
   { provider: "pollinations", model: /./, max: "2K" },
