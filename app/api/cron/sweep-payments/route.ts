@@ -3,9 +3,12 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { sweepAndFlush } from "@/lib/payments/settle";
 import { cronDenied } from "@/lib/cron";
 
-// Each voided authorisation closes its nonce account on chain, one
-// transaction at a time; what does not fit is next run's work.
-export const maxDuration = 60;
+// A voided row whose nonce account is not closed in the same run is never
+// picked up again (both sweeps skip voided rows), and a close can wait about
+// a minute for its blockhash. So: one row of each kind per round, void then
+// close, and no new round after two minutes of the five.
+export const maxDuration = 300;
+const STOP_STARTING_MS = 120_000;
 
 /**
  * Every five minutes (vercel.json): void the payment authorisations nobody
@@ -16,5 +19,13 @@ export const maxDuration = 60;
 export async function GET(req: NextRequest) {
   const denied = cronDenied(req);
   if (denied) return denied;
-  return NextResponse.json({ swept: await sweepAndFlush(getSupabaseServerClient(), 10) });
+  const supabase = getSupabaseServerClient();
+  const stopAt = Date.now() + STOP_STARTING_MS;
+  let swept = 0;
+  while (Date.now() < stopAt) {
+    const n = await sweepAndFlush(supabase, 1);
+    if (!n) break;
+    swept += n;
+  }
+  return NextResponse.json({ swept });
 }
