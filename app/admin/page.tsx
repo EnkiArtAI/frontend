@@ -106,7 +106,7 @@ function Badge({ pal, label }: { pal: { bg: string; ink: string }; label: string
 
 const TABS: { id: Tab; label: string; icon: string; sub: string; search: boolean }[] = [
   { id: "people", label: "People", icon: "user", sub: "Everyone who was warned, blocked, suspended or whose generations failed this week. Click a row for every event with its prompt and settings.", search: true },
-  { id: "access", label: "Access", icon: "userPlus", sub: "Requests to join the beta, and who may enter. Approving or inviting an email creates the account and mails a one-time password; a wallet goes on the list.", search: false },
+  { id: "access", label: "Access", icon: "userPlus", sub: "Requests to join the beta, and who may enter. Approving or inviting an email creates the account and mails a one-time password; a wallet goes on the list. Rejecting removes a request and mails nothing.", search: false },
   { id: "imports", label: "Pending imports", icon: "inbox", sub: "Hunt submissions waiting for review before they hit the marketplace.", search: true },
   { id: "reports", label: "Reports", icon: "flag", sub: "User-flagged prompts and profiles, grouped by target.", search: false },
   { id: "feedback", label: "Feedback", icon: "message", sub: "Submissions from the “Earn $100 for feedback” program. Click a row to read it all.", search: true },
@@ -245,9 +245,10 @@ export default function AdminPage() {
         headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
         body: JSON.stringify({ resource: "access", ...payload }),
       });
-      const r = (await res.json().catch(() => ({}))) as { error?: string; outcome?: string; mailed?: boolean; listed?: boolean };
+      const r = (await res.json().catch(() => ({}))) as { error?: string; outcome?: string; mailed?: boolean; listed?: boolean; rejected?: boolean };
       if (!res.ok) { say(r.error || "That didn't work."); return false; }
-      say(r.listed === true ? `${who} is on the access list now.`
+      say(r.rejected ? `Rejected the request of ${who}.`
+        : r.listed === true ? `${who} is on the access list now.`
         : r.listed === false ? `${who} is on the access list already.`
         : r.outcome === "has-password" ? `${who} has an account with its own password already; it is on the access list.`
         : !r.mailed ? `${r.outcome === "reinvited" ? `The earlier password of ${who} no longer works, and the new` : `Account ready for ${who}, but the`} mail did not go out. Invite the email again to resend.`
@@ -654,6 +655,7 @@ export default function AdminPage() {
                         <span title={r.about} style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: "var(--enki-ink-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.about}</span>
                         <span style={{ width: 160, fontSize: 11, color: "var(--enki-ink-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.socials ?? "—"}</span>
                         <Pill kind="green" label="Approve" onClick={() => void grant({ action: "approve", id: r.id }, r.email)} />
+                        <Pill kind="red" label="Reject" onClick={() => void grant({ action: "reject", id: r.id }, r.email)} />
                       </div>
                     ))}
                   </div>

@@ -23,6 +23,11 @@ describe("the admin's Access tab", () => {
     expect(PAGE).toMatch(/grant\(\{ action: "inviteWallet", address: invWallet \}, invWallet\.trim\(\)\)/);
   });
 
+  it("rejects a request through the same resource, and says so", () => {
+    expect(PAGE).toMatch(/<Pill kind="red" label="Reject" onClick=\{\(\) => void grant\(\{ action: "reject", id: r\.id \}, r\.email\)\} \/>/);
+    expect(PAGE).toMatch(/say\(r\.rejected \? `Rejected the request of \$\{who\}\.`/);
+  });
+
   it("grants one at a time, so a double click mails nothing twice", () => {
     expect(PAGE).toMatch(/if \(granting\) \{ say\("Still on the last one, one moment\."\); return false; \}\s*setGranting\(true\);/);
     expect(PAGE).toMatch(/\} finally \{\s*setGranting\(false\);\s*\}/);
