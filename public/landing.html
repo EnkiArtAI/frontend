@@ -4528,14 +4528,18 @@ function closeAuth(e) {
   if (e && e.target !== document.getElementById('authBackdrop')) return;
   document.getElementById('authBackdrop').classList.remove('open');
   document.body.style.overflow = '';
+  forgetFirstLogin();
 }
 function switchAuthTab(tab) {
   document.getElementById('tabLogin').classList.toggle('active', tab === 'login');
   document.getElementById('tabSignup').classList.toggle('active', tab === 'signup');
   document.getElementById('formLogin').style.display  = tab === 'login'  ? '' : 'none';
   document.getElementById('formSignup').style.display = tab === 'signup' ? '' : 'none';
-  // Leaving the first-login step (every reopen of the modal comes here too)
-  // forgets the one-time password: it never expires.
+  forgetFirstLogin();
+}
+// The one-time password never expires, so every way out of the first-login
+// step forgets it: another tab, a reopen of the modal, every way it closes.
+function forgetFirstLogin() {
   document.getElementById('formFirstLogin').style.display = 'none';
   firstLogin = null;
   document.getElementById('firstPass').value = '';
@@ -4593,6 +4597,7 @@ window.addEventListener('message', function (e) {
     if (bd && bd.classList.contains('open')) {
       bd.classList.remove('open');
       document.body.style.overflow = '';
+      forgetFirstLogin();
     }
   }
 });
@@ -4721,7 +4726,7 @@ function submitAuth(e, type) {
     .catch(() => fail('Network error. Please try again.'));
 }
 // The one-time password, kept in memory between the two steps only (var:
-// switchAuthTab clears it and may run while the page still loads).
+// forgetFirstLogin clears it and may run while the page still loads).
 var firstLogin = null;
 function showFirstLogin(email, password) {
   firstLogin = { email: email, password: password };
@@ -4772,6 +4777,7 @@ function showAuthSuccess() {
 function closeAuthHard() {
   document.getElementById('authBackdrop').classList.remove('open');
   document.body.style.overflow = '';
+  forgetFirstLogin();
 }
 // ── THEME SWATCHES (teal / purple / light) ──
 function pickTheme(t) {
@@ -5083,6 +5089,7 @@ document.addEventListener('keydown', e => {
     if (document.getElementById('authResetWrap')) { hideResetFrame(); return; }
     document.getElementById('authBackdrop').classList.remove('open');
     document.body.style.overflow = '';
+    forgetFirstLogin();
   }
 });
 // Closing the modal any other way also clears a swapped-in reset frame, so the
