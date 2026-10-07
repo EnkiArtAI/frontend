@@ -10,9 +10,11 @@ export const STEPUP_FACTORS_KEY = ["stepup-factors"] as const;
 /** The signed-in account's second factors (GET /api/auth/stepup), shared by
     the red bar, the shell and Settings. A failed read throws, so an outage
     never reads as "no 2FA". emailCodes: whether an email code can be a
-    factor here (never for an email account: its inbox resets the password). */
+    factor here (never for an email account: its inbox resets the password).
+    Read again whenever the tab comes back: a factor added or removed in
+    another tab or device shows at once ("always", as nothing here goes stale). */
 export function useStepUpFactors(enabled = true) {
-  return useQuery({ queryKey: STEPUP_FACTORS_KEY, enabled, retry: 2, queryFn: fetchStepUpFactors });
+  return useQuery({ queryKey: STEPUP_FACTORS_KEY, enabled, retry: 2, refetchOnWindowFocus: "always", queryFn: fetchStepUpFactors });
 }
 
 export async function fetchStepUpFactors(): Promise<{ factors: Factor[]; emailCodes: boolean }> {

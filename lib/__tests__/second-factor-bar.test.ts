@@ -16,6 +16,7 @@ const ROOT = join(__dirname, "..", "..");
 const BAR = readSource(join(ROOT, "components", "SecondFactorBar.tsx"));
 const CODES = readSource(join(ROOT, "components", "settings", "CodeFactors.tsx"));
 const GATE = readSource(join(ROOT, "components", "BetaGate.tsx"));
+const HOOK = readSource(join(ROOT, "hooks", "useSecondFactor.ts"));
 
 describe("the red bar", () => {
   it("shows for a signed-in account without a factor, and for no one else", () => {
@@ -48,5 +49,9 @@ describe("the 2FA state behind the bar", () => {
   it("is read afresh for a new session only: re-checks of the same one keep it, so the bar never blinks", () => {
     expect(GATE).toMatch(/if \(headers\["X-Session-Token"\] !== checkedSession\.current\) \{\s*checkedSession\.current = headers\["X-Session-Token"\];\s*queryClient\.removeQueries\(\{ queryKey: \["stepup-factors"\] \}\);\s*\}/);
     expect(GATE.match(/removeQueries/g)).toHaveLength(1);
+  });
+
+  it("is read again when the tab comes back, so a factor set up elsewhere shows at once", () => {
+    expect(HOOK).toMatch(/useQuery\(\{ queryKey: STEPUP_FACTORS_KEY, enabled, retry: 2, refetchOnWindowFocus: "always", queryFn: fetchStepUpFactors \}\)/);
   });
 });
