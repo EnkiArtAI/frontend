@@ -249,6 +249,7 @@ export async function POST(request: NextRequest) {
     const imageUrl = `data:${mediaType};base64,${buffer.toString('base64')}`;
 
     console.log(`✅ Image generated successfully in ${result.generationTime}ms`);
+    let delivered = imageUrl;
 
     // Free does not mean unrecorded. The node editor generates through here,
     // so without this its graphs would be lost exactly like every generation
@@ -264,14 +265,21 @@ export async function POST(request: NextRequest) {
         // Measured once, above, for the media type. Measuring the same
         // buffer a second time here could only ever agree with itself.
         const dims = measured;
-        // Everything here runs after the response. The image is stored first,
-        // with the paid route's retries and fallback bucket: without our copy
-        // the row would carry megabytes of data URL, and without the row the
-        // image never reaches its owner's gallery (ENG-07). A render can take
-        // 240 s, so the store gets what is left of the function's own clock
-        // and the record is written either way.
+        // Stored before the answer, with the paid route's retries and
+        // fallback bucket, so the copy the client keeps and the gallery row
+        // share one URL: My Gallery matches the two by URL, and a data URL
+        // showed every free image twice (and filled the browser's storage).
+        // Without our copy the row would carry megabytes of data URL, and
+        // without the row the image never reaches its owner's gallery
+        // (ENG-07). A store that misses its 30 s delivers the data URL as
+        // before and is tried again after the response, with what is left of
+        // the function's own clock; the record is written either way.
+        const quick = await storeGeneratedImage(imageUrl, recUserId, Math.min(Date.now() + 30_000, storeDeadline(startedAt)));
+        delivered = quick.imageUrl;
         after(async () => {
-          const stored = await storeGeneratedImage(imageUrl, recUserId, Math.min(Date.now() + 120_000, storeDeadline(startedAt)));
+          const stored = quick.imageUrl.startsWith("data:")
+            ? await storeGeneratedImage(imageUrl, recUserId, Math.min(Date.now() + 120_000, storeDeadline(startedAt)))
+            : quick;
           await recordGeneration(supabase, {
             adult,
             ...(stored.imageUrl.startsWith("data:") ? {} : stored),
@@ -319,7 +327,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({
-      imageUrl,
+      imageUrl: delivered,
       prompt,
       provider: "pollinations",
       model: model.normal.providerModel,
