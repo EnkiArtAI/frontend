@@ -6,8 +6,8 @@ import { readSource } from "./_read-source";
  * The publish route is the one place the prompt body exists in the clear on
  * the server, so it is the one place search tags may be computed from it.
  * These scans hold that boundary: the matcher reads body.content (plaintext)
- * with the paid rules, the merged result is what lands in prompts.tags, and
- * nothing else about the body leaves the request.
+ * with the paid rules, our tags alone land in prompts.tags (a creator sends
+ * none, Kev 2026-10-07), and nothing else about the body leaves the request.
  */
 
 const ROUTE = join(__dirname, "..", "..", "app", "api", "prompt", "route.ts");
@@ -22,12 +22,13 @@ function promptRowBlock(): string {
 
 describe("/api/prompt computes search tags at publish", () => {
   it("uses the vocabulary matcher from lib/search/tags", () => {
-    expect(src).toMatch(/import \{ extractTags, mergeTags \} from "@\/lib\/search\/tags"/);
+    expect(src).toMatch(/import \{ extractTags, storedTags \} from "@\/lib\/search\/tags"/);
   });
 
-  it("writes the merged tags, with the creator's own tags first", () => {
+  it("writes only the tags it computed, never the client's", () => {
     expect(promptRowBlock()).toMatch(/^\s*tags: searchTags,/m);
-    expect(src).toMatch(/mergeTags\(tags, \[/);
+    expect(src).toMatch(/const searchTags = storedTags\(\n\s+extractTags\(`\$\{body\.title\}\\n\$\{variableText\}`\),\n\s+extractTags\(body\.content, \{ paid: !publicText \}\),\n\s+\);/);
+    expect(src).not.toMatch(/body\.tags/);
   });
 
   it("matches the plaintext body with the paid rules whenever the body is hidden, never the ciphertext", () => {

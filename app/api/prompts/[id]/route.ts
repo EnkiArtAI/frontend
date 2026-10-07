@@ -13,7 +13,6 @@ type PatchBody = {
   title?: string;
   description?: string;
   category?: string;
-  tags?: string[];
   aiSettings?: { aspectRatio?: string; includeText?: boolean };
   published?: boolean;
 };
@@ -237,7 +236,6 @@ export async function PATCH(
     if (typeof body.title === "string") update.title = body.title;
     if (typeof body.description === "string") update.description = body.description;
     if (typeof body.category === "string") update.category = body.category;
-    if (Array.isArray(body.tags)) update.tags = body.tags;
 
     if (body.aiSettings) {
       update.ai_settings = {
@@ -256,12 +254,12 @@ export async function PATCH(
     // missing prompt and someone else's prompt (no ownership oracle).
 
     // Edited text is judged like a save (Kev, 2026-10-03): a prompt saved
-    // clean must not turn explicit or 18+ through its title, description or
-    // tags afterwards. Only the owner's edit is judged, so nobody else's
+    // clean must not turn explicit or 18+ through its title or description
+    // afterwards. Tags are ours, never edited here (Kev, 2026-10-07). Only the owner's edit is judged, so nobody else's
     // request costs a check or earns a warning. The rest of the prompt was
     // judged at save, so an 18+ mark is only ever raised here.
     const edited = Object.fromEntries(
-      Object.entries({ title: body.title, description: body.description, tags: Array.isArray(body.tags) ? body.tags.join(", ") : undefined })
+      Object.entries({ title: body.title, description: body.description })
         .filter((e): e is [string, string] => typeof e[1] === "string" && e[1].trim() !== ""),
     );
     if (Object.keys(edited).length > 0) {

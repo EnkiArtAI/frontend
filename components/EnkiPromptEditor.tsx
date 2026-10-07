@@ -2900,7 +2900,9 @@ export default function EnkiPromptEditor() {
         content: expandReferenceImageMentions(promptData.body),
         promptType: promptData.type,
         aiModel: models.selected[0],
-        tags: promptData.tags,
+        // The editor keeps its one category in `tags`; the server keeps it in
+        // prompts.category. Search tags are computed there, never sent.
+        category: promptData.tags[0] ?? "",
         variables: variables.map((v) => {
           const n = normalizeVariable(v);
           return {

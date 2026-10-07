@@ -8,7 +8,7 @@ import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { showsAdultRender } from "@/lib/adult-content";
 import { resolveOwnerIds, resolveSessionUserId, resolveSessionUserWithBan } from "@/lib/session-user";
 import { isPublicText } from "@/lib/prompt-visibility";
-import { extractTags, mergeTags } from "@/lib/search/tags";
+import { extractTags, storedTags } from "@/lib/search/tags";
 
 type VariableType =
   | "text"
@@ -26,7 +26,6 @@ type PromptPayload = {
   content: string;
   userId?: string | null;
   category?: string;
-  tags?: string[];
   aiModel?: string;
   price?: number;
   aspectRatio?: string | null;
@@ -249,10 +248,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "invalid id" }, { status: 400 });
     }
 
-    const tags = Array.isArray(body.tags)
-      ? body.tags.filter((t): t is string => typeof t === "string")
-      : [];
-
     const uploadedPhotos = Array.isArray(body.uploadedPhotos)
       ? body.uploadedPhotos.filter((p): p is string => typeof p === "string")
       : [];
@@ -346,13 +341,15 @@ export async function POST(req: Request) {
     }
 
     // Judged like a generation before it is stored, and whole: everything a
-    // saved prompt can put into an image or show a buyer — title, text, tags,
+    // saved prompt can put into an image or show a buyer — title, text,
     // every variable's default and options. Explicit and child-safety text is
     // refused with a warning; a suggestive prompt is marked 18+ by itself, as
     // is one whose showcase images are 18+ renders, so the creator never has
     // to (Kev, 2026-10-03). An outage of the check saves nothing rather than
     // an unjudged prompt.
-    const judged = savedPromptInputs({ ...body, tags, description: storedDescription });
+    // Tags are ours, computed below from what is judged here; a creator
+    // sends none (Kev, 2026-10-07).
+    const judged = savedPromptInputs({ ...body, tags: [], description: storedDescription });
     // A record of a refused save shows what a buyer could see; the body is
     // the artist's and is withheld from every moderator (lib/moderation/evidence).
     const { content: artistText, ...shownInputs } = judged;
@@ -397,13 +394,15 @@ export async function POST(req: Request) {
       }
     }
 
-    /* Search tags (Kev, 2026-09-24: zero cost search). The vocabulary matcher
-       runs HERE, on the plaintext the client sent, before it is encrypted:
-       only canonical vocabulary tags reach prompts.tags, never a word of the
-       body itself. Title, variable names and option values are matched in
-       full; the body is matched with the paid rules whenever the viewer
-       would not see it in the clear (isPublicText, the rule GET
-       /api/prompts/[id] decrypts by). The creator's own tags stay first. */
+    /* Search tags, ours alone (Kev, 2026-09-24: zero cost search; 2026-10-07:
+       automatic, private, no distilling). The vocabulary matcher runs HERE,
+       on the plaintext the client sent, before it is encrypted: only
+       canonical vocabulary tags reach prompts.tags, never a word of the body
+       itself. Title, variable names and option values, public on the prompt
+       page anyway, are matched in full; a body whose text the viewer would
+       not see (isPublicText, the rule GET /api/prompts/[id] decrypts by)
+       yields a few subjects only. Whatever the client sends as tags is
+       ignored. */
     const variableText = varsPayload
       .flatMap((v) => [
         v.name,
@@ -413,10 +412,10 @@ export async function POST(req: Request) {
       ])
       .filter((s): s is string => typeof s === "string")
       .join("\n");
-    const searchTags = mergeTags(tags, [
-      ...extractTags(`${body.title}\n${variableText}`),
-      ...extractTags(body.content, { paid: !publicText }),
-    ]);
+    const searchTags = storedTags(
+      extractTags(`${body.title}\n${variableText}`),
+      extractTags(body.content, { paid: !publicText }),
+    );
 
     const promptRow = {
       is_adult: adult,
@@ -539,7 +538,7 @@ export async function POST(req: Request) {
       id: promptId,
       title: body.title,
       category: body.category ?? "",
-      tags: body.tags ?? [],
+      tags: searchTags,
       aiModel: aiModel || null,
       price: publicText ? 0 : typeof body.price === "number" ? body.price : 1,
       aspectRatio: body.aspectRatio ?? null,

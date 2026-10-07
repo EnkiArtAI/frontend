@@ -21,6 +21,7 @@ export const ENKI_CATEGORIES = [
   "Architecture",
   "Abstract",
   "Editorial",
+  "Photography",
 ] as const;
 
 const CATEGORIES = ENKI_CATEGORIES.map((label) => ({ label }));

@@ -206,7 +206,8 @@ export default function EnkiFeedPage() {
 
   const visible = useMemo<EnkiPrompt[]>(() => {
     if (!tags.length) return allPrompts;
-    return allPrompts.filter((prompt) => tags.every((tag) => prompt.tags.includes(tag)));
+    // The chips are categories: a prompt has one, and any picked chip shows it.
+    return allPrompts.filter((prompt) => tags.includes(prompt.category));
   }, [allPrompts, tags]);
 
   const toggleTag = (tag: string) => {

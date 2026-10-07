@@ -120,12 +120,22 @@ describe("saving a prompt", () => {
     expect(tables.prompts).toHaveLength(0);
   });
 
-  it("judges title, text, tags and every variable's values", async () => {
+  it("judges title, text and every variable's values", async () => {
     await save({ ...BASE, variables: [{ ...BASE.variables[0], options: [{ visibleName: "Coat", promptValue: "a long coat" }] }] });
     expect(check).toHaveBeenCalledOnce();
     expect(check.mock.calls[0][0]).toEqual({
-      title: "Portrait", content: "Portrait of a woman, [outfit]", tags: "portrait", "variable 1": "outfit | a red coat | Coat | a long coat",
+      title: "Portrait", content: "Portrait of a woman, [outfit]", "variable 1": "outfit | a red coat | Coat | a long coat",
     });
+  });
+
+  it("stores our search tags and none the client sent (Kev, 2026-10-07)", async () => {
+    const res = await save({ ...BASE, tags: ["my-brand", "buy now"] });
+    expect(res.status).toBe(200);
+    const stored = tables.prompts[0].tags as string[];
+    expect(stored).not.toContain("my-brand");
+    expect(stored).not.toContain("buy now");
+    expect(stored).toEqual(expect.arrayContaining(["portrait", "woman"]));
+    expect((await res.json()).tags).toEqual(stored);
   });
 
   it("marks a prompt 18+ when the check finds it suggestive", async () => {
