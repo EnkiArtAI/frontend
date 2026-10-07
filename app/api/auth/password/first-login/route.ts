@@ -6,6 +6,9 @@
  * nothing else. Here it is checked again and replaced by the user's own, the
  * email counts as confirmed (the password came through the inbox), and the
  * session opens like any login. From then on only the new password works.
+ *
+ * It checks no other password: an account not on a one-time password gets
+ * the same 401 as a wrong one, so this is no second door for guessing.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -26,7 +29,10 @@ export async function POST(req: NextRequest) {
   if (!ipLimit.allowed) return rateLimitResponse(ipLimit.retryAfterSeconds);
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ error: "Choose a password of at least 8 characters." }, { status: 400 });
+  if (!parsed.success) {
+    const short = parsed.error.issues.some((i) => i.path[0] === "newPassword");
+    return NextResponse.json({ error: short ? "Choose a password of at least 8 characters." : "Invalid request" }, { status: 400 });
+  }
   const email = parsed.data.email.trim().toLowerCase();
 
   const idLimit = checkRequestRateLimit(rateLimitKey(req, "auth:firstlogin:id", email), 10, 10 * 60 * 1000);
@@ -35,13 +41,13 @@ export async function POST(req: NextRequest) {
   const supabase = getSupabaseServerClient();
   const { data: cred, error } = await supabase
     .from("password_credentials")
-    .select("user_id, email, pw_hash, pw_salt")
+    .select("user_id, email, pw_hash, pw_salt, must_change_password")
     .eq("email", email)
     .maybeSingle();
   if (error) return dbUnavailableResponse();
 
   // Always run the KDF (decoy when absent), as the login does.
-  if (!verifyOrDecoy(parsed.data.password, cred?.pw_hash, cred?.pw_salt) || !cred) {
+  if (!verifyOrDecoy(parsed.data.password, cred?.pw_hash, cred?.pw_salt) || !cred || !cred.must_change_password) {
     return NextResponse.json({ error: "Wrong login or password" }, { status: 401 });
   }
   if (parsed.data.newPassword === parsed.data.password) {
@@ -66,5 +72,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "This account has its own password already. Log in with it." }, { status: 409 });
   }
 
-  return openLoginSession(supabase, cred.user_id, cred.email, gate.ipHash);
+  try {
+    return await openLoginSession(supabase, cred.user_id, cred.email, gate.ipHash);
+  } catch {
+    // The password is set by now: the one-time password no longer works.
+    return NextResponse.json({ error: "Your password is set. Log in with it.", passwordSet: true }, { status: 503 });
+  }
 }
