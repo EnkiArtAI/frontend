@@ -95,14 +95,14 @@ const wallet = (sol: string): User => ({ solanaAccountObjects: [{ address: sol }
 // user, but keeps the secret; a refused JWT leaves both as they were. Only
 // signOut clears both. A secret signs for the user who registered it, only.
 // initialized: false is a runtime whose SDK has not started yet; gate holds
-// getCurrentUser until released (a slow read across an account switch).
+// getCurrentUser until released (a slow read across an account switch);
+// signGate holds a signing halfway, after it started.
 const cdp = vi.hoisted(() => ({
   user: null as null | User, secret: null as null | string, walletOf: {} as Record<string, User>, signIns: 0,
-  initialized: true, gate: null as null | Promise<void>,
+  initialized: true, gate: null as null | Promise<void>, signGate: null as null | Promise<void>,
 }));
 vi.mock("@coinbase/cdp-hooks", () => ({
   useIsInitialized: () => ({ isInitialized: cdp.initialized }),
-  useSolanaAddress: () => ({ solanaAddress: cdp.user?.solanaAccountObjects[0]?.address ?? null }),
 }));
 vi.mock("@coinbase/cdp-core", async () => {
   const { fetchWalletJwt } = await import("../cdp-bridge");
@@ -134,6 +134,9 @@ vi.mock("@coinbase/cdp-core", async () => {
     getCurrentUserSync: () => cdp.user,
     signSolanaTransaction: async ({ solanaAccount, transaction }: { solanaAccount: string; transaction: string }) => {
       own(solanaAccount);
+      const secret = cdp.secret; // a signing holds the secret it started with
+      if (cdp.signGate) await cdp.signGate;
+      if (cdp.secret !== secret) throw new Error("wallet secret cleared while signing");
       events.push("sign");
       return { signedTransaction: `${transaction} signed by ${solanaAccount}` };
     },
@@ -218,6 +221,7 @@ beforeEach(async () => {
   cdp.signIns = 0;
   cdp.initialized = true;
   cdp.gate = null;
+  cdp.signGate = null;
   Object.assign(server, { jwt: "open", banned: false, attached: [] });
   dialog.answer = "confirm";
   dialog.release = () => {};
@@ -315,6 +319,36 @@ describe("a second tab, after another account's login", () => {
     await expect(requestCdpSign("tx")).resolves.toBe(`tx signed by ${B}`);
   });
 
+  it("keeps its own sign-in when its runtime finishes starting in the middle of a payment", async () => {
+    cdp.initialized = false;
+    await mountFor("b@example.com");
+    let release!: () => void;
+    cdp.signGate = new Promise<void>((r) => { release = r; });
+    const paying = requestCdpSign("tx"); // signs B in and starts signing
+    await settle();
+    cdp.initialized = true; // the SDK is up: the silent sign-in runs now
+    rt.update();
+    await settle();
+    release();
+    await expect(paying).resolves.toBe(`tx signed by ${B}`);
+  });
+
+  it("never takes a late answer for the previous account as its own", async () => {
+    await mountFor("b@example.com");
+    cdp.user = wallet(A); // the old mount's sign-in, still on the wire, lands in CDP now
+    rt.update();
+    await settle();
+    expect(published).not.toContain(A);
+    expect(getCdpSolanaAddress()).toBe(B);
+    expect(server.attached.map((a) => a.address)).not.toContain(A);
+    await expect(requestCdpSign("tx")).resolves.toBe(`tx signed by ${B}`);
+    expect(server.attached.map((a) => a.address)).not.toContain(A);
+    cdp.user = wallet(A); // and once more, right before an export
+    await expect(requestCdpKeyExport()).resolves.toBe(`key of ${B}`);
+    await expect(ensureCdpWallet({ attached: true })).resolves.toBeUndefined();
+    expect(server.attached.map((a) => a.address)).not.toContain(A);
+  });
+
   it("is one runtime per account: another account's login remounts it", () => {
     const providers = readSource(join(__dirname, "..", "..", "providers", "index.tsx"));
     expect(providers).toMatch(/<CdpRuntime key=\{email\} email=\{email\} \/>/);
@@ -368,6 +402,16 @@ describe("a banned account", () => {
     await expect(requestCdpSign("tx")).resolves.toBe(`tx signed by ${B}`);
     await expect(requestCdpKeyExport()).resolves.toBe(`key of ${B}`);
     await expect(ensureCdpWallet({ attached: true })).rejects.toThrow("This account is suspended.");
+  });
+});
+
+describe("while the wallet is locked", () => {
+  it("offers the address this email had last, so the screens can offer the unlock", async () => {
+    local.set("enki-cdp-address:b@example.com", B);
+    server.jwt = "locked";
+    await mountFor("b@example.com");
+    expect(cdp.user).toBeNull();
+    expect(getCdpSolanaAddress()).toBe(B);
   });
 });
 
