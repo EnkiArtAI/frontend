@@ -16,7 +16,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  */
 
 type Row = Record<string, unknown>;
-type Result = { data: unknown; error: unknown };
+type Result = { data: unknown; error: unknown; count?: number };
 
 let db: Record<string, Row[]>;
 let failNext: { table: string; op: "select" | "insert" } | null;
@@ -25,15 +25,17 @@ class Query implements PromiseLike<Result> {
   private filters: ((r: Row) => boolean)[] = [];
   private patch: Row | null = null;
   private single = false;
+  private counting = false;
   private cap = Infinity;
 
   constructor(private table: string) {}
 
-  select() { return this; }
+  select(_cols?: string, opts?: { head?: boolean }) { this.counting = Boolean(opts?.head); return this; }
   update(patch: Row) { this.patch = patch; return this; }
   eq(col: string, v: unknown) { this.filters.push((r) => r[col] === v); return this; }
   gt(col: string, v: string) { this.filters.push((r) => String(r[col]) > v); return this; }
   is(col: string, v: null) { this.filters.push((r) => (r[col] ?? null) === v); return this; }
+  not(col: string, _op: "is", v: null) { this.filters.push((r) => (r[col] ?? null) !== v); return this; }
   ilike(col: string, pattern: string) {
     if (/[%_]/.test(pattern)) throw new Error("fake: ilike wildcards unsupported");
     this.filters.push((r) => String(r[col]).toLowerCase() === pattern.toLowerCase());
@@ -62,6 +64,7 @@ class Query implements PromiseLike<Result> {
       hits.forEach((r) => Object.assign(r, this.patch));
       return { data: null, error: null };
     }
+    if (this.counting) return { data: null, count: hits.length, error: null };
     if (!this.single) return { data: hits.map((r) => ({ ...r })), error: null };
     if (hits.length > 1) return { data: null, error: { code: "PGRST116", message: "multiple rows" } };
     return { data: hits[0] ? { ...hits[0] } : null, error: null };
@@ -121,6 +124,9 @@ beforeEach(() => {
     ],
     users: [{ id: ATTACKER, handle: null }, { id: VICTIM, handle: null }],
     bans: [],
+    // Read by the wallet JWT once the account's second factors gate it (MFA stack).
+    mfa_factors: [],
+    webauthn_credentials: [],
   };
 });
 
