@@ -27,7 +27,7 @@ vi.hoisted(() => {
   process.env.FIELD_ENCRYPTION_KEY_B64 = Buffer.alloc(32, 4).toString("base64");
 });
 
-import { AccessError, accessFor, approveRequest, inviteEmail, inviteWallet, loadAccess, oneTimePassword } from "../access-invite";
+import { AccessError, accessFor, approveRequest, inviteEmail, inviteWallet, loadAccess, oneTimePassword, rejectRequest } from "../access-invite";
 import { POST as login } from "../../app/api/auth/password/login/route";
 import { POST as firstLogin } from "../../app/api/auth/password/first-login/route";
 import { POST as walletJwt } from "../../app/api/auth/wallet/jwt/route";
@@ -208,6 +208,25 @@ describe("an access request", () => {
     expect(db.current!.tables.access_requests[0].status).toBe("pending");
   });
 
+  it("rejected: it leaves the queue, nobody is mailed or let in, and it cannot be approved after", async () => {
+    db.current!.tables.access_requests = [{ id: "r1", email: "applicant@example.com", status: "pending" }];
+    expect(await rejectRequest(db.current!.client, "r1")).toEqual({ rejected: true });
+    expect(db.current!.tables.access_requests[0].status).toBe("rejected");
+    expect(db.current!.tables.access_allowlist).toEqual([]);
+    expect(db.current!.tables.users).toEqual([]);
+    expect(mailer.sent).toEqual([]);
+    await expect(rejectRequest(db.current!.client, "r1")).rejects.toMatchObject({ status: 404 });
+    await expect(approveRequest(db.current!.client, "r1")).rejects.toMatchObject({ status: 404 });
+    expect((await loadAccess(db.current!.client)).requests).toEqual([]);
+  });
+
+  it("approved cannot be rejected after: its account exists", async () => {
+    db.current!.tables.access_requests = [{ id: "r1", email: "applicant@example.com", status: "pending" }];
+    await approveRequest(db.current!.client, "r1");
+    await expect(rejectRequest(db.current!.client, "r1")).rejects.toMatchObject({ status: 404 });
+    expect(db.current!.tables.access_requests[0].status).toBe("approved");
+  });
+
   it("is listed for the admin while pending, beside the access list; a mod sees none of it", async () => {
     expect(await accessFor(db.current!.client, "mod")).toBeNull();
     expect(await accessFor(db.current!.client, "admin")).toEqual({ requests: [], allowlist: [] });
@@ -251,6 +270,15 @@ describe("the admin route", () => {
     asRole("admin");
     const ok = await admin(post("/api/admin", { resource: "access", action: "inviteEmail", email: "new@example.com" }, "tok"));
     expect(await ok.json()).toEqual({ outcome: "invited", mailed: true });
+  });
+
+  it("lets an admin reject a request; a mod cannot", async () => {
+    db.current!.tables.access_requests = [{ id: "r1", email: "applicant@example.com", status: "pending" }];
+    asRole("mod");
+    expect((await admin(post("/api/admin", { resource: "access", action: "reject", id: "r1" }, "tok"))).status).toBe(403);
+    expect(db.current!.tables.access_requests[0].status).toBe("pending");
+    asRole("admin");
+    expect(await (await admin(post("/api/admin", { resource: "access", action: "reject", id: "r1" }, "tok"))).json()).toEqual({ rejected: true });
   });
 
   it("answers a refusal with its reason and status", async () => {

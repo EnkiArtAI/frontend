@@ -24,7 +24,7 @@ import { CHILD_SAFETY, hasChildSafetyCase, inWarningOrBanList, listPeople, parse
 import { readEvidence, withheldEvidence } from "@/lib/moderation/evidence";
 import { loadPromptText } from "@/lib/generation/prompt-text";
 import { banUntil } from "@/lib/moderation/bans";
-import { AccessError, accessFor, approveRequest, inviteEmail, inviteWallet } from "@/lib/access-invite";
+import { AccessError, accessFor, approveRequest, inviteEmail, inviteWallet, rejectRequest } from "@/lib/access-invite";
 
 /** A ban counts while it is not lifted and has not run out, as activeBanFor reads it. */
 const unexpired = () => `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`;
@@ -547,12 +547,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── private-beta access (Kev, 2026-10-07): approve a request, invite an
-  // email (account + mailed one-time password) or a wallet. Admins only. ──
+  // ── private-beta access (Kev, 2026-10-07): approve or reject a request,
+  // invite an email (account + mailed one-time password) or a wallet. Admins only. ──
   if (body.resource === "access") {
     if (role !== "admin") return NextResponse.json({ error: "Only admins grant access" }, { status: 403 });
     try {
       if (body.action === "approve" && body.id) return NextResponse.json(await approveRequest(supabase, body.id));
+      if (body.action === "reject" && body.id) return NextResponse.json(await rejectRequest(supabase, body.id));
       if (body.action === "inviteEmail" && body.email) return NextResponse.json(await inviteEmail(supabase, body.email));
       if (body.action === "inviteWallet" && body.address) return NextResponse.json(await inviteWallet(supabase, body.address));
     } catch (e) {
