@@ -11,7 +11,7 @@
  * the enforcement pair.
  */
 import { CDP_ADDRESS_EVENT } from "@/lib/cdp-bridge";
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { SHOW_ADULT_KEY, isSessionStorageKey, pillSurvives, sessionAuthHeaders, setPillActive } from "@/lib/session-headers";
 import { useQueryClient } from "@tanstack/react-query";
@@ -84,6 +84,10 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
     setProfile((p) => (p ? { ...p, handle: h } : p));
   };
   const [tick, setTick] = useState(0);
+  // The session the last check was for: only a new one (a login, a logout,
+  // another account) reads its 2FA state afresh. The same one keeps it, or
+  // the red bar blinks on every re-check (each wallet address event).
+  const checkedSession = useRef<string | undefined>(undefined);
 
   /* Re-verify when a login/logout happens in this or another tab. Only a
      session key counts as one: every editor autosave used to re-run this in
@@ -105,9 +109,12 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let dead = false;
-    // A new check is a possibly new account: nothing 18+ until it answers,
-    // and its 2FA state is read again (the red bar).
-    queryClient.removeQueries({ queryKey: ["stepup-factors"] });
+    const headers = sessionAuthHeaders();
+    if (headers["X-Session-Token"] !== checkedSession.current) {
+      checkedSession.current = headers["X-Session-Token"];
+      queryClient.removeQueries({ queryKey: ["stepup-factors"] });
+    }
+    // A new check is a possibly new account: nothing 18+ until it answers.
     const forgetPill = () => { try { localStorage.removeItem(SHOW_ADULT_KEY); } catch { /* none */ } };
     setAdultConfirmedState(false);
     setAdultPillState(false);
@@ -125,7 +132,6 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
       } catch { /* fall through to denied */ }
       if (!dead) setAccess("denied");
     };
-    const headers = sessionAuthHeaders();
     // Signed out: the pill goes with the session.
     if (Object.keys(headers).length === 0) { forgetPill(); void teamFallback(); return () => { dead = true; }; }
     (async () => {

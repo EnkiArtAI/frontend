@@ -15,6 +15,7 @@ import { fetchStepUpFactors, missingSecondFactor } from "@/hooks/useSecondFactor
 const ROOT = join(__dirname, "..", "..");
 const BAR = readSource(join(ROOT, "components", "SecondFactorBar.tsx"));
 const CODES = readSource(join(ROOT, "components", "settings", "CodeFactors.tsx"));
+const GATE = readSource(join(ROOT, "components", "BetaGate.tsx"));
 
 describe("the red bar", () => {
   it("shows for a signed-in account without a factor, and for no one else", () => {
@@ -39,5 +40,13 @@ describe("the red bar", () => {
 
   it("offers no email code to an account whose email is its login", () => {
     expect(CODES).toMatch(/\{data\?\.emailCodes && row\("email",/);
+  });
+
+});
+
+describe("the 2FA state behind the bar", () => {
+  it("is read afresh for a new session only: re-checks of the same one keep it, so the bar never blinks", () => {
+    expect(GATE).toMatch(/if \(headers\["X-Session-Token"\] !== checkedSession\.current\) \{\s*checkedSession\.current = headers\["X-Session-Token"\];\s*queryClient\.removeQueries\(\{ queryKey: \["stepup-factors"\] \}\);\s*\}/);
+    expect(GATE.match(/removeQueries/g)).toHaveLength(1);
   });
 });
