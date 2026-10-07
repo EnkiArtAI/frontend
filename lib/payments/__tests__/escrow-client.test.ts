@@ -304,10 +304,18 @@ describe("Current chain configuration gates new deposits", () => {
       await expect(validateEscrowConfiguration(plan(),await configuration({ maxDepositMicro: cap }))).rejects.toThrow();
     }
   });
-  it.each(["paused", "revoked", "treasury", "cap", "ttl", "fee", "bump"])("rejects %s configuration", async (field) => {
+  it("binds new quotes to the current operator while old funded snapshots retain their payer", async () => {
+    const rotated = await configuration({ operator: stranger.address });
+    await expect(validateEscrowConfiguration(plan(), rotated)).rejects.toThrow("does not allow");
+    await expect(validateEscrowConfiguration(plan({ rentPayer: stranger.address }), rotated))
+      .resolves.toHaveProperty("operator", stranger.address);
+    await expect(verifyFundedEscrow(plan(), await funded())).resolves.toHaveProperty("depositedMicro", 1_000_000);
+  });
+  it.each(["paused", "revoked", "operator", "treasury", "cap", "ttl", "fee", "bump"])("rejects %s configuration", async (field) => {
     const changes: Partial<ConfigInput> = {};
     if (field === "paused") changes.paused = true;
     if (field === "revoked") changes.operator = EMPTY_RECIPIENT;
+    if (field === "operator") changes.operator = stranger.address;
     if (field === "treasury") changes.treasuryOwner = stranger.address;
     if (field === "cap") changes.maxDepositMicro = 999_999;
     if (field === "ttl") changes.minTtlS = 901;

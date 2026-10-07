@@ -34,7 +34,8 @@ export async function validateEscrowConfiguration(plan: EscrowPaymentSnapshot, a
   const ttl = BigInt(plan.expiresAtSeconds - plan.chainNowSeconds);
   if (!sameBytes(config.discriminator, CONFIG_DISCRIMINATOR) || config.bump !== derived.configBump ||
       config.admin === EMPTY_RECIPIENT || config.guardian === EMPTY_RECIPIENT ||
-      config.operator === EMPTY_RECIPIENT || config.treasuryOwner !== plan.treasuryOwner || config.paused ||
+      config.operator === EMPTY_RECIPIENT || config.operator !== plan.rentPayer ||
+      config.treasuryOwner !== plan.treasuryOwner || config.paused ||
       config.maxDepositMicro <= BigInt(0) || config.maxDepositMicro > BigInt(Number.MAX_SAFE_INTEGER) ||
       config.minTtlS < BigInt(ESCROW_MIN_TTL_SECONDS) || config.maxTtlS > BigInt(ESCROW_MAX_TTL_SECONDS) ||
       config.minTtlS > config.maxTtlS || ttl < config.minTtlS || ttl > config.maxTtlS ||

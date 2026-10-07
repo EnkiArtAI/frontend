@@ -20,7 +20,10 @@ deploy a program or activate payments.
 
 1. Authenticate the intent owner. Read the deployed program's current Config at
    confirmed commitment and validate it with `validateEscrowConfiguration` using
-   the server quote and chain clock. Pass its verified `maxDepositMicro` to the
+   the server quote and chain clock. The quote's signing rent payer must match the current
+   `Config.operator`; `validateEscrowConfiguration` enforces this binding before
+   a deposit is prepared. Admin/upgrade governance is separate from this signer.
+   Pass its verified `maxDepositMicro` to the
    reservation RPC as required `p_max_deposit_micro`. Build the deposit plan from
    the returned row's net treasury/artist legs and `recovery_unit_micro`, then
    validate the updated plan against that Config. Supply its cap explicitly to
@@ -43,6 +46,8 @@ deploy a program or activate payments.
    `verifyFundedEscrow` validates immutable deposit fields, program owners,
    canonical addresses, state, unexpired lifetime and funds. Only then may the database mark the
    deposit funded and admit image claims. A client-supplied signature is not proof.
+   Generation admission must also check that the remaining chain TTL covers its
+   generation budget; a funded, merely unexpired escrow is not sufficient.
    This verification takes the immutable `EscrowPaymentSnapshot`, without a
    current cap: changing Config after funding cannot invalidate the payment or
    block settlement/refund. New deposits require `EscrowDepositPlan`, including
@@ -54,8 +59,8 @@ generated settlement and reclaim builders share the same program interface;
 delivered-image counting, retry persistence and atomic recovery booking belong
 to the subsequent server lifecycle integration.
 
-Base is `feat/nsfw` (#116), with #118 merged before this client (#119); the
-database chain is #117 then #120. No generation or x402 route changes belong in
+Base is `main`, with #118 merged before this client (#119); the
+database chain #117 and #120 is already merged. No generation or x402 route changes belong in
 this stack. Do not call any escrow RPC in production until per-image claims
 exist; the nonce rail is removed/drained in the coordinated cutover release.
 The missing-buyer-ATA refund behavior is unchanged and belongs in the Terms.
