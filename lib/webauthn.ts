@@ -85,11 +85,12 @@ async function verifyStepUpToken(token: string, userId: string, scope: string): 
 const FIRST_FACTOR_SESSION_MS = 10 * 60_000;
 
 /**
- * Gate for adding a factor (passkey, authenticator, email). With a factor
- * already in place it is a step-up like any other; the first one needs a
- * session younger than ten minutes, answering 403 { reauth } otherwise.
+ * Gate for adding a factor (passkey, authenticator, email) or a guardian,
+ * who can reset the password. With a factor already in place it is a step-up
+ * like any other; without one it needs a session younger than ten minutes,
+ * answering 403 { reauth } otherwise.
  */
-export async function requireAddFactor(req: NextRequest, userId: string): Promise<NextResponse | null> {
+export async function requireAddFactor(req: NextRequest, userId: string, scope = "add-factor"): Promise<NextResponse | null> {
   const supabase = getSupabaseServerClient();
   let factors: Factor[];
   try {
@@ -97,7 +98,7 @@ export async function requireAddFactor(req: NextRequest, userId: string): Promis
   } catch {
     return NextResponse.json({ error: "Could not verify security settings" }, { status: 503 });
   }
-  if (factors.length > 0) return requireStepUp(req, userId, "add-factor", { mandatory: true });
+  if (factors.length > 0) return requireStepUp(req, userId, scope, { mandatory: true });
   const { data, error } = await supabase
     .from("auth_sessions")
     .select("created_at")
@@ -105,7 +106,7 @@ export async function requireAddFactor(req: NextRequest, userId: string): Promis
     .maybeSingle();
   if (error) return NextResponse.json({ error: "Could not verify security settings" }, { status: 503 });
   if (!data || Date.now() - Date.parse(String(data.created_at)) > FIRST_FACTOR_SESSION_MS) {
-    return NextResponse.json({ error: "Sign in again to set up your first security factor", reauth: true }, { status: 403 });
+    return NextResponse.json({ error: "Sign in again to change your security settings", reauth: true }, { status: 403 });
   }
   return null;
 }

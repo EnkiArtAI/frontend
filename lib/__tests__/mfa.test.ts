@@ -72,6 +72,17 @@ describe("an authenticator app", () => {
     expect(await checkCode(supabase, U, "totp", code)).toBe("wrong");
   });
 
+  it("can be confirmed for ten minutes after its setup started, not weeks later", async () => {
+    const started = await beginTotp(supabase, U, "me");
+    if (started === "exists") throw new Error();
+    vi.setSystemTime(new Date("2026-10-07T12:10:01Z"));
+    expect(await checkCode(supabase, U, "totp", totpCode(started.secret), { confirm: true })).toBe("none");
+    expect(factor("totp").confirmed_at ?? null).toBeNull();
+    const again = await beginTotp(supabase, U, "me");
+    if (again === "exists") throw new Error();
+    expect(await checkCode(supabase, U, "totp", totpCode(again.secret), { confirm: true })).toBe("ok");
+  });
+
   it("is not replaced while confirmed", async () => {
     await confirmedTotp();
     expect(await beginTotp(supabase, U, "me")).toBe("exists");
@@ -144,10 +155,13 @@ describe("an email code", () => {
 
   it("has no code outlive a lock", async () => {
     await beginEmail(supabase, U, "me@example.com");
+    await checkCode(supabase, U, "email", lastCode(), { confirm: true });
+    vi.setSystemTime(new Date("2026-10-07T12:02:00Z"));
+    await sendEmailCode(supabase, U);
     const code = lastCode();
-    for (let i = 0; i < MAX_ATTEMPTS; i++) await checkCode(supabase, U, "email", "000000", { confirm: true });
-    vi.setSystemTime(new Date("2026-10-07T12:20:00Z"));
-    expect(await checkCode(supabase, U, "email", code, { confirm: true })).toBe("wrong");
+    for (let i = 0; i < MAX_ATTEMPTS; i++) await checkCode(supabase, U, "email", "000000");
+    vi.setSystemTime(new Date("2026-10-07T12:22:00Z"));
+    expect(await checkCode(supabase, U, "email", code)).toBe("wrong");
   });
 });
 

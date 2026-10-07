@@ -22,7 +22,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ kind: stri
     if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
     const result = await checkCode(supabase, userId, kind, body.code, { confirm: true });
     if (result === "ok") return NextResponse.json({ confirmed: true });
-    if (result === "none") return NextResponse.json({ error: "Start the setup first" }, { status: 404 });
+    if (result === "none") return NextResponse.json({ error: "This setup expired. Start it again." }, { status: 404 });
     if (result === "locked") return NextResponse.json({ error: "Too many wrong codes. Try again later." }, { status: 429 });
     if (result === "busy") return NextResponse.json({ error: "Another check is running, try again" }, { status: 409 });
     return NextResponse.json({ error: "Wrong code" }, { status: 400 });

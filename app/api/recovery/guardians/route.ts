@@ -14,7 +14,7 @@ import { randomBytes } from "crypto";
 import { PublicKey } from "@solana/web3.js";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
-import { requireStepUp } from "@/lib/webauthn";
+import { requireAddFactor, requireStepUp } from "@/lib/webauthn";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { sendMail } from "@/lib/mailer";
 import { MANUAL_REMINDER_MAX, MANUAL_REMINDER_COOLDOWN_MS } from "@/lib/recovery/manual-reminder";
@@ -166,13 +166,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Bad request" }, { status: 400 });
   }
 
-  // Adding a guardian adds someone who can reset the password: a step-up.
-  // Confirming, re-inviting and SMS codes continue one already added.
-  if (!body.verifyId && !body.reinviteId && !body.phoneResendId && !body.phoneVerifyId) {
-    const blocked = await requireStepUp(req, userId, "guardians");
-    if (blocked) return blocked;
-  }
-
   // Verify an authenticator guardian: the user enters a TOTP code from their
   // app; a match confirms it (decrypt the stored secret, check ±1 window).
   if (body.verifyId && body.code) {
@@ -272,6 +265,12 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ guardian: shape(g as GuardianRow), emailed });
   }
+
+  // Adding a guardian adds someone who can reset the password, so it is gated
+  // like a factor. Gated here, where the add path starts: any body that missed
+  // the branches above lands here, whatever ids it carried.
+  const blocked = await requireAddFactor(req, userId, "guardians");
+  if (blocked) return blocked;
 
   const guardianType = body.guardianType;
   let value = (body.value ?? "").trim();
@@ -389,8 +388,8 @@ export async function PATCH(req: NextRequest) {
   const userId = await resolveSessionUserId(supabase, req.headers.get("X-Session-Token"));
   if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
-  // Guardians can reset the password: who they are is a step-up decision.
-  const blocked = await requireStepUp(req, userId, "guardians");
+  // Fewer approvals make a password reset easier: gated like adding a guardian.
+  const blocked = await requireAddFactor(req, userId, "guardians");
   if (blocked) return blocked;
 
   let threshold: unknown;

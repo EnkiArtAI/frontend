@@ -29,6 +29,10 @@ const LOCK_MAX_MS = 24 * 3600_000;
 const CODE_TTL_MS = 10 * 60_000;
 const RESEND_COOLDOWN_MS = 60_000;
 const SENDS_PER_DAY = 5;
+// How long a started setup can be confirmed. Longer, a session that was fresh
+// once could start an authenticator, keep its secret and confirm it weeks
+// later, past every gate added meanwhile.
+const SETUP_TTL_MS = 10 * 60_000;
 
 type Row = {
   id: string;
@@ -47,6 +51,7 @@ type Row = {
   failed_attempts: number;
   lockouts: number;
   locked_until: string | null;
+  created_at: string;
 };
 
 // Until Kev runs the migration the table does not exist: nobody has a factor
@@ -99,7 +104,7 @@ async function begin(supabase: SupabaseClient, userId: string, kind: FactorKind,
     .upsert(
       {
         user_id: userId, kind, ...sealed(userId, secret),
-        confirmed_at: null, last_step: null, code_hash: null, code_expires_at: null,
+        created_at: new Date().toISOString(), confirmed_at: null, last_step: null, code_hash: null, code_expires_at: null,
         failed_attempts: 0, locked_until: null,
       },
       { onConflict: "user_id,kind" },
@@ -172,6 +177,7 @@ export async function checkCode(
   const row = await factorRow(supabase, userId, kind);
   if (!row || (!confirm && !row.confirmed_at)) return "none";
   const now = Date.now();
+  if (!row.confirmed_at && Date.parse(row.created_at) + SETUP_TTL_MS < now) return "none";
   if ((row.locked_until && Date.parse(row.locked_until) > now) || row.failed_attempts >= MAX_ATTEMPTS) return "locked";
 
   // The attempt is spent before the code is looked at, against the row as it

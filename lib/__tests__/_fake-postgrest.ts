@@ -1,6 +1,6 @@
 /**
  * A PostgREST-shaped stand-in for the service-role client: eq / is / not /
- * or filters, conditional updates, upsert on (user_id, kind), deletes with a
+ * or filters, inserts, conditional updates, upsert on (user_id, kind), deletes with a
  * count, a switch that makes one table answer with an error code, and a
  * pause that hands one read its snapshot late (to stage races). Enough for
  * the MFA code; no SQL semantics beyond that.
@@ -39,11 +39,12 @@ export function fakePostgrest() {
 
   function from(table: string) {
     const filters: ((r: Row) => boolean)[] = [];
-    let op: { kind: "select" | "update" | "upsert" | "delete"; values?: Row; head?: boolean; star?: boolean } = { kind: "select" };
+    let op: { kind: "select" | "insert" | "update" | "upsert" | "delete"; values?: Row; head?: boolean; star?: boolean } = { kind: "select" };
     let one = false;
     const rows = () => (tables[table] ??= []);
     const q: Record<string, unknown> = {
       select: (cols?: string, opts?: { head?: boolean }) => { if (op.kind === "select") op = { kind: "select", head: opts?.head, star: cols === "*" }; return q; },
+      insert: (values: Row) => { op = { kind: "insert", values }; return q; },
       update: (values: Row) => { op = { kind: "update", values }; return q; },
       upsert: (values: Row) => { op = { kind: "upsert", values }; return q; },
       delete: () => { op = { kind: "delete" }; return q; },
@@ -57,11 +58,16 @@ export function fakePostgrest() {
         if (state.failing?.table === table) {
           return Promise.resolve({ data: null, error: { code: state.failing.code, message: "boom" }, count: null }).then(ok);
         }
+        if (op.kind === "insert") {
+          const r = { id: `${table}-${rows().length + 1}`, ...op.values };
+          rows().push(r);
+          return Promise.resolve({ data: { ...r }, error: null }).then(ok);
+        }
         if (op.kind === "upsert") {
           const v = op.values!;
           let r = rows().find((x) => x.user_id === v.user_id && x.kind === v.kind);
           if (!r) {
-            r = { id: `f${rows().length + 1}`, lockouts: 0, sends_count: 0, failed_attempts: 0, last_step: null, code_sent_at: null, sends_day: null, ...v };
+            r = { id: `f${rows().length + 1}`, lockouts: 0, sends_count: 0, failed_attempts: 0, last_step: null, code_sent_at: null, sends_day: null, created_at: new Date().toISOString(), ...v };
             rows().push(r);
           } else Object.assign(r, v);
           return Promise.resolve({ data: { ...r }, error: null }).then(ok);
