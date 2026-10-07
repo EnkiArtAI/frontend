@@ -28,9 +28,10 @@ describe("apiRequest", () => {
 describe("the prompt editor", () => {
   const EDITOR = readSource(join(__dirname, "..", "..", "components", "EnkiPromptEditor.tsx"));
 
-  it("saves, publishes and rolls dice with the signed-in session", () => {
+  it("saves, releases and rolls dice with the signed-in session", () => {
     expect(EDITOR).toMatch(/fetch\("\/api\/prompt", \{\n\s+method: "POST",\n\s+headers: \{ "Content-Type": "application\/json", \.\.\.sessionAuthHeaders\(\) \},/);
-    expect(EDITOR).toMatch(/method: "PATCH",\n\s+headers: \{ "Content-Type": "application\/json", \.\.\.sessionAuthHeaders\(\) \},/);
+    // A release is that same save (lib/__tests__/editor-release.test.ts), so it carries the session too.
+    expect(EDITOR).toContain("await savePromptMutation.mutateAsync({ release: true });");
     expect(EDITOR).toMatch(/headers=\{sessionAuthHeaders\(\)\}/);
   });
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { sessionAuthHeaders, viewerHeaders } from "@/lib/session-headers";
-import { fetchGenerationQuote, toModelFamily } from "@/lib/generation-checkout";
+import { fetchGenerationQuote, PromptUnavailable, toModelFamily } from "@/lib/generation-checkout";
 import { runGeneration } from "@/lib/generation/run-generation";
 import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
 import { useModelCatalogue, resolveCatalogueEntry } from "@/hooks/useModelLimits";
@@ -426,7 +426,7 @@ export default function PromptGeneratorView({
     }
   }, [resolutions, resolution]);
 
-  const { data: paidQuote } = useQuery({
+  const { data: paidQuote, error: quoteError } = useQuery({
     /* boost + quality are part of the key: toggling either MUST refetch, or
        the shown price is the old route's (Kev, 2026-08-23: boost = real cost
        everywhere). */
@@ -436,7 +436,12 @@ export default function PromptGeneratorView({
     enabled: !noCharge && !!promptId && !loading && !!core.entry,
     // Quotes expire server-side after 5 minutes; refresh a little sooner.
     refetchInterval: 4 * 60 * 1000,
+    // "Not for sale" is an answer, not a failure to ask again.
+    retry: (failures, e) => !(e instanceof PromptUnavailable) && failures < 3,
   });
+  /* Taken down, deleted or unlisted while this page was open (or before): the
+     button said "Generate …" forever, waiting for a price that could not come. */
+  const unavailable = quoteError instanceof PromptUnavailable;
   /* Each tier's price is the server's quote for this prompt at the current
      settings (Kev, 2026-10-02: "ich brauche safe überall den server-quote");
      it was the catalogue price x tier scale, without the artist share and
@@ -1734,8 +1739,8 @@ export default function PromptGeneratorView({
             <button
               className="pgv-generate-btn"
               onClick={generate}
-              disabled={generating || refsLoading || guest || (!noCharge && !paidQuote)}
-              title={guest ? "Sign in to generate" : undefined}
+              disabled={generating || refsLoading || guest || (!noCharge && (!paidQuote || unavailable))}
+              title={guest ? "Sign in to generate" : unavailable ? quoteError.message : undefined}
             >
               {generating ? <Loader2 size={14} className="pgv-spinner" /> : <Sparkles size={14} />}
               {/* A guest sees WHY the button is dead, not a "Generate …"
@@ -1747,9 +1752,11 @@ export default function PromptGeneratorView({
                 ? "Loading images…"
                 : noCharge
                   ? "Generate free"
-                  : paidQuote
-                    ? `Generate $${paidQuote.totalUsd}`
-                    : "Generate …"}
+                  : unavailable
+                    ? "No longer available"
+                    : paidQuote
+                      ? `Generate $${paidQuote.totalUsd}`
+                      : "Generate …"}
             </button>
             {/* ToS §4 requires the network fee to be itemised before the buyer
                 confirms. It used to occupy its own line above the footer,

@@ -10,6 +10,9 @@ import { resolveOwnerIds, resolveSessionUserId, resolveSessionUserWithBan } from
 import { isPublicText } from "@/lib/prompt-visibility";
 import { ownShowcaseImages } from "@/lib/generation/derivative-store";
 import { extractTags, storedTags } from "@/lib/search/tags";
+import { artistPayoutWallet } from "@/lib/payments/generation-quote";
+import { DEFAULT_PROMPT_PRICE_USD } from "@/shared/revenue-config";
+import { storedName } from "@/lib/generation/prompt-text";
 
 type VariableType =
   | "text"
@@ -59,6 +62,8 @@ type VariablePayload = {
 
 type SaveBody = PromptPayload & {
   variables?: VariablePayload[];
+  /** The artist releases the prompt: once this save has passed the checks it is listed for sale. */
+  release?: boolean;
 };
 
 function getErrorMessage(e: unknown): string {
@@ -175,6 +180,21 @@ function toDbVarName(name: unknown, position: number, taken: Set<string>): strin
   return candidate;
 }
 
+/* What a variable may carry: text in its name, label, description and
+   options; a text, number, yes/no or one flat list of those as its default.
+   The prompt check reads exactly these, one level deep, so anything nested
+   would be stored, shown and generated from without ever being judged. */
+const plain = (x: unknown) => x == null || ["string", "number", "boolean"].includes(typeof x);
+const text = (x: unknown) => x == null || typeof x === "string";
+function isPlainVariable(v: VariablePayload): boolean {
+  return (
+    typeof v === "object" && v !== null && text(v.name) && text(v.label) && text(v.description) &&
+    (Array.isArray(v.defaultValue) ? v.defaultValue.every(plain) : plain(v.defaultValue)) &&
+    (v.options == null ||
+      (Array.isArray(v.options) && v.options.every((o) => typeof o === "object" && o !== null && text(o.visibleName) && text(o.label) && text(o.promptValue))))
+  );
+}
+
 // Resolve the prompt's creator from the session — NEVER from the client
 // (a client-supplied userId could claim any creator, and the payment quote
 // pays the artist share to that creator's wallet). prompts.creator_id is
@@ -234,6 +254,8 @@ async function resolveCreatorId(
 }
 
 export async function POST(req: Request) {
+  // A listed prompt is off sale from its first write until its last one.
+  let offSale = false;
   try {
     const body = (await req.json()) as SaveBody;
 
@@ -247,6 +269,11 @@ export async function POST(req: Request) {
 
     if (body.id && !isUuid(body.id)) {
       return NextResponse.json({ error: "invalid id" }, { status: 400 });
+    }
+
+    // Stored and handed out with the prompt, so text only: it is judged with the rest.
+    if ([body.category, body.aspectRatio, body.resolution].some((x) => x != null && typeof x !== "string")) {
+      return NextResponse.json({ error: "category, aspectRatio and resolution must be text" }, { status: 400 });
     }
 
     const uploadedPhotos = Array.isArray(body.uploadedPhotos)
@@ -274,6 +301,13 @@ export async function POST(req: Request) {
     const isFreeShowcase = Boolean(body.isFreeShowcase ?? false);
     // A free prompt: its text is public and it has no price.
     const publicText = isPublicText({ prompt_type: dbPromptType, is_free_showcase: isFreeShowcase });
+    // The body sends dollars (float); the column is integer cents.
+    // A free prompt is stored at 0 whatever was sent: the share card, the
+    // price filter and the card price read "free" from the cents alone.
+    const priceCents = publicText ? 0 : typeof body.price === "number" ? Math.round(body.price * 100) : Math.round(DEFAULT_PROMPT_PRICE_USD * 100);
+    if (!Number.isFinite(priceCents) || priceCents < 0) {
+      return NextResponse.json({ error: "The price must be zero or more." }, { status: 400 });
+    }
     /* Every [slot] in the text must be a DEFINED variable WITH a value.
        The showcase image is generated from those values, and a prompt whose
        slots have none shows buyers raw brackets next to an image that
@@ -282,6 +316,12 @@ export async function POST(req: Request) {
        generieren" — raw DB seeds proved the gap). Checked at SAVE, the one
        door every prompt passes through. */
     const varsPayload = Array.isArray(body.variables) ? body.variables : [];
+    if (!varsPayload.every(isPlainVariable)) {
+      return NextResponse.json(
+        { error: "A variable holds a value that cannot be saved: its name, label, description and options must be text, its default a text, a number, yes/no or a plain list of those." },
+        { status: 400 },
+      );
+    }
     const slotNames = new Set(
       Array.from(String(body.content ?? "").matchAll(/\[([^\]\n]+)\]/g), (m) => m[1].trim()),
     );
@@ -306,6 +346,26 @@ export async function POST(req: Request) {
       }
     }
 
+    /* No two variables under one stored name. Names are stored as slugs
+       ("Cat" and "cat" are both cat, "red car" and "red-car" both red_car); the
+       second would get a tie-break (cat_2) that no slot names, and every buyer
+       of the prompt would be refused as unmatched. Said here, where the artist
+       can still rename one. */
+    const storedAs = new Map<string, string>();
+    for (const v of varsPayload) {
+      const name = String(v.name ?? "").trim();
+      const stored = storedName(name);
+      if (!stored) continue;
+      const first = storedAs.get(stored);
+      if (first !== undefined) {
+        return NextResponse.json(
+          { error: `Two variables would be saved under one name: "${first}" and "${name}". Rename one of them. Nothing was saved.` },
+          { status: 422 },
+        );
+      }
+      storedAs.set(stored, name);
+    }
+
     if (!body.id && !aiModel) {
       return NextResponse.json({ error: "Pick the model this prompt is made for." }, { status: 400 });
     }
@@ -323,6 +383,21 @@ export async function POST(req: Request) {
     // PATCH route) but is shown with the prompt, so an update judges it too.
     let storedDescription: string | null = null;
     let savedShowcase: string[] = [];
+    // The model is kept when a save sends none, and is handed out with a
+    // listed prompt like the description: judged with the rest as well.
+    let storedModel = "";
+    // A release lists the prompt (Kev, 2026-10-05: the artist lists when they
+    // want, once the checks have passed). A first listing keeps its dates.
+    let listedSince: { listed_at?: unknown; published_at?: unknown } = {};
+    // What this save writes is for sale: it is released now, or is listed already.
+    let live = body.release === true;
+    // Whose prompt it is: a paid prompt's buyers pay this creator.
+    let payee: string;
+    // The content this save read. Every save stores a fresh IV, so a write
+    // that still finds this one lands on the prompt as it was read and
+    // judged, not on what another save put there meanwhile.
+    let readIv: string | null = null;
+    let wasListed = false;
     if (body.id) {
       const owners = await resolveOwnerIds(supabase, req.headers.get("X-Session-Token"));
       if (!owners) {
@@ -331,15 +406,52 @@ export async function POST(req: Request) {
       // A session whose wallet maps to no user row owns no prompts, and
       // .in() with an empty list is a PostgREST parse error, not a no-op.
       if (owners.length === 0) return NextResponse.json({ error: "not found" }, { status: 404 });
-      const { data: own } = await supabase.from("prompts").select("id, description, showcase_images").eq("id", body.id).in("creator_id", owners).maybeSingle();
+      const { data: own } = await supabase.from("prompts").select("id, creator_id, description, ai_model, encrypted_content_iv, is_listed, delisted_at, listed_at, published_at, showcase_images").eq("id", body.id).in("creator_id", owners).maybeSingle();
       if (!own) return NextResponse.json({ error: "not found" }, { status: 404 });
+      // What a moderator took down stays down: releasing it again would undo the takedown.
+      if (body.release === true && own.delisted_at) {
+        return NextResponse.json({ error: "This prompt was taken down by a moderator and cannot be released again. Nothing was saved." }, { status: 403 });
+      }
+      listedSince = own;
+      wasListed = own.is_listed === true;
+      live ||= wasListed;
+      payee = String(own.creator_id);
+      readIv = (own.encrypted_content_iv as string | null) ?? null;
       storedDescription = (own.description as string | null) ?? null;
       savedShowcase = Array.isArray(own.showcase_images) ? own.showcase_images.filter((u: unknown): u is string => typeof u === "string") : [];
+      storedModel = typeof own.ai_model === "string" ? own.ai_model : "";
       ownerIds = owners;
     } else {
       creatorId = await resolveCreatorId(supabase, req);
       if (!creatorId) {
         return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+      }
+      payee = creatorId;
+    }
+
+    // What is for sale must be sellable: it has a text, it is free or paid,
+    // and a paid one has a price. Asked before any check is paid for.
+    if (live) {
+      const unsellable = !body.content.trim()
+        ? "A prompt for sale needs its text."
+        : !publicText && dbPromptType !== "paid"
+          ? "A prompt for sale is either free or paid."
+          : // A price that was not sent is stored as the default for a draft; nothing
+            // goes or stays on sale at a price its artist never set.
+            !publicText && (typeof body.price !== "number" || priceCents < 1)
+            ? "A paid prompt for sale needs a price of at least $0.01."
+            : null;
+      if (unsellable) return NextResponse.json({ error: `${unsellable} Nothing was saved.` }, { status: 422 });
+      // A paid prompt's buyers pay the artist's share to the artist's Solana
+      // wallet, by the rule the quote applies. Without one every purchase
+      // would be refused at the quote: listed, and for sale to nobody.
+      if (!publicText) {
+        const payout = await artistPayoutWallet(supabase, payee);
+        if (!payout.ok) {
+          return payout.status === 500
+            ? NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 })
+            : NextResponse.json({ error: "A paid prompt for sale needs a Solana wallet on your account to be paid to: connect one, or link yours again. Nothing was saved." }, { status: 422 });
+        }
       }
     }
 
@@ -352,7 +464,7 @@ export async function POST(req: Request) {
     // an unjudged prompt.
     // Tags are ours, computed below from what is judged here; a creator
     // sends none (Kev, 2026-10-07).
-    const judged = savedPromptInputs({ ...body, tags: [], description: storedDescription });
+    const judged = savedPromptInputs({ ...body, tags: [], description: storedDescription, aiModel: aiModel || storedModel });
     // A record of a refused save shows what a buyer could see; the body is
     // the artist's and is withheld from every moderator (lib/moderation/evidence).
     const { content: artistText, ...shownInputs } = judged;
@@ -394,6 +506,12 @@ export async function POST(req: Request) {
       after(recordModerationEvent(verdict, { surface: "upload", request: req, prompt: Object.values(shownInputs).join("\n"), withheld: artistText }));
       if (!verdict.allowed) {
         return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
+      }
+      // Tier 2 answers "allowed" when it is down. That is right for a draft,
+      // which is judged again when it is released, and wrong for what is or
+      // goes on sale: nothing reaches the marketplace on a check that never ran.
+      if (verdict.tier2Degraded && live) {
+        return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 });
       }
     }
 
@@ -437,11 +555,7 @@ export async function POST(req: Request) {
       category: body.category ?? "",
       tags: searchTags,
       ...(aiModel ? { ai_model: aiModel } : {}),
-      // The body sends dollars (float); the column is integer cents.
-      // A free prompt is stored at 0 whatever was sent: the share card, the
-      // price filter and the card price read "free" from the cents alone.
-      price_usd_cents:
-        publicText ? 0 : typeof body.price === "number" ? Math.round(body.price * 100) : 100,
+      price_usd_cents: priceCents,
       aspect_ratio: body.aspectRatio ?? null,
       photo_count: typeof body.photoCount === "number" ? body.photoCount : 1,
       prompt_type: dbPromptType,
@@ -467,19 +581,34 @@ export async function POST(req: Request) {
     if (body.id) {
       promptId = body.id;
 
-      const { error: updateError, count } = await supabase
+      // Only onto the prompt as it was read. The rules above (for sale or
+      // not, sellable, tier 2) were decided on that read, and the checks took
+      // seconds: a second save of the same prompt may have been judged as a
+      // draft and would otherwise land on what this one lists, or the other
+      // way round. The description goes back as it was judged, so an edit of
+      // it that landed meanwhile cannot sit under a mark it was not part of.
+      const asRead = supabase
         .from("prompts")
-        .update(promptRow, { count: "exact" })
+        // Off sale in the same write that changes it; a listed prompt comes
+        // back with the last write below. Its new text is never for sale
+        // without its new variables, whatever fails in between.
+        .update({ ...promptRow, description: storedDescription, is_listed: false }, { count: "exact" })
         .eq("id", promptId)
         .in("creator_id", ownerIds);
+      const sameContent = readIv === null ? asRead.is("encrypted_content_iv", null) : asRead.eq("encrypted_content_iv", readIv);
+      // And the listing as it was read: another save's last write puts the
+      // prompt back on sale without changing the IV, so a save that read it
+      // in that gap would be judged as a draft and take it off sale for good.
+      const { error: updateError, count } = await (wasListed ? sameContent.is("is_listed", true) : sameContent.not("is_listed", "is", true));
 
       if (updateError) {
         throw updateError;
       }
 
       if (count === 0) {
-        return NextResponse.json({ error: "not found" }, { status: 404 });
+        return NextResponse.json({ error: "This prompt was changed by another save while this one was being checked. Nothing was saved; save it again." }, { status: 409 });
       }
+      offSale = wasListed;
 
       const { error: deleteError } = await supabase
         .from("prompt_variables")
@@ -544,24 +673,54 @@ export async function POST(req: Request) {
       }
     }
 
+    // Listed last: after the prompt check and moderation let this very save
+    // through, and once the prompt and its variables are both written, so a
+    // save that fails halfway leaves nothing half-made for sale. A save
+    // without a release puts a listed prompt back on sale and lists nothing
+    // else. The takedown mark is part of the write itself: a moderator may
+    // take the prompt down between the ownership read above and here, and
+    // what is taken down stays down.
+    if (live) {
+      const { error: listError, count: nowListed } = await supabase
+        .from("prompts")
+        .update(
+          { is_listed: true, listing_status: "active", listed_at: listedSince.listed_at ?? nowIso, published_at: listedSince.published_at ?? nowIso },
+          { count: "exact" },
+        )
+        .eq("id", promptId)
+        // Still the content this very save wrote, not another save's.
+        .eq("encrypted_content_iv", enc.iv)
+        .is("delisted_at", null);
+      if (listError) throw listError;
+      if (nowListed === 0) {
+        const { data: now } = await supabase.from("prompts").select("delisted_at").eq("id", promptId).maybeSingle();
+        return now?.delisted_at
+          ? NextResponse.json({ error: "This prompt was taken down by a moderator and cannot be released again. Your changes were saved; it stays unlisted." }, { status: 403 })
+          : NextResponse.json({ error: "This prompt was changed by another save while it was being released, so it stays unlisted. Release it again." }, { status: 409 });
+      }
+    }
+
     return NextResponse.json({
       id: promptId,
       title: body.title,
       category: body.category ?? "",
       tags: searchTags,
       aiModel: aiModel || null,
-      price: publicText ? 0 : typeof body.price === "number" ? body.price : 1,
+      price: publicText ? 0 : typeof body.price === "number" ? body.price : DEFAULT_PROMPT_PRICE_USD,
       aspectRatio: body.aspectRatio ?? null,
       photoCount: typeof body.photoCount === "number" ? body.photoCount : 1,
       promptType: clientPromptType,
       uploadedPhotos: showcase,
       resolution: body.resolution ?? null,
       isFreeShowcase: Boolean(body.isFreeShowcase ?? false),
+      // The check marks a prompt 18+ by itself; its artist is told, since an
+      // 18+ prompt is shown only to viewers who may see 18+.
+      adult,
     });
   } catch (e: unknown) {
     console.error("/api/prompt POST failed:", e);
     return NextResponse.json(
-      { error: getErrorMessage(e) || "Failed to save prompt" },
+      { error: offSale ? "This prompt could not be saved completely and is off sale now. Release it again." : getErrorMessage(e) || "Failed to save prompt" },
       { status: 500 }
     );
   }
@@ -648,7 +807,7 @@ export async function GET(req: Request) {
       price:
         typeof prompt.price_usd_cents === "number"
           ? prompt.price_usd_cents / 100
-          : 1,
+          : DEFAULT_PROMPT_PRICE_USD,
       aspectRatio: (prompt.aspect_ratio as string | null | undefined) ?? null,
       photoCount: typeof prompt.photo_count === "number" ? prompt.photo_count : 1,
       promptType: PROMPT_TYPE_FROM_DB[dbPromptType] ?? dbPromptType,

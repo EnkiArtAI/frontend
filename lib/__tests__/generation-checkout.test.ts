@@ -18,6 +18,7 @@ import {
   authorizePaidGeneration,
   fetchGenerationQuote,
   fetchGenerationQuotes,
+  PromptUnavailable,
   toModelFamily,
   microToUsd,
   CheckoutError,
@@ -169,6 +170,33 @@ describe("the quote never invents a price", () => {
     signMock.mockReset();
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("offline"); }));
     expect(await fetchGenerationQuote(REQ)).toBeNull();
+  });
+});
+
+describe("the quote of a prompt that is not for sale", () => {
+  it("says so, instead of the null that keeps a button waiting", async () => {
+    scriptFetch({ "/api/payments/generation/quote": { status: 404, body: { error: "Prompt not found" } } });
+    await expect(fetchGenerationQuote(REQ)).rejects.toBeInstanceOf(PromptUnavailable);
+    await expect(fetchGenerationQuote(REQ)).rejects.toThrow("This prompt is no longer available.");
+  });
+
+  it("is only that answer: every other refusal still reads as no quote yet", async () => {
+    for (const status of [400, 401, 422, 429, 500]) {
+      scriptFetch({ "/api/payments/generation/quote": { status, body: { error: "no" } } });
+      expect(await fetchGenerationQuote(REQ)).toBeNull();
+    }
+  });
+
+  it("is shown on the buyer's button, which stays dead and is not asked for again", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const PGV = readFileSync(join(__dirname, "..", "..", "components", "PromptGeneratorView.tsx"), "utf8");
+    expect(PGV).toContain("const unavailable = quoteError instanceof PromptUnavailable;");
+    expect(PGV).toContain("retry: (failures, e) => !(e instanceof PromptUnavailable) && failures < 3,");
+    expect(PGV).toContain("disabled={generating || guest || (!noCharge && (!paidQuote || unavailable))}");
+    // Before the stale price of a quote fetched while the prompt was still for sale.
+    expect(PGV.indexOf('? "No longer available"')).toBeGreaterThan(-1);
+    expect(PGV.indexOf('? "No longer available"')).toBeLessThan(PGV.indexOf("? `Generate $${paidQuote.totalUsd}`"));
   });
 });
 

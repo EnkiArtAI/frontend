@@ -30,6 +30,7 @@ class Query implements PromiseLike<Result> {
   in(col: string, vs: unknown[]) { this.filters.push((r) => vs.includes(r[col])); return this; }
   gt() { return this; }
   is() { return this; }
+  not() { return this; }
   order() { return this; }
   or() { return this; }
   limit() { return this; }
@@ -155,6 +156,17 @@ describe("GET /api/prompt answers only the prompt's creator", () => {
   it("gives the creator the full text", async () => {
     const res = await get("artist-token");
     expect((await res.json()).content).toBe("the artist's secret words around [subject]");
+  });
+});
+
+describe("the price its creator reads", () => {
+  it("is the default for a prompt that has none", async () => {
+    db.prompts[0].price_usd_cents = null;
+    expect((await (await get("artist-token")).json()).price).toBe(0.07);
+  });
+
+  it("is the stored price otherwise", async () => {
+    expect((await (await get("artist-token")).json()).price).toBe(1.5);
   });
 });
 

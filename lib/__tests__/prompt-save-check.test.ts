@@ -9,20 +9,38 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 type Row = Record<string, unknown>;
 let tables: Record<string, Row[]>;
 let failingTable: string | null = null;
+let failingInsert: string | null = null;
+let failingUpdate: string | null = null;
+let failingPayoutLookup = false;
+// Runs once the prompt row is written and before its variables are: where another request can land.
+let betweenWrites: (() => void) | null = null;
+let saves = 0;
+// Holds the write that puts a prompt on sale, so another request can run in that gap.
+let beforeListing: (() => Promise<void>) | null = null;
 
 class Query implements PromiseLike<{ data: unknown; error: null; count?: number }> {
   private filters: ((r: Row) => boolean)[] = [];
   private op: "select" | "update" | "insert" | "delete" = "select";
   private payload: Row | Row[] | null = null;
+  private counted = false;
   private one = false;
+  private asked: string[] = [];
   constructor(private table: string) {}
   select() { return this; }
-  update(p: Row) { this.op = "update"; this.payload = p; return this; }
+  // A count comes back only when asked for, as from PostgREST.
+  update(p: Row, o?: { count?: string }) { this.op = "update"; this.payload = p; this.counted = o?.count === "exact"; return this; }
   insert(p: Row | Row[]) { this.op = "insert"; this.payload = p; return this; }
   delete() { this.op = "delete"; return this; }
-  eq(c: string, v: unknown) { this.filters.push((r) => r[c] === v); return this; }
+  eq(c: string, v: unknown) { this.asked.push(c); this.filters.push((r) => r[c] === v); return this; }
   in(c: string, vs: unknown[]) { this.filters.push((r) => vs.includes(r[c])); return this; }
-  is(c: string, v: null) { this.filters.push((r) => (r[c] ?? null) === v); return this; }
+  is(c: string, v: null | boolean) { this.filters.push((r) => (r[c] ?? null) === v); return this; }
+  // Only "not is": a missing value is not the value either, as in SQL. Any other
+  // operator is refused: "not eq" would never match a row whose value is missing.
+  not(c: string, op: string, v: null | boolean) {
+    if (op !== "is") throw new Error(`this fake knows only not.is, got not.${op}`);
+    this.filters.push((r) => (r[c] ?? null) !== v);
+    return this;
+  }
   gt(c: string, v: string) { this.filters.push((r) => String(r[c]) > v); return this; }
   limit() { return this; }
   order() { return this; }
@@ -35,8 +53,19 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
   maybeSingle() { this.one = true; return this; }
   single() { this.one = true; return this; }
   // failingTable: reads of that table fail as an unreachable database's would.
-  then<A, B = never>(ok?: ((v: { data: unknown; error: null; count?: number }) => A | PromiseLike<A>) | null, ko?: ((e: unknown) => B | PromiseLike<B>) | null) {
+  then<A, B = never>(ok?: ((v: { data: unknown; error: null; count?: number }) => A | PromiseLike<A>) | null, ko?: ((e: unknown) => B | PromiseLike<B>) | null): PromiseLike<A | B> {
+    if (beforeListing && this.table === "prompts" && this.op === "update" && (this.payload as Row).is_listed === true) {
+      const hold = beforeListing;
+      beforeListing = null;
+      return hold().then(() => this.then(ok, ko));
+    }
     if (this.table === failingTable && this.op === "select") return Promise.resolve({ data: null, error: { message: "fetch failed" } as unknown as null }).then(ok, ko);
+    // failingInsert: writes of new rows to that table are refused, as a broken constraint would.
+    // failingPayoutLookup: only the payout wallet's read fails; the session's own wallet reads still answer.
+    if (failingPayoutLookup && this.table === "user_wallets" && this.asked.includes("chain_family")) return Promise.resolve({ data: null, error: { message: "fetch failed" } as unknown as null }).then(ok, ko);
+    if (this.table === failingUpdate && this.op === "update") return Promise.resolve({ data: null, error: { message: "update refused" } as unknown as null }).then(ok, ko);
+    if (this.table === failingInsert && this.op === "insert") return Promise.resolve({ data: null, error: { message: "insert refused" } as unknown as null }).then(ok, ko);
+    if (this.table === "prompt_variables" && this.op === "insert") { const land = betweenWrites; betweenWrites = null; land?.(); }
     const rows = (tables[this.table] ??= []);
     const hits = rows.filter((r) => this.filters.every((f) => f(r)));
     let res: { data: unknown; error: null; count?: number };
@@ -46,7 +75,7 @@ class Query implements PromiseLike<{ data: unknown; error: null; count?: number 
       res = { data: this.one ? added[0] : added, error: null };
     } else if (this.op === "update") {
       hits.forEach((r) => Object.assign(r, this.payload));
-      res = { data: null, error: null, count: hits.length };
+      res = { data: null, error: null, ...(this.counted ? { count: hits.length } : {}) };
     } else if (this.op === "delete") {
       tables[this.table] = rows.filter((r) => !hits.includes(r));
       res = { data: null, error: null };
@@ -62,8 +91,8 @@ const check = vi.fn();
 const warn = vi.fn(async () => ({ total: 1, suspendedUntil: null, nextStepAt: 10 }));
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), after: () => {} }));
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => fake }));
-vi.mock("@/lib/crypto", () => ({ encryptString: () => ({ encrypted: "ct", iv: "iv", authTag: "tag", kid: "k1" }), decryptString: () => "" }));
-const tier2 = vi.fn(async (_i: { prompt: string }) => ({ allowed: true }));
+vi.mock("@/lib/crypto", () => ({ encryptString: () => ({ encrypted: "ct", iv: `iv-${++saves}`, authTag: "tag", kid: "k1" }), decryptString: () => "" }));
+const tier2 = vi.fn(async (_i: { prompt: string }): Promise<{ allowed: boolean; tier2Degraded?: boolean }> => ({ allowed: true }));
 const screened = vi.fn((_i: Record<string, string>): unknown => null);
 vi.mock("@/lib/moderation", () => ({ moderate: (i: { prompt: string }) => tier2(i), screenFirst: (i: Record<string, string>) => screened(i), CLIENT_BLOCK_MESSAGE: "blocked" }));
 const recorded = vi.fn(async (..._a: unknown[]) => {});
@@ -80,7 +109,7 @@ const save = (body: Row, token: string | null = "tok") => POST(new Request("http
   method: "POST", headers: { "Content-Type": "application/json", ...(token ? { "X-Session-Token": token } : {}) }, body: JSON.stringify(body),
 }));
 const BASE = {
-  title: "Portrait", content: "Portrait of a woman, [outfit]", aiModel: "nano-banana-pro", tags: ["portrait"],
+  title: "Portrait", content: "Portrait of a woman, [outfit]", aiModel: "nano-banana-pro", tags: ["portrait"], promptType: "free-prompt",
   variables: [{ name: "outfit", label: "outfit", type: "text", defaultValue: "a red coat", position: 0 }],
 };
 const future = new Date(Date.now() + 86400_000).toISOString();
@@ -88,6 +117,12 @@ const EMAIL_USER = "3a3a3a3a-1111-4222-8333-444455556666";
 
 beforeEach(() => {
   failingTable = null;
+  failingInsert = null;
+  failingUpdate = null;
+  failingPayoutLookup = false;
+  betweenWrites = null;
+  beforeListing = null;
+  saves = 0;
   check.mockReset();
   check.mockResolvedValue({ verdict: "clear" });
   screened.mockReset();
@@ -124,7 +159,7 @@ describe("saving a prompt", () => {
     await save({ ...BASE, variables: [{ ...BASE.variables[0], options: [{ visibleName: "Coat", promptValue: "a long coat" }] }] });
     expect(check).toHaveBeenCalledOnce();
     expect(check.mock.calls[0][0]).toEqual({
-      title: "Portrait", content: "Portrait of a woman, [outfit]", "variable 1": "outfit | a red coat | Coat | a long coat",
+      title: "Portrait", content: "Portrait of a woman, [outfit]", settings: "nano-banana-pro", "variable 1": "outfit | a red coat | Coat | a long coat",
     });
   });
 
@@ -148,6 +183,12 @@ describe("saving a prompt", () => {
     tables.generated_images.push({ id: "g1", storage_url: "https://blob/x.png", is_adult: true });
     await save({ ...BASE, uploadedPhotos: ["https://blob/x.png"] });
     expect(tables.prompts[0].is_adult).toBe(true);
+  });
+
+  it("tells the artist whether the prompt was marked 18+", async () => {
+    expect((await (await save(BASE)).json()).adult).toBe(false);
+    check.mockResolvedValue({ verdict: "clear", adult: true });
+    expect((await (await save({ ...BASE, release: true })).json()).adult).toBe(true);
   });
 
   it("leaves an ordinary prompt below 18", async () => {
@@ -250,14 +291,38 @@ describe("judged whole", () => {
 });
 
 describe("variables sharing a name", () => {
-  it("are each judged, none hiding another", async () => {
-    await save({ ...BASE, variables: [
-      { name: "outfit", label: "outfit", type: "text", defaultValue: "sheer lingerie", position: 0 },
-      { name: "outfit", label: "outfit", type: "text", defaultValue: "a red coat", position: 1 },
-    ] });
+  // Names are stored as slugs. The second of two alike would be saved with a
+  // tie-break no slot names, and every buyer of the prompt refused as unmatched.
+  const two = (a: string, b: string, content = "A scene") => save({ ...BASE, content, variables: [
+    { name: a, label: a, type: "text", defaultValue: "sheer lingerie", position: 0 },
+    { name: b, label: b, type: "text", defaultValue: "a red coat", position: 1 },
+  ] });
+
+  it.each([
+    ["written the same", "outfit", "outfit"],
+    ["differing only in case", "Cat", "cat"],
+    ["differing only in spaces around", " cat ", "cat"],
+    ["differing only in what a stored name drops", "red car", "red-car"],
+    ["both starting with a digit", "2nd subject", "2nd-subject"],
+  ])("are refused when %s, before any check is paid for", async (_name, a, b) => {
+    const res = await two(a, b);
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe(`Two variables would be saved under one name: "${a.trim()}" and "${b.trim()}". Rename one of them. Nothing was saved.`);
+    expect(check).not.toHaveBeenCalled();
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("are saved when their stored names differ, each judged", async () => {
+    expect((await two("outfit", "outfit colour")).status).toBe(200);
     const judged = check.mock.calls[0][0] as Record<string, string>;
     expect(judged["variable 1"]).toContain("sheer lingerie");
     expect(judged["variable 2"]).toContain("a red coat");
+    expect(tables.prompt_variables.map((v) => v.name)).toEqual(["outfit", "outfit_colour"]);
+  });
+
+  it("are saved when nothing of their names survives as a stored name: those are stored by position", async () => {
+    expect((await two("猫", "犬")).status).toBe(200);
+    expect(tables.prompt_variables.map((v) => v.name)).toEqual(["var_0", "var_1"]);
   });
 });
 
@@ -266,5 +331,666 @@ describe("a showcase lookup that fails", () => {
     failingTable = "generated_images";
     expect((await save({ ...BASE, uploadedPhotos: ["https://blob/x.png"] })).status).toBe(503);
     expect(tables.prompts).toEqual([]);
+  });
+});
+
+describe("releasing a prompt", () => {
+  // Kev, 2026-10-05: the artist lists a prompt when they want, once the checks have passed.
+  // Nothing set is_listed before, so a released prompt was for sale to nobody.
+  const owned = (extra: Row = {}) => {
+    tables.prompts.push({ id: "11111111-1111-4111-8111-111111111111", creator_id: "u1", title: "Portrait", description: null, ...extra });
+    return tables.prompts[0];
+  };
+  const ID = "11111111-1111-4111-8111-111111111111";
+
+  it("lists it for sale once the checks have passed", async () => {
+    expect((await save({ ...BASE, release: true })).status).toBe(200);
+    expect(tables.prompts[0]).toMatchObject({ is_listed: true, listing_status: "active" });
+    expect(tables.prompts[0].listed_at).toBeTruthy();
+    expect(tables.prompts[0].published_at).toBeTruthy();
+  });
+
+  it("leaves a prompt saved without a release unlisted", async () => {
+    await save(BASE);
+    expect(tables.prompts[0]).not.toHaveProperty("is_listed");
+    expect(tables.prompts[0]).not.toHaveProperty("listing_status");
+  });
+
+  it("lists nothing the prompt check refuses", async () => {
+    check.mockResolvedValue({ verdict: "explicit_sexual", confidence: 0.9 });
+    expect((await save({ ...BASE, release: true })).status).toBe(422);
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("lists nothing that moderation blocks, and nothing while the check is unavailable", async () => {
+    const row = owned({ is_listed: false, listing_status: "draft" });
+    tier2.mockResolvedValueOnce({ allowed: false });
+    expect((await save({ ...BASE, id: ID, release: true })).status).toBe(422);
+    check.mockResolvedValue({ verdict: "unavailable", reason: "api 500" });
+    expect((await save({ ...BASE, id: ID, release: true })).status).toBe(503);
+    expect(row).toMatchObject({ is_listed: false, listing_status: "draft" });
+  });
+
+  it("lists a suggestive prompt, marked 18+", async () => {
+    check.mockResolvedValue({ verdict: "clear", adult: true });
+    await save({ ...BASE, release: true });
+    expect(tables.prompts[0]).toMatchObject({ is_listed: true, is_adult: true });
+  });
+
+  it("lists an existing draft and keeps a listed prompt's first dates", async () => {
+    const row = owned({ is_listed: false, listing_status: "draft", listed_at: null, published_at: null });
+    await save({ ...BASE, id: ID, release: true });
+    expect(row).toMatchObject({ is_listed: true, listing_status: "active" });
+    const first = { listed_at: "2026-09-01T00:00:00.000Z", published_at: "2026-08-30T00:00:00.000Z" };
+    Object.assign(row, first);
+    await save({ ...BASE, id: ID, release: true });
+    expect(row).toMatchObject(first);
+  });
+
+  it("leaves a listed prompt listed when it is saved again without a release", async () => {
+    const row = owned({ is_listed: true, listing_status: "active", listed_at: "2026-09-01T00:00:00.000Z" });
+    await save({ ...BASE, id: ID });
+    expect(row).toMatchObject({ is_listed: true, listing_status: "active", listed_at: "2026-09-01T00:00:00.000Z" });
+  });
+
+  it("never lists again what a moderator took down, and costs no check", async () => {
+    const row = owned({ is_listed: false, listing_status: "active", delisted_at: "2026-10-01T00:00:00.000Z", title: "Taken down" });
+    const res = await save({ ...BASE, id: ID, release: true });
+    expect(res.status).toBe(403);
+    expect(row).toMatchObject({ is_listed: false, title: "Taken down" });
+    expect(check).not.toHaveBeenCalled();
+    // Its artist may still edit it, unlisted.
+    expect((await save({ ...BASE, id: ID })).status).toBe(200);
+    expect(row).toMatchObject({ is_listed: false, title: "Portrait" });
+  });
+
+  it("lists nothing whose variables could not be written", async () => {
+    failingInsert = "prompt_variables";
+    expect((await save({ ...BASE, release: true })).status).toBe(500);
+    expect(tables.prompts[0].is_listed).not.toBe(true);
+  });
+
+  it("answers an error, not a release, when the listing itself could not be written", async () => {
+    failingUpdate = "prompts";
+    expect((await save({ ...BASE, release: true })).status).toBe(500);
+    expect(tables.prompts[0].is_listed).not.toBe(true);
+  });
+
+  it("leaves a draft a draft when its variables could not be written", async () => {
+    failingInsert = "prompt_variables";
+    const row = owned({ is_listed: false, listing_status: "draft" });
+    const res = await save({ ...BASE, id: ID, release: true });
+    expect(res.status).toBe(500);
+    // It was never on sale, so the answer is the failure, not "off sale now".
+    expect((await res.json()).error).toBe("insert refused");
+    expect(row).toMatchObject({ is_listed: false, listing_status: "draft" });
+  });
+
+  it("stays down when a moderator takes it down while the release is being checked", async () => {
+    const row = owned({ is_listed: false, listing_status: "draft", delisted_at: null });
+    // The takedown lands after the ownership read, before anything is written.
+    check.mockImplementation(async () => {
+      Object.assign(row, { is_listed: false, delisted_at: "2026-10-05T12:00:00.000Z" });
+      return { verdict: "clear" };
+    });
+    const res = await save({ ...BASE, id: ID, release: true });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toContain("stays unlisted");
+    expect(row).toMatchObject({ is_listed: false, listing_status: "draft", delisted_at: "2026-10-05T12:00:00.000Z" });
+  });
+
+  it("releases nobody else's prompt", async () => {
+    const row = owned({ creator_id: "u2", is_listed: false });
+    expect((await save({ ...BASE, id: ID, release: true })).status).toBe(404);
+    expect(row.is_listed).toBe(false);
+  });
+});
+
+describe("the save route's ownership read", () => {
+  it("asks for the creator, the stored description and model, the content it read, the listing, the takedown mark and the first listing dates, which this file's fake would hand over unasked", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const src = readFileSync(join(__dirname, "..", "..", "app", "api", "prompt", "route.ts"), "utf8");
+    expect(src).toContain('.select("id, creator_id, description, ai_model, encrypted_content_iv, is_listed, delisted_at, listed_at, published_at").eq("id", body.id).in("creator_id", owners)');
+    // And, where a listing did not land, for the one column that tells a takedown from another save.
+    expect(src).toContain('.from("prompts").select("delisted_at").eq("id", promptId).maybeSingle();');
+  });
+});
+
+describe("a variable that hides text from the check", () => {
+  // The check reads a variable's fields one level deep; anything nested would be stored unjudged.
+  const withVariable = (extra: Row) => save({ ...BASE, variables: [{ ...BASE.variables[0], ...extra }] });
+  const refused = async (extra: Row) => {
+    const res = await withVariable(extra);
+    expect(res.status).toBe(400);
+    expect(check).not.toHaveBeenCalled();
+    expect(tables.prompts).toEqual([]);
+    expect(tables.prompt_variables).toEqual([]);
+  };
+
+  it("is refused when its default is an object", () => refused({ defaultValue: { text: "explicit" } }));
+  it("is refused when its default nests a list in a list", () => refused({ defaultValue: [["explicit"]] }));
+  it("is refused when its default lists an object", () => refused({ defaultValue: [{ text: "explicit" }] }));
+  it("is refused when an option's value is not text", () => refused({ options: [{ visibleName: "A", promptValue: ["explicit"] }] }));
+  it("is refused when an option's shown name is not text", () => refused({ options: [{ visibleName: { a: "explicit" }, promptValue: "a" }] }));
+  it("is refused when an option's label is not text", () => refused({ options: [{ label: ["explicit"], promptValue: "a" }] }));
+  it("is refused when an option is no object", () => refused({ options: [null] }));
+  it("is refused when its options are no list", () => refused({ options: { 0: { promptValue: "explicit" } } }));
+  it("is refused when its label is not text", () => refused({ label: ["explicit"] }));
+  it("is refused when its description is not text", () => refused({ description: { a: "explicit" } }));
+  it("is refused when its name is not text", () => refused({ name: ["outfit"] }));
+  it("is refused when it is no object", async () => {
+    expect((await save({ ...BASE, content: "Portrait", variables: ["explicit"] })).status).toBe(400);
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("is saved with a text, a number, a yes/no or a flat list as its default, each text judged", async () => {
+    for (const defaultValue of ["a red coat", 3, true, ["a red coat", "a blue coat", 2]]) {
+      expect((await withVariable({ defaultValue })).status).toBe(200);
+    }
+    expect(check.mock.calls.at(-1)![0]["variable 1"]).toBe("outfit | a red coat | a blue coat");
+  });
+});
+
+describe("while tier 2 is down", () => {
+  // It answers "allowed" then. A draft is judged again at its release; what is for sale is not.
+  const ID = "11111111-1111-4111-8111-111111111111";
+  const down = () => tier2.mockResolvedValueOnce({ allowed: true, tier2Degraded: true });
+
+  it("a draft is still saved", async () => {
+    down();
+    expect((await save(BASE)).status).toBe(200);
+    expect(tables.prompts).toHaveLength(1);
+  });
+
+  it("nothing is released", async () => {
+    down();
+    expect((await save({ ...BASE, release: true })).status).toBe(503);
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("a listed prompt is not changed", async () => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Listed", is_listed: true, listing_status: "active" });
+    down();
+    expect((await save({ ...BASE, id: ID })).status).toBe(503);
+    expect(tables.prompts[0].title).toBe("Listed");
+  });
+
+  it("an unlisted prompt of the same artist is", async () => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Draft", is_listed: false });
+    down();
+    expect((await save({ ...BASE, id: ID })).status).toBe(200);
+    expect(tables.prompts[0].title).toBe("Portrait");
+  });
+
+  it("a block still answers as a block", async () => {
+    tier2.mockResolvedValueOnce({ allowed: false, tier2Degraded: true });
+    expect((await save({ ...BASE, release: true })).status).toBe(422);
+  });
+});
+
+describe("what may be for sale", () => {
+  const ID = "11111111-1111-4111-8111-111111111111";
+  const PAID = { ...BASE, promptType: "paid-prompt", price: 2.5 };
+  beforeEach(() => { tables.user_wallets.push({ address: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU", user_id: "u1", chain_family: "solana", removed_at: null }); });
+  const refused = async (body: Row, reason: string) => {
+    const res = await save(body);
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe(`${reason} Nothing was saved.`);
+    expect(check).not.toHaveBeenCalled();
+  };
+
+  it("a free prompt, and a paid one with a price", async () => {
+    expect((await save({ ...BASE, release: true })).status).toBe(200);
+    expect((await save({ ...PAID, release: true })).status).toBe(200);
+    expect(tables.prompts.map((p) => [p.prompt_type, p.price_usd_cents, p.is_listed])).toEqual([["free", 0, true], ["paid", 250, true]]);
+  });
+
+  it("a free showcase and a paid prompt at one cent", async () => {
+    expect((await save({ ...BASE, promptType: "create-now", isFreeShowcase: true, release: true })).status).toBe(200);
+    expect((await save({ ...PAID, price: 0.01, release: true })).status).toBe(200);
+    expect((await save({ ...BASE, promptType: "showcase", release: true })).status).toBe(200);
+  });
+
+  it("no prompt without a text", async () => {
+    await refused({ ...BASE, content: "  ", variables: [], release: true }, "A prompt for sale needs its text.");
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("no prompt that is neither free nor paid", async () => {
+    await refused({ ...BASE, promptType: undefined, release: true }, "A prompt for sale is either free or paid.");
+    await refused({ ...BASE, promptType: "create-now", release: true }, "A prompt for sale is either free or paid.");
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("no paid prompt without a price", async () => {
+    await refused({ ...PAID, price: 0, release: true }, "A paid prompt for sale needs a price of at least $0.01.");
+    await refused({ ...PAID, price: 0.004, release: true }, "A paid prompt for sale needs a price of at least $0.01.");
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("a listed prompt cannot be saved into something unsellable either", async () => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Listed", is_listed: true, listing_status: "active", price_usd_cents: 250 });
+    await refused({ ...PAID, id: ID, price: 0 }, "A paid prompt for sale needs a price of at least $0.01.");
+    await refused({ ...BASE, id: ID, promptType: "create-now" }, "A prompt for sale is either free or paid.");
+    expect(tables.prompts[0]).toMatchObject({ title: "Listed", price_usd_cents: 250 });
+  });
+
+  it("a draft may still be any of these", async () => {
+    expect((await save({ ...BASE, promptType: "create-now" })).status).toBe(200);
+    expect((await save({ ...PAID, price: 0 })).status).toBe(200);
+    expect((await save({ ...BASE, content: "", variables: [] })).status).toBe(200);
+  });
+
+  it("no save carries a price below zero", async () => {
+    const res = await save({ ...PAID, price: -5 });
+    expect(res.status).toBe(400);
+    expect(check).not.toHaveBeenCalled();
+    expect(tables.prompts).toEqual([]);
+    // A free prompt is stored at 0 whatever was sent.
+    expect((await save({ ...BASE, price: -5 })).status).toBe(200);
+    expect(tables.prompts[0].price_usd_cents).toBe(0);
+  });
+});
+
+describe("a paid prompt's payout wallet", () => {
+  // Its buyers pay the artist's share there; without one every purchase is refused at the quote.
+  const ID = "11111111-1111-4111-8111-111111111111";
+  const SOLANA = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
+  const PAID = { ...BASE, promptType: "paid-prompt", price: 2.5 };
+  const NO_WALLET = "A paid prompt for sale needs a Solana wallet on your account to be paid to: connect one, or link yours again. Nothing was saved.";
+  const solana = (user_id: string, extra: Row = {}) => tables.user_wallets.push({ address: SOLANA, user_id, chain_family: "solana", removed_at: null, ...extra });
+  const refused = async (body: Row, token = "tok") => {
+    const res = await save(body, token);
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe(NO_WALLET);
+    expect(check).not.toHaveBeenCalled();
+  };
+
+  it("lets a paid prompt go on sale", async () => {
+    solana("u1");
+    expect((await save({ ...PAID, release: true })).status).toBe(200);
+    expect(tables.prompts[0]).toMatchObject({ is_listed: true, price_usd_cents: 250 });
+  });
+
+  it("is needed before a paid prompt is released", async () => {
+    await refused({ ...PAID, release: true });
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("is not the wallet of another chain, a removed one or one an old bug lowercased", async () => {
+    solana("u1", { chain_family: "evm", address: "0xAbC0000000000000000000000000000000000001" });
+    solana("u1", { removed_at: "2026-09-01T00:00:00Z" });
+    solana("u1", { address: SOLANA.toLowerCase() });
+    await refused({ ...PAID, release: true });
+  });
+
+  it("is not asked of a free prompt, nor of a draft", async () => {
+    expect((await save({ ...BASE, release: true })).status).toBe(200);
+    expect((await save(PAID)).status).toBe(200);
+    expect(tables.prompts.map((p) => p.is_listed)).toEqual([true, undefined]);
+  });
+
+  it("is needed to keep editing a listed paid prompt", async () => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Listed", is_listed: true, listing_status: "active" });
+    await refused({ ...PAID, id: ID });
+    expect(tables.prompts[0].title).toBe("Listed");
+  });
+
+  it("is the wallet of the prompt's creator, whoever of the session's accounts that is", async () => {
+    // An email login also owns what its address was first mapped to.
+    tables.user_wallets.push({ address: EMAIL_USER, user_id: "ph3", removed_at: null });
+    tables.prompts.push({ id: ID, creator_id: "ph3", title: "Old save", is_listed: false });
+    solana(EMAIL_USER);
+    await refused({ ...PAID, id: ID, release: true }, "email");
+    solana("ph3");
+    expect((await save({ ...PAID, id: ID, release: true }, "email")).status).toBe(200);
+    expect(tables.prompts[0].is_listed).toBe(true);
+  });
+
+  it("releases nothing while the wallet cannot be looked up", async () => {
+    solana("u1");
+    failingPayoutLookup = true;
+    const res = await save({ ...PAID, release: true });
+    expect(res.status).toBe(503);
+    expect(check).not.toHaveBeenCalled();
+    expect(tables.prompts).toEqual([]);
+  });
+});
+
+describe("the fields beside the text", () => {
+  // The editor picks them from lists; the API stores and hands out whatever a direct caller sends.
+  it("are judged with the rest", async () => {
+    await save({ ...BASE, category: "Poster", aspectRatio: "16:9", resolution: "2K" });
+    expect(check.mock.calls[0][0].settings).toBe("Poster | 16:9 | 2K | nano-banana-pro");
+    await save({ ...BASE, aspectRatio: "16:9" });
+    expect(check.mock.calls[1][0].settings).toBe("16:9 | nano-banana-pro");
+    // The model too: it is stored as sent and handed out with the listed prompt.
+    await save({ ...BASE, aiModel: "any text a caller sends" });
+    expect(check.mock.calls[2][0].settings).toBe("any text a caller sends");
+    // An update without a model keeps the stored one, which is then the one judged:
+    // a release would otherwise list a model text no check of that release had read.
+    Object.assign(tables.prompts[0], { id: "11111111-1111-4111-8111-111111111111", ai_model: "a stored model text" });
+    await save({ ...BASE, aiModel: undefined, id: "11111111-1111-4111-8111-111111111111", release: true });
+    expect(check.mock.calls[3][0].settings).toBe("a stored model text");
+    expect(tier2.mock.calls.at(-1)![0].prompt).toContain("a stored model text");
+    expect(tables.prompts[0]).toMatchObject({ ai_model: "a stored model text", is_listed: true });
+    // A model that is sent replaces it, and is the one judged.
+    await save({ ...BASE, aiModel: "a sent model", id: "11111111-1111-4111-8111-111111111111" });
+    expect(check.mock.calls[4][0].settings).toBe("a sent model");
+  });
+
+  it("are refused when they are not text", async () => {
+    for (const odd of [{ category: { hidden: "explicit" } }, { aspectRatio: ["explicit"] }, { resolution: 4 }]) {
+      expect((await save({ ...BASE, ...odd })).status).toBe(400);
+    }
+    expect(check).not.toHaveBeenCalled();
+    expect(tables.prompts).toEqual([]);
+  });
+});
+
+describe("a price nobody set", () => {
+  const ID = "11111111-1111-4111-8111-111111111111";
+  const PAID = { ...BASE, promptType: "paid-prompt" };
+  const NO_PRICE = "A paid prompt for sale needs a price of at least $0.01. Nothing was saved.";
+  beforeEach(() => { tables.user_wallets.push({ address: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU", user_id: "u1", chain_family: "solana", removed_at: null }); });
+
+  it("is the draft's default of $0.07, which never goes on sale by itself", async () => {
+    const saved = await save(PAID);
+    expect(saved.status).toBe(200);
+    expect(tables.prompts[0].price_usd_cents).toBe(7);
+    expect((await saved.json()).price).toBe(0.07);
+    for (const price of [undefined, null, "5"]) {
+      const res = await save({ ...PAID, price, release: true });
+      expect(res.status).toBe(422);
+      expect((await res.json()).error).toBe(NO_PRICE);
+    }
+    expect(tables.prompts).toHaveLength(1);
+    expect((await save({ ...PAID, price: 1, release: true })).status).toBe(200);
+  });
+
+  it("does not replace the price of a listed prompt", async () => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Listed", is_listed: true, listing_status: "active", price_usd_cents: 500 });
+    const res = await save({ ...PAID, id: ID });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe(NO_PRICE);
+    expect(tables.prompts[0]).toMatchObject({ title: "Listed", price_usd_cents: 500 });
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it("is refused when the number is beyond what a price can be", async () => {
+    // JSON reads 1e999 as Infinity, which no column holds.
+    const raw = JSON.stringify({ ...PAID, price: 0 }).replace('"price":0', '"price":1e999');
+    const res = await POST(new Request("http://enki.test/api/prompt", { method: "POST", headers: { "Content-Type": "application/json", "X-Session-Token": "tok" }, body: raw }));
+    expect(res.status).toBe(400);
+    expect(tables.prompts).toEqual([]);
+    expect(check).not.toHaveBeenCalled();
+  });
+});
+
+describe("a release and the other prompts", () => {
+  it("lists the released prompt and no other, even one that shares its IV", async () => {
+    // The next save encrypts under "iv-1": only the id tells the two rows apart.
+    tables.prompts.push({ id: "other", creator_id: "u1", title: "Other draft", is_listed: false, encrypted_content_iv: "iv-1", delisted_at: null });
+    expect((await save({ ...BASE, release: true })).status).toBe(200);
+    expect(tables.prompts.map((p) => [p.title, p.is_listed])).toEqual([["Other draft", false], ["Portrait", true]]);
+  });
+});
+
+describe("two saves of one prompt at once", () => {
+  // Each decides on its own read whether it is for sale, and the checks take seconds.
+  const ID = "11111111-1111-4111-8111-111111111111";
+  const CHANGED = "This prompt was changed by another save while this one was being checked. Nothing was saved; save it again.";
+  const draft = (extra: Row = {}) => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Draft", description: null, is_listed: false, listing_status: "draft", delisted_at: null, is_adult: false, encrypted_content_iv: "iv-old", ...extra });
+    return tables.prompts[0];
+  };
+  /** Both requests sit in their prompt check; `first` is let through and answers, then the other. */
+  const race = async (second: Row, first: "release" | "second") => {
+    // One gate per request, keyed by its title.
+    const seen: Record<string, () => void> = {};
+    const inCheck = { Release: new Promise<void>((r) => { seen.Release = r; }), Second: new Promise<void>((r) => { seen.Second = r; }) };
+    const open: Record<string, () => void> = {};
+    const gate = { Release: new Promise<void>((r) => { open.Release = r; }), Second: new Promise<void>((r) => { open.Second = r; }) };
+    check.mockImplementation(async (i: Record<string, string>) => {
+      const who = i.title === "Second" ? "Second" : "Release";
+      seen[who]();
+      await gate[who];
+      return { verdict: "clear" };
+    });
+    const release = save({ ...BASE, id: ID, title: "Release", release: true });
+    const other = save({ ...BASE, id: ID, title: "Second", ...second });
+    await Promise.all([inCheck.Release, inCheck.Second]);
+    const [a, b] = first === "release" ? ["Release", "Second"] : ["Second", "Release"];
+    open[a]();
+    const one = await (a === "Release" ? release : other);
+    open[b]();
+    const two = await (b === "Release" ? release : other);
+    return a === "Release" ? { release: one, other: two } : { release: two, other: one };
+  };
+
+  it.each([
+    ["a paid prompt at $0", { promptType: "paid-prompt", price: 0 }],
+    ["a prompt without a text, neither free nor paid", { content: "", variables: [], promptType: "create-now" }],
+    ["a paid prompt whose artist has no payout wallet", { promptType: "paid-prompt", price: 2.5 }],
+  ])("a save judged as a draft does not land on what the release listed: %s", async (_name, second) => {
+    const row = draft();
+    const { release, other } = await race(second, "release");
+    expect(release.status).toBe(200);
+    expect(other.status).toBe(409);
+    expect((await other.json()).error).toBe(CHANGED);
+    expect(row).toMatchObject({ title: "Release", is_listed: true, listing_status: "active", prompt_type: "free", price_usd_cents: 0 });
+    expect(tables.prompt_variables).toHaveLength(1);
+  });
+
+  it("text whose tier-2 check never ran does not land on what the release listed", async () => {
+    const row = draft();
+    tier2.mockImplementation(async (i: { prompt: string }) => (i.prompt.includes("Second") ? { allowed: true, tier2Degraded: true } : { allowed: true }));
+    const { release, other } = await race({ content: "text tier 2 never read", variables: [] }, "release");
+    tier2.mockReset();
+    tier2.mockImplementation(async () => ({ allowed: true }));
+    expect([release.status, other.status]).toEqual([200, 409]);
+    expect(row).toMatchObject({ title: "Release", is_listed: true });
+    expect(row.public_prompt_text).not.toContain("never read");
+  });
+
+  it("a release does not list over a save that landed first", async () => {
+    const row = draft();
+    const { release, other } = await race({ promptType: "paid-prompt", price: 0 }, "second");
+    expect(other.status).toBe(200);
+    expect(release.status).toBe(409);
+    expect((await release.json()).error).toBe(CHANGED);
+    expect(row).toMatchObject({ title: "Second", is_listed: false, prompt_type: "paid" });
+  });
+
+  it("a release does not list a prompt another save rewrote before the listing", async () => {
+    const row = draft();
+    // The other save's row lands after this one's, before this one lists.
+    betweenWrites = () => { Object.assign(row, { title: "Rewritten", encrypted_content_iv: "iv-other", prompt_type: "create-now" }); };
+    const res = await save({ ...BASE, id: ID, release: true });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("This prompt was changed by another save while it was being released, so it stays unlisted. Release it again.");
+    expect(row).toMatchObject({ title: "Rewritten", is_listed: false });
+  });
+
+  it("still names the takedown when that is why the listing did not land", async () => {
+    const row = draft();
+    betweenWrites = () => { Object.assign(row, { delisted_at: "2026-10-05T12:00:00.000Z" }); };
+    const res = await save({ ...BASE, id: ID, release: true });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toContain("taken down by a moderator");
+    expect(row.is_listed).toBe(false);
+  });
+
+  it("an edit of the description that lands during the check is put back as it was judged", async () => {
+    const row = draft({ description: "a quiet scene" });
+    check.mockImplementation(async () => {
+      // The edit route judged this text 18+ and marked the prompt; this save never read it.
+      Object.assign(row, { description: "a sultry boudoir scene", is_adult: true });
+      return { verdict: "clear" };
+    });
+    expect((await save({ ...BASE, id: ID, release: true })).status).toBe(200);
+    expect(row).toMatchObject({ is_listed: true, is_adult: false, description: "a quiet scene" });
+  });
+
+  it("a save judged as a draft does not land on a prompt that was listed after its read", async () => {
+    const row = draft();
+    // Another save's listing lands during this save's check: the same IV, now for sale.
+    check.mockImplementation(async () => {
+      Object.assign(row, { is_listed: true, listing_status: "active" });
+      return { verdict: "clear" };
+    });
+    const res = await save({ ...BASE, id: ID, promptType: "paid-prompt", price: 0 });
+    expect(res.status).toBe(409);
+    expect(row).toMatchObject({ title: "Draft", is_listed: true });
+    expect(row).not.toHaveProperty("prompt_type");
+  });
+
+  it("a listed prompt that goes off sale during the check is not rewritten", async () => {
+    const row = draft({ title: "Listed", is_listed: true, listing_status: "active" });
+    // A moderator's takedown lands while this save is being checked.
+    check.mockImplementation(async () => {
+      Object.assign(row, { is_listed: false, delisted_at: "2026-10-05T12:00:00.000Z" });
+      return { verdict: "clear" };
+    });
+    expect((await save({ ...BASE, id: ID })).status).toBe(409);
+    expect(row).toMatchObject({ title: "Listed", is_listed: false, delisted_at: "2026-10-05T12:00:00.000Z" });
+  });
+
+  it("a prompt without an IV is still written only as it was read", async () => {
+    const row = draft({ encrypted_content_iv: null });
+    const { release, other } = await race({ promptType: "paid-prompt", price: 0 }, "release");
+    expect([release.status, other.status]).toEqual([200, 409]);
+    expect(row).toMatchObject({ title: "Release", is_listed: true });
+  });
+
+  it("a release does not overwrite a save that gave a prompt its first IV", async () => {
+    const row = draft({ encrypted_content_iv: null });
+    const { release, other } = await race({ promptType: "paid-prompt", price: 0 }, "second");
+    expect([other.status, release.status]).toEqual([200, 409]);
+    expect(row).toMatchObject({ title: "Second", is_listed: false });
+  });
+
+  it("a prompt saved before contents carried an IV is still saved", async () => {
+    const row = draft({ encrypted_content_iv: null });
+    expect((await save({ ...BASE, id: ID })).status).toBe(200);
+    expect(row.title).toBe("Portrait");
+  });
+});
+
+describe("a listed prompt while it is being rewritten", () => {
+  const ID = "11111111-1111-4111-8111-111111111111";
+  const listed = () => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Listed", description: null, is_listed: true, listing_status: "active", listed_at: "2026-09-01T00:00:00.000Z", published_at: "2026-09-01T00:00:00.000Z", delisted_at: null, encrypted_content_iv: "iv-old" });
+    tables.prompt_variables.push({ id: "v-old", prompt_id: ID, name: "outfit" });
+    return tables.prompts[0];
+  };
+
+  it("is off sale between its new text and its new variables, and back on sale after them", async () => {
+    const row = listed();
+    let during: unknown = "never asked";
+    betweenWrites = () => { during = row.is_listed; };
+    expect((await save({ ...BASE, id: ID })).status).toBe(200);
+    expect(during).toBe(false);
+    expect(row).toMatchObject({ title: "Portrait", is_listed: true, listing_status: "active", listed_at: "2026-09-01T00:00:00.000Z" });
+  });
+
+  it("stays off sale, and says so, when its variables could not be written", async () => {
+    const row = listed();
+    failingInsert = "prompt_variables";
+    for (const body of [{ ...BASE, id: ID }, { ...BASE, id: ID, release: true }]) {
+      row.is_listed = true;
+      const res = await save(body);
+      expect(res.status).toBe(500);
+      expect((await res.json()).error).toBe("This prompt could not be saved completely and is off sale now. Release it again.");
+      expect(row.is_listed).toBe(false);
+    }
+  });
+
+  it("is not pulled by a save that is refused before anything is written", async () => {
+    const row = listed();
+    check.mockResolvedValue({ verdict: "unavailable", reason: "api 500" });
+    expect((await save({ ...BASE, id: ID })).status).toBe(503);
+    expect(row).toMatchObject({ title: "Listed", is_listed: true });
+  });
+
+  it("a draft is never put on sale by a save that does not release it", async () => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Draft", is_listed: false, listing_status: "draft", delisted_at: null, encrypted_content_iv: "iv-old" });
+    expect((await save({ ...BASE, id: ID })).status).toBe(200);
+    expect(tables.prompts[0]).toMatchObject({ title: "Portrait", is_listed: false, listing_status: "draft" });
+  });
+
+  it("a listed prompt whose row could not be written answers with the failure itself and stays on sale", async () => {
+    const row = listed();
+    failingUpdate = "prompts";
+    const res = await save({ ...BASE, id: ID });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("update refused");
+    expect(row).toMatchObject({ title: "Listed", is_listed: true });
+  });
+
+  it("a save that fails before anything is written answers with the failure itself", async () => {
+    failingInsert = "prompts";
+    const res = await save(BASE);
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("insert refused");
+  });
+
+  it("a failed save of a draft answers with the failure itself", async () => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Draft", is_listed: false, delisted_at: null, encrypted_content_iv: "iv-old" });
+    failingInsert = "prompt_variables";
+    const res = await save({ ...BASE, id: ID });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("insert refused");
+  });
+});
+
+describe("a save that reads a listed prompt while another save has it off sale", () => {
+  // A listed prompt is off sale from a save's first write to its last one. Read in that gap it looks like a draft.
+  const ID = "11111111-1111-4111-8111-111111111111";
+  /** First is held at the write that puts the prompt back on sale; Second reads the prompt there and is held in its check. */
+  const overlap = async (second: Row) => {
+    tables.prompts.push({ id: ID, creator_id: "u1", title: "Listed", description: null, is_listed: true, listing_status: "active", delisted_at: null, encrypted_content_iv: "iv-old" });
+    const row = tables.prompts[0];
+    let reached!: () => void; const atListing = new Promise<void>((r) => { reached = r; });
+    let list!: () => void; const mayList = new Promise<void>((r) => { list = r; });
+    beforeListing = () => { reached(); return mayList; };
+    let seen!: () => void; const inCheck = new Promise<void>((r) => { seen = r; });
+    let go!: () => void; const mayWrite = new Promise<void>((r) => { go = r; });
+    check.mockImplementation(async (i: Record<string, string>) => {
+      if (i.title === "Second") { seen(); await mayWrite; }
+      return { verdict: "clear" };
+    });
+    const first = save({ ...BASE, id: ID, title: "First" });
+    await atListing;
+    const during = row.is_listed;
+    const other = save({ ...BASE, id: ID, title: "Second", ...second });
+    await inCheck;
+    return { row, during, first, other, list, go };
+  };
+
+  it("is refused once the other save has put the prompt back on sale, which stays on sale", async () => {
+    const { row, during, first, other, list, go } = await overlap({});
+    expect(during).toBe(false);
+    list();
+    expect((await first).status).toBe(200);
+    expect(row).toMatchObject({ title: "First", is_listed: true });
+    go();
+    const res = await other;
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("changed by another save");
+    expect(row).toMatchObject({ title: "First", is_listed: true });
+    expect(tables.prompt_variables).toHaveLength(1);
+  });
+
+  it("when it writes first, the other save is told the prompt stays off sale", async () => {
+    const { row, first, other, list, go } = await overlap({});
+    go();
+    expect((await other).status).toBe(200);
+    list();
+    const res = await first;
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("stays unlisted");
+    expect(row).toMatchObject({ title: "Second", is_listed: false });
   });
 });

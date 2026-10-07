@@ -61,11 +61,25 @@ export async function fetchGenerationQuote(req: QuoteRequest): Promise<Generatio
       headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
       body: JSON.stringify(req),
     });
+    if (res.status === 404) throw new PromptUnavailable();
     if (!res.ok) return null;
     const json = (await res.json()) as { quote?: QuoteBody };
     return json.quote ? toQuote(json.quote) : null;
-  } catch {
+  } catch (e) {
+    if (e instanceof PromptUnavailable) throw e;
     return null;
+  }
+}
+
+/**
+ * The quote's "not for sale": the prompt was taken down, deleted or never
+ * listed. Unlike every other missing quote, waiting will not bring this one,
+ * so the buyer is told instead of shown a price that never loads.
+ */
+export class PromptUnavailable extends Error {
+  constructor() {
+    super("This prompt is no longer available.");
+    this.name = "PromptUnavailable";
   }
 }
 

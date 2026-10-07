@@ -14,12 +14,16 @@ import { computeGenerationSplit, getModelCostMicro, PRICING_POLICY } from "@/lib
 
 function db(prompt: Record<string, unknown> | null) {
   const from = (table: string) => {
+    // Only the selected columns come back, as from PostgREST: a column the
+    // quote forgets to ask for is then missing here too.
+    let cols: string[] = [];
     const q: Record<string, unknown> = {
-      maybeSingle: async () => ({ data: table === "prompts" ? prompt : null, error: null }),
+      select: (c: string) => { cols = c.split(",").map((x) => x.trim()); return q; },
+      maybeSingle: async () => ({ data: table === "prompts" && prompt ? Object.fromEntries(cols.map((c) => [c, prompt[c]])) : null, error: null }),
       then: (ok: (v: unknown) => unknown) =>
         Promise.resolve({ data: table === "user_wallets" ? [{ address: "ArtistWa11et1111111111111111111111111111111" }] : [], error: null }).then(ok),
     };
-    for (const m of ["select", "eq", "is", "limit", "order", "lte", "gte", "or"]) q[m] = () => q;
+    for (const m of ["eq", "is", "limit", "order", "lte", "gte", "or"]) q[m] = () => q;
     return q;
   };
   return { from } as unknown as SupabaseClient;
@@ -63,5 +67,16 @@ describe("the server never compares a stored prompt type with the client's word"
     const sources = [...files(join(ROOT, "lib")), ...files(join(ROOT, "app", "api"))];
     expect(sources.length).toBeGreaterThan(100);
     expect(sources.filter((f) => CLIENT_WORD.test(readFileSync(f, "utf8")))).toEqual([]);
+  });
+});
+
+describe("the creator's analytics", () => {
+  // Free by the database's word there too; the route has no test of its own.
+  const src = readFileSync(join(__dirname, "..", "..", "..", "app", "api", "analytics", "me", "route.ts"), "utf8");
+
+  it("call a prompt free by the same rule, and read the columns it needs", () => {
+    expect(src).toContain('const isFree = isPublicText(p) || (typeof p.price_usd_cents === "number" ? p.price_usd_cents : 0) === 0;');
+    const baseCols = /const baseCols = "([^"]+)"/.exec(src)?.[1].split(",").map((c) => c.trim()) ?? [];
+    expect(baseCols).toEqual(expect.arrayContaining(["prompt_type", "is_free_showcase", "price_usd_cents"]));
   });
 });
