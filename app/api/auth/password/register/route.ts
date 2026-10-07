@@ -1,13 +1,13 @@
 import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 /**
- * POST /api/auth/password/register  { email, password } → { token, expiresAt, email, codeSent }
+ * POST /api/auth/password/register  { email, password } → { token, expiresAt, email }
  *
  * Creates a bare users row + an Argon2id+pepper credential in
  * password_credentials (isolated from the encrypted-email design),
- * then mints a session and mails a code to the address. Confirming it
- * (POST /api/auth/password/verify-email) makes the address the account's
- * first step-up factor. The wallet is a non-custodial embedded wallet
- * attached after login — Enki never holds keys.
+ * then mints a session: straight in, no code (Kev, 2026-10-07). 2FA is
+ * optional and never the email, which resets the password; a red bar asks
+ * for it. The wallet is a non-custodial embedded wallet attached after
+ * login — Enki never holds keys.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -17,7 +17,6 @@ import { mintUserSession } from "@/lib/user-session";
 import { getClientIp, hashIp, isIpBanned } from "@/lib/ip-hash";
 import { whitelistStageActive, isEmailAllowed, grantGateCookie } from "@/lib/allowlist";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
-import { beginEmail } from "@/lib/mfa";
 
 const bodySchema = z.object({
   email: z.string().email().max(320),
@@ -92,10 +91,6 @@ export async function POST(req: NextRequest) {
   }
 
   const session = await mintUserSession(user.id, ipHash);
-  // The login email is confirmed with a code, and the confirmed address is the
-  // first step-up factor (Kev, 2026-10-07). A failed send keeps the account:
-  // verify-email sends again.
-  const sent = await beginEmail(supabase, user.id, email).catch(() => "send_failed" as const);
   // Whitelisted registration → grant app access (gate cookie).
-  return grantGateCookie(NextResponse.json({ email, ...session, codeSent: sent === "sent" }));
+  return grantGateCookie(NextResponse.json({ email, ...session }));
 }

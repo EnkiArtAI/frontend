@@ -158,34 +158,6 @@ function sendRefusal(row: Row, now: number): "cooldown" | "daily_cap" | null {
 }
 
 /**
- * Stamps password_credentials.email_verified_at once the user's confirmed
- * email factor is their login address: a code that reached it proves it,
- * whichever route checked the code. True when the login email is verified.
- */
-export async function stampVerifiedLogin(supabase: SupabaseClient, userId: string): Promise<boolean> {
-  const [{ data: cred, error }, row] = await Promise.all([
-    supabase.from("password_credentials").select("email, email_verified_at").eq("user_id", userId).maybeSingle(),
-    factorRow(supabase, userId, "email"),
-  ]);
-  if (error) throw error;
-  if (!cred) return false;
-  if (cred.email_verified_at) return true;
-  if (!row?.confirmed_at || opened(userId, row) !== cred.email) return false;
-  const { error: stampErr } = await supabase
-    .from("password_credentials")
-    .update({ email_verified_at: new Date().toISOString() })
-    .eq("user_id", userId);
-  if (stampErr) throw stampErr;
-  return true;
-}
-
-/** The address of the user's email factor, pending or confirmed; null without one. */
-export async function emailFactorAddress(supabase: SupabaseClient, userId: string): Promise<string | null> {
-  const row = await factorRow(supabase, userId, "email");
-  return row ? opened(userId, row) : null;
-}
-
-/**
  * A fresh code to the user's email factor, pending or confirmed. A new code
  * replaces the last. `begun` is the row a restart just wrote: the send is then
  * conditional on that row, not on a later read.

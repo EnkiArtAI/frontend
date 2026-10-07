@@ -104,6 +104,18 @@ describe("a further factor", () => {
   });
 });
 
+describe("confirming a further factor", () => {
+  it("takes the step-up too: the inbox alone never confirms one", async () => {
+    await withTotp();
+    const token = await mintStepUpToken(U, "add-factor");
+    expect((await setup(req("/api/auth/mfa/email", "POST", { email: "me@example.com" }, token), kind("email"))).status).toBe(200);
+    const code = mails[mails.length - 1].text.match(/\b(\d{6})\b/)![1];
+    expect((await confirm(req("/x", "POST", { code }), kind("email"))).status).toBe(401);
+    expect(db.current!.tables.mfa_factors.find((f) => f.kind === "email")!.confirmed_at ?? null).toBeNull();
+    expect((await confirm(req("/x", "POST", { code }, token), kind("email"))).status).toBe(200);
+  });
+});
+
 describe("removing a factor", () => {
   it("takes a step-up naming that factor", async () => {
     await withTotp();
