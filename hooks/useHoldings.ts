@@ -32,8 +32,7 @@ export function useHoldings(address?: string | null) {
     }
     try {
       const res = await fetch(`/api/billing/balance?address=${encodeURIComponent(address)}`);
-      const data = await res.json();
-      setBalance(Number(data?.balance) || 0);
+      if (res.ok) setBalance(Number((await res.json())?.balance) || 0);
     } catch {
       /* leave previous balance on transient error */
     } finally {
