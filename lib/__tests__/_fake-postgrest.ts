@@ -1,6 +1,6 @@
 /**
  * A PostgREST-shaped stand-in for the service-role client: eq / is / not /
- * or filters, inserts, conditional updates, upsert on (user_id, kind), deletes with a
+ * gt / in / or filters, inserts, conditional updates, upsert on (user_id, kind), deletes with a
  * count, a switch that makes one table answer with an error code, and a
  * pause that hands one read its snapshot late (to stage races). Enough for
  * the MFA code; no SQL semantics beyond that.
@@ -51,6 +51,8 @@ export function fakePostgrest() {
       eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
       is: (c: string, v: unknown) => { filters.push((r) => (r[c] ?? null) === v); return q; },
       not: (c: string, _op: string, v: unknown) => { filters.push((r) => (r[c] ?? null) !== v); return q; },
+      gt: (c: string, v: string) => { filters.push((r) => r[c] != null && String(r[c]) > v); return q; },
+      in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return q; },
       or: (expr: string) => { filters.push(orFilter(expr)); return q; },
       maybeSingle: () => { one = true; return q; },
       single: () => { one = true; return q; },
