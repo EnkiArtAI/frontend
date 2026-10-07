@@ -15,6 +15,7 @@ import { PublicKey } from "@solana/web3.js";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { requireAddFactor, requireStepUp } from "@/lib/webauthn";
+import { recoveryThreshold } from "@/lib/recovery/threshold";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { sendMail } from "@/lib/mailer";
 import { MANUAL_REMINDER_MAX, MANUAL_REMINDER_COOLDOWN_MS } from "@/lib/recovery/manual-reminder";
@@ -130,13 +131,13 @@ export async function GET(req: NextRequest) {
   const userId = await resolveSessionUserId(supabase, req.headers.get("X-Session-Token"));
   if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
-  const [gRes, settingsRes] = await Promise.all([
+  const [gRes, threshold] = await Promise.all([
     supabase
       .from("recovery_guardians")
       .select("id, guardian_type, value, label, status, invite_token, reminder_count, manual_reminder_count, last_reminded_at, created_at")
       .eq("user_id", userId)
       .order("created_at", { ascending: true }),
-    supabase.from("recovery_settings").select("threshold").eq("user_id", userId).maybeSingle(),
+    recoveryThreshold(supabase, userId),
   ]);
   // Degrade gracefully if the reminder columns aren't migrated yet.
   const guardians = (gRes.error
@@ -147,7 +148,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     guardians: (guardians ?? []).map(shape),
-    threshold: settingsRes.data?.threshold ?? 2,
+    threshold,
   });
 }
 
