@@ -51,7 +51,8 @@ export async function POST(req: NextRequest) {
   // One-shot: burn the code before setting the password.
   await supabase.from("password_reset_tokens").delete().eq("user_id", cred.user_id);
 
-  const result = await completePasswordReset(supabase, row.user_id, parsed.data.password);
+  // The code came through the inbox: the email is confirmed (Kev, 2026-10-07).
+  const result = await completePasswordReset(supabase, row.user_id, parsed.data.password, { inboxProven: true });
   if ("error" in result) return NextResponse.json({ error: result.error }, { status: 500 });
   return NextResponse.json(result);
 }

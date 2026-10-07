@@ -18,15 +18,20 @@ export function numericCode(digits = 7): string {
   return String(randomInt(10 ** (digits - 1), 10 ** digits));
 }
 
+/** inboxProven: the reset came through the account's inbox (the emailed
+    code), so the email counts as confirmed and a one-time password is gone.
+    A guardian recovery proves no inbox and leaves both as they are. */
 export async function completePasswordReset(
   supabase: SupabaseClient,
   userId: string,
   password: string,
+  { inboxProven = false } = {},
 ): Promise<{ email?: string; token: string; expiresAt: string } | { error: string }> {
   const { hash, salt } = hashPassword(password);
+  const now = new Date().toISOString();
   const { data: updated, error } = await supabase
     .from("password_credentials")
-    .update({ pw_hash: hash, pw_salt: salt, updated_at: new Date().toISOString() })
+    .update({ pw_hash: hash, pw_salt: salt, updated_at: now, ...(inboxProven ? { email_verified_at: now, must_change_password: false } : {}) })
     .eq("user_id", userId)
     .select("email")
     .single();
