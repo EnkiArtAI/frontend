@@ -57,12 +57,16 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     const supabase = getSupabaseServerClient();
     const userId = await resolveSessionUserId(supabase, req.headers.get("X-Session-Token"));
     if (!userId) return NextResponse.json({ error: "Sign in to publish images" }, { status: 401 });
-    const { error, count } = await supabase
+    let change = supabase
       .from("generated_images")
       .update({ visibility }, { count: "exact" })
       .eq("id", id)
       .eq("user_id", userId)
       .is("deleted_at", null);
+    // An upload is published only once the image check exists; until then a
+    // reader filtering on visibility alone would show it unchecked.
+    if (visibility === "public") change = change.eq("is_uploaded", false);
+    const { error, count } = await change;
     if (error) throw error;
     if (!count) return NextResponse.json({ error: "Image not found" }, { status: 404 });
     return NextResponse.json({ id, visibility });

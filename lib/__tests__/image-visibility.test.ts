@@ -107,4 +107,10 @@ describe("publishing", () => {
     expect((await publish(GONE, "public", { "X-Session-Token": "owner-tok" })).status).toBe(404);
     expect(visibilityOf(GONE)).toBe("private");
   });
+
+  it("does not publish an upload before the image check exists, but lets it be made private", async () => {
+    expect((await publish(UPLOAD, "private", { "X-Session-Token": "owner-tok" })).status).toBe(200);
+    expect((await publish(UPLOAD, "public", { "X-Session-Token": "owner-tok" })).status).toBe(404);
+    expect(visibilityOf(UPLOAD)).toBe("private");
+  });
 });

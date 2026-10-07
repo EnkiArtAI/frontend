@@ -27,6 +27,7 @@ type SupabaseGeneration = {
   status?: string;
   created_at: string;
   visibility?: "public" | "private";
+  isUploaded?: boolean;
 };
 
 /** A DB image knows whether it is published; a local-only one has no such state. */
@@ -97,7 +98,7 @@ export default function MyGalleryPage() {
               imageUrl: String(imageUrl),
               prompt: typeof prompt === "string" ? prompt : "",
               createdAt: typeof g.created_at === "string" ? g.created_at : new Date().toISOString(),
-              isUploaded: g.settings?.origin === "uploaded" || g.status === "uploaded",
+              isUploaded: g.isUploaded === true || g.settings?.origin === "uploaded" || g.status === "uploaded",
               visibility: g.visibility === "public" ? "public" : "private",
             };
           });
