@@ -135,9 +135,9 @@ describe("no encrypted column reaches search", () => {
 
   it("the SQL functions select no encrypted or email column", () => {
     const sql = read("migrations", "2026-09-24-search.sql").replace(/--[^\n]*/g, "");
-    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION search_prompts\(q text, lim int, off int\)/);
-    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION suggest_titles\(q text, lim int\)/);
-    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION search_creators\(q text, lim int\)/);
+    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION search_prompts\(q text, lim int, off int, show_adult boolean DEFAULT false\)/);
+    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION suggest_titles\(q text, lim int, show_adult boolean DEFAULT false\)/);
+    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION search_creators\(q text, lim int, show_adult boolean DEFAULT false\)/);
     expect(sql).not.toMatch(ENCRYPTED);
     // The index too: title, description, tags and nothing else.
     expect(sql).toMatch(/coalesce\(title, ''\) \|\| ' ' \|\| coalesce\(description, ''\) \|\| ' ' \|\| coalesce\(tags_to_text\(tags\), ''\)/);
@@ -166,7 +166,7 @@ describe("the SQL functions hide banned creators and users who never published",
 
   it("search_creators lists only users with a listed, active, undeleted prompt", () => {
     expect(fn("search_creators")).toMatch(
-      /AND EXISTS \(SELECT 1 FROM prompts p\s+WHERE p\.creator_id = u\.id\s+AND p\.is_listed = true\s+AND p\.deleted_at IS NULL\s+AND p\.listing_status = 'active'\)/,
+      /AND EXISTS \(SELECT 1 FROM prompts p\s+WHERE p\.creator_id = u\.id\s+AND p\.is_listed = true\s+AND p\.deleted_at IS NULL\s+AND p\.listing_status = 'active'\s+AND \(show_adult OR p\.is_adult = false\)\)/,
     );
   });
 });
@@ -216,7 +216,7 @@ describe("GET /api/search", () => {
     const res = await GET(get("/api/search?q=dragon&limit=2&type=all"));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(calls[0]).toEqual({ fn: "search_prompts", args: { q: "dragon", lim: 3, off: 0 } });
+    expect(calls[0]).toEqual({ fn: "search_prompts", args: { q: "dragon", lim: 3, off: 0, show_adult: false } });
     expect(body.prompts.map((p: { id: string }) => p.id)).toEqual(["b", "a"]);
     expect(body.hasMore).toBe(true);
     expect(body.nextCursor).toBe("2");
@@ -228,7 +228,7 @@ describe("GET /api/search", () => {
       variables: [],
       previewImages: [{ url: "https://img/1.png" }, { url: "https://img/2.png" }],
     });
-    expect(calls[1]).toEqual({ fn: "search_creators", args: { q: "dragon", lim: 8 } });
+    expect(calls[1]).toEqual({ fn: "search_creators", args: { q: "dragon", lim: 8, show_adult: false } });
     expect(body.creators).toEqual([{ id: "u1", handle: "kev", displayName: "kev", avatarUrl: null }]);
   });
 
@@ -238,11 +238,11 @@ describe("GET /api/search", () => {
     const res = await GET(get("/api/search?q=kev&type=creators&limit=100"));
     expect(res.status).toBe(200);
     expect(calls.map((c) => c.fn)).toEqual(["search_creators"]);
-    expect(calls[0].args).toEqual({ q: "kev", lim: 40 });
+    expect(calls[0].args).toEqual({ q: "kev", lim: 40, show_adult: false });
 
     calls = fakeSupabase(() => ({ data: [], error: null }));
     await GET(get("/api/search?q=kev&type=prompts&limit=100&cursor=80"));
-    expect(calls).toEqual([{ fn: "search_prompts", args: { q: "kev", lim: 41, off: 80 } }]);
+    expect(calls).toEqual([{ fn: "search_prompts", args: { q: "kev", lim: 41, off: 80, show_adult: false } }]);
     const empty = await (await GET(get("/api/search?q=kev&type=prompts"))).json();
     expect(empty).toEqual({ query: "kev", prompts: [], creators: [], hasMore: false });
   });
@@ -269,8 +269,8 @@ describe("GET /api/search/suggest", () => {
       creators: [{ id: "u1", handle: "kev", displayName: "Kev", avatarUrl: null }],
     });
     expect(calls).toEqual([
-      { fn: "suggest_titles", args: { q: "dra", lim: 8 } },
-      { fn: "search_creators", args: { q: "dra", lim: 4 } },
+      { fn: "suggest_titles", args: { q: "dra", lim: 8, show_adult: false } },
+      { fn: "search_creators", args: { q: "dra", lim: 4, show_adult: false } },
     ]);
   });
 

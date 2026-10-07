@@ -14,6 +14,7 @@ import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { PROMPT_CARD_SELECT, mapPromptRow, enrichPromptCards, type PromptCardRow } from "@/lib/marketplace/card";
 import { isSearchNotMigrated, searchNotMigratedResponse, searchQuery } from "@/lib/search/db";
+import { viewer } from "@/lib/adult-content";
 
 const TYPES = new Set(["prompts", "creators", "all"]);
 const MAX_LIMIT = 40;
@@ -37,13 +38,15 @@ export async function GET(req: NextRequest) {
 
   try {
     const supabase = getSupabaseServerClient();
+    // 18+ only for a confirmed adult with the pill on, like the feed.
+    const { showAdult } = await viewer(supabase, req);
     let prompts: Awaited<ReturnType<typeof enrichPromptCards>> = [];
     let creators: { id: string; handle: string; displayName: string; avatarUrl: string | null }[] = [];
     let hasMore = false;
 
     if (type !== "creators") {
       // One row past the page tells us whether a next page exists.
-      const { data: ranked, error } = await supabase.rpc("search_prompts", { q, lim: limit + 1, off: offset });
+      const { data: ranked, error } = await supabase.rpc("search_prompts", { q, lim: limit + 1, off: offset, show_adult: showAdult });
       if (error) throw error;
       const page = ((ranked ?? []) as { id: string; rank: number }[]).slice(0, limit);
       hasMore = (ranked?.length ?? 0) > limit;
@@ -63,7 +66,7 @@ export async function GET(req: NextRequest) {
 
     if (type !== "prompts") {
       const lim = type === "all" ? CREATORS_IN_ALL : limit;
-      const { data, error } = await supabase.rpc("search_creators", { q, lim });
+      const { data, error } = await supabase.rpc("search_creators", { q, lim, show_adult: showAdult });
       if (error) throw error;
       creators = ((data ?? []) as Creator[]).map((u) => ({
         id: u.id,

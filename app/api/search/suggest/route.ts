@@ -11,6 +11,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { isSearchNotMigrated, searchNotMigratedResponse, searchQuery } from "@/lib/search/db";
+import { viewer } from "@/lib/adult-content";
 
 const TITLES = 8;
 const CREATORS = 4;
@@ -28,9 +29,10 @@ export async function GET(req: NextRequest) {
 
   try {
     const supabase = getSupabaseServerClient();
+    const { showAdult } = await viewer(supabase, req);
     const [titles, creators] = await Promise.all([
-      supabase.rpc("suggest_titles", { q, lim: TITLES }),
-      supabase.rpc("search_creators", { q, lim: CREATORS }),
+      supabase.rpc("suggest_titles", { q, lim: TITLES, show_adult: showAdult }),
+      supabase.rpc("search_creators", { q, lim: CREATORS, show_adult: showAdult }),
     ]);
     if (titles.error) throw titles.error;
     if (creators.error) throw creators.error;
