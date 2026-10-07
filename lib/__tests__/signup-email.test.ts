@@ -27,13 +27,16 @@ vi.hoisted(() => {
 import { POST as register } from "../../app/api/auth/password/register/route";
 import { POST as verifyEmail } from "../../app/api/auth/password/verify-email/route";
 import { POST as walletJwt } from "../../app/api/auth/wallet/jwt/route";
-import { beginEmail } from "../mfa";
+import { POST as confirmFactor } from "../../app/api/auth/mfa/[kind]/confirm/route";
+import { beginEmail, beginTotp, checkCode } from "../mfa";
+import { mintStepUpToken } from "../webauthn";
+import { totpCode } from "../totp";
 
 const EMAIL = "new@example.com";
-const post = (url: string, body: unknown, token?: string) =>
+const post = (url: string, body: unknown, token?: string, stepUp?: string) =>
   new NextRequest(`http://enki.test${url}`, {
     method: "POST",
-    headers: token ? { "X-Session-Token": token } : {},
+    headers: { ...(token ? { "X-Session-Token": token } : {}), ...(stepUp ? { "X-StepUp-Token": stepUp } : {}) },
     body: JSON.stringify(body),
   });
 const lastCode = () => mails[mails.length - 1].text.match(/\b(\d{6})\b/)![1];
@@ -83,6 +86,46 @@ describe("signing up", () => {
     expect(await (await verifyEmail(post("/x", {}, token))).json()).toEqual({ sent: true });
     expect(mails).toHaveLength(2);
     expect((await verifyEmail(post("/x", { code: lastCode() }, token))).status).toBe(200);
+  });
+
+  it("keeps the code already mailed when a resend is refused", async () => {
+    const { token } = await signUp();
+    const first = lastCode();
+    at("2026-10-07T12:00:30Z");
+    expect((await verifyEmail(post("/x", {}, token))).status).toBe(429);
+    expect(await (await verifyEmail(post("/x", { code: first }, token))).json()).toEqual({ verified: true });
+  });
+
+  it("adds the email beside an existing factor only with a step-up: the inbox alone unlocks nothing", async () => {
+    const { token, userId } = await signUp();
+    const totp = await beginTotp(db.current!.client, userId, "me");
+    if (totp === "exists") throw new Error();
+    await checkCode(db.current!.client, userId, "totp", totpCode(totp.secret), { confirm: true });
+    const code = lastCode();
+    at("2026-10-07T12:01:01Z");
+    expect((await verifyEmail(post("/x", {}, token))).status).toBe(401);
+    expect((await verifyEmail(post("/x", { code }, token))).status).toBe(401);
+    expect(db.current!.tables.mfa_factors.find((f) => f.kind === "email")!.confirmed_at ?? null).toBeNull();
+    const stepUp = await mintStepUpToken(userId, "add-factor");
+    expect((await verifyEmail(post("/x", { code }, token, stepUp))).status).toBe(200);
+  });
+
+  it("counts a code confirmed for the login address in Settings as verifying it", async () => {
+    const { token } = await signUp();
+    expect((await confirmFactor(post("/x", { code: lastCode() }, token), { params: Promise.resolve({ kind: "email" }) })).status).toBe(200);
+    expect(db.current!.tables.password_credentials[0].email_verified_at).toBe("2026-10-07T12:00:00.000Z");
+    db.current!.tables.password_credentials[0].email_verified_at = null;
+    expect(await (await verifyEmail(post("/x", {}, token))).json()).toEqual({ verified: true });
+    expect(db.current!.tables.password_credentials[0].email_verified_at).toBe("2026-10-07T12:00:00.000Z");
+  });
+
+  it("never counts another confirmed address as the login email", async () => {
+    const { token, userId } = await signUp();
+    at("2026-10-07T12:01:01Z");
+    await beginEmail(db.current!.client, userId, "other@example.com");
+    expect((await confirmFactor(post("/x", { code: lastCode() }, token), { params: Promise.resolve({ kind: "email" }) })).status).toBe(200);
+    expect((await verifyEmail(post("/x", {}, token))).status).toBe(401);
+    expect(db.current!.tables.password_credentials[0].email_verified_at ?? null).toBeNull();
   });
 
   it("never verifies the login email with a code sent to another address", async () => {
