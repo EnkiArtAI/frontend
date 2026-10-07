@@ -77,6 +77,13 @@ describe("the first factor", () => {
     expect((await fresh.json()).uri).toMatch(/^otpauth:\/\/totp\//);
   });
 
+  it("takes no email address longer than one can be", async () => {
+    sessionAge(1);
+    const at = (domain: number) => `${"a".repeat(64)}@${"b".repeat(domain)}.com`;
+    expect((await setup(req("/api/auth/mfa/email", "POST", { email: at(186) }), kind("email"))).status).toBe(400);
+    expect((await setup(req("/api/auth/mfa/email", "POST", { email: at(185) }), kind("email"))).status).toBe(200);
+  });
+
   it("counts only once confirmed with a right code", async () => {
     sessionAge(1);
     const { secret } = await (await setup(req("/api/auth/mfa/totp", "POST", {}), kind("totp"))).json();
@@ -125,6 +132,29 @@ describe("guardians", () => {
     expect((await addGuardian(req("/api/recovery/guardians", "POST", { guardianType: "email", value: "g@example.com" }))).status).toBe(401);
     expect((await guardianThreshold(req("/api/recovery/guardians", "PATCH", { threshold: 2 }))).status).toBe(401);
     expect((await removeGuardian(req("/api/recovery/guardians?id=g1", "DELETE"))).status).toBe(401);
+  });
+
+  it("are added only through the gate, whatever ids the body carries", async () => {
+    await withTotp();
+    const add = { guardianType: "email", value: "g@example.com" };
+    expect((await addGuardian(req("/api/recovery/guardians", "POST", { ...add, verifyId: "x" }))).status).toBe(401);
+    expect((await addGuardian(req("/api/recovery/guardians", "POST", { ...add, phoneVerifyId: "x" }))).status).toBe(401);
+    expect(db.current!.tables.recovery_guardians).toHaveLength(0);
+    const token = await mintStepUpToken(U, "guardians");
+    expect((await addGuardian(req("/api/recovery/guardians", "POST", add, token))).status).toBe(201);
+    expect(db.current!.tables.recovery_guardians).toHaveLength(1);
+  });
+
+  it("without a factor take a fresh login, like a first factor", async () => {
+    const add = { guardianType: "email", value: "g@example.com" };
+    sessionAge(11);
+    const stale = await addGuardian(req("/api/recovery/guardians", "POST", add));
+    expect(stale.status).toBe(403);
+    expect((await stale.json()).reauth).toBe(true);
+    expect((await guardianThreshold(req("/api/recovery/guardians", "PATCH", { threshold: 1 }))).status).toBe(403);
+    expect(db.current!.tables.recovery_guardians).toHaveLength(0);
+    sessionAge(9);
+    expect((await addGuardian(req("/api/recovery/guardians", "POST", add))).status).toBe(201);
   });
 
   it("still let an added authenticator guardian be confirmed without one", async () => {

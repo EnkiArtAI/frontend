@@ -48,7 +48,11 @@ export function StepUpProvider({ children }: { children: React.ReactNode }) {
         setError(null);
         setEmailSent(false);
         setMode(factors.includes("passkey") ? null : factors.includes("totp") ? "totp" : factors.includes("email") ? "email" : null);
-        setPending({ scope, factors, resolve });
+        // A second ask while one is open cancels the first, so no caller waits forever.
+        setPending((prev) => {
+          prev?.resolve(null);
+          return { scope, factors, resolve };
+        });
       }),
     [],
   );
@@ -72,10 +76,15 @@ export function StepUpProvider({ children }: { children: React.ReactNode }) {
   const sendEmail = async () => {
     setBusy(true);
     setError(null);
-    const { ok, data } = await postJson("/api/auth/stepup/email", {});
-    setBusy(false);
-    if (ok) setEmailSent(true);
-    else setError(data.error || "The code could not be sent");
+    try {
+      const { ok, data } = await postJson("/api/auth/stepup/email", {});
+      if (ok) setEmailSent(true);
+      else setError(data.error || "The code could not be sent");
+    } catch {
+      setError("The code could not be sent");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const has = (f: Factor) => pending?.factors.includes(f) ?? false;
@@ -130,6 +139,11 @@ export function StepUpProvider({ children }: { children: React.ReactNode }) {
                 <button className={btn} type="submit" disabled={busy || code.length !== 6}>
                   {mode === "totp" ? "Confirm with the app's code" : "Confirm with the emailed code"}
                 </button>
+                {mode === "email" && (
+                  <button type="button" className="text-xs underline disabled:opacity-50" disabled={busy} onClick={sendEmail}>
+                    Send a new code
+                  </button>
+                )}
               </form>
             )}
             {error && <p className="text-sm text-red-600">{error}</p>}

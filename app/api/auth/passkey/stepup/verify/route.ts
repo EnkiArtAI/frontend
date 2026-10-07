@@ -28,12 +28,12 @@ export async function POST(req: NextRequest) {
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid request" }, { status: 400 });
 
-  const challenge = readChallengeCookie(req, "pk_auth_challenge");
-  if (!challenge) return NextResponse.json({ error: "Challenge expired — try again" }, { status: 400 });
-
   const supabase = getSupabaseServerClient();
   const userId = await resolveStableUserId(supabase, walletAddress);
   if (!userId) return NextResponse.json({ error: "No user for session" }, { status: 404 });
+
+  const challenge = readChallengeCookie(req, "pk_auth_challenge", userId);
+  if (!challenge) return NextResponse.json({ error: "Challenge expired — try again" }, { status: 400 });
 
   const credentialId = (parsed.data.response as { id?: string }).id;
   const { data: cred } = await supabase

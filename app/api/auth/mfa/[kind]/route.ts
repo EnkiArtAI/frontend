@@ -33,7 +33,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
     const body = (await req.json().catch(() => ({}))) as { email?: unknown };
     const address = typeof body.email === "string" ? body.email.trim() : "";
-    if (kind === "email" && !EMAIL.test(address)) return NextResponse.json({ error: "Enter a valid email address" }, { status: 400 });
+    if (kind === "email" && (address.length > 254 || !EMAIL.test(address))) return NextResponse.json({ error: "Enter a valid email address" }, { status: 400 });
 
     const blocked = await requireAddFactor(req, userId);
     if (blocked) return blocked;

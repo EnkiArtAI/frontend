@@ -18,6 +18,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { numericCode, sha256 } from "@/lib/password-reset";
 import { sendMail } from "@/lib/mailer";
+import { recoveryThreshold } from "@/lib/recovery/threshold";
 
 const REQUEST_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const bodySchema = z.object({ email: z.string().email().max(320) });
@@ -113,18 +114,18 @@ export async function GET(req: NextRequest) {
   }
   const expired = request.expires_at && new Date(request.expires_at).getTime() <= Date.now();
 
-  const [{ count: approved }, { data: settings }] = await Promise.all([
+  const [{ count: approved }, threshold] = await Promise.all([
     supabase
       .from("recovery_approvals")
       .select("guardian_id", { count: "exact", head: true })
       .eq("request_id", id)
       .not("approved_at", "is", null),
-    supabase.from("recovery_settings").select("threshold").eq("user_id", request.user_id).maybeSingle(),
+    recoveryThreshold(supabase, request.user_id),
   ]);
 
   return NextResponse.json({
     status: expired ? "expired" : request.status,
     approved: approved ?? 0,
-    threshold: settings?.threshold ?? 2,
+    threshold,
   });
 }
