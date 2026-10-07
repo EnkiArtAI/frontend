@@ -181,8 +181,8 @@ export async function stampVerifiedLogin(supabase: SupabaseClient, userId: strin
  * the wallet JWT needs one, and a banned account cannot enroll a new one.
  * The last one is refused before anything is deleted, so no request ever
  * sees the account without a factor. Two removals racing past that check
- * count what is left after deleting, and one that finds nothing (or cannot
- * count) puts its factor back.
+ * count what is left after deleting, and one that finds nothing puts its
+ * factor back; one that cannot count puts it back and reports the error.
  */
 export async function removeFactor(
   supabase: SupabaseClient,
@@ -205,12 +205,22 @@ export async function removeFactor(
   if (error) throw error;
   if (!gone?.length) return "none";
   if (!hasPassword) return "removed";
-  if ((await factorKeys(supabase, userId).catch(() => [])).length) return "removed";
-  const { error: back } = await supabase.from(table).insert(gone);
-  if (back) {
-    console.error(`[mfa] could not put back the last factor of ${userId} (${table}):`, back.message);
-    throw back;
+  const putBack = async () => {
+    const { error: back } = await supabase.from(table).insert(gone);
+    if (back) {
+      console.error(`[mfa] could not put back the last factor of ${userId} (${table}):`, back.message);
+      throw back;
+    }
+  };
+  let left: string[];
+  try {
+    left = await factorKeys(supabase, userId);
+  } catch (e) {
+    await putBack();
+    throw e;
   }
+  if (left.length) return "removed";
+  await putBack();
   return "last";
 }
 
