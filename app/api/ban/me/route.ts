@@ -7,12 +7,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserWithBan } from "@/lib/session-user";
+import { grantGateCookie, revokeGateCookie } from "@/lib/allowlist";
 
 export async function GET(req: NextRequest) {
   const supabase = getSupabaseServerClient();
   const { userId, ban } = await resolveSessionUserWithBan(supabase, req.headers.get("X-Session-Token"));
   if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  if (!ban) return NextResponse.json({ banned: false });
+  // A ban that ended gives app access back: the login that minted this
+  // session passed the allowlist but got no cookie while banned.
+  if (!ban) return grantGateCookie(NextResponse.json({ banned: false }));
 
   const [{ data: appeals }, { data: wallets }] = await Promise.all([
     supabase.from("appeals")
@@ -24,7 +27,7 @@ export async function GET(req: NextRequest) {
       .eq("user_id", userId).is("removed_at", null),
   ]);
   const a = appeals?.[0] ?? null;
-  return NextResponse.json({
+  return revokeGateCookie(NextResponse.json({
     banned: true,
     reason: ban.reason,
     permanent: !ban.expiresAt,
@@ -35,5 +38,5 @@ export async function GET(req: NextRequest) {
       external: String(w.wallet_type) === "external_eoa",
       chain: String(w.chain_family),
     })),
-  });
+  }));
 }

@@ -12,7 +12,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { verifyOrDecoy } from "@/lib/password-auth";
 import { mintUserSession } from "@/lib/user-session";
 import { activeBanFor } from "@/lib/session-user";
-import { whitelistStageActive, isEmailAllowed, grantGateCookie } from "@/lib/allowlist";
+import { whitelistStageActive, isEmailAllowed, grantGateCookie, revokeGateCookie } from "@/lib/allowlist";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { getClientIp, hashIp, isIpBanned } from "@/lib/ip-hash";
 
@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
   const banned = !!(await activeBanFor(supabase, cred.user_id));
   const session = await mintUserSession(cred.user_id, ipHash);
   const res = NextResponse.json({ email: cred.email, ...session, ...(banned ? { banned: true } : {}) });
-  // Whitelisted login → grant app access (gate cookie). Never to a banned
-  // account: the cookie opens every page, /banned is public without it.
-  return banned ? res : grantGateCookie(res);
+  // Whitelisted login → grant app access (gate cookie). A banned account
+  // loses it: the cookie opens every page, /banned is public without it.
+  return banned ? revokeGateCookie(res) : grantGateCookie(res);
 }

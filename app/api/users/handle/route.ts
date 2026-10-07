@@ -12,7 +12,8 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
-import { resolveSessionUserId } from "@/lib/session-user";
+import { resolveSessionUserId, resolveSessionUserWithBan } from "@/lib/session-user";
+import { revokeGateCookie } from "@/lib/allowlist";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { normalizeHandle as normalize, usableHandle as usable } from "@/lib/handle-rules";
 
@@ -23,7 +24,10 @@ export async function GET(req: NextRequest) {
   if (name === null) {
     // Own identity bits (handle + role) for the session user — role drives the
     // Admin section's visibility client-side. Admin APIs must re-check server-side.
-    const userId = await resolveSessionUserId(supabase, req.headers.get("X-Session-Token"));
+    const { userId, ban } = await resolveSessionUserWithBan(supabase, req.headers.get("X-Session-Token"));
+    // Said, not hidden behind a 401: BetaGate sends a banned account to
+    // /banned, and the cookie from before the ban goes.
+    if (ban) return revokeGateCookie(NextResponse.json({ error: "This account is suspended.", banned: true }, { status: 403 }));
     if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
     const wantStats = req.nextUrl.searchParams.get("stats") === "1";
     let row: {

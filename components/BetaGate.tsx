@@ -130,6 +130,11 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
       try {
         const res = await fetch("/api/users/handle", { headers });
         if (dead) return;
+        // A suspended account has exactly one door.
+        if (res.status === 403 && (await res.json().catch(() => null))?.banned) {
+          if (window.location.pathname !== "/banned") window.location.href = "/banned";
+          return;
+        }
         // A dead session forgets the pill; a passing error keeps it for later.
         if (!res.ok) { if (res.status === 401) forgetPill(); void teamFallback(); return; }
         const data = (await res.json()) as {
