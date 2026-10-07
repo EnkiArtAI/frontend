@@ -12,7 +12,7 @@ import {
 } from "@/lib/creations";
 import { WalletPickerModal } from "@/components/WalletPickerModal";
 import { useCdpAddress } from "@/hooks/useCdpAddress";
-import { usePasskey } from "@/hooks/usePasskey";
+import { useStepUp } from "@/components/StepUpProvider";
 import { Images, Trash2, Wallet, Loader2, ImageOff } from "lucide-react";
 
 type SupabaseGeneration = {
@@ -32,7 +32,7 @@ export default function MyGalleryPage() {
   const account = useActiveAccount();
   const { connected: solanaConnected, publicKey: solanaPublicKey } = useWallet();
   const { address: cdpAddress } = useCdpAddress();
-  const { stepUp } = usePasskey();
+  const { guarded } = useStepUp();
   const authenticated = !!account || solanaConnected || !!cdpAddress;
   const [showWalletPicker, setShowWalletPicker] = useState(false);
   const userKey = useMemo(
@@ -142,19 +142,13 @@ export default function MyGalleryPage() {
 
   const handleRemove = async (id: string) => {
     if (!userKey) return;
-    // Step-up 2FA (only prompts if the user enrolled a passkey; null otherwise).
-    // A cancelled/failed passkey check aborts the delete.
-    let stepUpToken: string | null;
+    // Step-up 2FA: when the user has a factor, the server asks and the dialog
+    // collects it; a cancelled check deletes nothing.
     try {
-      stepUpToken = await stepUp(`delete-work:${id}`);
-    } catch {
-      return;
-    }
-    try {
-      await fetch(`/api/generations/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-        headers: { ...sessionAuthHeaders(), ...(stepUpToken ? { "X-StepUp-Token": stepUpToken } : {}) },
-      });
+      const res = await guarded(`delete-work:${id}`, (h) =>
+        fetch(`/api/generations/${encodeURIComponent(id)}`, { method: "DELETE", headers: { ...sessionAuthHeaders(), ...h } }),
+      );
+      if (res.status === 401) return;
     } catch {
       // ignore
     }

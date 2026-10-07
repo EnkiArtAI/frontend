@@ -21,6 +21,7 @@ function CdpLauncher() {
 }
 import { Toaster } from "@/components/ui/toaster";
 import BetaGate from "@/components/BetaGate";
+import { StepUpProvider } from "@/components/StepUpProvider";
 
 /**
  * Provider hierarchy (outermost first):
@@ -60,7 +61,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
             <SolanaWalletProvider>
               <TooltipProvider>
                 {/* Closed-beta wall around EVERY page (public paths excepted). */}
-                <BetaGate>{children}</BetaGate>
+                <StepUpProvider>
+                  <BetaGate>{children}</BetaGate>
+                </StepUpProvider>
                 {/* Without this, every toast() (errors included) went nowhere. */}
                 <Toaster />
                 <CdpLauncher />

@@ -4,7 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Key, Loader2, Mail, Users, Wallet, Smartphone, ShieldCheck, CheckCircle2 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 
-import { usePasskey } from "@/hooks/usePasskey";
+import { usePasskey, StepUpNeeded } from "@/hooks/usePasskey";
+import { useStepUp } from "@/components/StepUpProvider";
+import CodeFactors from "@/components/settings/CodeFactors";
 import { useToast } from "@/hooks/use-toast";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import { refreshRecoveryStatus } from "@/hooks/useRecoveryStatus";
@@ -47,6 +49,7 @@ let guardianCache: { guardians: Guardian[]; threshold: number } | null = null;
 export default function RecoveryPanel({ focus = false }: { focus?: boolean } = {}) {
   const { toast } = useToast();
   const { enroll: enrollPasskey, busy: passkeyBusy } = usePasskey();
+  const { guarded, tokenFor } = useStepUp();
 
   // When arrived here via the red "no recovery" banner: scroll the Guardians
   // area into view and pulse it (same heartbeat as the Payment "Add money").
@@ -148,8 +151,17 @@ export default function RecoveryPanel({ focus = false }: { focus?: boolean } = {
   }, [authed, loadPasskeys, loadGuardians]);
 
   const handleAddPasskey = async () => {
+    const label = typeof navigator !== "undefined" ? navigator.platform || "This device" : undefined;
     try {
-      await enrollPasskey(typeof navigator !== "undefined" ? navigator.platform || "This device" : undefined);
+      try {
+        await enrollPasskey(label);
+      } catch (e) {
+        // A further factor is a step-up; the first one needs a fresh login.
+        if (!(e instanceof StepUpNeeded) || e.reauth) throw e;
+        const token = await tokenFor("add-factor");
+        if (!token) return;
+        await enrollPasskey(label, { "X-StepUp-Token": token });
+      }
       toast({ title: "Passkey added", description: "We'll ask for it before risky actions." });
       loadPasskeys();
     } catch (e) {
@@ -159,11 +171,11 @@ export default function RecoveryPanel({ focus = false }: { focus?: boolean } = {
   };
 
   const removePasskey = async (id: string) => {
-    const res = await fetch("/api/auth/passkey/credentials", {
+    const res = await guarded(`remove-factor:${id}`, (h) => fetch("/api/auth/passkey/credentials", {
       method: "DELETE",
-      headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
+      headers: { "Content-Type": "application/json", ...sessionAuthHeaders(), ...h },
       body: JSON.stringify({ id }),
-    });
+    }));
     if (res.ok) { toast({ title: "Passkey removed" }); loadPasskeys(); }
     else toast({ title: "Couldn't remove passkey", variant: "destructive" });
   };
@@ -177,11 +189,11 @@ export default function RecoveryPanel({ focus = false }: { focus?: boolean } = {
     if (needsValue && !value) return;
     setAddBusy(true);
     try {
-      const res = await fetch("/api/recovery/guardians", {
+      const res = await guarded("guardians", (h) => fetch("/api/recovery/guardians", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
+        headers: { "Content-Type": "application/json", ...sessionAuthHeaders(), ...h },
         body: JSON.stringify(addType === "authenticator" ? { guardianType: "authenticator" } : { guardianType: addType, value }),
-      });
+      }));
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Could not add guardian");
       setAddValue("");
@@ -300,10 +312,10 @@ export default function RecoveryPanel({ focus = false }: { focus?: boolean } = {
   const removeGuardian = async (id: string) => {
     setRemoveBusy(true);
     try {
-      const res = await fetch(`/api/recovery/guardians?id=${encodeURIComponent(id)}`, {
+      const res = await guarded("guardians", (h) => fetch(`/api/recovery/guardians?id=${encodeURIComponent(id)}`, {
         method: "DELETE",
-        headers: sessionAuthHeaders(),
-      });
+        headers: { ...sessionAuthHeaders(), ...h },
+      }));
       if (res.ok) { toast({ title: "Guardian removed", description: "If they were an email guardian, we let them know." }); loadGuardians(); }
       else toast({ title: "Couldn't remove guardian", variant: "destructive" });
     } catch {
@@ -316,11 +328,11 @@ export default function RecoveryPanel({ focus = false }: { focus?: boolean } = {
 
   const saveThreshold = async (n: number) => {
     setThreshold(n);
-    const res = await fetch("/api/recovery/guardians", {
+    const res = await guarded("guardians", (h) => fetch("/api/recovery/guardians", {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
+      headers: { "Content-Type": "application/json", ...sessionAuthHeaders(), ...h },
       body: JSON.stringify({ threshold: n }),
-    });
+    }));
     if (res.ok) toast({ title: "Saved", description: `${n} guardian${n === 1 ? "" : "s"} must approve a recovery.` });
     else toast({ title: "Couldn't save threshold", variant: "destructive" });
   };
@@ -416,8 +428,9 @@ export default function RecoveryPanel({ focus = false }: { focus?: boolean } = {
       <SettingsSection num="01" title="Two-step check (2FA)">
         <div className="set-section-desc" style={{ paddingBottom: 16 }}>
           A passkey is the fingerprint, face or PIN lock of one of your devices, used for this site.
-          Add one — best on a second device like your phone — and we&apos;ll ask for it before
-          anything serious happens (right now: deleting your work; selling and sending money are next).
+          An authenticator app or a code by email works too. Add any of them and we&apos;ll ask for
+          one before anything serious happens: deleting your work, changing these factors or your
+          guardians.
         </div>
         <div className="set-list-item set-soft">
           <div className="set-item-icon"><Key size={14} /></div>
@@ -451,6 +464,7 @@ export default function RecoveryPanel({ focus = false }: { focus?: boolean } = {
             </div>
           ))
         )}
+        <CodeFactors />
       </SettingsSection>
 
       {/* ── 02 · Guardians ── */}
