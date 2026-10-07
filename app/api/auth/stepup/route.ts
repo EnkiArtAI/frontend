@@ -2,7 +2,8 @@
  * Step-up with a code factor (the passkey keeps its own WebAuthn routes under
  * /api/auth/passkey/stepup).
  *
- *   GET                                   -> { factors: ["passkey" | "totp" | "email"] }
+ *   GET                                   -> { factors: ["passkey" | "totp" | "email"], emailCodes }
+ *     (emailCodes: whether an email code can be a factor here; never for a password account)
  *   POST { scope, factor, code }          -> { token } for X-StepUp-Token
  *
  * Ban tolerant on purpose: a ban locks the marketplace, never the wallet, and
@@ -12,7 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserWithBan } from "@/lib/session-user";
 import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
-import { checkCode, enrolledFactors } from "@/lib/mfa";
+import { checkCode, enrolledFactors, isPasswordAccount } from "@/lib/mfa";
 import { isStepUpScope, mintStepUpToken, afterStepUp } from "@/lib/webauthn";
 
 async function sessionUser(req: NextRequest) {
@@ -25,7 +26,8 @@ export async function GET(req: NextRequest) {
   try {
     const { supabase, userId } = await sessionUser(req);
     if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-    return NextResponse.json({ factors: await enrolledFactors(supabase, userId) });
+    const [factors, password] = await Promise.all([enrolledFactors(supabase, userId), isPasswordAccount(supabase, userId)]);
+    return NextResponse.json({ factors, emailCodes: !password });
   } catch (e) {
     if (isDbUnreachable(e)) return dbUnavailableResponse();
     return NextResponse.json({ error: "Could not read your security settings" }, { status: 503 });
@@ -40,6 +42,10 @@ export async function POST(req: NextRequest) {
   try {
     const { supabase, userId } = await sessionUser(req);
     if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+    // Only a factor that counts steps up: an email code is none for a password account.
+    if (!(await enrolledFactors(supabase, userId)).includes(body.factor)) {
+      return NextResponse.json({ error: "That factor is not set up" }, { status: 404 });
+    }
     const result = await checkCode(supabase, userId, body.factor, body.code);
     if (result === "ok") {
       try {

@@ -4,12 +4,12 @@ import { generateKeyPairSync } from "crypto";
 import { fakePostgrest } from "./_fake-postgrest";
 
 /**
- * Wallet unlock (Kev, 2026-10-07, decisions 1 and 3). CDP asks
+ * Wallet unlock (Kev, 2026-10-07). CDP asks
  * /api/auth/wallet/jwt for a JWT before every wallet request, so that route
  * is where a stolen session is stopped from signing or exporting straight
- * through CDP: an account needs a factor, a session a wallet step-up at most
- * 2 h old with wallet use in the last 15 min. And an embedded wallet never
- * loses its last factor.
+ * through CDP: once the account has a second factor, the session needs a
+ * wallet step-up at most 2 h old with wallet use in the last 15 min. 2FA is
+ * optional: without a factor the session alone opens the wallet.
  */
 
 const db = vi.hoisted(() => ({ current: null as ReturnType<typeof import("./_fake-postgrest").fakePostgrest> | null }));
@@ -34,11 +34,9 @@ vi.hoisted(() => {
 import { POST as walletJwt } from "../../app/api/auth/wallet/jwt/route";
 import { POST as stepUp } from "../../app/api/auth/stepup/route";
 import { POST as passkeyStepUp } from "../../app/api/auth/passkey/stepup/verify/route";
-import { DELETE as removeCode } from "../../app/api/auth/mfa/[kind]/route";
-import { DELETE as removePasskey } from "../../app/api/auth/passkey/credentials/route";
-import { beginEmail, beginTotp, checkCode, removeFactor } from "../mfa";
+import { beginEmail, beginTotp, checkCode } from "../mfa";
 import { totpCode } from "../totp";
-import { mintStepUpToken, setChallengeCookie } from "../webauthn";
+import { setChallengeCookie } from "../webauthn";
 
 const U = "11111111-1111-4111-8111-111111111111";
 const at = (iso: string) => vi.setSystemTime(new Date(iso));
@@ -74,12 +72,18 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("the wallet JWT", () => {
-  it("is refused to an account without a factor, saying how to fix it", async () => {
+  it("is minted for an account without 2FA on the session alone, and stamps nothing", async () => {
     db.current!.tables.mfa_factors = [];
-    unlockedAt("2026-10-07T12:00:00.000Z");
-    const res = await mint();
-    expect(res.status).toBe(403);
-    expect(await res.json()).toMatchObject({ enroll: true });
+    expect((await mint()).status).toBe(200);
+    expect(session("sess").stepup_seen_at ?? null).toBeNull();
+  });
+
+  it("is minted for an email account whose only code factor is its email, which is none", async () => {
+    db.current!.tables.mfa_factors = [];
+    await beginEmail(db.current!.client, U, "me@example.com");
+    const code = (mails[mails.length - 1] as unknown as { text: string }).text.match(/\b(\d{6})\b/)![1];
+    expect(await checkCode(db.current!.client, U, "email", code, { confirm: true })).toBe("ok");
+    expect((await mint()).status).toBe(200);
   });
 
   it("is refused to a session never unlocked, naming the factors that unlock it", async () => {
@@ -209,62 +213,5 @@ describe("a step-up", () => {
       expect((await codeStepUp(secret, "export")).status).toBe(200);
     }
     expect(mails).toHaveLength(3);
-  });
-});
-
-describe("the last factor of an embedded wallet", () => {
-  const removeTotp = async () =>
-    removeCode(
-      req("/api/auth/mfa/totp", { method: "DELETE", token: "sess", headers: { "X-StepUp-Token": await mintStepUpToken(U, "remove-factor:totp") } }),
-      { params: Promise.resolve({ kind: "totp" }) },
-    );
-  const removeKey = async (id: string) =>
-    removePasskey(req("/api/auth/passkey/credentials", {
-      method: "DELETE", token: "sess", body: { id },
-      headers: { "X-StepUp-Token": await mintStepUpToken(U, `remove-factor:${id}`) },
-    }));
-  const PK = "22222222-2222-4222-8222-222222222222";
-
-  it("stays, never even briefly deleted; with a second factor beside it, either can go", async () => {
-    const before = db.current!.tables.mfa_factors[0];
-    expect((await removeTotp()).status).toBe(409);
-    expect(db.current!.tables.mfa_factors[0]).toBe(before);
-    expect(db.current!.tables.mfa_factors).toHaveLength(1);
-    db.current!.tables.webauthn_credentials = [{ id: PK, user_id: U }];
-    expect((await removeTotp()).status).toBe(200);
-    expect((await removeKey(PK)).status).toBe(409);
-    expect(db.current!.tables.webauthn_credentials).toHaveLength(1);
-  });
-
-  it("stays when two removals race past the check", async () => {
-    db.current!.tables.webauthn_credentials = [{ id: PK, user_id: U }];
-    const c = db.current!.client;
-    const answers = await Promise.all([removeFactor(c, U, { kind: "totp" }), removeFactor(c, U, { passkey: PK })]);
-    expect(answers).toContain("last");
-    expect(db.current!.tables.mfa_factors.length + db.current!.tables.webauthn_credentials.length).toBeGreaterThan(0);
-  });
-
-  it("is put back, never reported last, when what is left cannot be counted", async () => {
-    db.current!.tables.webauthn_credentials = [{ id: PK, user_id: U }];
-    db.current!.state.failNext = { table: "webauthn_credentials", op: "select", code: "XX000", skip: 1 };
-    await expect(removeFactor(db.current!.client, U, { kind: "totp" })).rejects.toMatchObject({ code: "XX000" });
-    expect(db.current!.tables.mfa_factors).toHaveLength(1);
-  });
-
-  it("that cannot be put back is logged and reported", async () => {
-    db.current!.tables.webauthn_credentials = [{ id: PK, user_id: U }];
-    db.current!.state.failNext = { table: "mfa_factors", op: "insert", code: "XX000" };
-    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    const c = db.current!.client;
-    const [code] = await Promise.allSettled([removeFactor(c, U, { kind: "totp" }), removeFactor(c, U, { passkey: PK })]);
-    expect(code.status).toBe("rejected");
-    expect(String(logged.mock.calls[0]?.[0])).toMatch(/could not put back the last factor/);
-    expect(db.current!.tables.webauthn_credentials).toHaveLength(1);
-    logged.mockRestore();
-  });
-
-  it("goes as before for an account that signs in with its own wallet", async () => {
-    db.current!.tables.password_credentials = [];
-    expect((await removeTotp()).status).toBe(200);
   });
 });

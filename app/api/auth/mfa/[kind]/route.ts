@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
-import { beginEmail, beginTotp, removeFactor, type FactorKind } from "@/lib/mfa";
+import { beginEmail, beginTotp, isPasswordAccount, type FactorKind } from "@/lib/mfa";
 import { requireAddFactor, requireStepUp } from "@/lib/webauthn";
 
 const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
@@ -34,6 +34,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     const body = (await req.json().catch(() => ({}))) as { email?: unknown };
     const address = typeof body.email === "string" ? body.email.trim() : "";
     if (kind === "email" && (address.length > 254 || !EMAIL.test(address))) return NextResponse.json({ error: "Enter a valid email address" }, { status: 400 });
+    if (kind === "email" && (await isPasswordAccount(supabase, userId))) {
+      return NextResponse.json({ error: "Your email resets your password, so it can't be your second factor. Use an authenticator app or a passkey." }, { status: 403 });
+    }
 
     const blocked = await requireAddFactor(req, userId);
     if (blocked) return blocked;
@@ -65,9 +68,9 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
     if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
     const blocked = await requireStepUp(req, userId, `remove-factor:${kind}`, { mandatory: true });
     if (blocked) return blocked;
-    const removed = await removeFactor(supabase, userId, { kind });
-    if (removed === "last") return NextResponse.json({ error: "Add another factor first: your wallet needs one" }, { status: 409 });
-    if (removed === "none") return NextResponse.json({ error: "That factor is not set up" }, { status: 404 });
+    const { error, count } = await supabase.from("mfa_factors").delete({ count: "exact" }).eq("user_id", userId).eq("kind", kind);
+    if (error) throw error;
+    if (!count) return NextResponse.json({ error: "That factor is not set up" }, { status: 404 });
     return NextResponse.json({ removed: true });
   } catch (e) {
     if (isDbUnreachable(e)) return dbUnavailableResponse();

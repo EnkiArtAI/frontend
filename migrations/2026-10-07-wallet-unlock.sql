@@ -1,10 +1,11 @@
 -- Wallet unlock (Kev, 2026-10-07, decision 3): CDP asks our server for a
 -- JWT before every wallet request, so POST /api/auth/wallet/jwt is the one
 -- place a stolen session can be stopped from signing or exporting directly
--- through CDP. It mints only for a session that passed a "wallet" or
--- "export" step-up at most 2 h ago (stepup_at) and used the wallet in the
--- last 15 min (stepup_seen_at, refreshed by every mint). A row never stamped
--- is locked.
+-- through CDP. Once the account has a second factor, it mints only for a
+-- session that passed a "wallet" or "export" step-up at most 2 h ago
+-- (stepup_at) and used the wallet in the last 15 min (stepup_seen_at,
+-- refreshed by every mint). A row never stamped is locked. Without a factor
+-- (2FA is optional) the session alone opens the wallet.
 --
 -- Run in the SQL editor BEFORE the code deploys (until then the JWT route
 -- answers 503), then read it back through PostgREST:

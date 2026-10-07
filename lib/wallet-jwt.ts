@@ -35,12 +35,11 @@ export async function publicJwks() {
 }
 
 /** Short-lived JWT telling the vendor who our logged-in user is (sub = users.id). */
-export async function mintWalletJwt(user: { id: string; email: string; emailVerified: boolean; username?: string | null }) {
+export async function mintWalletJwt(user: { id: string; email: string; username?: string | null }) {
   const key = await importPKCS8(pem(), ALG);
   const { kid } = await publicJwk();
   return new SignJWT({
     email: user.email,
-    emailVerified: user.emailVerified,
     ...(user.username ? { username: user.username } : {}),
   })
     .setProtectedHeader({ alg: ALG, kid })
