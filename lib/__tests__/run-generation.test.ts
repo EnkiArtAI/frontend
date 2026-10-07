@@ -10,6 +10,7 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("@/lib/session-headers", () => ({ sessionAuthHeaders: () => ({ "X-Session-Token": "t" }) }));
 
 import { runGeneration } from "@/lib/generation/run-generation";
+import { registerCdpEnsure } from "@/lib/cdp-bridge";
 import type { CatalogueEntry } from "@/hooks/useModelLimits";
 
 const entry = (over: Partial<CatalogueEntry>): CatalogueEntry => ({
@@ -112,6 +113,18 @@ describe("a paid model", () => {
     scriptFetch(PAID);
     await runGeneration({ ...BASE, model: entry({ price: 0 }) }, vi.fn(async () => "s"));
     expect(calls[0].path).toBe("/api/payments/generation/intent");
+  });
+
+  it("waits for an embedded wallet that can act and is on the session before it pays", async () => {
+    scriptFetch(PAID);
+    const ensure = vi.fn(async () => { expect(calls).toEqual([]); });
+    registerCdpEnsure(ensure);
+    try {
+      await runGeneration({ ...BASE, model: GPT }, vi.fn(async () => "s"));
+    } finally {
+      registerCdpEnsure(null);
+    }
+    expect(ensure).toHaveBeenCalledWith({ attached: true });
   });
 
   it("generates nothing when the buyer cancels in the wallet", async () => {

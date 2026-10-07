@@ -24,7 +24,7 @@ vi.stubGlobal("localStorage", new Proxy({}, {
 
 import {
   CDP_SIGN_REQUEST, CDP_SIGN_RESULT, ensureCdpWallet, registerCdpEnsure, requestCdpSign,
-  rememberCdpAddress, rememberedCdpAddress, forgetCdpAddresses,
+  rememberCdpAddress, rememberedCdpAddress, forgetCdpAddresses, fetchWalletJwt, isCdpLocked,
 } from "../cdp-bridge";
 
 const answerSigns = () => window.addEventListener(CDP_SIGN_REQUEST, (e) => {
@@ -58,6 +58,30 @@ describe("a wallet action", () => {
     registerCdpEnsure(async () => { throw new Error("Not confirmed, nothing was signed."); });
     await expect(requestCdpSign("tx")).rejects.toThrow(/Not confirmed/);
     expect(asked).not.toHaveBeenCalled();
+  });
+});
+
+describe("the lock", () => {
+  const answer = (status: number, body: unknown) =>
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: status < 300, status, json: async () => body })));
+
+  it("is whatever the JWT route said last: 403 { locked } locks, a JWT unlocks", async () => {
+    answer(403, { locked: true });
+    expect(await fetchWalletJwt()).toBeUndefined();
+    expect(isCdpLocked()).toBe(true);
+    answer(200, { jwt: "jwt" });
+    expect(await fetchWalletJwt()).toBe("jwt");
+    expect(isCdpLocked()).toBe(false);
+  });
+
+  it("is never an outage or another refusal: no dialog for those", async () => {
+    for (const [status, body] of [[503, { error: "down" }], [403, { error: "other" }]] as const) {
+      answer(403, { locked: true });
+      await fetchWalletJwt();
+      answer(status, body);
+      expect(await fetchWalletJwt()).toBeUndefined();
+      expect(isCdpLocked()).toBe(false);
+    }
   });
 });
 
