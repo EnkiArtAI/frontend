@@ -16,6 +16,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth, checkRateLimit } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { mayShowAdult, viewer } from "@/lib/adult-content";
+import { isListed, isPublicText } from "@/lib/prompt-visibility";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import {
   buildDiceMessages,
@@ -51,7 +53,7 @@ const variableSchema = z.object({
 const bodySchema = z.object({
   /**
    * A SAVED prompt: the server loads its variables from prompt_variables and
-   * its context from public_prompt_text, and whatever the client sent as
+   * its context from its public words (see below), and whatever the client sent as
    * `variables` is ignored. The stored definitions are the authoritative ones
    * — options, ranges and types with full fidelity — and a client cannot
    * widen a select or drop a range by editing its copy.
@@ -103,7 +105,7 @@ export async function POST(req: NextRequest) {
     // variable NAME (unique per prompt, enforced by the table), which is also
     // the key every surface fills its inputs under.
     const supabase = getSupabaseServerClient();
-    const [{ data: rows, error }, { data: prompt }] = await Promise.all([
+    const [{ data: rows, error }, { data: prompt, error: promptError }] = await Promise.all([
       supabase
         .from("prompt_variables")
         .select("name, label, description, data_type, min_value, max_value, options")
@@ -112,18 +114,27 @@ export async function POST(req: NextRequest) {
         .order("position"),
       supabase
         .from("prompts")
-        .select("public_prompt_text")
+        .select("public_prompt_text, prompt_type, is_free_showcase, is_listed, listing_status, deleted_at, title, description, is_adult, creator_id")
         .eq("id", parsed.data.promptId)
         .maybeSingle(),
     ]);
-    if (error) {
-      console.error("[dice] could not load prompt variables:", error.message);
+    // An 18+ prompt answers like a missing one to anyone who may not see it.
+    if (prompt?.is_adult && !mayShowAdult(await viewer(supabase, req), prompt.creator_id as string | null)) {
+      return NextResponse.json({ error: "Could not load the prompt" }, { status: 404 });
+    }
+    if (error || promptError) {
+      console.error("[dice] could not load the prompt:", (error ?? promptError)?.message);
       return NextResponse.json({ error: "Could not load the prompt" }, { status: 500 });
     }
     sourceVars = (rows ?? []).map(rowToDiceVariable);
-    // The stored PUBLIC excerpt, never the encrypted content: a buyer's dice
-    // roll must not carry the artist's secret to a third party.
-    context = (prompt?.public_prompt_text as string | undefined) ?? undefined;
+    // Public words only, never the encrypted content: a buyer's dice roll must
+    // not carry the artist's secret to a third party. A live free prompt lends
+    // its excerpt; a paid or unreleased one only its title and description
+    // (the editor sends a draft's own words as variables' context itself).
+    context =
+      (prompt && isPublicText(prompt) && isListed(prompt) ? (prompt.public_prompt_text as string | null) : null) ||
+      [prompt?.title, prompt?.description].filter((v): v is string => typeof v === "string" && v.trim() !== "").join(" - ") ||
+      undefined;
   } else if (parsed.data.variables) {
     sourceVars = parsed.data.variables as DiceVariable[];
   } else {

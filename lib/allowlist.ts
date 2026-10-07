@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isDbUnreachable, DbUnreachableError } from "@/lib/db-error";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { escapeLike } from "@/lib/db-escape";
 
@@ -19,24 +20,27 @@ export function whitelistStageActive(): boolean {
 type Supabase = ReturnType<typeof getSupabaseServerClient>;
 
 export async function isWalletAllowed(supabase: Supabase, address: string): Promise<boolean> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("access_allowlist")
     .select("id")
     .eq("kind", "wallet")
     .ilike("value", escapeLike(address)) // case-insensitive, wildcards escaped
     .maybeSingle();
+  // A dead host is not "not on the list" — callers turn this into a 503.
+  if (isDbUnreachable(error)) throw new DbUnreachableError();
   return !!data;
 }
 
 export async function isEmailAllowed(supabase: Supabase, email: string): Promise<boolean> {
   // Emails are stored lowercased (register/login lowercase before writing), so
   // an exact eq on the lowercased value is both correct and injection-proof.
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("access_allowlist")
     .select("id")
     .eq("kind", "email")
     .eq("value", email.trim().toLowerCase())
     .maybeSingle();
+  if (isDbUnreachable(error)) throw new DbUnreachableError();
   return !!data;
 }
 

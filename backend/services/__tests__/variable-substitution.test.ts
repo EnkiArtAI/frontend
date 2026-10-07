@@ -25,7 +25,7 @@ describe('Variable Substitution Service', () => {
         { variableName: 'object', value: 'balloon' }
       ];
 
-      mockDecryptPrompt.mockResolvedValue(template);
+      mockDecryptPrompt.mockReturnValue(template);
 
       // Act
       const result = await substituteVariables(encryptedPrompt, variableValues);
@@ -48,7 +48,7 @@ describe('Variable Substitution Service', () => {
         { variableName: 'features', value: ['headlights', 'spoiler', 'rims'] }
       ];
 
-      mockDecryptPrompt.mockResolvedValue(template);
+      mockDecryptPrompt.mockReturnValue(template);
 
       // Act
       const result = await substituteVariables(encryptedPrompt, variableValues);
@@ -66,7 +66,7 @@ describe('Variable Substitution Service', () => {
         { variableName: 'includeBg', value: true }
       ];
 
-      mockDecryptPrompt.mockResolvedValue(template);
+      mockDecryptPrompt.mockReturnValue(template);
 
       // Act
       const result = await substituteVariables(encryptedPrompt, variableValues);
@@ -84,7 +84,7 @@ describe('Variable Substitution Service', () => {
         { variableName: 'includeBg', value: false }
       ];
 
-      mockDecryptPrompt.mockResolvedValue(template);
+      mockDecryptPrompt.mockReturnValue(template);
 
       // Act
       const result = await substituteVariables(encryptedPrompt, variableValues);
@@ -102,7 +102,7 @@ describe('Variable Substitution Service', () => {
         { variableName: 'intensity', value: 75 }
       ];
 
-      mockDecryptPrompt.mockResolvedValue(template);
+      mockDecryptPrompt.mockReturnValue(template);
 
       // Act
       const result = await substituteVariables(encryptedPrompt, variableValues);
@@ -120,7 +120,7 @@ describe('Variable Substitution Service', () => {
         { variableName: 'color', value: 'red' }
       ];
 
-      mockDecryptPrompt.mockResolvedValue(template);
+      mockDecryptPrompt.mockReturnValue(template);
 
       // Act
       const result = await substituteVariables(encryptedPrompt, variableValues);
@@ -139,7 +139,7 @@ describe('Variable Substitution Service', () => {
         // Missing 'object' variable
       ];
 
-      mockDecryptPrompt.mockResolvedValue(template);
+      mockDecryptPrompt.mockReturnValue(template);
 
       // Act
       const result = await substituteVariables(encryptedPrompt, variableValues);
@@ -154,7 +154,7 @@ describe('Variable Substitution Service', () => {
       const encryptedPrompt = 'encrypted-template';
       const template = 'A simple prompt without variables';
 
-      mockDecryptPrompt.mockResolvedValue(template);
+      mockDecryptPrompt.mockReturnValue(template);
 
       // Act
       const result = await substituteVariables(encryptedPrompt, []);
@@ -169,7 +169,9 @@ describe('Variable Substitution Service', () => {
       const encryptedPrompt = 'encrypted-template';
       const decryptionError = new Error('Decryption failed');
 
-      mockDecryptPrompt.mockRejectedValue(decryptionError);
+      mockDecryptPrompt.mockImplementation(() => {
+        throw decryptionError;
+      });
 
       // Act
       const result = await substituteVariables(encryptedPrompt, []);
@@ -188,7 +190,7 @@ describe('Variable Substitution Service', () => {
         { name: 'color', type: 'text', required: true }
       ];
 
-      mockDecryptPrompt.mockResolvedValue(template);
+      mockDecryptPrompt.mockReturnValue(template);
 
       // Act
       const result = await substituteVariables(encryptedPrompt, variableValues, variableDefinitions);

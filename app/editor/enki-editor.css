@@ -41,6 +41,21 @@
   --enk-surface-elevated: #ffffff;
 }
 
+/* The mono token had 21 references and no definition, so every
+   `font-family: var(--enk-font-mono)` silently inherited the sans face — a bare
+   var() with no fallback raises no error, it just does nothing.
+
+   It is declared on `body`, NOT in the :root block above, and that is load-bearing:
+   next/font puts --font-jetbrains-mono on <body> (the generated class in
+   app/layout.tsx), so on :root it is undefined. A :root declaration referencing it
+   would be invalid at computed-value time and would inherit down as undefined —
+   i.e. it would look correct in review and still render nothing. Measured in the
+   browser: :root form → sans (broken), body form → "JetBrains Mono". Deliberately
+   not repeated in html.dark; a font is not theme-dependent. */
+body {
+  --enk-font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
+}
+
 html.dark .enk-model-card {
   background: var(--enk-surface);
 }

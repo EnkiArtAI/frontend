@@ -1,3 +1,4 @@
+import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 /**
  * POST /api/auth/password/login  { identifier, password } → { token, expiresAt, email }
  *
@@ -47,21 +48,24 @@ export async function POST(req: NextRequest) {
   let cred: { user_id: string; email: string; pw_hash: string; pw_salt: string } | null = null;
 
   if (isEmail) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("password_credentials")
       .select("user_id, email, pw_hash, pw_salt")
       .eq("email", identifier)
       .maybeSingle();
+    if (isDbUnreachable(error)) return dbUnavailableResponse();
     cred = data;
   } else {
     // handle → users.id → credential (handle is citext, case-insensitive)
-    const { data: u } = await supabase.from("users").select("id").eq("handle", identifier).maybeSingle();
+    const { data: u, error: uErr } = await supabase.from("users").select("id").eq("handle", identifier).maybeSingle();
+    if (isDbUnreachable(uErr)) return dbUnavailableResponse();
     if (u) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("password_credentials")
         .select("user_id, email, pw_hash, pw_salt")
         .eq("user_id", u.id)
         .maybeSingle();
+      if (isDbUnreachable(error)) return dbUnavailableResponse();
       cred = data;
     }
   }
@@ -75,7 +79,14 @@ export async function POST(req: NextRequest) {
 
   // Private-beta whitelist: the account exists, but app access still needs the
   // email to be allow-listed. Generic 401 keeps it from being an oracle.
-  if (whitelistStageActive() && !(await isEmailAllowed(supabase, cred.email))) {
+  let emailAllowed = true;
+  try {
+    emailAllowed = !whitelistStageActive() || (await isEmailAllowed(supabase, cred.email));
+  } catch (e) {
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
+    throw e;
+  }
+  if (!emailAllowed) {
     return NextResponse.json({ error: "Wrong login or password" }, { status: 401 });
   }
 

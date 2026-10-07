@@ -40,7 +40,8 @@ function insertBlock(): string {
 
 /** The column list GET selects from prompts. */
 function promptSelect(): string {
-  const m = src.match(/\.from\("prompts"\)\s*\.select\(\s*"([^"]+)"/);
+  // The GET handler's read; the save path has its own ownership lookup.
+  const m = src.slice(src.indexOf("export async function GET")).match(/\.from\("prompts"\)\s*\.select\(\s*"([^"]+)"/);
   expect(m, "prompts select list not found").not.toBeNull();
   return m![1];
 }
@@ -212,11 +213,10 @@ describe("/api/prompts/[id] specifics", () => {
     expect(src).not.toMatch(/backend\/encryption/);
   });
 
-  it("scopes PATCH ownership to creator_id via user_wallets", () => {
-    // requireAuth hands back the wallet ADDRESS; creator_id is a users.id
-    // uuid, so the address must map through user_wallets — a raw address in
-    // a uuid filter is a Postgres type error on every call.
-    expect(src).toMatch(/\.from\("user_wallets"\)/);
-    expect(src).toMatch(/\.eq\("creator_id"/);
+  it("scopes PATCH ownership to creator_id of the resolved owners", () => {
+    // creator_id is a users.id uuid: the session is resolved to its owners
+    // the way a save resolves them, never used as an address.
+    expect(src).toMatch(/const ids = await resolveOwnerIds\(supabase, req\.headers\.get\("X-Session-Token"\)\);/);
+    expect(src).toMatch(/\.eq\("id", id\)\s*\.in\("creator_id", owners\);/);
   });
 });

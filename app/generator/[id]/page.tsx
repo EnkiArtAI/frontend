@@ -1,104 +1,56 @@
-"use client";
+import type { Metadata } from "next";
+import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { isListed } from "@/lib/prompt-visibility";
+import GeneratorClient from "./GeneratorClient";
 
-import { useParams, useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import PromptGeneratorView from "@/components/PromptGeneratorView";
-import { Button } from "@/components/ui/button";
-import { ArrowLeft } from "lucide-react";
-
-export default function Generator() {
-  const params = useParams<{ id: string }>();
-  const router = useRouter();
-  const promptId = params.id;
-
-  const {
-    data: promptData,
-    isLoading: promptLoading,
-    error: promptError,
-  } = useQuery<{ prompt: any }>({
-    queryKey: [`/api/prompts/${promptId}`],
-    enabled: !!promptId,
-  });
-
-  const prompt = promptData?.prompt;
-  const creatorId = prompt?.creator?.toString?.() || prompt?.creator;
-
-  const { data: creatorData } = useQuery<{ user: any }>({
-    queryKey: [`/api/users/${creatorId}`],
-    enabled: !!creatorId,
-  });
-
-  if (promptLoading) {
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "var(--pg-bg, #f7f6f1)",
-          fontFamily: "'Space Mono', monospace",
-          fontSize: 13,
-          color: "#666",
-        }}
-      >
-        Loading prompt...
-      </div>
-    );
+/**
+ * Server shell for the standalone prompt page: it exists to put REAL Open
+ * Graph / Twitter metadata in the <head>, so a pasted /generator/<id> link
+ * unfurls on X, Discord, Telegram or Slack with the prompt's showcase
+ * images instead of a blank card (Kev, 2026-09-05). The card image is a
+ * server-rendered grid of up to four showcase renders (/api/og/[id]); the
+ * proxy lets link-preview bots read this head without the team cookie.
+ * Everything interactive stays in GeneratorClient.
+ */
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params;
+  let title = "Enki Art";
+  let description = "AI art prompts as tradeable IP — generate with the artist's prompt, pay per image.";
+  try {
+    const { data: p } = await getSupabaseServerClient()
+      .from("prompts")
+      .select("title, description, is_free_showcase, price_usd_cents, is_listed, listing_status, deleted_at")
+      .eq("id", id)
+      .eq("is_adult", false) // link previews are public: 18+ gets the brand card
+      .maybeSingle();
+    // Bots read this head without the team cookie, and every unfurl republishes
+    // it. Only a live prompt gets a card, and its lead is the creator's own
+    // description, never the prompt's words: a paid prompt's text is the
+    // artist's secret.
+    if (p?.title && isListed(p)) {
+      title = `${p.title} · Enki Art`;
+      const free = p.is_free_showcase === true || (p.price_usd_cents ?? 0) === 0;
+      const lead = String(p.description || "").trim().slice(0, 160);
+      description = `${free ? "Free prompt" : `$${((p.price_usd_cents ?? 0) / 100).toFixed(2)} per generation`}${lead ? ` — ${lead}` : ""}`;
+    }
+  } catch {
+    /* metadata falls back to the brand card; the page itself still loads */
   }
+  const og = `/api/og/${encodeURIComponent(id)}`;
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      type: "website",
+      url: `/generator/${encodeURIComponent(id)}`,
+      images: [{ url: og, width: 1200, height: 630, alt: title }],
+    },
+    twitter: { card: "summary_large_image", title, description, images: [og] },
+  };
+}
 
-  if (promptError || !prompt) {
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 16,
-          background: "var(--pg-bg, #f7f6f1)",
-        }}
-      >
-        <p style={{ fontSize: 16, color: "#111" }}>Prompt not found</p>
-        <Button
-          onClick={() => router.push("/showcase")}
-          data-testid="button-back-gallery"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Gallery
-        </Button>
-      </div>
-    );
-  }
-
-  const promptIdString = prompt._id?.toString() || prompt.id;
-  const artistName =
-    creatorData?.user?.profile?.displayName ||
-    creatorData?.user?.profile?.username ||
-    "Unknown Artist";
-
-  const primaryImage = prompt.showcaseImages?.find(
-    (img: any) => img.isPrimary === true
-  );
-  const thumbnailImage = primaryImage || prompt.showcaseImages?.[0];
-  const imageUrl = thumbnailImage?.thumbnail || thumbnailImage?.url || "";
-
-  const allShowcaseImages = prompt.showcaseImages || [];
-  const isFreeShowcase =
-    prompt.type === "showcase" ||
-    prompt.prompt_type === "showcase" ||
-    prompt.is_free_showcase === true;
-
-  return (
-    <PromptGeneratorView
-      promptId={promptIdString}
-      title={prompt.title}
-      artistName={artistName}
-      artistId={creatorId}
-      imageUrl={imageUrl}
-      showcaseImages={allShowcaseImages}
-      isFreeShowcase={isFreeShowcase}
-    />
-  );
+export default function GeneratorPage() {
+  return <GeneratorClient />;
 }

@@ -9,6 +9,8 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
+import { sessionAuthHeaders } from "@/lib/session-headers";
+import { useEmailAuth } from "@/hooks/useEmailAuth";
 
 interface UploadPreview {
   file: File;
@@ -18,9 +20,10 @@ interface UploadPreview {
 
 export default function ShowroomUploadZone() {
   const account = useActiveAccount();
-  const { connected: solanaConnected, publicKey: solanaPublicKey } = useWallet();
-  const authenticated = !!account || solanaConnected;
-  const userKey = account?.address ?? solanaPublicKey?.toBase58() ?? null;
+  const { connected: solanaConnected } = useWallet();
+  // An email login holds a session too, and the server files uploads under the session.
+  const { isAuthed: emailAuthed } = useEmailAuth();
+  const authenticated = emailAuthed || !!account || solanaConnected;
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
   const [uploads, setUploads] = useState<UploadPreview[]>([]);
@@ -101,7 +104,9 @@ export default function ShowroomUploadZone() {
   };
 
   const handleUpload = async () => {
-    if (!authenticated || !userKey) {
+    // The server files the upload under the session's account, so a session is what it needs.
+    const auth = sessionAuthHeaders();
+    if (!auth["X-Session-Token"]) {
       toast({
         title: "Authentication required",
         description: "Please log in to upload images",
@@ -131,14 +136,13 @@ export default function ShowroomUploadZone() {
       try {
         const formData = new FormData();
         formData.append('file', upload.file);
-        formData.append('userId', userKey);
         if (upload.prompt) {
           formData.append('prompt', upload.prompt);
         }
 
         const response = await fetch('/api/gallery/upload', {
           method: 'POST',
-          headers: { "X-Wallet-Address": userKey },
+          headers: auth,
           body: formData,
         });
 

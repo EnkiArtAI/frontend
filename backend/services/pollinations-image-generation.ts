@@ -8,6 +8,7 @@
  * Rate limits: Fair use (typically ~10 req/min)
  */
 
+import { missingModel } from './model-required';
 import type { ImageGenerationResult } from './types';
 import { readImageDimensions } from './gemini-image-generation';
 
@@ -95,12 +96,22 @@ function rawDimensions(aspectRatio: string, baseSize: number): { width: number; 
 /**
  * Generate image using Pollinations.ai (FREE, no API key)
  */
+/**
+ * Below the free route's maxDuration (300 s), with room for the checks before
+ * the render: a render the platform kills midway cannot give its free claim
+ * back (ENG-20), one that times out here fails like any other and does.
+ */
+export const POLLINATIONS_TIMEOUT_MS = 240_000;
+
 export async function generateImageWithPollinations(
   prompt: string,
-  aspectRatio: string = '1:1',
-  resolution: string = '2K',
+  aspectRatio: string,
+  resolution: string,
+  /** The routed provider model (model_providers.provider_model). Never defaulted. */
+  model: string,
 ): Promise<ImageGenerationResult> {
   const startTime = Date.now();
+  if (!model) return missingModel(startTime);
 
   try {
     if (!prompt || prompt.trim().length === 0) {
@@ -131,7 +142,10 @@ export async function generateImageWithPollinations(
       height: String(height),
       seed: String(seed),
       enhance: 'true',
-      model: 'flux',
+      model,
+      // Kept out of Pollinations' public feed: the prompt is in the URL, and
+      // a paid prompt's text is the artist's secret.
+      private: 'true',
     });
     // nologo is a paid-tier feature; asking for it anonymously is noise.
     if (token) params.set('nologo', 'true');
@@ -143,10 +157,13 @@ export async function generateImageWithPollinations(
     const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?${params.toString()}`;
 
     console.log(`[Pollinations] Generating image: ${width}x${height}${token ? ' (token)' : ' (anonymous)'}`);
-    console.log(`[Pollinations] Prompt: ${prompt.substring(0, 100)}...`);
+    // Length only: a paid prompt's text is the artist's secret, and logs are
+    // read by everyone with access to the deployment.
+    console.log(`[Pollinations] Prompt: ${prompt.length} chars`);
 
     // Fetch the image to get the buffer (Pollinations returns the image directly)
     const response = await fetch(imageUrl, {
+      signal: AbortSignal.timeout(POLLINATIONS_TIMEOUT_MS),
       headers: {
         'Accept': 'image/*',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -201,7 +218,7 @@ export async function generateImageWithPollinations(
       imageBuffers: [buffer],
       generationTime,
       metadata: {
-        model: 'pollinations-flux',
+        model,
         aspectRatio,
         resolution: measured ? `${measured.width}x${measured.height}` : null,
         requestedSize: `${width}x${height}`,

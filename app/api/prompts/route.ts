@@ -89,6 +89,8 @@ export async function GET(request: NextRequest) {
       // listing_status 'draft') showed up here immediately — an artist's
       // unfinished work, public to every beta user, listed as if for sale.
       .eq("is_listed", true)
+      // No 18+ pill on this list, so it always shows the safe view.
+      .eq("is_adult", false)
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
 

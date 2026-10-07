@@ -17,7 +17,7 @@ import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { requireAuth, checkRateLimit } from "@/lib/auth";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
-import { createNonceAccount } from "@/lib/payments/nonce";
+import { createNonceAccount, readNonce } from "@/lib/payments/nonce";
 import { feePayerKeypair, solanaConnection, feePayerBalance, usdcMint } from "@/lib/payments/solana";
 import { signAsEnki } from "@/lib/payments/authorize-tx";
 import {
@@ -109,7 +109,13 @@ export async function POST(req: NextRequest) {
         : { frontedMicro: 0, outstandingMicro: 0 },
     });
 
-    const { address, nonce } = await createNonceAccount(solanaConnection(), feePayerKeypair());
+    // A second /authorize for the same intent reuses its nonce account. A new
+    // one would orphan the first: nothing references it any more, so no sweep
+    // could ever close it and its rent would be gone.
+    const reused = intent.nonce_account ? await readNonce(solanaConnection(), intent.nonce_account) : null;
+    const { address, nonce } = reused && intent.nonce_account
+      ? { address: intent.nonce_account as string, nonce: reused }
+      : await createNonceAccount(solanaConnection(), feePayerKeypair());
 
     // Written BEFORE the transaction is built, because /submit rebuilds from
     // exactly these values and must not recompute them.

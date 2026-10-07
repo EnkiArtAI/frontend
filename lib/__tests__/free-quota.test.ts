@@ -6,8 +6,7 @@ function stub(result: { count?: number | null; error?: { message: string } | nul
   const calls: Record<string, unknown>[] = [];
   const chain = {
     select: () => chain,
-    eq: (col: string, val: unknown) => { calls.push({ eq: [col, val] }); return chain; },
-    is: (col: string, val: unknown) => { calls.push({ is: [col, val] }); return Promise.resolve(result) as never; },
+    eq: (col: string, val: unknown) => { calls.push({ eq: [col, val] }); return Promise.resolve(result) as never; },
   };
   return { client: { from: (t: string) => { calls.push({ from: t }); return chain; } }, calls };
 }
@@ -37,16 +36,14 @@ describe("freeQuotaFor", () => {
     expect(q.exhausted).toBe(true);
   });
 
-  it("counts unpaid rows for THIS user, and does not filter by provider", async () => {
-    // Filtering on provider = 'pollinations' would reset everyone's allowance
-    // the day the free provider changes.
+  it("counts THIS user's claims, not generations rows or a provider", async () => {
+    // generations rows were written after the response (parallel requests all
+    // read the same count) and paid renders lacked amount_paid_cents; a
+    // provider filter would reset everyone the day the free provider changes.
     const { client, calls } = stub({ count: 0, error: null });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await freeQuotaFor(client as any, "user-42");
-    expect(calls).toContainEqual({ from: "generations" });
-    expect(calls).toContainEqual({ eq: ["user_id", "user-42"] });
-    expect(calls).toContainEqual({ is: ["amount_paid_cents", null] });
-    expect(JSON.stringify(calls)).not.toContain("provider");
+    expect(calls).toEqual([{ from: "free_generation_claims" }, { eq: ["user_id", "user-42"] }]);
   });
 
   it("throws on a failed lookup instead of granting a free generation", async () => {
@@ -60,8 +57,8 @@ describe("freeQuotaFor", () => {
 
 import { freeGenerationDecision } from "@/lib/generation/free-quota";
 
-/** Stub covering both queries the decision issues: users.role, then the count. */
-function decisionStub(opts: { role?: string | null; roleError?: boolean; count?: number }) {
+/** Stub of what the decision issues: users.role, the claim, and the count when refused. */
+function decisionStub(opts: { role?: string | null; roleError?: boolean; count?: number; claimError?: boolean }) {
   const seen: string[] = [];
   const usersChain = {
     select: () => usersChain,
@@ -77,13 +74,19 @@ function decisionStub(opts: { role?: string | null; roleError?: boolean; count?:
           : { data: opts.role === undefined ? null : { role: opts.role }, error: null },
       ),
   };
-  const genChain = {
-    select: () => genChain,
-    eq: () => genChain,
-    is: () => Promise.resolve({ count: opts.count ?? 0, error: null }) as never,
+  let claims = opts.count ?? 0;
+  const claimChain = {
+    select: () => claimChain,
+    eq: () => Promise.resolve({ count: claims, error: null }) as never,
   };
   return {
-    from: (t: string) => { seen.push(t); return t === "users" ? usersChain : genChain; },
+    from: (t: string) => { seen.push(t); return t === "users" ? usersChain : claimChain; },
+    // The database's claim_free_generation: one claim while under the limit, else null.
+    rpc: (fn: string, args: { p_limit: number }) => {
+      seen.push(fn);
+      if (opts.claimError) return Promise.resolve({ data: null, error: { message: "boom" } });
+      return Promise.resolve({ data: claims < args.p_limit ? `claim-${++claims}` : null, error: null });
+    },
     seen,
   };
 }
@@ -101,22 +104,32 @@ describe("freeGenerationDecision", () => {
       const stub = decisionStub({ role, count: 999 });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const d = await freeGenerationDecision(stub as any, "kev");
-      expect(d).toEqual({ allowed: true, quota: null });
-      // and it never even counts — the exemption is not a large allowance
-      expect(stub.seen).not.toContain("generations");
+      expect(d).toEqual({ allowed: true, claimId: null });
+      // and it never even claims — the exemption is not a large allowance
+      expect(stub.seen).not.toContain("claim_free_generation");
     }
   });
 
   it("holds an ordinary account to the allowance", async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const under = await freeGenerationDecision(decisionStub({ role: "beta", count: 1 }) as any, "u");
-    expect(under.allowed).toBe(true);
-    expect(under.quota?.remaining).toBe(2);
+    expect(under).toEqual({ allowed: true, claimId: "claim-2" });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const over = await freeGenerationDecision(decisionStub({ role: "beta", count: 3 }) as any, "u");
-    expect(over.allowed).toBe(false);
-    expect(over).toMatchObject({ reason: "quota" });
+    expect(over).toMatchObject({ allowed: false, reason: "quota", quota: { used: 3, remaining: 0 } });
+  });
+
+  it("takes the allowance by claiming it, so a burst gets only what is left", async () => {
+    const stub = decisionStub({ role: "user", count: 1 });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const burst = await Promise.all(Array.from({ length: 10 }, () => freeGenerationDecision(stub as any, "u")));
+    expect(burst.filter((d) => d.allowed)).toHaveLength(2);
+  });
+
+  it("refuses when the claim itself fails, instead of granting a free render", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await expect(freeGenerationDecision(decisionStub({ role: "user", claimError: true }) as any, "u")).rejects.toThrow(/free claim failed/);
   });
 
   it("does not grant the team exemption when the role lookup fails", async () => {

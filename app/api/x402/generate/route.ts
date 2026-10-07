@@ -10,10 +10,10 @@
  * the X-PAYMENT header. We verify offline, co-sign, submit with preflight,
  * generate, and answer with the image plus X-PAYMENT-RESPONSE.
  *
- *   GET  /api/x402/generate                    → 402 requirements (probe)
+ *   GET  /api/x402/generate?modelFamily=…      → 402 requirements (probe)
  *   POST /api/x402/generate                    → 402 without X-PAYMENT
- *        { prompt } or { promptId, variableValues? }, plus optional
- *        { modelFamily, resolution, aspectRatio, quality }
+ *        { prompt } or { promptId, variableValues? }, plus the model
+ *        { modelFamily } and optional { resolution, aspectRatio, quality }
  *   POST + X-PAYMENT                           → settle, generate, 200
  *
  * Prices are THE SAME ladders humans pay. Since 2026-08-24 (Kev: "i want
@@ -34,31 +34,39 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { computeQuote } from "@/lib/payments/generation-quote";
+import { checkAgentPromptInputs } from "@/lib/generation/agent-prompt-inputs";
 import {
   getModelCostMicro, computeGenerationSplit, UnknownModelError,
 } from "@/lib/payments/generation-pricing";
-import { usdcMint, feePayerKeypair, solanaConnection, solanaChainKey } from "@/lib/payments/solana";
+import { usdcMint, feePayerKeypair, solanaConnection, solanaChainKey, broadcastAndConfirm } from "@/lib/payments/solana";
+import bs58 from "bs58";
 import { effectiveQuality } from "@/lib/pricing";
+import { reportPriceDrift } from "@/lib/generation/price-drift";
 import {
-  parseXPayment, verifyAgentPayment, cosignAsFeePayer, submitAndConfirm, paymentResponseHeader,
+  parseXPayment, verifyAgentPayment, cosignAsFeePayer, simulatePayment, paymentLanded, submitAndConfirm, paymentResponseHeader,
 } from "@/lib/payments/x402-settle";
 import { checkAndRecordSolanaSignature } from "@/backend/solana-x402-verifier";
 import { isSolanaChain } from "@/shared/payment-config";
-import { decryptPrompt } from "@/backend/encryption";
+import { loadPromptText, fillVariables, inputsUnmatched, VALUE_MAX } from "@/lib/generation/prompt-text";
+import { checkPrompt, NOT_CHECKED, textValues } from "@/lib/moderation/prompt-check";
+import { recordGenerationFailure } from "@/lib/generation/record";
+import { addressWarnedOut, addressWarningMessage, byAddress, recordWarning } from "@/lib/moderation/warnings";
+import { childSafetyScore, recordModerationEvent } from "@/lib/moderation-enforcement";
+import { agentBlocked, recordExtractionHit, silentFailure } from "@/lib/moderation/extraction-hits";
 import { findMissingAtas } from "@/lib/payments/authorize-flow";
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 import { TransactionMessage, VersionedTransaction } from "@solana/web3.js";
-import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
+import { moderate, screenFirst, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { resolveModelByFamily, chooseRoute } from "@/lib/generation/models";
 import { clampTier } from "@/lib/generation/resolution";
 import { reportSuccess, reportFailure } from "@/lib/generation/provider-health";
-import { storeGeneratedImage } from "@/lib/generation/derivative-store";
+import { INLINE_MAX_BYTES, storeDeadline, storeGeneratedImage } from "@/lib/generation/derivative-store";
 import { generateImagesWithWaveSpeed } from "@/backend/services/wavespeed-image-generation";
 import { generateImagesWithOpenAI } from "@/backend/services/openai-image-generation";
 import { generateImagesWithGemini } from "@/backend/services/gemini-image-generation";
-import { generateImageWithPollinations } from "@/backend/services/pollinations-image-generation";
 import type { ImageGenerationRequest } from "@/backend/services/types";
 import { PublicKey } from "@solana/web3.js";
+import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 
 export const maxDuration = 300;
 
@@ -67,12 +75,16 @@ const RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9",
 const bodySchema = z.object({
   prompt: z.string().trim().min(1).max(4000).optional(),
   promptId: z.string().uuid().optional(),
-  variableValues: z.record(z.string(), z.string().max(2000)).optional(),
-  modelFamily: z.string().trim().max(64).default("nano-banana-pro"),
+  variableValues: z.record(z.string(), z.string().max(VALUE_MAX)).optional(),
+  // Required: an agent that names no model gets a refusal, never a default
+  // one (Kev, 2026-10-02: "NIEMALS IRGENDEIN standardmodell").
+  modelFamily: z.string({ error: "modelFamily is required" }).trim().min(1, "modelFamily is required").max(64),
   resolution: z.enum(["1K", "2K", "4K"]).default("2K"),
-  aspectRatio: z.string().trim().max(8).default("1:1"),
+  aspectRatio: z.enum(RATIOS).default("1:1"),
   quality: z.enum(["low", "medium", "high"]).optional(),
-}).refine((v) => v.prompt || v.promptId, { message: "Send prompt or promptId" });
+}).refine((v) => Boolean(v.prompt) !== Boolean(v.promptId), { message: "Send prompt or promptId, not both" })
+  // Values for a plain prompt would be paid for and never read.
+  .refine((v) => Boolean(v.promptId) || Object.keys(v.variableValues ?? {}).length === 0, { message: "variableValues needs a promptId" });
 
 type Input = z.infer<typeof bodySchema>;
 
@@ -96,8 +108,37 @@ interface Priced {
    * settle with, so the artist is paid by the buyer's own transaction.
    */
   legs: Array<{ recipient: string; amountMicro: number }>;
+  /** A marketplace prompt's filled text, for settlement; it never goes into the 402 body. */
+  prompt?: { text: string; adult: boolean; paid: boolean };
 }
 type Requirements = Priced | { status: 400 | 404 | 422 | 500 | 503; body: { error: string } };
+
+/**
+ * A marketplace prompt's text filled with the agent's values, or why not.
+ * Only a live prompt is for sale, and every value must belong to a declared
+ * variable, fit it and land in a slot, so an agent never pays for an input
+ * that is ignored (agent-prompt-inputs). The 402 and settlement refuse the
+ * same requests. The text never leaves the server.
+ */
+async function agentPrompt(
+  supabase: ReturnType<typeof getSupabaseServerClient>,
+  promptId: string,
+  values: Input["variableValues"],
+): Promise<{ ok: true; text: string; adult: boolean; paid: boolean } | { ok: false; status: 400 | 404 | 422 | 500; error: string }> {
+  const inputs = await checkAgentPromptInputs(supabase, promptId, values);
+  if (!inputs.ok) return { ok: false, status: inputs.status as 400 | 404 | 500, error: inputs.error };
+  const text = await loadPromptText(supabase, promptId);
+  if (!text.ok) return text;
+  const filled = fillVariables(text.text, Object.fromEntries(inputs.values), inputs.variables);
+  if (inputsUnmatched(filled)) {
+    return { ok: false, status: 422, error: "This prompt's inputs could not be matched to its text — nothing was charged" };
+  }
+  // Every value is a declared variable's, so one that no slot takes would be paid for and dropped.
+  if (filled.unused.length > 0) {
+    return { ok: false, status: 422, error: `This prompt's text has no place for ${filled.unused.join(", ")} — nothing was charged` };
+  }
+  return { ok: true, text: filled.text, adult: text.adult, paid: inputs.paid };
+}
 
 /** The 402 body, in the x402 ecosystem's shape — Solana-first by decree. */
 async function requirementsFor(input: Input): Promise<Requirements> {
@@ -107,8 +148,14 @@ async function requirementsFor(input: Input): Promise<Requirements> {
   let amountMicro: number;
   let legs: Priced["legs"];
   let description: string;
+  let prompt: Priced["prompt"];
   if (input.promptId) {
     const supabase = getSupabaseServerClient();
+    // Refused here, so the 402 probe already says no, and no payment is ever
+    // asked for a draft or for inputs a paid prompt does not take.
+    const filled = await agentPrompt(supabase, input.promptId, input.variableValues);
+    if (!filled.ok) return { status: filled.status, body: { error: filled.error } };
+    prompt = { text: filled.text, adult: filled.adult, paid: filled.paid };
     const quote = await computeQuote(supabase, {
       promptId: input.promptId,
       modelFamily: input.modelFamily,
@@ -145,6 +192,7 @@ async function requirementsFor(input: Input): Promise<Requirements> {
     status: 402,
     amountMicro,
     legs,
+    prompt,
     body: {
       x402Version: 1,
       error: "X-PAYMENT header is required",
@@ -183,7 +231,12 @@ function rejectPayment(reqs: Priced, error: string) {
   return NextResponse.json({ ...reqs.body, error }, { status: 402 });
 }
 
-async function settleAndGenerate(input: Input, paymentHeader: string): Promise<NextResponse> {
+async function settleAndGenerate(input: Input, paymentHeader: string, request: NextRequest): Promise<NextResponse> {
+  // The clock maxDuration runs on; the image must be stored inside it.
+  const startedAt = Date.now();
+  // Warnings and hits here count on the address alone: this rail never reads
+  // an account's ban, so one filed on an account would stop nobody.
+  const asker = byAddress(request);
   // ── Everything refusable is refused BEFORE money moves ──────────────────
   let feePayer;
   try {
@@ -198,6 +251,20 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
   const reqs = await requirementsFor(input);
   if (reqs.status !== 402) return NextResponse.json(reqs.body, { status: reqs.status });
 
+  // ── Verify the agent's transaction offline, before anything is judged ──
+  // Free, and the same answer for everyone: a header that is not a signed
+  // transaction paying exactly these legs is refused here, so it can no
+  // longer buy a metered prompt check or the address lookups below (Kev,
+  // 2026-10-06). Moved up from after the routing, unchanged.
+  const parsed = parseXPayment(paymentHeader);
+  if (!parsed.ok) return rejectPayment(reqs, parsed.error);
+  const verified = verifyAgentPayment(parsed.tx, {
+    legs: reqs.legs.map((l) => ({ owner: new PublicKey(l.recipient), amountMicro: l.amountMicro })),
+    mint: usdcMint(),
+    feePayer: feePayer.publicKey,
+  });
+  if (!verified.ok) return rejectPayment(reqs, verified.error);
+
   const supabase = getSupabaseServerClient();
 
   // Prompt text: sent directly, or loaded from the prompt row. A PAID
@@ -206,37 +273,64 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
   // generation, not the text (Kev, 2026-08-24: "i want agents to purchase
   // artists prompts"). Free/showcase prompts read their public text.
   let promptText = input.prompt ?? "";
-  if (input.promptId) {
-    const { data: row, error } = await supabase
-      .from("prompts")
-      .select("public_prompt_text, encrypted_content, encrypted_content_iv, encrypted_content_tag, encrypted_content_kid")
-      .eq("id", input.promptId)
-      .maybeSingle();
-    if (error || !row) return NextResponse.json({ error: "Failed to load prompt" }, { status: 500 });
-    if (row.encrypted_content) {
-      try {
-        promptText = decryptPrompt({
-          encryptedContent: String(row.encrypted_content),
-          iv: String(row.encrypted_content_iv ?? ""),
-          authTag: String(row.encrypted_content_tag ?? ""),
-          kid: row.encrypted_content_kid ? String(row.encrypted_content_kid) : undefined,
-        });
-      } catch {
-        promptText = "";
-      }
-    }
-    if (!promptText.trim()) promptText = row.public_prompt_text ?? "";
-    if (!promptText.trim()) {
-      return NextResponse.json({ error: "This prompt has no readable text to generate from" }, { status: 422 });
-    }
-    if (input.variableValues) {
-      // Same [name] slots the human UI fills.
-      promptText = promptText.replace(/\[([^\]\n]+)\]/g, (m, name: string) =>
-        input.variableValues?.[name] ?? m);
-    }
+  let promptAdult = false;
+  // Whether the text the values fill is one the agent must not see, whatever
+  // the artist charges for it: a paid prompt at 0 cents is still secret.
+  let hidden = false;
+  // Filled and checked by requirementsFor above, in this same request.
+  if (reqs.prompt) {
+    promptText = reqs.prompt.text;
+    promptAdult = reqs.prompt.adult;
+    hidden = reqs.prompt.paid;
   }
 
-  const verdict = await moderate({ prompt: promptText, surface: "x402-generate" });
+  // What the request asks for, judged before any payment: for a marketplace
+  // prompt the agent's values only (an artist's text never goes out for
+  // this), otherwise the whole prompt. An address with enough hits gets no
+  // more; explicit and child-safety requests get a warning, everything else
+  // that is refused reads like any failure.
+  // A blocked address, like a caught request, fails silently once its
+  // payment is simulated (below); a junk header never gets this far.
+  const blocked = (await agentBlocked(supabase, request)) || (await addressWarnedOut(supabase, request));
+  const checked = input.promptId ? textValues(input.variableValues) : { prompt: promptText };
+  // A blocked address is still judged, so its answers and their timing match
+  // everyone else's up to the silent point; only its hits are not recorded.
+  // The regex first: what Tier 1 refuses never reaches the chat model, and
+  // its refusal is this request's moderation verdict (Kev, 2026-10-06).
+  const first = screenFirst(checked);
+  const check = first ? NOT_CHECKED : await checkPrompt(checked, { hidden });
+  if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
+    await recordWarning(supabase, {
+      surface: "x402-generate", request: asker, category: check.verdict, text: JSON.stringify(checked), confidence: check.confidence,
+      ...(input.promptId ? { promptId: input.promptId } : {}),
+    });
+    return NextResponse.json({ error: addressWarningMessage(check.verdict) }, { status: 422 });
+  }
+  if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
+  const silent = blocked || check.verdict !== "clear";
+
+  // For a marketplace prompt the check saw only the agent's values, so tier 2
+  // keeps its sexual flag for the artist's text, unless the prompt is marked
+  // 18+: its save already judged that text 18+ and not explicit.
+  const verdict = first ?? await moderate({ prompt: promptText, surface: "x402-generate", adultJudged: !input.promptId || promptAdult });
+  // A child-safety hit counts on the requester's ladder, where it stops an
+  // address at once; an agent's own prompt too, since this rail has no
+  // account to ban for good. The warning is the hit's one record.
+  const minors = !verdict.allowed ? childSafetyScore(verdict) : null;
+  if (minors !== null) {
+    await recordWarning(supabase, {
+      surface: "x402-generate", request: asker, category: "minor_sexual", text: JSON.stringify(checked), confidence: minors, scores: verdict.scores,
+      ...(input.promptId ? { promptId: input.promptId } : {}),
+    });
+    return NextResponse.json({ error: addressWarningMessage("minor_sexual") }, { status: 422 });
+  }
+  // Every other decision is recorded as on the human rail, on the address: a
+  // child-safety case below the auto-ban line goes to a human, and the
+  // passes are the control group. A marketplace prompt is named, never quoted.
+  after(recordModerationEvent(verdict, {
+    surface: "x402-generate", request: asker,
+    ...(input.promptId ? { prompt: JSON.stringify(checked), promptId: input.promptId } : { prompt: promptText }),
+  }));
   if (!verdict.allowed) {
     return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
   }
@@ -254,16 +348,15 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
   if (!route) {
     return NextResponse.json({ error: "No healthy route for this model right now — retry shortly" }, { status: 503 });
   }
-
-  // ── Verify the agent's transaction offline ──────────────────────────────
-  const parsed = parseXPayment(paymentHeader);
-  if (!parsed.ok) return rejectPayment(reqs, parsed.error);
-  const verified = verifyAgentPayment(parsed.tx, {
-    legs: reqs.legs.map((l) => ({ owner: new PublicKey(l.recipient), amountMicro: l.amountMicro })),
-    mint: usdcMint(),
-    feePayer: feePayer.publicKey,
-  });
-  if (!verified.ok) return rejectPayment(reqs, verified.error);
+  // A paid request never falls back to a guessed model (Kev, 2026-09-22) and
+  // never lands on a host this route cannot call or on the free Flux host:
+  // both are refused here, before any money moves.
+  if (!["gemini", "wavespeed", "openai"].includes(route.provider)) {
+    return NextResponse.json({ error: "This model is not available on a paid host right now — nothing was charged" }, { status: 503 });
+  }
+  if (!route.providerModel) {
+    return NextResponse.json({ error: "This model has no provider model configured — nothing was charged" }, { status: 503 });
+  }
 
   // A leg can point at a wallet with no USDC account yet (a new artist).
   // TransferChecked to a missing ATA fails the whole payment, so the fee
@@ -285,14 +378,13 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
           mint,
         ),
       );
-      const { blockhash } = await conn.getLatestBlockhash("confirmed");
+      const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash("confirmed");
       const msg = new TransactionMessage({
         payerKey: feePayer.publicKey, recentBlockhash: blockhash, instructions: ixs,
       }).compileToV0Message();
       const fronted = new VersionedTransaction(msg);
       fronted.sign([feePayer]);
-      const sig = await conn.sendRawTransaction(Buffer.from(fronted.serialize()), { maxRetries: 3 });
-      await conn.confirmTransaction(sig, "confirmed");
+      await broadcastAndConfirm(conn, fronted.serialize(), bs58.encode(fronted.signatures[0]), { lastValidBlockHeight, timeoutMs: 30_000, maxRetries: 3 });
       console.warn(`[x402] fronted ${missing.length} USDC account(s) for payment legs — rent on the fee payer`);
     }
   } catch (e) {
@@ -310,6 +402,30 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
   if (!isSolanaChain(chainKey)) {
     return NextResponse.json({ error: "Deployment chain is not Solana" }, { status: 503 });
   }
+  // Every payment is simulated with signature checks before anything else
+  // is decided, and an unpayable one is refused here, the same way whether or
+  // not the request was caught.
+  const simulated = await simulatePayment(solanaConnection(), parsed.tx);
+  // A payment that already landed is answered as the replay it is, so an
+  // agent retrying after a timeout is not told to pay again. One lookup, the
+  // signature history, which also covers the recent cache, and which counts
+  // only a payment that landed without an error.
+  if (!simulated.ok && (await paymentLanded(solanaConnection(), signature))) {
+    return NextResponse.json({ error: "This payment transaction was already settled", transaction: signature }, { status: 409 });
+  }
+  if (!simulated.ok) {
+    return NextResponse.json({ error: simulated.error, transaction: signature }, { status: 402 });
+  }
+  // Refused silently: nothing is settled. A real failure only happens after
+  // settlement, so a paying agent can still tell a failure from an image, as
+  // with any check; every caught probe is recorded and the third blocks the
+  // address (agentBlocked).
+  if (silent) {
+    if (!blocked && check.verdict === "extraction") {
+      after(recordExtractionHit(supabase, { surface: "x402-generate", request: asker, values: checked, confidence: check.confidence, promptId: input.promptId }));
+    }
+    return silentFailure();
+  }
   const replay = await checkAndRecordSolanaSignature(signature, chainKey, "x402-agent-generate");
   if (!replay.isNew) {
     return NextResponse.json(
@@ -319,20 +435,32 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
   }
   const settled = await submitAndConfirm(solanaConnection(), parsed.tx);
   if (!settled.ok) {
-    // Preflight/on-chain rejection means no funds moved; a confirmation
-    // timeout is the one ambiguous case, so the signature travels with the
-    // error for the agent to check.
-    const timedOut = settled.error.includes("Timed out");
+    // A rejection (preflight, on chain, expired) means no funds moved; every
+    // other failure is pending, the payment may still land, so the signature
+    // travels with the error for the agent to check.
+    if (settled.pending) {
+      // The payment may still land with no image for it: recorded with its
+      // signature so support can make it right.
+      after(recordGenerationFailure(supabase, {
+        request, surface: "x402-generate", modelId: model.id, resolution: input.resolution, quality: effQuality, boost: false,
+        aspectRatio: input.aspectRatio ?? null, referenceImageCount: 0,
+        prompt: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
+        error: "Payment outcome unknown", txSignature: signature,
+      }));
+    }
     return NextResponse.json(
       { error: settled.error, transaction: signature },
-      { status: timedOut ? 504 : 402 },
+      { status: settled.pending ? 504 : 402 },
     );
   }
 
   // ── Paid work: one provider call on the routed host ─────────────────────
-  const ratio = (RATIOS as readonly string[]).includes(input.aspectRatio) ? input.aspectRatio : "1:1";
+  const ratio = input.aspectRatio;
   const genRequest: ImageGenerationRequest = {
     prompt: promptText,
+    // The routed model, exactly as the human route sends it. Without it every
+    // adapter used to fall back to its own default model.
+    modelVersion: route.providerModel,
     aspectRatio: ratio as ImageGenerationRequest["aspectRatio"],
     imageSize: model.supportsResolution
       ? clampTier(input.resolution, route.provider, route.providerModel)
@@ -343,7 +471,6 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
   const result =
     route.provider === "wavespeed" ? await generateImagesWithWaveSpeed(genRequest)
     : route.provider === "openai" ? await generateImagesWithOpenAI(genRequest)
-    : route.provider === "pollinations" ? await generateImageWithPollinations(promptText, ratio, input.resolution)
     : await generateImagesWithGemini(genRequest);
 
   const buffer = result.success ? result.imageBuffers?.[0] : undefined;
@@ -351,10 +478,19 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
     if (route.modelProviderId && route.providerId) {
       after(reportFailure(getSupabaseServerClient(), route.modelProviderId, route.providerId, result.error || "generation failed"));
     }
+    // The agent paid and got nothing: recorded with the signature so support can make it right.
+    after(recordGenerationFailure(supabase, {
+      request, surface: "x402-generate", modelId: model.id, resolution: input.resolution, quality: effQuality, boost: false,
+      aspectRatio: ratio, referenceImageCount: 0,
+      // For a marketplace prompt only the agent's values: an artist's text is never stored with a failure.
+      prompt: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
+      error: result.error || "generation failed", txSignature: signature,
+    }));
     // The payment settled; hiding that would be worse than the failure.
     return NextResponse.json(
       {
-        error: result.error || "Image generation failed after your payment settled.",
+        // A fixed sentence: the provider's own text would differ from case to case.
+        error: "Image generation failed after your payment settled.",
         transaction: signature,
         note: "Keep this transaction signature — support will make it right.",
       },
@@ -364,9 +500,36 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
   if (route.modelProviderId && route.providerId) {
     after(reportSuccess(getSupabaseServerClient(), route.modelProviderId, route.providerId));
   }
+  if (typeof result.usage?.costUsd === "number") {
+    after(reportPriceDrift(supabase, {
+      provider: route.provider,
+      modelFamily: input.modelFamily,
+      resolution: input.resolution,
+      quality: effQuality,
+      observedUsd: result.usage.costUsd,
+    }));
+  }
 
   const dataUrl = `data:image/png;base64,${buffer.toString("base64")}`;
-  const stored = await storeGeneratedImage(dataUrl, "x402-agent");
+  const stored = await storeGeneratedImage(dataUrl, "x402-agent", storeDeadline(startedAt));
+  // Not stored by the deadline: inline only while it fits the response cap,
+  // or the agent that paid would get HTTP 413 instead of its image.
+  if (stored.imageUrl === dataUrl && buffer.length > INLINE_MAX_BYTES) {
+    after(recordGenerationFailure(supabase, {
+      request, surface: "x402-generate", modelId: model.id, resolution: input.resolution, quality: effQuality, boost: false,
+      aspectRatio: ratio, referenceImageCount: 0,
+      prompt: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
+      error: "image could not be stored", txSignature: signature,
+    }));
+    return NextResponse.json(
+      {
+        error: "Your image was made but could not be delivered after your payment settled.",
+        transaction: signature,
+        note: "Keep this transaction signature — support will make it right.",
+      },
+      { status: 502 },
+    );
+  }
 
   return NextResponse.json(
     {
@@ -382,10 +545,23 @@ async function settleAndGenerate(input: Input, paymentHeader: string): Promise<N
   );
 }
 
+/**
+ * This route is public (proxy.ts) and every paying request costs a metered
+ * prompt check: agents hold no session, so the address is the only handle
+ * (Kev, 2026-10-06).
+ */
+function ipLimited(req: NextRequest): NextResponse | null {
+  const limit = checkRequestRateLimit(rateLimitKey(req, "x402:ip"), 60, 60_000);
+  return limit.allowed ? null : rateLimitResponse(limit.retryAfterSeconds);
+}
+
 export async function GET(req: NextRequest) {
+  const limited = ipLimited(req);
+  if (limited) return limited;
+  const promptId = req.nextUrl.searchParams.get("promptId") ?? undefined;
   const parsed = bodySchema.safeParse({
-    prompt: req.nextUrl.searchParams.get("prompt") ?? "probe",
-    promptId: req.nextUrl.searchParams.get("promptId") ?? undefined,
+    prompt: req.nextUrl.searchParams.get("prompt") ?? (promptId ? undefined : "probe"),
+    promptId,
     modelFamily: req.nextUrl.searchParams.get("modelFamily") ?? undefined,
     resolution: req.nextUrl.searchParams.get("resolution") ?? undefined,
   });
@@ -395,13 +571,15 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const limited = ipLimited(req);
+  if (limited) return limited;
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid request" }, { status: 400 });
   }
 
   const payment = req.headers.get("X-PAYMENT");
-  if (payment) return settleAndGenerate(parsed.data, payment);
+  if (payment) return settleAndGenerate(parsed.data, payment, req);
 
   const r = await requirementsFor(parsed.data);
   return NextResponse.json(r.body, { status: r.status });

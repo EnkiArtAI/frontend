@@ -42,11 +42,14 @@ interface SidebarProps {
   onLogoff?: () => void;
   theme: ThemeId;
   setTheme: (t: ThemeId) => void;
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
 }
 
 export default function EnkiSidebar({
   nav, active, onNav, rail, onCreate, onCreate2, nodeActive, onRefer, onFeedback, guest = false,
   account, onToggleCollapse, collapsed, balance, onProfile, onTopUp, onLogoff, theme, setTheme,
+  mobileOpen = false, onCloseMobile,
 }: SidebarProps) {
   const [colorOpen, setColorOpen] = useState(false);
   const colorRef = useRef<HTMLDivElement>(null);
@@ -82,7 +85,17 @@ export default function EnkiSidebar({
   }, [burgerOpen]);
 
   return (
-    <aside className="ek-sidebar">
+    <aside className={"ek-sidebar" + (mobileOpen ? " ek-sidebar--mobile-open" : "")}>
+      {onCloseMobile && (
+        <button
+          className="ek-sidebar-mobile-close"
+          type="button"
+          onClick={onCloseMobile}
+          aria-label="Close menu"
+        >
+          <Icon name="x" size={16} stroke={2.4} />
+        </button>
+      )}
       <button
         className="ek-collapse-btn"
         type="button"
@@ -215,11 +228,16 @@ export default function EnkiSidebar({
               <span className="ek-account-nametext">{clip10(account.name)}</span>
               <span className="ek-account-handle">@{clip10(account.handle)}</span>
             </span>
-            {/* money + log off stacked at the far right — long names stay clear */}
+            {/* money + log off stacked at the far right — long names stay clear.
+                No balance chip for guests: $0 opened the payment settings for
+                someone who cannot pay yet — login comes first (Kev,
+                2026-08-24). */}
             <span className="ek-account-side">
-              <span className="ek-balance" onClick={(e) => { e.stopPropagation(); onTopUp(); }} title="Add funds">
-                <Icon name="dollar" size={11} stroke={2.4} />{balance.toFixed(2)}
-              </span>
+              {!guest && (
+                <span className="ek-balance" onClick={(e) => { e.stopPropagation(); onTopUp(); }} title="Add funds">
+                  <Icon name="dollar" size={11} stroke={2.4} />{balance.toFixed(2)}
+                </span>
+              )}
               {onLogoff && (
                 <button
                   className="ek-logoff"

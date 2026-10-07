@@ -20,6 +20,7 @@
  * maps from our 1K/2K/4K tier, which is the only quality control the UI has.
  */
 import type { ImageGenerationRequest, ImageGenerationResult } from './types';
+import { missingModel } from './model-required';
 import { readImageDimensions } from './gemini-image-generation';
 import { referenceImageLimit } from '@/lib/generation/provider-capabilities';
 import { normalizeTier } from '@/lib/generation/resolution';
@@ -175,6 +176,8 @@ export async function generateImagesWithOpenAI(
   request: ImageGenerationRequest,
 ): Promise<ImageGenerationResult> {
   const startTime = Date.now();
+  const model = request.modelVersion;
+  if (!model) return missingModel(startTime);
   const apiKey = (process.env.OPENAI_API_KEYS || process.env.OPENAI_API_KEY || '')
     .split(',')[0]
     ?.trim();
@@ -209,7 +212,6 @@ export async function generateImagesWithOpenAI(
     };
   }
 
-  const model = request.modelVersion || 'gpt-image-2';
   const size = sizeFor(request.aspectRatio, request.imageSize);
   // The user's choice wins. Deriving it from the resolution tier was a guess:
   // size and quality are separate parameters here, and quality is the one that
@@ -262,7 +264,17 @@ export async function generateImagesWithOpenAI(
       };
     }
 
-    const json = (await res.json()) as { data?: { b64_json?: string; url?: string }[] };
+    const json = (await res.json()) as {
+      data?: { b64_json?: string; url?: string }[];
+      usage?: { output_tokens?: number; output_tokens_details?: { image_tokens?: number } };
+    };
+    /* The bill for THIS image: gpt-image bills image output tokens at $30/1M
+       (official rate, confirmed 2026-08-24). Carried out so the runtime
+       price-drift detector can compare it with what we charge. */
+    const imageOutputTokens = json.usage?.output_tokens_details?.image_tokens ?? json.usage?.output_tokens;
+    const usage = typeof imageOutputTokens === 'number'
+      ? { imageOutputTokens, costUsd: (imageOutputTokens * 30) / 1_000_000 }
+      : undefined;
     const first = json.data?.[0];
     // gpt-image models always answer with base64 — there is no url to follow.
     if (!first?.b64_json) {
@@ -279,6 +291,7 @@ export async function generateImagesWithOpenAI(
 
     return {
       success: true,
+      usage,
       imageBuffers: [buffer],
       generationTime: Date.now() - startTime,
       metadata: {

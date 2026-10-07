@@ -26,10 +26,11 @@
  * forged client signature fails simulation before anything lands.
  */
 import {
-  Connection, Keypair, PublicKey, VersionedTransaction,
+  Connection, Keypair, PublicKey, Transaction, VersionedTransaction,
 } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import bs58 from "bs58";
+import { broadcastAndConfirm, Rejected } from "@/lib/payments/solana";
 
 const COMPUTE_BUDGET_PROGRAM = "ComputeBudget111111111111111111111111111111";
 const MEMO_PROGRAM = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
@@ -211,32 +212,65 @@ export function cosignAsFeePayer(tx: VersionedTransaction, feePayer: Keypair): s
 }
 
 /**
+ * Simulate the co-signed payment with signature checks, before anything about
+ * the request is decided. verifyAgentPayment checks the transaction's shape
+ * only, so a forged signature or an empty payer would otherwise first fail at
+ * submission, which a refused request never reaches: the answer to an
+ * unpayable payment told a refused request from a clean one, for free.
+ */
+export async function simulatePayment(
+  connection: Connection,
+  tx: VersionedTransaction,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const { value } = await connection.simulateTransaction(tx, { sigVerify: true, commitment: "confirmed" });
+    return value.err ? { ok: false, error: `Transaction simulation failed: ${JSON.stringify(value.err)}` } : { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Transaction simulation failed" };
+  }
+}
+
+/**
+ * Whether a payment already landed on chain without an error. Simulation says
+ * AlreadyProcessed only while the transaction's blockhash is in the status
+ * cache (about a minute); after that it says BlockhashNotFound, so a retry
+ * after a timeout must look the signature up in the history instead.
+ */
+export async function paymentLanded(connection: Connection, signature: string): Promise<boolean> {
+  try {
+    const { value } = await connection.getSignatureStatuses([signature], { searchTransactionHistory: true });
+    return Boolean(value[0] && !value[0].err);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Submit WITH preflight (unlike the durable-nonce rails): this is a normal
  * recent-blockhash transaction, and preflight simulation is what rejects a
  * forged client signature or an empty payer balance before anything lands.
+ *
+ * The signature is fixed before the send and travels with every outcome. A
+ * send that failed in transit, or was answered "already processed" after a
+ * failover, is confirmed rather than believed (broadcastAndConfirm). Only a
+ * rejection means nothing moved; anything else is pending: it may yet land.
  */
+export type SubmitOutcome =
+  | { ok: true; signature: string }
+  | { ok: false; error: string; pending: boolean; signature: string };
+
 export async function submitAndConfirm(
   connection: Connection,
-  tx: VersionedTransaction,
+  tx: VersionedTransaction | Transaction,
   timeoutMs = 45_000,
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  let signature: string;
+): Promise<SubmitOutcome> {
+  const signature = bs58.encode(tx instanceof VersionedTransaction ? tx.signatures[0] : tx.signature!);
   try {
-    signature = await connection.sendRawTransaction(Buffer.from(tx.serialize()), { maxRetries: 3 });
+    await broadcastAndConfirm(connection, tx.serialize(), signature, { timeoutMs, maxRetries: 3 });
+    return { ok: true, signature };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Transaction submission failed" };
+    return { ok: false, error: e instanceof Error ? e.message : "Transaction submission failed", pending: !(e instanceof Rejected), signature };
   }
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const st = await connection.getSignatureStatuses([signature]);
-    const s = st.value[0];
-    if (s?.err) return { ok: false, error: `Transaction failed on-chain: ${JSON.stringify(s.err)}` };
-    if (s && (s.confirmationStatus === "confirmed" || s.confirmationStatus === "finalized")) {
-      return { ok: true };
-    }
-    await new Promise((r) => setTimeout(r, 1_500));
-  }
-  return { ok: false, error: "Timed out waiting for confirmation" };
 }
 
 /** The X-PAYMENT-RESPONSE header body the spec asks for on success. */

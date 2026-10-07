@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import SettingsSection from "@/components/settings/SettingsSection";
 import BillingPanel from "@/components/settings/BillingPanel";
+import SendUsdcPanel from "@/components/settings/SendUsdcPanel";
 
 interface Earnings {
   earnings: { total: number; thisMonth: number };
@@ -299,13 +300,22 @@ export default function PaymentPanel({ focusRamp = false }: { focusRamp?: boolea
       </SettingsSection>
       </div>
 
-      {/* ── 03 · Deposit crypto (wallet users only) ── */}
+      {/* ── 03 · Send USDC (the user's own money, to any Solana wallet) ── */}
+      <SettingsSection num="03" title="Send USDC">
+        {address ? (
+          <SendUsdcPanel fromAddress={address} />
+        ) : (
+          <div className="set-section-desc" style={{ paddingBottom: 16 }}>Sign in to send USDC from your wallet.</div>
+        )}
+      </SettingsSection>
+
+      {/* ── 04 · Deposit crypto (wallet users only) ── */}
       <BillingPanel />
 
-      {/* ── 04 · Networks (collapsed by default) ── */}
+      {/* ── 05 · Networks (collapsed by default) ── */}
       <details className="set-section set-networks">
         <summary>
-          <span><span className="set-section-num" style={{ marginRight: 12 }}>04</span>Networks</span>
+          <span><span className="set-section-num" style={{ marginRight: 12 }}>05</span>Networks</span>
           <ChevronDown size={16} className="set-chevron" />
         </summary>
         <div className="set-section-desc" style={{ paddingBottom: 12 }}>
@@ -338,6 +348,15 @@ export default function PaymentPanel({ focusRamp = false }: { focusRamp?: boolea
           <div className="set-item-content">
             <div className="set-item-title">Ethereum <span className="set-badge-warn">Coming soon</span></div>
             <div className="set-item-sub">For collectors who live there.</div>
+          </div>
+        </div>
+        {/* LUKSO is the achievements chain (Solana pays, LUKSO remembers)
+            — listed as coming so the plan is visible (Kev, 2026-08-24). */}
+        <div className="set-list-item" style={{ opacity: 0.6 }}>
+          <div className="set-item-icon">◈</div>
+          <div className="set-item-content">
+            <div className="set-item-title">LUKSO <span className="set-badge-warn">Coming soon</span></div>
+            <div className="set-item-sub">Achievements and creator identity will live here.</div>
           </div>
         </div>
       </details>

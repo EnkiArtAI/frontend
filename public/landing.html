@@ -198,6 +198,10 @@
   input[type="text"], input[type="email"], input[type="password"],
   input[type="search"], input[type="number"], input[type="tel"], input[type="url"],
   textarea { cursor: text !important; }
+  /* The backdrop carries onclick (click-away closes), which the rule above
+     turned into a pointer over every empty inch of the modal — empty space
+     must not beckon (Kev, 2026-08-24). Closing by click still works. */
+  #authBackdrop, .auth-backdrop { cursor: default !important; }
 
   /* CUSTOM CURSOR */
   .cursor { display:none; }
@@ -2164,7 +2168,7 @@
   /* ══ AUTH MODAL ══ */
   .auth-backdrop {
     position: fixed; inset: 0; z-index: 2000;
-    background: rgba(0,4,24,0.75); backdrop-filter: blur(10px);
+    background: rgba(0,4,24,0.75); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
     display: none; align-items: center; justify-content: center;
     padding: 20px;
   }
@@ -2193,7 +2197,9 @@
     width: 30px; height: 30px; padding: 0; margin: -14px -22px 0 auto;
     border: 1px solid rgba(var(--lp-text-rgb),0.16); border-radius: 50%;
     background: rgba(18,18,24,0.94); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
-    color: rgba(var(--lp-text-rgb),0.72); font-size: 15px; line-height: 1; cursor: pointer;
+    /* line-height 0 lets flex centre the ✕ glyph's box itself — with 1 the
+       font's metrics parked it a hair low in the circle (Kev, 2026-08-24). */
+    color: rgba(var(--lp-text-rgb),0.72); font-size: 14px; line-height: 0; cursor: pointer;
     transition: background .2s, color .2s, border-color .2s;
   }
   .auth-close:hover { background: rgba(var(--lp-accent-rgb),0.22); color: #fff; border-color: rgba(var(--lp-accent-rgb),0.55); }
@@ -4539,6 +4545,9 @@ function hideResetFrame() {
 window.addEventListener('message', function (e) {
   if (!e || !e.data) return;
   if (e.data.type === 'enki-reset-back') hideResetFrame();
+  /* In-app "Log in" buttons route to /?login=1; the shell forwards that
+     here so the visitor lands IN the auth modal (Kev, 2026-08-24). */
+  if (e.data.type === 'enki-open-login') openAuth('login');
   /* ESC pressed while focus sits in the TOP window (outside this iframe):
      the app forwards it here — same behavior as a local ESC. */
   if (e.data.type === 'enki-esc') {
@@ -4670,11 +4679,14 @@ function pickTheme(t) {
 //    timer; each previews a crop of the source and pans the big image to it. ──
 // Each square shows a referenced preview image. Drop the two personal photos in
 // public/previews/ (fawn.png, myself.jpg); the rest already ship.
+/* Solana rides SECOND (Kev, 2026-08-24) — the chain mark right after the
+   opening photo; everyone else shifts down one. SHOWCASE_SETS is keyed by
+   these indexes, so its keys moved with them. */
 var KV_IMG = [
   { src: '/previews/berlin.webp', fit: 'cover',   pos: 'center 28%' },
+  { src: '/previews/solana.webp', fit: 'contain', pos: 'center' },
   { src: '/previews/myself.webp', fit: 'cover',   pos: 'center center' },
   { src: '/previews/fawn.webp',   fit: 'cover',   pos: 'center' },
-  { src: '/previews/solana.webp', fit: 'contain', pos: 'center' },
   { src: '/previews/up.webp',     fit: 'contain', pos: 'center' },
 ];
 
@@ -4692,7 +4704,7 @@ var SHOWCASE_SETS = {
       { src: '/previews/berlin-guide.webp',    t: 'Travel Guide',  s: 'Map · Districts', pos: 'center 16%' },
     ],
   },
-  1: {
+  2: {
     src: '/previews/myself.webp', srcFit: 'cover', srcPos: 'center 18%', title: 'Myself · Base Photo',
     vars: [
       { src: '/previews/me-crayon.webp',   t: 'Crayon Scribble', s: 'Kids · Marker', pos: 'center 58%' },
@@ -4703,7 +4715,7 @@ var SHOWCASE_SETS = {
       { src: '/previews/me-aura.webp',     t: 'Spirit Aura',     s: 'Energy · Alley', pos: 'center 16%' },
     ],
   },
-  2: {
+  3: {
     src: '/previews/fawn.webp', srcFit: 'cover', srcPos: 'center 16%', title: 'Fawn · Base Render',
     vars: [
       { src: '/previews/fawn-ember.webp',     t: 'Ember Split',       s: 'Fire · Purple' },
@@ -4714,7 +4726,7 @@ var SHOWCASE_SETS = {
       { src: '/previews/fawn-wasteland.webp', t: 'Wasteland Drifter', s: 'Survivor · Ruins', pos: 'center 15%' },
     ],
   },
-  3: {
+  1: {
     src: '/previews/solana.webp', srcFit: 'contain', srcPos: 'center', title: 'Solana · Base Mark',
     vars: [
       { src: '/previews/solana-crystal.webp', t: 'Crystal Cave',     s: 'Prismatic · Geode' },
@@ -4744,7 +4756,21 @@ function applyShowcase(i) {
   var srcEl = document.querySelector('.kv-source');
   if (srcEl) {
     var si = srcEl.querySelector('img');
-    if (si) { si.loading = 'lazy'; si.decoding = 'async'; if (kvImagesEnabled) si.src = set.src; si.style.objectFit = set.srcFit || 'cover'; si.style.objectPosition = set.srcPos || 'center'; }
+    if (si) {
+      si.loading = 'lazy'; si.decoding = 'async';
+      if (kvImagesEnabled) si.src = set.src;
+      si.style.objectFit = set.srcFit || 'cover';
+      /* Every set slides in from the TOP. The 0.9s object-position
+         transition used to run from the PREVIOUS set's position, so a
+         change of barely two percent (myself 18% → fawn 16%) showed no
+         slide at all (Kev, 2026-08-24). Jump to the top without
+         transition, reflow, then glide to the real position. */
+      si.style.transition = 'none';
+      si.style.objectPosition = 'center 0%';
+      void si.offsetWidth;
+      si.style.transition = '';
+      si.style.objectPosition = set.srcPos || 'center';
+    }
     var st = srcEl.querySelector('div[style*="font-size:1rem"]');
     if (st) st.textContent = set.title;
   }
@@ -5224,6 +5250,53 @@ function insertVar() {
 </style>
 <button class="lp-login-float" type="button" onclick="openAuth('login')">Login</button>
 <script>
+/* Deep link into the auth modal: /?login=1 (or #login) opens it on load.
+   In-app "Log in" buttons (profile gate, creator notice) send people here
+   — they should land IN the modal, not on the marketing page hunting for
+   the button (Kev, 2026-08-24). */
+(function () {
+  var q = new URLSearchParams(window.location.search);
+  if (q.get('login') === '1' || window.location.hash === '#login') {
+    var open = function () { if (typeof openAuth === 'function') openAuth('login'); };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', open);
+    else open();
+  }
+  /* EMBED mode (?modal=1): this page becomes ONLY the auth modal, on a
+     transparent ground — the shell's LoginModal component mounts it in an
+     iframe overlay, so the ONE login UI is pluggable anywhere without a
+     second implementation that could drift (Kev, 2026-08-24). Closing
+     tells the host; "Continue with Wallet" already postMessages the host
+     (enki-open-wallet), which opens the wallet picker above. */
+  if (q.get('modal') === '1') {
+    var embed = function () {
+      document.documentElement.classList.add('auth-embed');
+      document.body.classList.add('auth-embed');
+      if (typeof openAuth === 'function') openAuth('login');
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', embed);
+    else embed();
+    var origClose = window.closeAuth;
+    window.closeAuth = function (e) {
+      if (e && e.target !== document.getElementById('authBackdrop')) return;
+      try { window.parent.postMessage({ type: 'enki-login-close' }, '*'); } catch (err) {}
+      if (origClose) origClose(e);
+    };
+    // "Done" on the access-request success card closes locally as well.
+    var origHard = window.closeAuthHard;
+    window.closeAuthHard = function () {
+      try { window.parent.postMessage({ type: 'enki-login-close' }, '*'); } catch (err) {}
+      if (origHard) origHard();
+    };
+    // Escape closes the modal locally (handler above) but never went through
+    // closeAuth, so the host kept an invisible, click-swallowing frame on top
+    // of the page. Capture phase: runs before that handler can hide the reset
+    // frame, so a first Escape inside the reset flow still only steps back.
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape' || document.getElementById('authResetWrap')) return;
+      try { window.parent.postMessage({ type: 'enki-login-close' }, '*'); } catch (err) {}
+    }, true);
+  }
+})();
 (function () {
   var btn = document.querySelector('.lp-login-float');
   var hero = document.querySelector('.hero');
@@ -5268,6 +5341,13 @@ function insertVar() {
   /* Bright mode: the scene pill label was too light — use the deep accent
      tone the pill gradient already uses. */
   .lp-light .kv-scene-label { color: var(--lp-deep) !important; }
+</style>
+<style>
+/* ── Auth-embed mode (?modal=1): nothing but the modal on transparent
+   ground. Same markup, same scripts, same ESC/tab behavior as the landing
+   — that sameness is the point of embedding instead of rebuilding. ── */
+html.auth-embed, body.auth-embed { background: transparent !important; }
+body.auth-embed > *:not(#authBackdrop) { display: none !important; }
 </style>
 </body>
 </html>

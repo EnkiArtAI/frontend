@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { hideAdult, viewer } from "@/lib/adult-content";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -40,14 +41,18 @@ export async function GET(
     }
 
     // Listed prompts only — the portfolio is the public shelf, not drafts.
-    const { data: promptRows, error: promptsError } = await supabase
-      .from("prompts")
-      .select("id, title, price_usd_cents, showcase_images, published_at, created_at")
-      .eq("creator_id", userData.id)
-      .eq("is_listed", true)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false })
-      .limit(20);
+    const { data: promptRows, error: promptsError } = await hideAdult(
+      supabase
+        .from("prompts")
+        .select("id, title, price_usd_cents, showcase_images, published_at, created_at")
+        .eq("creator_id", userData.id)
+        .eq("is_listed", true)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false })
+        .limit(20),
+      await viewer(supabase, request),
+      userData.id,
+    );
 
     if (promptsError) console.error("[API] Error fetching creator prompts:", promptsError.message);
 

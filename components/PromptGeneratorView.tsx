@@ -1,12 +1,16 @@
 "use client";
 
-import { sessionAuthHeaders } from "@/lib/session-headers";
-import { fetchGenerationQuote, authorizePaidGeneration, toModelFamily } from "@/lib/generation-checkout";
+import { sessionAuthHeaders, viewerHeaders } from "@/lib/session-headers";
+import { fetchGenerationQuote, toModelFamily } from "@/lib/generation-checkout";
+import { runGeneration } from "@/lib/generation/run-generation";
+import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
+import { useModelCatalogue, resolveCatalogueEntry } from "@/hooks/useModelLimits";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useCdpAddress } from "@/hooks/useCdpAddress";
+import { usePaymentSigner } from "@/hooks/usePaymentSigner";
 import { useToast } from "@/hooks/use-toast";
 import { addCreation } from "@/lib/creations";
 import {
@@ -16,6 +20,7 @@ import {
   Info,
   X,
   Copy,
+  PenSquare,
   Check,
   Sparkles,
   Loader2,
@@ -40,12 +45,16 @@ import DiceButton from "@/components/DiceButton";
 import { DICE_LIMITS, type DiceValue, type DiceVariable } from "@/lib/generation/variable-dice";
 import { type ResolutionTier } from "@/lib/generation/resolution";
 import { useGenerationCore } from "@/hooks/useGenerationCore";
+import { useReferenceReads, REFS_LOADING } from "@/hooks/useReferenceReads";
 import QualitySelect, { type Quality } from "@/components/generation/QualitySelect";
 import { variableRange } from "@/lib/editor/selection-variable";
 import RatioSelect from "@/components/generation/RatioSelect";
 import { useBetaAccess } from "@/components/BetaGate";
 import { createPortal } from "react-dom";
 import { openCreator } from "@/lib/openCreator";
+import { requestPromptEdit } from "@/components/enki-shell/editorBridge";
+import ResolutionSelect from "@/components/generation/ResolutionSelect";
+import GeneratorLogo from "@/components/generation/GeneratorLogo";
 
 /* ── Types ── */
 type VarType = "text" | "checkbox" | "single-select" | "multi-select" | "slider" | "radio";
@@ -117,6 +126,7 @@ export default function PromptGeneratorView({
   const account = useActiveAccount();
   const { publicKey: solanaPublicKey } = useWallet();
   const { address: cdpAddress } = useCdpAddress();
+  const signPayment = usePaymentSigner();
   const userKey = useMemo(
     () => account?.address ?? solanaPublicKey?.toBase58() ?? cdpAddress ?? null,
     [account?.address, solanaPublicKey, cdpAddress]
@@ -126,7 +136,9 @@ export default function PromptGeneratorView({
   const [vars, setVars] = useState<Record<string, string>>({});
   const [aspect, setAspect] = useState("4:5");
   const [resolution, setResolution] = useState("2K");
-  const [generator, setGenerator] = useState("Nano Banana Pro");
+  /* The buyer's own pick. Empty until they pick, or until the prompt's own
+     model is known (below); nothing else is ever preselected. */
+  const [generatorPick, setGenerator] = useState("");
   /* The gpt-image quality lever — the image UI simply had none, so a
      GPT-Image-2 buyer could never choose it here (Kev, 2026-08-22). Hidden
      for models without the parameter (QualitySelect available). */
@@ -171,6 +183,7 @@ export default function PromptGeneratorView({
   const { access, role } = useBetaAccess();
   const guest = !(access === "ok" && role !== "team");
   const [generating, setGenerating] = useState(false);
+  const { loading: refsLoading, pending: refsPending, read: readRef } = useReferenceReads();
   // Same model on a priority host — faster, dearer, identical image.
   const [boost, setBoost] = useState(false);
   /* Only consulted below the 960px breakpoint, where the history is an
@@ -255,16 +268,11 @@ export default function PromptGeneratorView({
     const fromDb = (modelsData ?? [])
       .map((m) => (typeof m.name === "string" ? m.name : ""))
       .filter(Boolean);
-    return fromDb.length > 0
-      ? fromDb
-      : ["Nano Banana Pro", "Seedream 5.0 lite (coming soon)", "GPT-Image-2 (coming soon)"];
+    // Only rows that exist. The invented fallback names and the effect that
+    // reset any pick missing from this list to its FIRST entry (the cheapest
+    // row, Flux) are gone (Kev, 2026-10-02: "IMMER DAS AUSGEWÄHLTE").
+    return fromDb;
   }, [modelsData]);
-
-  useEffect(() => {
-    if (GENERATORS.length > 0 && !GENERATORS.includes(generator)) {
-      setGenerator(GENERATORS[0]);
-    }
-  }, [GENERATORS, generator]);
 
   /* Fetch prompt */
   const { data: promptData, isLoading: loading } = useQuery<{
@@ -274,6 +282,7 @@ export default function PromptGeneratorView({
       is_free_showcase?: boolean; price?: number; tags?: string[];
       content?: string; created_at?: string; creator?: string;
       publicPromptText?: string; showcaseImages?: ShowcaseImage[];
+      ai_model?: string;
       promptData?: { variables?: PromptVariable[] };
     };
   }>({
@@ -282,6 +291,16 @@ export default function PromptGeneratorView({
   });
 
   const prompt = promptData?.prompt;
+  /* The prompt's own model preselects, when the catalogue knows it. Derived,
+     not written into state, so a buyer's pick always wins and nothing ever
+     resets it. */
+  const catalogue = useModelCatalogue();
+  const promptModelName = useMemo(() => {
+    const m = prompt?.ai_model;
+    if (!m) return "";
+    return (catalogue.find((c) => c.name === m) ?? resolveCatalogueEntry(catalogue, m))?.name ?? "";
+  }, [prompt?.ai_model, catalogue]);
+  const generator = generatorPick || promptModelName;
   const variables = useMemo(() => prompt?.promptData?.variables || [], [prompt]);
   const title = prompt?.title || propTitle || "Untitled Prompt";
   const artistName = propArtistName || "Unknown Artist";
@@ -377,7 +396,7 @@ export default function PromptGeneratorView({
      free route cannot deliver it clamps server-side, and resultSize reports
      what was actually measured. */
   const core = useGenerationCore(generator);
-  const freeModel = core.entry?.price === 0;
+  const freeModel = core.free;
 
   /* Free of charge ONLY when the chosen model costs nothing to run. A free
      PROMPT with a paid model still bills its model cost + fee (Kev,
@@ -411,13 +430,22 @@ export default function PromptGeneratorView({
     /* boost + quality are part of the key: toggling either MUST refetch, or
        the shown price is the old route's (Kev, 2026-08-23: boost = real cost
        everywhere). */
-    queryKey: ["generation-quote", promptId, modelFamily, quoteResolution, boost, quality],
+    queryKey: ["generation-quote", promptId, core.entry?.id, quoteResolution, core.boostAvailable && boost, quality],
     queryFn: () =>
-      fetchGenerationQuote({ promptId: promptId!, modelFamily, resolution: quoteResolution, boost, quality }),
-    enabled: !noCharge && !!promptId && !loading,
+      fetchGenerationQuote({ promptId: promptId!, modelId: core.entry!.id, resolution: quoteResolution, boost: core.boostAvailable && boost, quality }),
+    enabled: !noCharge && !!promptId && !loading && !!core.entry,
     // Quotes expire server-side after 5 minutes; refresh a little sooner.
     refetchInterval: 4 * 60 * 1000,
   });
+  /* Each tier's price is the server's quote for this prompt at the current
+     settings (Kev, 2026-10-02: "ich brauche safe überall den server-quote");
+     it was the catalogue price x tier scale, without the artist share and
+     without the fee. */
+  const tierQuotes = useServerQuotes(
+    !noCharge && promptId && core.entry && !loading
+      ? resolutions.map((t) => ({ promptId, modelId: core.entry!.id, resolution: t, boost: core.boostAvailable && boost, quality }))
+      : [],
+  );
   const showcaseImages = prompt?.showcaseImages?.length ? prompt.showcaseImages : propShowcaseImages;
   const mainImage = showcaseImages[0]?.thumbnail || showcaseImages[0]?.url || propImageUrl || "";
   const promptText = prompt?.publicPromptText || "";
@@ -580,7 +608,7 @@ export default function PromptGeneratorView({
     queryKey: genQueryKey,
     queryFn: async () => {
       if (!userKey) return {};
-      const res = await fetch(`/api/generations?userId=${encodeURIComponent(userKey)}&limit=20`);
+      const res = await fetch(`/api/generations?userId=${encodeURIComponent(userKey)}&limit=20`, { headers: viewerHeaders() });
       return res.ok ? res.json() : {};
     },
     enabled: !!userKey,
@@ -651,12 +679,10 @@ export default function PromptGeneratorView({
     if (!files) return;
     const remaining = 10 - refs.length;
     Array.from(files).slice(0, remaining).forEach(file => {
-      const reader = new FileReader();
-      reader.onload = ev => setRefs(prev => prev.length >= 10 ? prev : [...prev, ev.target?.result as string]);
-      reader.readAsDataURL(file);
+      void readRef(file).then(url => { if (url) setRefs(prev => prev.length >= 10 ? prev : [...prev, url]); });
     });
     if (fileRef.current) fileRef.current.value = "";
-  }, [refs.length]);
+  }, [refs.length, readRef]);
 
   const removeRef = useCallback((i: number) => setRefs(prev => prev.filter((_, idx) => idx !== i)), []);
 
@@ -818,6 +844,10 @@ export default function PromptGeneratorView({
   }, []);
 
   const generate = useCallback(async () => {
+    if (refsLoading) {
+      toast({ title: "Images still loading", description: REFS_LOADING });
+      return;
+    }
     setGenerating(true);
     setResultUrl(null);
     try {
@@ -875,51 +905,38 @@ export default function PromptGeneratorView({
          no branch of this function can end with money gone and no picture.
          This surface previously displayed a price and then called the FREE
          route: the marketplace showed prices and never charged anyone. */
-      let res: Response;
-      if (!noCharge && promptId) {
-        const { intentId } = await authorizePaidGeneration({
-          promptId,
-          modelFamily,
+      const outcome = await runGeneration(
+        {
+          model: core.entry,
           resolution: quoteResolution,
-          boost,
           quality,
-        });
-        res = await fetch("/api/generate-image", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
-          body: JSON.stringify({ intentId, prompt: final.trim(), aspectRatio: aspect, quality }),
-        });
-      } else {
-        res = await fetch("/api/generate-free", {
-          method: "POST",
-          /* The session travels with a FREE generation too. Without it
-             resolveRecordingUserId returns null and the route skips its whole
-             recorder block, so a signed-in user's free images belonged to
-             nobody and never reached their history. */
-          headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
-          /* promptId travels even when the wording was edited: the image is
-             still that prompt's descendant, and without it the record said the
-             generation came from nowhere. */
-          body: JSON.stringify({ prompt: final.trim(), aspectRatio: aspect, resolution, promptId, quality }),
-        });
-      }
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
+          boost: core.boostAvailable && boost,
+          prompt: final.trim(),
+          promptId: promptId || undefined,
+          // Fills a paid prompt's own text on the server, which this client never sees.
+          variableValues: resolvedVars,
+          aspectRatio: aspect,
+          // The deck was shown and never sent.
+          referenceImages: refs.length ? refs : undefined,
+        },
+        signPayment,
+      );
+      if (!outcome.ok) {
+        const d = (outcome.data ?? {}) as { signInRequired?: boolean; freeQuotaExhausted?: boolean; used?: number; limit?: number };
         /* The free allowance is a state, not a failure. A red "Generation
            Failed" toast that vanishes would leave the reader pressing the
            button again, so it is kept on screen next to the button instead. */
-        if (res.status === 401 && d?.signInRequired) {
+        if (outcome.status === 401 && d.signInRequired) {
           setFreeQuota({ used: 0, limit: 0, signIn: true });
           return;
         }
-        if (res.status === 402 && d?.freeQuotaExhausted) {
+        if (outcome.status === 402 && d.freeQuotaExhausted) {
           setFreeQuota({ used: Number(d.used) || 0, limit: Number(d.limit) || 0, signIn: false });
           return;
         }
-        throw new Error(d.error || "Generation failed");
+        throw new Error(outcome.error);
       }
-      const data = await res.json();
-      if (!data.imageUrl) throw new Error("No image returned");
+      const data = outcome.data as { imageUrl: string; width?: number; height?: number; requestedResolution?: string; provider?: string };
       setResultUrl(data.imageUrl);
       setResultSize(
         typeof data.width === "number" && typeof data.height === "number"
@@ -989,7 +1006,7 @@ export default function PromptGeneratorView({
        so a prompt whose variables arrived after it would have generated from
        an empty set. Same class of bug as the edited-prompt one this component
        already carried. */
-  }, [isFree, noCharge, modelFamily, quoteResolution, promptText, editedPrompt, vars, variables, promptSegments, title, aspect, resolution, userKey, promptId, refs.length, toast, queryClient, genQueryKey]);
+  }, [isFree, core, boost, quality, quoteResolution, promptText, editedPrompt, vars, variables, promptSegments, title, aspect, resolution, userKey, promptId, refs, refsLoading, toast, queryClient, genQueryKey, signPayment]);
 
   const download = useCallback(() => {
     if (!resultUrl) return;
@@ -1128,9 +1145,8 @@ export default function PromptGeneratorView({
     <div className="pgv-page">
       {/* ═══ LEFT SIDEBAR ═══ */}
       <aside className="pgv-sidebar">
-        <div className="pgv-sidebar-scroll">
-          {/* Title + meta */}
-          <div className="pgv-sidebar-header">
+        {/* Title + meta */}
+        <div className="pgv-sidebar-header">
             {/* A small way back, directly above the title. Kev asked for it
                 "very small to save space": the header is the top of a 230px
                 column, so a full-width Back row would cost a line that the
@@ -1271,6 +1287,7 @@ export default function PromptGeneratorView({
             </div>
           </div>
 
+          <div className="pgv-sidebar-scroll">
           {/* Free: the prompt IS the interface.
               A free prompt has nothing to hide, so the text is the thing worth
               showing — and its variables are edited IN it rather than in a
@@ -1330,6 +1347,31 @@ export default function PromptGeneratorView({
                 >
                   {copied ? <Check size={12} /> : <Copy size={12} />}
                 </button>
+                {/* "Put prompt to editor" (Kev, 2026-08-24): carry the text —
+                    including your edits — into the node editor to shape and
+                    release your own version. The parent prompt's id rides
+                    along as lineage (derived_from_prompt_id), so who built
+                    on whom stays traceable for later creator payouts. */}
+                {!guest && (
+                  <button
+                    type="button"
+                    className="pgv-mode pgv-mode--copy"
+                    title="Open in the prompt editor — release your own version"
+                    aria-label="Open in the prompt editor"
+                    onClick={() => {
+                      requestPromptEdit({
+                        title,
+                        promptTemplate: editedPrompt ?? promptText ?? "",
+                        derivedFrom: promptId,
+                        variables: variables.map(v => ({ name: v.name, type: "text", value: vars[v.name] ?? v.defaultValue ?? "" })),
+                      });
+                      toast({ title: "Opened in the editor — shape it and release your own." });
+                      if (!window.location.pathname.startsWith("/home")) window.location.assign("/home");
+                    }}
+                  >
+                    <PenSquare size={12} />
+                  </button>
+                )}
               </div>
 
               {/* VARIABLES is the artist's text and stays read-only — its
@@ -1537,7 +1579,7 @@ export default function PromptGeneratorView({
               >
                 +
               </button>
-              {refs.length === 0 ? (
+              {refs.length + refsPending.length === 0 ? (
                 <span className="pgv-ref-hint">Add images this prompt can refer to</span>
               ) : (
                 <div className="pgv-ref-deck">
@@ -1582,6 +1624,11 @@ export default function PromptGeneratorView({
                       </button>
                     </div>
                   ))}
+                  {refsPending.map((src) => (
+                    <div key={src} className="pgv-ref-slot enki-ref-pending" aria-label="Reference image loading">
+                      <img src={src} alt="" draggable={false} />
+                    </div>
+                  ))}
                   {/* The seam past the last card needs its own element: the
                       last card may itself be the one being carried, and that
                       card's margins are already spoken for. */}
@@ -1601,10 +1648,24 @@ export default function PromptGeneratorView({
               row instead of squeezing three controls into one line
               (Kev, 2026-08-22). Hidden for guests with the rest of the
               generation controls (Kev, 2026-08-24). */}
+          {/* Guests still SEE which generator made the showcase — read-only,
+              below the prompt: they cannot generate, so an editable picker
+              would be a lie, but hiding the model hid information
+              (Kev, 2026-08-24). */}
+          {guest && (
+            <div className="pgv-block">
+              <span className="pgv-section-label">Generator</span>
+              <div className="pgv-generator-readonly">
+                <GeneratorLogo name={generator} size={14} />
+                <span>{generator}</span>
+              </div>
+            </div>
+          )}
           {!guest && (<>
           <div className="pgv-block">
             <span className="pgv-section-label">Generator</span>
             <select className="pgv-generator-select" value={generator} onChange={e => setGenerator(e.target.value)}>
+              {!generator && <option value="" disabled>Pick a model</option>}
               {GENERATORS.map(g => <option key={g}>{g}</option>)}
             </select>
           </div>
@@ -1624,18 +1685,19 @@ export default function PromptGeneratorView({
               <div className="pgv-field pgv-field--bare">
                 <RatioSelect value={aspect} options={aspects} onChange={setAspect} title="Aspect ratio" />
               </div>
-              <div className="pgv-field">
-                <Maximize2 size={12} aria-hidden />
-                <select
+              {/* Ratio-format resolution: the CLOSED trigger says "2K", the
+                  price rides only the OPEN panel's rows (Kev, 2026-08-24:
+                  "den preis NUR bei aufgeklappten feldern"). */}
+              <div className="pgv-field pgv-field--bare">
+                <ResolutionSelect
                   value={resolution}
-                  onChange={e => setResolution(e.target.value)}
+                  onChange={setResolution}
+                  options={resolutions.map((t, i) => ({ tier: t, priceLabel: noCharge ? undefined : quoteLabel(tierQuotes[i]) ?? undefined }))}
                   title={noCharge
                     ? "Resolution — this run renders on the FREE route (Flux), which tops out at 2K. Paid models unlock 4K."
                     : "Resolution"}
-                  aria-label="Resolution"
-                >
-                  {core.tiers.map(t => <option key={t.tier} value={t.tier}>{t.tier}{!noCharge && t.price != null ? ` · $${t.price.toFixed(2)}` : ""}</option>)}
-                </select>
+                  disabled={generating}
+                />
               </div>
             </div>
             {/* Quality on its own row below — room to breathe instead of a
@@ -1674,7 +1736,7 @@ export default function PromptGeneratorView({
               promptId={promptId}
               context={promptText ? promptText.slice(0, DICE_LIMITS.maxContextLen) : undefined}
               onValues={applyDiceValues}
-              headers={sessionAuthHeaders()}
+              headers={viewerHeaders()}
               disabled={generating}
               title="Roll the dice — fill the fields you left empty"
             />
@@ -1706,7 +1768,7 @@ export default function PromptGeneratorView({
             <button
               className="pgv-generate-btn"
               onClick={generate}
-              disabled={generating || guest || (!noCharge && !paidQuote)}
+              disabled={generating || refsLoading || guest || (!noCharge && !paidQuote)}
               title={guest ? "Sign in to generate" : undefined}
             >
               {generating ? <Loader2 size={14} className="pgv-spinner" /> : <Sparkles size={14} />}
@@ -1715,6 +1777,8 @@ export default function PromptGeneratorView({
                   2026-08-24). */}
               {guest
                 ? "Log in to generate"
+                : refsLoading
+                ? "Loading images…"
                 : noCharge
                   ? "Generate free"
                   : paidQuote
@@ -1728,17 +1792,22 @@ export default function PromptGeneratorView({
                 there, still before the click, and reachable by hover, focus
                 and touch — but it stops competing with the price it qualifies.
                 Rendered only when the quote actually carries a fee. */}
-            {!noCharge && paidQuote && (
+            {/* The network fee is 0 since 2026-09-05 (Kev: only 10% on top of
+                the API cost) — the marker renders only when there is a fee
+                or a pricing rule to name, never "incl. $0 network fee". */}
+            {!noCharge && paidQuote && (Number(paidQuote.networkFeeUsd) > 0 || paidQuote.appliedRule) && (
               <span
                 className="pgv-fee-info"
                 tabIndex={0}
                 role="note"
-                aria-label={`Total includes a $${paidQuote.networkFeeUsd} network fee`}
+                aria-label={Number(paidQuote.networkFeeUsd) > 0
+                  ? `Total includes a $${paidQuote.networkFeeUsd} network fee`
+                  : `Pricing rule: ${paidQuote.appliedRule?.name}`}
               >
                 <Info size={11} aria-hidden />
                 <span className="pgv-fee-tip">
-                  incl. ${paidQuote.networkFeeUsd} network fee
-                  {paidQuote.appliedRule ? ` · ${paidQuote.appliedRule.name}` : ""}
+                  {Number(paidQuote.networkFeeUsd) > 0 ? `incl. $${paidQuote.networkFeeUsd} network fee` : ""}
+                  {paidQuote.appliedRule ? `${Number(paidQuote.networkFeeUsd) > 0 ? " · " : ""}${paidQuote.appliedRule.name}` : ""}
                 </span>
               </span>
             )}
@@ -1763,9 +1832,10 @@ export default function PromptGeneratorView({
           <div className="pgv-x402-inner">
           <div className="pgv-x402-body">
             <p>
-              Hand this prompt to your AI agent. It pays the same price as
-              you, in USDC on Solana, and needs no account and no gas. The
-              server tells it the exact price, it pays, it gets the image.
+              Hand this prompt to your AI agent. It pays in USDC on Solana
+              and needs no account and no gas. The server quotes it the exact
+              price for its own settings (discounts on your account do not
+              carry over), it pays, it gets the image.
               Paste the request below into your agent chat.
             </p>
             <code className="pgv-x402-endpoint mono">POST {typeof window !== "undefined" ? window.location.origin : ""}/api/x402/generate</code>

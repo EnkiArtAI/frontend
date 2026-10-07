@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Heart, Star, Bookmark, Play, Image as ImageIcon, Film, PencilLine } from "lucide-react";
 import BookmarkPicker from "@/components/enki/BookmarkPicker";
+import { useBetaAccess } from "@/components/BetaGate";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { preloadImageUI } from "@/components/enki/EnkiDetailPanel";
@@ -22,6 +23,8 @@ export default function EnkiCard({ prompt, onOpen, onEdit }: EnkiCardProps) {
   // The top-right action is a BOOKMARK now, not a like: it opens the
   // category picker and files the card there (Kev, 2026-08-22).
   const [pickerOpen, setPickerOpen] = useState(false);
+  const { access, role } = useBetaAccess();
+  const authed = access === "ok" && role !== "team";
 
   /* Warm what the click is about to need, while the pointer is still on its
      way: the image view's chunk, which next/dynamic otherwise fetches only on
@@ -63,6 +66,9 @@ export default function EnkiCard({ prompt, onOpen, onEdit }: EnkiCardProps) {
           </span>
           <span className="enki-card-stat mono enki-card-stat-price">${prompt.price.toFixed(2)}</span>
         </div>
+        {/* Bookmarks are an ACCOUNT feature — a guest sees no button for a
+            function that does not exist for them (Kev, 2026-08-24). */}
+        {authed && (
         <button
           className={`enki-heart${pickerOpen ? " active" : ""}`}
           onClick={(event) => {
@@ -76,6 +82,7 @@ export default function EnkiCard({ prompt, onOpen, onEdit }: EnkiCardProps) {
         >
           <Bookmark size={14} fill={pickerOpen ? "currentColor" : "none"} />
         </button>
+        )}
         {pickerOpen && (
           <BookmarkPicker
             promptId={prompt.id}

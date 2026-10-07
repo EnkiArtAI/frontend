@@ -21,15 +21,7 @@
     "build",
     "dist",
     
-    "backend/__tests__/**/*","backend/scripts/**/*",
-    "backend/app.ts",
-    "backend/routes.ts",
-    "backend/index-dev.ts",
-    "backend/index-prod.ts",
-    "backend/price-oracle-complex.ts",
-    "backend/oracles/chainlink-oracle.ts",
-    "backend/oracles/uniswap-twap-oracle.ts",
-    "backend/oracles/oracle-resolver.ts"
+    "backend/__tests__/**/*","backend/scripts/**/*"
   ],
   "compilerOptions": {
     "incremental": true,

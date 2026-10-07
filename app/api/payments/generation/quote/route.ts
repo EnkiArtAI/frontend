@@ -4,7 +4,8 @@
  * First half of server-built payments (backlog #2). The client sends ONLY
  * identifiers — never a price, amount, or destination:
  *
- *   Body: { promptId: string, modelFamily: string, resolution?: "1K" | "2K" | "4K" }
+ *   Body: { promptId?, modelId, resolution, quality?, boost?, referenceImageCount? }
+ *   (lib/payments/generation-settings.ts: the sum of settings, priced once)
  *
  * The server loads the prompt price and artist wallet from its own DB,
  * takes the model cost from server-side pricing, and returns the full
@@ -24,26 +25,63 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { requireAuth, checkRateLimit } from "@/lib/auth";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { PRICING_POLICY, splitToBreakdown } from "@/lib/payments/generation-pricing";
 import { computeQuote } from "@/lib/payments/generation-quote";
+import { settingsSchema, resolvePaidSettings, type SettingsInput } from "@/lib/payments/generation-settings";
 
-const quoteSchema = z.object({
-  promptId: z.string().min(1).max(128),
-  modelFamily: z.string().min(1).max(64),
-  /* 1K joined 2026-08-22 (Kev: "warum keine 1K generierungen"). It is
-     priced as 2K — toResolutionTier maps it, the provider fact being that
-     both hosts charge 1K and 2K identically — so the schema admitting it
-     cannot underprice anything. */
-  resolution: z.enum(["1K", "2K", "4K"]).optional(),
-  /* Boost prices the model leg at the vendor-direct route's REAL cost
-     (quality-aware for gpt) — see getModelCostMicro. Optional: absent means
-     the normal ladder, so existing clients quote unchanged. */
-  boost: z.boolean().optional(),
-  quality: z.enum(["low", "medium", "high"]).optional(),
-});
+/* Every price a picker shows is a server quote (Kev, 2026-10-02: "ich brauche
+   safe überall den server-quote"). A picker prices all its options at once,
+   so it asks once: one request, one rate-limit slot, up to 24 quotes. */
+const batchSchema = z.object({ items: z.array(settingsSchema).min(1).max(24) });
+
+/** One quote, or why there is none: the same answer for a single request and for each batch item. */
+async function quoteOne(
+  supabase: SupabaseClient,
+  input: SettingsInput,
+  user: { userId: string; walletAddress: string; sessionToken: string | null },
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const resolved = await resolvePaidSettings(supabase, input);
+  if (!resolved.ok) return { status: resolved.status, body: { error: resolved.error } };
+  const { settings } = resolved;
+  const promptId = input.promptId;
+
+  // Shared with the intent route (lib/payments/generation-quote.ts) so the two
+  // paths can never drift apart — including DB pricing rules (discounts).
+  const quote = await computeQuote(supabase, {
+    promptId,
+    modelFamily: settings.modelFamily,
+    resolution: settings.resolution,
+    boost: settings.boost,
+    quality: settings.quality ?? undefined,
+    buyer: user.userId,
+    sessionToken: user.sessionToken,
+  });
+  if (!quote.ok) return { status: quote.status, body: { error: quote.error } };
+  const { artistWallet, split, appliedRule } = quote;
+
+  const expiresAt = new Date(
+    Date.now() + PRICING_POLICY.quoteTtlSeconds * 1000,
+  ).toISOString();
+
+  return {
+    status: 200,
+    body: {
+      quote: {
+        promptId: promptId ?? null,
+        ...settings,
+        buyerWallet: user.walletAddress,
+        artistWallet,
+        expiresAt,
+        breakdown: splitToBreakdown(split),
+        appliedRule: appliedRule ? { name: appliedRule.name, effect: appliedRule.effect } : null,
+      },
+    },
+  };
+}
 
 export async function POST(req: NextRequest) {
   // 60 payments/min per user (Kev, 2026-07-08 — dApp-friendly); IP cap above
@@ -53,7 +91,7 @@ export async function POST(req: NextRequest) {
 
   let authUser;
   try {
-    authUser = await requireAuth(req);
+    authUser = { ...(await requireAuth(req)), sessionToken: req.headers.get("X-Session-Token") };
   } catch {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
@@ -68,39 +106,23 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
-  const parsed = quoteSchema.safeParse(body);
+  const supabase = getSupabaseServerClient();
+
+  const batch = batchSchema.safeParse(body);
+  if (batch.success) {
+    const results = await Promise.all(batch.data.items.map((item) => quoteOne(supabase, item, authUser)));
+    return NextResponse.json({
+      quotes: results.map((r) => (r.status === 200 ? r.body.quote : { error: r.body.error })),
+    });
+  }
+
+  const parsed = settingsSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.issues },
       { status: 400 },
     );
   }
-  const { promptId, modelFamily, resolution } = parsed.data;
-
-  const supabase = getSupabaseServerClient();
-
-  // Shared with the intent route (lib/payments/generation-quote.ts) so the two
-  // paths can never drift apart — including DB pricing rules (discounts).
-  const quote = await computeQuote(supabase, { ...parsed.data, buyer: authUser.userId });
-  if (!quote.ok) {
-    return NextResponse.json({ error: quote.error }, { status: quote.status });
-  }
-  const { artistWallet, split, appliedRule } = quote;
-
-  const expiresAt = new Date(
-    Date.now() + PRICING_POLICY.quoteTtlSeconds * 1000,
-  ).toISOString();
-
-  return NextResponse.json({
-    quote: {
-      promptId,
-      modelFamily,
-      resolution: resolution ?? "2K",
-      buyerWallet: authUser.walletAddress,
-      artistWallet,
-      expiresAt,
-      breakdown: splitToBreakdown(split),
-      appliedRule: appliedRule ? { name: appliedRule.name, effect: appliedRule.effect } : null,
-    },
-  });
+  const one = await quoteOne(supabase, parsed.data, authUser);
+  return NextResponse.json(one.body, { status: one.status });
 }

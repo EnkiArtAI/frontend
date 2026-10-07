@@ -273,6 +273,55 @@ async function voidIfStale(
 }
 
 /**
+ * Void every intent that was prepared at /authorize and never signed.
+ *
+ * /authorize creates a nonce account (about 0.00145 SOL of rent from the fee
+ * payer) before the buyer sees the wallet popup. A buyer who cancels there
+ * never reaches /submit, so authorized_at stays null and sweepAbandoned, which
+ * only looks at signed rows, never saw it: the account stayed open and its
+ * rent with it, once per cancelled checkout. Same cutoff as the signed sweep,
+ * re-checked at the moment of the write so a /submit that lands in between
+ * wins and is never voided.
+ */
+export async function sweepUnsubmitted(
+  supabase: SupabaseClient,
+  limit = 20,
+): Promise<{ intentId: string; nonceAccount: string | null }[]> {
+  const cutoff = staleCutoff();
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select("id")
+    .eq("status", "building")
+    .not("nonce_account", "is", null)
+    .is("authorized_at", null)
+    .is("captured_at", null)
+    .is("voided_at", null)
+    .lt("updated_at", cutoff)
+    .limit(limit);
+  if (error) {
+    console.warn("[payments/auth] unsubmitted sweep failed:", error.message);
+    return [];
+  }
+
+  const flushed: { intentId: string; nonceAccount: string | null }[] = [];
+  for (const row of data ?? []) {
+    const now = nowIso();
+    const { data: won } = await supabase
+      .from(TABLE)
+      .update({ voided_at: now, void_reason: "abandoned" as VoidReason, status: "voided", updated_at: now })
+      .eq("id", row.id as string)
+      .eq("status", "building")
+      .is("authorized_at", null)
+      .is("voided_at", null)
+      .lt("updated_at", cutoff)
+      .select("id, nonce_account")
+      .maybeSingle();
+    if (won) flushed.push({ intentId: row.id as string, nonceAccount: won.nonce_account as string | null });
+  }
+  return flushed;
+}
+
+/**
  * Void every authorisation whose worker went quiet.
  *
  * Opportunistic, not scheduled: there is no cron on this deployment, so each

@@ -28,8 +28,18 @@ import {
   SystemProgram,
   Transaction,
   NONCE_ACCOUNT_LENGTH,
-  sendAndConfirmTransaction,
 } from "@solana/web3.js";
+import bs58 from "bs58";
+import { broadcastAndConfirm } from "@/lib/payments/solana";
+
+/** Sign with a fresh blockhash and confirm over HTTP (broadcastAndConfirm), not a websocket. */
+async function sendSigned(connection: Connection, tx: Transaction, signers: Keypair[]): Promise<void> {
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+  tx.recentBlockhash = blockhash;
+  tx.feePayer = signers[0].publicKey;
+  tx.sign(...signers);
+  await broadcastAndConfirm(connection, tx.serialize(), bs58.encode(tx.signature!), { lastValidBlockHeight });
+}
 
 /** ~400ms is one slot; 4 attempts covers a slow cluster without hanging a request. */
 const CLOSE_ATTEMPTS = 4;
@@ -65,9 +75,7 @@ export async function createNonceAccount(
     }),
   );
 
-  await sendAndConfirmTransaction(connection, tx, [feePayer, nonceKeypair], {
-    commitment: "confirmed",
-  });
+  await sendSigned(connection, tx, [feePayer, nonceKeypair]);
 
   const nonce = await readNonce(connection, nonceKeypair.publicKey.toBase58());
   if (!nonce) {
@@ -136,7 +144,7 @@ export async function closeNonceAccount(
     );
 
     try {
-      await sendAndConfirmTransaction(connection, tx, [authority], { commitment: "confirmed" });
+      await sendSigned(connection, tx, [authority]);
       return "closed";
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);

@@ -1,3 +1,4 @@
+import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
@@ -49,10 +50,12 @@ export async function POST(req: NextRequest) {
       .from("access_requests")
       .insert({ email, about, socials: socials || null });
     if (error && error.code !== "23505") {
+      if (isDbUnreachable(error)) return dbUnavailableResponse();
       console.error("[access-request] insert failed:", error);
       return NextResponse.json({ error: "Could not save your application. Please try again." }, { status: 500 });
     }
   } catch (err) {
+    if (isDbUnreachable(err)) return dbUnavailableResponse();
     console.error("[access-request] storage unavailable:", err);
     return NextResponse.json({ error: "Could not save your application. Please try again." }, { status: 500 });
   }

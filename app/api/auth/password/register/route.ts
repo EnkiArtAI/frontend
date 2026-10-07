@@ -1,3 +1,4 @@
+import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 /**
  * POST /api/auth/password/register  { email, password } → { token, expiresAt, email }
  *
@@ -37,18 +38,26 @@ export async function POST(req: NextRequest) {
   }
 
   // Private-beta whitelist: only allow-listed emails may register.
-  if (whitelistStageActive() && !(await isEmailAllowed(supabase, email))) {
+  let emailAllowed = true;
+  try {
+    emailAllowed = !whitelistStageActive() || (await isEmailAllowed(supabase, email));
+  } catch (e) {
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
+    throw e;
+  }
+  if (!emailAllowed) {
     return NextResponse.json(
       { error: "This email isn't on the access list yet. Request access to join.", notWhitelisted: true },
       { status: 403 },
     );
   }
 
-  const { data: existing } = await supabase
+  const { data: existing, error: existingErr } = await supabase
     .from("password_credentials")
     .select("user_id")
     .eq("email", email)
     .maybeSingle();
+  if (isDbUnreachable(existingErr)) return dbUnavailableResponse();
   if (existing) return NextResponse.json({ error: "An account with this email already exists" }, { status: 409 });
 
   const { hash, salt } = hashPassword(parsed.data.password);
@@ -61,6 +70,7 @@ export async function POST(req: NextRequest) {
     .select("id")
     .single();
   if (userErr || !user) {
+    if (isDbUnreachable(userErr)) return dbUnavailableResponse();
     console.error("[auth/register] users insert failed:", userErr?.message);
     return NextResponse.json({ error: "Could not create account" }, { status: 500 });
   }

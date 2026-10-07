@@ -21,6 +21,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { activeBanFor } from "@/lib/session-user";
+import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
 
 const bodySchema = z.object({
   solanaAddress: z.string().min(32).max(64),
@@ -44,12 +46,14 @@ export async function POST(req: NextRequest) {
   const evm = parsed.data.evmAddress ?? null;
 
   const supabase = getSupabaseServerClient();
-  const { data: session } = await supabase
+  const { data: session, error: sessionErr } = await supabase
     .from("auth_sessions")
     .select("wallet_address, wallet_type")
     .eq("token", token)
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();
+  // A dead database is not "signed out" (Kev, 2026-09-05).
+  if (isDbUnreachable(sessionErr)) return dbUnavailableResponse();
   if (!session) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   if (session.wallet_type !== "password") {
     return NextResponse.json({ error: "Only password sessions attach wallets" }, { status: 400 });
@@ -58,15 +62,29 @@ export async function POST(req: NextRequest) {
   // Resolve users.id: fresh sessions carry it directly, re-attached ones map back.
   let userId: string | null = UUID.test(session.wallet_address) ? session.wallet_address : null;
   if (!userId) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("user_wallets")
       .select("user_id")
       .eq("address", session.wallet_address)
       .is("removed_at", null)
       .maybeSingle();
+    if (isDbUnreachable(error)) return dbUnavailableResponse();
     userId = data?.user_id ?? null;
   }
   if (!userId) return NextResponse.json({ error: "No user for session" }, { status: 404 });
+  // A suspended account maps no new wallets. The ones it already holds stay
+  // its own: signing and key export go through wallet/jwt, which stays ban
+  // tolerant.
+  let banned: boolean;
+  try {
+    banned = Boolean(await activeBanFor(supabase, userId));
+  } catch (e) {
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
+    throw e;
+  }
+  if (banned) {
+    return NextResponse.json({ error: "This account is suspended.", banned: true }, { status: 403 });
+  }
 
   if (session.wallet_address === sol) {
     return NextResponse.json({ attached: sol, evm });

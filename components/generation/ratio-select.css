@@ -13,4 +13,7 @@
 .enki-ratio-panel{z-index:1200;padding:5px;border-radius:9px;border:1px solid var(--enki-rule,rgba(127,127,127,.35));background:var(--enki-paper,#101418);box-shadow:0 10px 30px rgba(0,0,0,.35);}
 .enki-ratio-opt{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border:none;border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer;text-align:left;}
 .enki-ratio-opt:hover{background:color-mix(in oklab,currentColor 10%,transparent);}
+/* Right-hand detail on a panel row (a price, a count) — the trigger never
+   shows it: settings closed, detail open (Kev, 2026-08-24). */
+.enki-ratio-opt-sub{margin-left:auto;padding-left:14px;font-size:11px;opacity:.65;}
 .enki-ratio-opt.on{background:var(--cta-bg,#e0a35c);color:var(--cta-ink,#1c1207);font-weight:700;}

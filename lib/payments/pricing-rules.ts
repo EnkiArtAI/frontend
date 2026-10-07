@@ -79,7 +79,7 @@ async function resolveBuyerId(supabase: SupabaseClient, walletOrId: string): Pro
  */
 export async function resolvePricingRule(
   supabase: SupabaseClient,
-  args: { buyerWalletOrId: string; modelFamily: string; promptId: string },
+  args: { buyerWalletOrId: string; modelFamily: string; promptId?: string },
 ): Promise<AppliedRule | null> {
   const rules = await loadActiveRules(supabase);
   if (rules.length === 0) return null;
@@ -108,7 +108,7 @@ export async function resolvePricingRule(
     if (a.user_ids && !a.user_ids.includes(buyerId)) continue;
     const s = r.scope ?? {};
     if (s.models && !s.models.includes(args.modelFamily)) continue;
-    if (s.prompt_ids && !s.prompt_ids.includes(args.promptId)) continue;
+    if (s.prompt_ids && (!args.promptId || !s.prompt_ids.includes(args.promptId))) continue;
 
     if (r.effect?.type === "free_generation" && r.effect.uses_per_day) {
       // FAILPROOF QUOTA (Kev, 2026-07-12): a use is RESERVED the moment a

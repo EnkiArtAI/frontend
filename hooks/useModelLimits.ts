@@ -10,7 +10,6 @@
  */
 import { useEffect, useState } from "react";
 import { toModelFamily } from "@/lib/generation/model-family";
-import { TIER_PRICE_MULT } from "@/lib/generation/resolution";
 
 export interface ModelLimits {
   maxRefs: number;
@@ -50,8 +49,8 @@ interface ModelRow {
   /** Resolved server-side by /api/models via withCapabilities(). */
   maxResolution?: string;
   supportsQuality?: boolean;
-  tierScale?: Record<string, number>;
   boostAvailable?: boolean;
+  free?: boolean;
 }
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -126,6 +125,11 @@ export interface CatalogueEntry {
   /** USD per image. 0 is the free tier. */
   price: number;
   /**
+   * Which medium the model produces — the generator filter's tree groups by
+   * it (models.media_type; rows without the column yet are image models).
+   */
+  mediaType: "image" | "video";
+  /**
    * Whether the model takes a low|medium|high quality tier of its own. Only
    * the gpt-image family does — offering the control anywhere else would put a
    * setting in front of the user that changes nothing.
@@ -148,16 +152,12 @@ export interface CatalogueEntry {
    * database!").
    */
   ratios: string[];
-  /**
-   * Price multiplier per tier relative to the row's base price, computed
-   * SERVER-SIDE from the same ladder the checkout charges (1K priced as 2K;
-   * 4K/2K is per model). The old client-side flat x2 overstated 4K.
-   */
-  tierScale?: Record<string, number>;
   /** Whether a faster host exists for this model — server-derived (hasBoost). */
   boostAvailable?: boolean;
   /** How many reference images the model takes (models.max_reference_images). */
   maxRefs?: number;
+  /** Renders on the free host (server-derived). The only thing that makes a generation free. */
+  free: boolean;
 }
 
 /**
@@ -171,27 +171,6 @@ export interface CatalogueEntry {
  * (Kev's screenshot, 2026-08-19). Matching falls back to the name's family
  * slug, which is exactly what those stored slugs are.
  */
-/**
- * What ONE image at this resolution costs on this model, in dollars — or
- * null when nothing is charged (free model, or no model resolved yet).
- *
- * The pickers used to annotate tiers with multipliers ("x1, x2"), which told
- * the user a factor and made them do the arithmetic; a generation has no
- * multiplier, it has a price (Kev, 2026-08-22). Every generate surface reads
- * this one function, so the number can never drift between pickers.
- */
-export function tierPrice(
-  entry: Pick<CatalogueEntry, "price" | "tierScale"> | undefined,
-  tier: string,
-): number | null {
-  if (!entry || !(entry.price > 0)) return null;
-  return entry.price * tierScale(entry, tier);
-}
-
-/** The per-model tier multiplier; TIER_PRICE_MULT only while /api/models loads. */
-export function tierScale(entry: Pick<CatalogueEntry, "tierScale"> | undefined, tier: string): number {
-  return entry?.tierScale?.[tier] ?? TIER_PRICE_MULT[tier] ?? 1;
-}
 
 export function resolveCatalogueEntry(
   catalogue: CatalogueEntry[],
@@ -204,12 +183,14 @@ export function resolveCatalogueEntry(
      Found by this function's own test asserting "flux-free" and failing. */
   const plainSlug = (name: string) =>
     name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return (
-    catalogue.find((m) => m.id === idOrSlug) ??
-    catalogue.find(
-      (m) => toModelFamily(m.name) === idOrSlug || plainSlug(m.name) === idOrSlug,
-    )
+  const exact = catalogue.find((m) => m.id === idOrSlug);
+  if (exact) return exact;
+  // A slug resolves only when exactly one row answers to it: with two, the
+  // cheaper one would win by list order, and that is not what was selected.
+  const bySlug = catalogue.filter(
+    (m) => toModelFamily(m.name) === idOrSlug || plainSlug(m.name) === idOrSlug,
   );
+  return bySlug.length === 1 ? bySlug[0] : undefined;
 }
 
 /**
@@ -228,7 +209,11 @@ export function useModelCatalogue(): CatalogueEntry[] {
   );
   useEffect(() => {
     let dead = false;
-    const pull = () => loadModels().then((r) => { if (!dead) setRows(toCatalogue(r)); });
+    /* An EMPTY answer never replaces what is on screen: a 401 during the
+       gate-cookie window used to overwrite the fallback catalogue with [],
+       which is the empty Generators panel Kev hit (2026-08-24). The retry
+       on the next mount fills in the real rows. */
+    const pull = () => loadModels().then((r) => { if (!dead && r.length > 0) setRows(toCatalogue(r)); });
     pull();
     /* If the first pull landed before the gate cookie (empty → fallback), a
        later focus refetches, so the list fills itself in without a reload. */
@@ -248,6 +233,7 @@ function toCatalogue(rows: ModelRow[]): CatalogueEntry[] {
       // A missing price is 0 and therefore free — never a guessed number,
       // because a guessed price is one a user might be charged.
       price: typeof r.price === "number" ? r.price : 0,
+      mediaType: ((r as { media_type?: unknown }).media_type === "video" ? "video" : "image") as CatalogueEntry["mediaType"],
       /* Server-resolved when present (/api/models runs withCapabilities, the
          same code the generation enforces); the old client-side derivations
          only cover the window where a cached pre-upgrade response is still in
@@ -259,9 +245,9 @@ function toCatalogue(rows: ModelRow[]): CatalogueEntry[] {
         ? r.maxResolution
         : "2K") as CatalogueEntry["maxResolution"],
       ratios: Array.isArray(r.allowed_ratios) && r.allowed_ratios.length > 0 ? r.allowed_ratios : FALLBACK_RATIOS,
-      tierScale: r.tierScale && typeof r.tierScale === "object" ? (r.tierScale as Record<string, number>) : undefined,
       boostAvailable: typeof r.boostAvailable === "boolean" ? r.boostAvailable : undefined,
       maxRefs: typeof r.max_reference_images === "number" ? r.max_reference_images : undefined,
+      free: r.free === true,
     }));
   return out;
 }
