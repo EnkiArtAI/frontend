@@ -3,8 +3,8 @@
 import { CDPHooksProvider } from "@coinbase/cdp-hooks";
 import type { Config } from "@coinbase/cdp-core";
 import { useMemo } from "react";
-import { sessionAuthHeaders } from "@/lib/session-headers";
 import { CdpWalletBridge } from "@/components/CdpWalletBridge";
+import { fetchWalletJwt } from "@/lib/cdp-bridge";
 
 /**
  * Standalone Coinbase CDP runtime: headless embedded-wallet provider + bridge,
@@ -19,7 +19,7 @@ import { CdpWalletBridge } from "@/components/CdpWalletBridge";
  * there's no CDP login UI — our own email/password AuthModal is the only login.
  * Non-custodial: keys live in Coinbase's TEE, never exposed; user can export.
  */
-export default function CdpRuntime() {
+export default function CdpRuntime({ email }: { email: string }) {
   const projectId = process.env.NEXT_PUBLIC_CDP_PROJECT_ID;
 
   const config = useMemo<Config | null>(() => {
@@ -28,14 +28,9 @@ export default function CdpRuntime() {
       projectId,
       ethereum: { createOnLogin: "eoa" },
       solana: { createOnLogin: true },
-      customAuth: {
-        getJwt: async () => {
-          const res = await fetch("/api/auth/wallet/jwt", { method: "POST", headers: sessionAuthHeaders() });
-          if (!res.ok) return undefined;
-          const { jwt } = (await res.json()) as { jwt?: string };
-          return jwt;
-        },
-      },
+      // 403 { locked }: the account has a second factor and this session has
+      // not unlocked the wallet; the bridge asks when the user acts.
+      customAuth: { getJwt: fetchWalletJwt },
     };
   }, [projectId]);
 
@@ -43,7 +38,7 @@ export default function CdpRuntime() {
 
   return (
     <CDPHooksProvider config={config}>
-      <CdpWalletBridge />
+      <CdpWalletBridge email={email} />
     </CDPHooksProvider>
   );
 }

@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
+import { requireStepUp } from "@/lib/webauthn";
 
 export async function GET(req: NextRequest) {
   const supabase = getSupabaseServerClient();
@@ -41,7 +42,10 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Bad request" }, { status: 400 });
   }
   if (typeof id !== "string" || !id) return NextResponse.json({ error: "id required" }, { status: 400 });
-
+  // A factor is removed only with a factor: a stolen session could otherwise
+  // strip the owner's passkey before doing anything else.
+  const blocked = await requireStepUp(req, userId, `remove-factor:${id}`, { mandatory: true });
+  if (blocked) return blocked;
   const { error } = await supabase.from("webauthn_credentials").delete().eq("id", id).eq("user_id", userId);
   if (error) return NextResponse.json({ error: "Could not remove" }, { status: 500 });
   return NextResponse.json({ ok: true });

@@ -455,6 +455,9 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const [connectLine, setConnectLine] = useState<{ from: { x: number; y: number }; to: { x: number; y: number }; color: string } | null>(null);
   // Prompt box height — roughly doubled but capped so the node never spills past the frame.
   const canvasRef = useRef<HTMLDivElement>(null);
+  // Where the canvas starts on screen: below a top bar (the 2FA or recovery
+  // bar) it is not 0, and a click must land where the pointer is.
+  const canvasTop = () => canvasRef.current?.getBoundingClientRect().top ?? 0;
   const taRef = useRef<HTMLTextAreaElement>(null);
   const ovRef = useRef<HTMLDivElement>(null);
 
@@ -769,7 +772,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       const factor = Math.exp(-e.deltaY * unit * 0.0042);
       const nz = Math.max(0.3, Math.min(1, z * factor));
       if (nz === z) return;
-      const mx = e.clientX - sidebarWRef.current, my = e.clientY;
+      const mx = e.clientX - sidebarWRef.current, my = e.clientY - canvasTop();
       const wx = (mx - p.x) / z, wy = (my - p.y) / z;
       setPan({ x: mx - wx * nz, y: my - wy * nz }); setZoom(nz);
     };
@@ -1719,7 +1722,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       pendingDockSide.current = (e.clientX - sidebarWRef.current) <= EDGE ? "left" : (e.clientX >= window.innerWidth - EDGE ? "right" : null);
     }
     else if (d.kind === "connect") {
-      const to = { x: (e.clientX - sidebarWRef.current - panRef.current.x) / zoomRef.current, y: (e.clientY - panRef.current.y) / zoomRef.current };
+      const to = { x: (e.clientX - sidebarWRef.current - panRef.current.x) / zoomRef.current, y: (e.clientY - canvasTop() - panRef.current.y) / zoomRef.current };
       if (Math.abs(dx) + Math.abs(dy) > 6) d.moved = true;
       setConnectLine({ from: d.from!, to, color: d.color! });
     }
@@ -1754,7 +1757,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     if (d.kind === "connect") {
       setConnectLine(null);
       if (d.moved && !aborted) {
-        const pos = { x: (e.clientX - sidebarWRef.current - panRef.current.x) / zoomRef.current, y: (e.clientY - panRef.current.y) / zoomRef.current };
+        const pos = { x: (e.clientX - sidebarWRef.current - panRef.current.x) / zoomRef.current, y: (e.clientY - canvasTop() - panRef.current.y) / zoomRef.current };
         spawnFromPortKind(d.portType!, pos);
       }
     }
@@ -1930,7 +1933,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
           if ((e.target as HTMLElement).closest(".nc-node")) return;
           e.preventDefault();
           if (rightPan.current.moved) { rightPan.current.moved = false; return; }
-          setCtx({ x: e.clientX, y: e.clientY, wx: (e.clientX - sidebarWRef.current - pan.x) / zoom, wy: (e.clientY - pan.y) / zoom });
+          setCtx({ x: e.clientX, y: e.clientY, wx: (e.clientX - sidebarWRef.current - pan.x) / zoom, wy: (e.clientY - canvasTop() - pan.y) / zoom });
         }}>
         <div className="nc-world" style={{ transform: "translate(" + pan.x + "px," + pan.y + "px) scale(" + zoom + ")" }}>
           {/* edges */}

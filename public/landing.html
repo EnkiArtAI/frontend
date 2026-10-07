@@ -4434,7 +4434,6 @@ function closeMobileMenu() {
         </div>
       </div>
       <div class="auth-row">
-        <label class="auth-check-row"><input type="checkbox" class="auth-check"/> Remember me</label>
         <a href="/reset-password" target="_top" class="auth-forgot" onclick="return showResetFrame()">Forgot password?</a>
       </div>
       <button type="submit" class="auth-submit" id="submitLogin">
@@ -4446,27 +4445,59 @@ function closeMobileMenu() {
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>
         Continue with Wallet
       </button>
-      <div class="auth-switch">Need access? <a href="#" onclick="switchAuthTab('signup');return false;">Request access</a></div>
+      <div class="auth-switch"><span id="loginSwitchText">Need access?</span> <a href="#" id="loginSwitchLink" onclick="switchAuthTab('signup');return false;">Request access</a></div>
     </form>
-    <!-- APPLICATION (whitelist) FORM -->
+    <!-- FIRST LOGIN (Kev, 2026-10-07): the mailed one-time password opens
+         only this step; the user's own password replaces it. -->
+    <form class="auth-form" id="formFirstLogin" style="display:none" onsubmit="submitFirstLogin(event)">
+      <div class="auth-note">Welcome in. Choose your own password: the one from the email stops working then, and your wallet opens.</div>
+      <div class="auth-field">
+        <label class="auth-label">Your password <span class="auth-optional">(8+ characters)</span></label>
+        <div class="auth-input-wrap">
+          <input class="auth-input" type="password" id="firstPass" placeholder="••••••••" required minlength="8" autocomplete="new-password"/>
+          <button type="button" class="auth-eye" onclick="togglePass('firstPass',this)">👁</button>
+        </div>
+      </div>
+      <div class="auth-field">
+        <label class="auth-label">Repeat it</label>
+        <input class="auth-input" type="password" id="firstPass2" placeholder="••••••••" required minlength="8" autocomplete="new-password"/>
+      </div>
+      <button type="submit" class="auth-submit" id="submitFirstLogin">
+        <span class="auth-submit-text">Set password and enter</span>
+        <span class="auth-submit-spin"></span>
+      </button>
+    </form>
+    <!-- ACCESS FORM. While SIGNUP_OPEN is false (private beta) it takes
+         applications only; open, it creates the account with email +
+         password and falls back to the application for emails not on the
+         access list. -->
     <form class="auth-form" id="formSignup" style="display:none" onsubmit="submitAuth(event,'signup')">
-      <div class="auth-note">Enki Art is invite-only during the whitelist stage.<br>Apply below — if your email is already whitelisted you're in right away; otherwise we review your application and email you when you're accepted.</div>
+      <div class="auth-note" id="signupNote">Enki Art is invite-only during the whitelist stage. Apply below and we'll email you when you're accepted.</div>
       <div class="auth-form-scroll">
         <div class="auth-field">
           <label class="auth-label">Email</label>
           <input class="auth-input" type="email" id="signupEmail" placeholder="you@example.com" required autocomplete="email"/>
         </div>
-        <div class="auth-field">
-          <label class="auth-label">Describe yourself briefly</label>
-          <textarea class="auth-textarea" id="appAbout" placeholder="What are you working on?" required></textarea>
+        <div class="auth-field" id="signupPassField" style="display:none">
+          <label class="auth-label">Password <span class="auth-optional">(8+ characters)</span></label>
+          <div class="auth-input-wrap">
+            <input class="auth-input" type="password" id="signupPass" placeholder="••••••••" minlength="8" autocomplete="new-password"/>
+            <button type="button" class="auth-eye" onclick="togglePass('signupPass',this)">👁</button>
+          </div>
         </div>
-        <div class="auth-field">
-          <label class="auth-label">Link to socials <span class="auth-optional">(optional)</span></label>
-          <input class="auth-input" type="text" id="appSocials" placeholder="link your best social media account"/>
+        <div id="applyFields">
+          <div class="auth-field">
+            <label class="auth-label">Describe yourself briefly</label>
+            <textarea class="auth-textarea" id="appAbout" placeholder="What are you working on?"></textarea>
+          </div>
+          <div class="auth-field">
+            <label class="auth-label">Link to socials <span class="auth-optional">(optional)</span></label>
+            <input class="auth-input" type="text" id="appSocials" placeholder="link your best social media account"/>
+          </div>
         </div>
       </div>
       <button type="submit" class="auth-submit" id="submitSignup" style="margin-top:16px">
-        <span class="auth-submit-text">Request access</span>
+        <span class="auth-submit-text" id="signupLabel">Request access</span>
         <span class="auth-submit-spin" id="spinSignup"></span>
       </button>
       <div class="auth-switch">Already have access? <a href="#" onclick="switchAuthTab('login');return false;">Log in</a></div>
@@ -4497,12 +4528,22 @@ function closeAuth(e) {
   if (e && e.target !== document.getElementById('authBackdrop')) return;
   document.getElementById('authBackdrop').classList.remove('open');
   document.body.style.overflow = '';
+  forgetFirstLogin();
 }
 function switchAuthTab(tab) {
   document.getElementById('tabLogin').classList.toggle('active', tab === 'login');
   document.getElementById('tabSignup').classList.toggle('active', tab === 'signup');
   document.getElementById('formLogin').style.display  = tab === 'login'  ? '' : 'none';
   document.getElementById('formSignup').style.display = tab === 'signup' ? '' : 'none';
+  forgetFirstLogin();
+}
+// The one-time password never expires, so every way out of the first-login
+// step forgets it: another tab, a reopen of the modal, every way it closes.
+function forgetFirstLogin() {
+  document.getElementById('formFirstLogin').style.display = 'none';
+  firstLogin = null;
+  document.getElementById('firstPass').value = '';
+  document.getElementById('firstPass2').value = '';
 }
 function togglePass(id, btn) {
   const inp = document.getElementById(id);
@@ -4556,6 +4597,7 @@ window.addEventListener('message', function (e) {
     if (bd && bd.classList.contains('open')) {
       bd.classList.remove('open');
       document.body.style.overflow = '';
+      forgetFirstLogin();
     }
   }
 });
@@ -4580,10 +4622,8 @@ function checkStrength(val) {
   label.textContent = map[score].text;
   label.style.color = map[score].color;
 }
-// Emails already approved for the whitelist stage. Add more as people are accepted.
-const WHITELIST = ['kirikev4d@gmail.com'];
 function walletLogin() {
-  // Wallet / Turnkey sign-in lives in the app shell — hand off to it.
+  // Wallet sign-in (Phantom & co) lives in the app shell — hand off to it.
   try {
     if (window.parent && window.parent !== window) {
       window.parent.postMessage({ type: 'enki-open-wallet' }, '*');
@@ -4592,51 +4632,128 @@ function walletLogin() {
   } catch (e) {}
   (window.top || window).location.href = '/home?auth=wallet';
 }
+// Email + password (Kev, 2026-10-07): a login or a new account opens the app
+// at once. The session is stored where the app reads it (same origin), and
+// the app then asks for the wallet's second factor if the account has one.
+function adoptSession(d) {
+  try {
+    localStorage.removeItem('solana-auth-session'); // one identity at a time
+    localStorage.setItem('enki_session_token', d.token);
+    localStorage.setItem('enki_session_email', d.email);
+    sessionStorage.setItem('enki:wallet-ask', '1');
+  } catch (e) {}
+  (window.top || window).location.href = d.banned ? '/banned' : '/home';
+}
+function postJson(url, body) {
+  return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then((res) => res.json().catch(() => ({})).then((data) => ({ ok: res.ok, data: data })));
+}
+// Sign-up is wired but closed during the private beta (Kev, 2026-10-07):
+// the access form takes applications only. true opens it, together with
+// SIGNUP_OPEN=1 on the server: email + password create the account, and an
+// email not on the access list falls back to the application.
+const SIGNUP_OPEN = false;
+let signupStep = 'apply'; // 'account' while sign-up is open, until an email turns out not to be on the list
+function setSignupStep(step) {
+  signupStep = step;
+  const account = step === 'account';
+  document.getElementById('signupPassField').style.display = account ? '' : 'none';
+  document.getElementById('signupPass').required = account;
+  document.getElementById('applyFields').style.display = account ? 'none' : '';
+  document.getElementById('signupLabel').textContent = account ? 'Create account' : 'Request access';
+}
+if (SIGNUP_OPEN) {
+  document.getElementById('tabSignup').textContent = 'Sign up';
+  document.getElementById('loginSwitchText').textContent = 'No account yet?';
+  document.getElementById('loginSwitchLink').textContent = 'Sign up';
+  document.getElementById('signupNote').textContent = "Enki Art is invite-only during the whitelist stage. Whitelisted emails are in right away; everyone else can request access.";
+  setSignupStep('account');
+  // Another email may be on the list, or have an account: it starts over.
+  document.getElementById('signupEmail').addEventListener('input', () => {
+    setSignupStep('account');
+    const note = document.getElementById('formSignup').querySelector('.auth-inline-note');
+    if (note) note.remove();
+  });
+}
 function submitAuth(e, type) {
   e.preventDefault();
-  if (type === 'login') {
-    // Honest: there is no password backend yet — never fake a successful
-    // login. Real sign-in is the wallet / email-code flow in the app shell.
-    showInlineNote('login', 'Password sign-in isn\'t live during the whitelist stage yet — use "Continue with Wallet" below (it includes an email-code option).');
-    return;
-  }
-  const btn = document.getElementById('submitSignup');
+  const btn = document.getElementById(type === 'login' ? 'submitLogin' : 'submitSignup');
+  const done = () => { btn.classList.remove('loading'); btn.disabled = false; };
+  const fail = (msg) => { done(); showInlineNote(type, msg || 'Something went wrong. Please try again.'); };
   btn.classList.add('loading');
   btn.disabled = true;
-  // Application: stored server-side (access_requests); whitelisted emails get in now,
-  // everyone else is queued for review.
+  if (type === 'login') {
+    const email = (document.getElementById('loginEmail').value || '').trim().toLowerCase();
+    const password = document.getElementById('loginPass').value;
+    postJson('/api/auth/password/login', { identifier: email, password: password })
+      .then(({ ok, data }) => {
+        if (ok && data.token) return adoptSession(data);
+        // The mailed one-time password: choose your own first.
+        if (ok && data.setPassword) return (done(), showFirstLogin(email, password));
+        fail(data.error);
+      })
+      .catch(() => fail('Network error. Please try again.'));
+    return;
+  }
   const email = (document.getElementById('signupEmail').value || '').trim().toLowerCase();
-  const about = (document.getElementById('appAbout').value || '').trim();
-  const socials = (document.getElementById('appSocials') ? document.getElementById('appSocials').value : '').trim();
-  fetch('/api/access-request', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: email, about: about, socials: socials }),
-  })
-    .then((res) => res.json().catch(() => ({})).then((data) => ({ ok: res.ok, data: data })))
+  if (signupStep === 'apply') {
+    // Not on the access list yet: the application is stored for review.
+    const about = (document.getElementById('appAbout').value || '').trim();
+    if (!about) return fail('Tell us briefly what you are working on.');
+    postJson('/api/access-request', { email: email, about: about, socials: (document.getElementById('appSocials').value || '').trim() })
+      .then(({ ok, data }) => (ok ? (done(), showAuthSuccess()) : fail(data.error)))
+      .catch(() => fail('Network error. Please try again.'));
+    return;
+  }
+  postJson('/api/auth/password/register', { email: email, password: document.getElementById('signupPass').value })
     .then(({ ok, data }) => {
-      btn.classList.remove('loading');
-      btn.disabled = false;
-      if (!ok) {
-        showInlineNote('signup', (data && data.error) || 'Something went wrong. Please try again.');
-        return;
+      if (ok && data.token) return adoptSession(data);
+      // Edited while this was checked: the next submit checks the new email.
+      if ((document.getElementById('signupEmail').value || '').trim().toLowerCase() !== email) return done();
+      // Not on the list, or the server not opened yet: the application.
+      if (data.notWhitelisted || data.closed) {
+        setSignupStep('apply');
+        return fail(data.closed ? data.error : "This email isn't on the access list yet. Tell us about you and we'll review your request.");
       }
-      if (WHITELIST.includes(email)) {
+      if (/already exists/i.test(data.error || '')) {
+        done();
         switchAuthTab('login');
-        const le = document.getElementById('loginEmail'); if (le) le.value = email;
-        showInlineNote('login', "✓ You're whitelisted — continue with your wallet below to enter Enki Art.");
-      } else {
-        showAuthSuccess();
+        document.getElementById('loginEmail').value = email;
+        return showInlineNote('login', 'You already have an account. Log in below.');
       }
+      fail(data.error);
     })
-    .catch(() => {
-      btn.classList.remove('loading');
-      btn.disabled = false;
-      showInlineNote('signup', 'Network error. Please try again.');
-    });
+    .catch(() => fail('Network error. Please try again.'));
+}
+// The one-time password, kept in memory between the two steps only (var:
+// forgetFirstLogin clears it and may run while the page still loads).
+var firstLogin = null;
+function showFirstLogin(email, password) {
+  firstLogin = { email: email, password: password };
+  document.getElementById('loginPass').value = '';
+  document.getElementById('formLogin').style.display = 'none';
+  document.getElementById('formFirstLogin').style.display = '';
+}
+function submitFirstLogin(e) {
+  e.preventDefault();
+  const btn = document.getElementById('submitFirstLogin');
+  const done = () => { btn.classList.remove('loading'); btn.disabled = false; };
+  const fail = (msg) => { done(); showInlineNote('firstLogin', msg || 'Something went wrong. Please try again.'); };
+  const password = document.getElementById('firstPass').value;
+  if (password !== document.getElementById('firstPass2').value) return fail('The two passwords differ.');
+  btn.classList.add('loading');
+  btn.disabled = true;
+  postJson('/api/auth/password/first-login', { email: firstLogin.email, password: firstLogin.password, newPassword: password })
+    .then(({ ok, data }) => {
+      if (ok && data.token) return adoptSession(data);
+      // Set, but no session opened: the new password logs in now.
+      if (data.passwordSet) return (done(), switchAuthTab('login'), showInlineNote('login', data.error));
+      fail(data.error);
+    })
+    .catch(() => fail('Network error. Please try again.'));
 }
 function showInlineNote(form, msg) {
-  const f = document.getElementById(form === 'login' ? 'formLogin' : 'formSignup');
+  const f = document.getElementById(form === 'login' ? 'formLogin' : form === 'firstLogin' ? 'formFirstLogin' : 'formSignup');
   if (!f) return;
   let n = f.querySelector('.auth-inline-note');
   if (!n) { n = document.createElement('div'); n.className = 'auth-note auth-inline-note'; f.insertBefore(n, f.firstChild); }
@@ -4660,6 +4777,7 @@ function showAuthSuccess() {
 function closeAuthHard() {
   document.getElementById('authBackdrop').classList.remove('open');
   document.body.style.overflow = '';
+  forgetFirstLogin();
 }
 // ── THEME SWATCHES (teal / purple / light) ──
 function pickTheme(t) {
@@ -4971,6 +5089,7 @@ document.addEventListener('keydown', e => {
     if (document.getElementById('authResetWrap')) { hideResetFrame(); return; }
     document.getElementById('authBackdrop').classList.remove('open');
     document.body.style.overflow = '';
+    forgetFirstLogin();
   }
 });
 // Closing the modal any other way also clears a swapped-in reset frame, so the

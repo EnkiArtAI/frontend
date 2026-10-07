@@ -15,12 +15,16 @@ import { useEmailAuth } from "@/hooks/useEmailAuth";
 // session exists — visitors and wallet-only users never download it.
 const CdpRuntime = dynamic(() => import("./CdpProvider"), { ssr: false });
 
+// One runtime per account: another account's login remounts it, and the new
+// bridge signs in to CDP itself (see CdpWalletBridge).
 function CdpLauncher() {
-  const { isAuthed } = useEmailAuth();
-  return isAuthed ? <CdpRuntime /> : null;
+  const { email } = useEmailAuth();
+  return email ? <CdpRuntime key={email} email={email} /> : null;
 }
 import { Toaster } from "@/components/ui/toaster";
 import BetaGate from "@/components/BetaGate";
+import { StepUpProvider } from "@/components/StepUpProvider";
+import SecondFactorBar from "@/components/SecondFactorBar";
 
 /**
  * Provider hierarchy (outermost first):
@@ -60,10 +64,17 @@ export function Providers({ children }: { children: React.ReactNode }) {
             <SolanaWalletProvider>
               <TooltipProvider>
                 {/* Closed-beta wall around EVERY page (public paths excepted). */}
-                <BetaGate>{children}</BetaGate>
+                <StepUpProvider>
+                  <BetaGate>
+                    {/* First: it goes with the page when BetaGate shows its wall. */}
+                    <SecondFactorBar />
+                    {children}
+                  </BetaGate>
+                  {/* Inside the step-up provider: the wallet unlock asks through its dialog. */}
+                  <CdpLauncher />
+                </StepUpProvider>
                 {/* Without this, every toast() (errors included) went nowhere. */}
                 <Toaster />
-                <CdpLauncher />
               </TooltipProvider>
             </SolanaWalletProvider>
 

@@ -4,8 +4,14 @@ import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
  *
  * Creates a bare users row + an Argon2id+pepper credential in
  * password_credentials (isolated from the encrypted-email design),
- * then mints a session. The wallet is a Privy non-custodial embedded wallet
- * attached after login — Enki never holds keys.
+ * then mints a session: straight in, no code (Kev, 2026-10-07). 2FA is
+ * optional and never the email, which resets the password; a red bar asks
+ * for it. The wallet is a non-custodial embedded wallet attached after
+ * login — Enki never holds keys.
+ *
+ * Closed during the private beta (Kev, 2026-10-07: "wired but not activated"):
+ * it answers 403 { closed } unless SIGNUP_OPEN=1 is set, so hiding the form on
+ * the landing (its own SIGNUP_OPEN) is not the only lock. Open both together.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -22,6 +28,9 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  if (process.env.SIGNUP_OPEN !== "1") {
+    return NextResponse.json({ error: "Sign-up opens after the private beta. Request access to join.", closed: true }, { status: 403 });
+  }
   const limit = checkRequestRateLimit(rateLimitKey(req, "auth:register:ip"), 10, 10 * 60 * 1000);
   if (!limit.allowed) return rateLimitResponse(limit.retryAfterSeconds);
 

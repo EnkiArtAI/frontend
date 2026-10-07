@@ -1,9 +1,9 @@
 /**
  * Open the login UI where the user stands (Kev, 2026-08-24: "just pop up
- * the login UI … without opening the homepage"). The working sign-in is the
- * wallet picker (wallet + email code) — the shell listens and pops it in
- * place; only outside the shell does this fall back to the landing route,
- * which deep-links into its auth modal.
+ * the login UI … without opening the homepage"). The shell listens and pops
+ * the login modal (email + password, or a wallet) in place; only outside the
+ * shell does this fall back to the landing route, which deep-links into its
+ * auth modal.
  */
 export function openLogin(): void {
   const notConsumed = window.dispatchEvent(

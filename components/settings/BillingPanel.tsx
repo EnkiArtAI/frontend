@@ -33,7 +33,7 @@ export default function BillingPanel() {
   // Email users get a CDP embedded wallet — its address arrives via the
   // bridge (the CDP provider tree lives outside this component), which is
   // what useCdpAddress above already subscribes to.
-  const { isAuthed: emailAuthed, email } = useEmailAuth();
+  const { isAuthed: emailAuthed } = useEmailAuth();
 
   const walletLogin = Boolean(account?.address) || solanaConnected || solanaSessionActive || (emailAuthed && !!cdpAddress);
   const recipient =
@@ -87,7 +87,7 @@ export default function BillingPanel() {
           </div>
           {/* Self-custody: email wallets can export their private key. Wallet
               logins (Solflare & co) hold their keys themselves already. */}
-          {emailAuthed && <KeyExport email={email} ready={!!cdpAddress} />}
+          {emailAuthed && <KeyExport ready={!!cdpAddress} />}
         </SettingsSection>
       )}
 
