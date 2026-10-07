@@ -23,7 +23,6 @@ import { sessionAuthHeaders } from "@/lib/session-headers";
 type Imp = { id: string; name: string; url: string | null; hunter: string; tags: string[]; at: string };
 type Rep = { id: string; target: string; type: "prompt" | "profile"; reason: string; details: string | null; reporter: string; severity: number | string | null; at: string };
 type Fb = { id: string; name: string; email: string | null; desc: string; images: number; paid: boolean; payoutCents: number | null; at: string };
-type Friend = { id: string; name: string; address: string; type: string; chain: string; notes: string | null };
 type Hunter = { handle: string; total: number; approved: number; denied: number; earningsCents: number };
 type StrikeRow = { userId: string; handle: string; strikes: { id: string; reason: string | null }[]; banned: boolean; permanent: boolean; note: string | null; appeal: { id: string; note: string | null; against: { reason: string | null; until: string | null } | null } | null };
 type Rec = { id: string; handle: string; wallet: string | null; contact: string | null; explanation: string | null; evidence: { kind: string; matched: boolean | null }[]; status: string; at: string };
@@ -41,10 +40,10 @@ type AccessRequest = { id: string; email: string; about: string; socials: string
 type Allowed = { id: string; kind: string; value: string; note: string | null; created_at: string };
 // Who may enter: admins only (null for a mod).
 type Access = { requests: AccessRequest[]; allowlist: Allowed[] } | null;
-type AdminData = { generation: GenPolicy; imports: Imp[]; reports: Rep[]; feedback: Fb[]; friends: Friend[]; hunters: Hunter[]; strikes: StrikeRow[]; recovery: Rec[]; council: Council; automod: Automod[]; people: Person[]; access: Access };
+type AdminData = { generation: GenPolicy; imports: Imp[]; reports: Rep[]; feedback: Fb[]; hunters: Hunter[]; strikes: StrikeRow[]; recovery: Rec[]; council: Council; automod: Automod[]; people: Person[]; access: Access };
 const COUNCIL_OFF: Council = { ready: false, isOwner: false, enabled: false, quorum: 3, ttlDays: 7, members: [], myEmail: null, proposals: [] };
 
-type Tab = "people" | "access" | "imports" | "reports" | "feedback" | "friends" | "hunters" | "strikes" | "automod" | "council" | "recovery" | "settings";
+type Tab = "people" | "access" | "imports" | "reports" | "feedback" | "hunters" | "strikes" | "automod" | "council" | "recovery" | "settings";
 const REJECT_REASONS = ["Duplicate", "Low quality", "Not a prompt", "Spam", "Policy violation", "Other"];
 
 /* ── the admin sidebar's own palette: inverted warm dark, theme-independent ── */
@@ -110,7 +109,6 @@ const TABS: { id: Tab; label: string; icon: string; sub: string; search: boolean
   { id: "imports", label: "Pending imports", icon: "inbox", sub: "Hunt submissions waiting for review before they hit the marketplace.", search: true },
   { id: "reports", label: "Reports", icon: "flag", sub: "User-flagged prompts and profiles, grouped by target.", search: false },
   { id: "feedback", label: "Feedback", icon: "message", sub: "Submissions from the “Earn $100 for feedback” program. Click a row to read it all.", search: true },
-  { id: "friends", label: "Friends (whitelist)", icon: "key", sub: "Wallets and collections with early or elevated access.", search: false },
   { id: "hunters", label: "Hunter trust", icon: "target", sub: "Importers ranked by how often their finds get approved.", search: false },
   { id: "strikes", label: "Strikes & bans", icon: "zap", sub: "Users with active strikes, bans, and open appeals.", search: false },
   { id: "automod", label: "Auto-filter log", icon: "filetext", sub: "Every prompt the filter blocked, with the reason and the score. Review and overturn them per person in People.", search: true },
@@ -142,13 +140,9 @@ export default function AdminPage() {
   const [impRejectId, setImpRejectId] = useState<string | null>(null);
   const [impReason, setImpReason] = useState(REJECT_REASONS[0]);
   const [fbOpen, setFbOpen] = useState<string | null>(null);
-  const [flAdd, setFlAdd] = useState(false);
   const [invEmail, setInvEmail] = useState("");
   const [invWallet, setInvWallet] = useState("");
   const [granting, setGranting] = useState(false);
-  const [flName, setFlName] = useState(""); const [flAddr, setFlAddr] = useState("");
-  const [flType, setFlType] = useState("EOA"); const [flNotes, setFlNotes] = useState("");
-  const [delPending, setDelPending] = useState<Friend | null>(null);
   const [appealOpen, setAppealOpen] = useState<string | null>(null);
   const [repStrikeId, setRepStrikeId] = useState<string | null>(null);
   const [amOpen, setAmOpen] = useState<string | null>(null);
@@ -331,7 +325,6 @@ export default function AdminPage() {
     imports: data?.imports.length ?? 0,
     reports: data?.reports.length ?? 0,
     feedback: data?.feedback.filter((f) => !f.paid).length ?? 0,
-    friends: 0,
     hunters: 0,
     strikes: data?.strikes.filter((s) => s.appeal).length ?? 0,
     // Only the never-looked-at ones nag. A block that has been judged is
@@ -373,7 +366,7 @@ export default function AdminPage() {
     );
   }
 
-  const d: AdminData = data ?? { imports: [], reports: [], feedback: [], friends: [], hunters: [], strikes: [], recovery: [], council: COUNCIL_OFF, automod: [], people: [], generation: { maxConcurrentPerUser: null, canEdit: false }, access: null };
+  const d: AdminData = data ?? { imports: [], reports: [], feedback: [], hunters: [], strikes: [], recovery: [], council: COUNCIL_OFF, automod: [], people: [], generation: { maxConcurrentPerUser: null, canEdit: false }, access: null };
   const c = d.council ?? COUNCIL_OFF;
   const filteredImports = d.imports.filter((r) => !q || r.name.toLowerCase().includes(q) || r.hunter.toLowerCase().includes(q));
   const filteredFeedback = d.feedback.filter((r) => !q || r.name.toLowerCase().includes(q) || (r.email ?? "").toLowerCase().includes(q) || r.desc.toLowerCase().includes(q));
@@ -667,62 +660,6 @@ export default function AdminPage() {
                         <Badge pal={r.kind === "email" ? PILL.blue : PILL.purple} label={r.kind} />
                         <span style={{ flex: 1, minWidth: 0, fontFamily: MONO, fontSize: 10.5, color: "var(--enki-ink-2)", overflow: "hidden", textOverflow: "ellipsis" }}>{r.value}</span>
                         <span style={{ width: 120, fontSize: 11, color: "var(--enki-ink-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.note ?? "—"}</span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-
-              {tab === "friends" && (
-                <>
-                  <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
-                    <button onClick={() => setFlAdd((v) => !v)} style={{ padding: "5px 14px", borderRadius: 999, border: "none", background: "var(--enki-ink)", color: "var(--enki-paper)", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
-                      {flAdd ? "Close" : "+ Add entry"}
-                    </button>
-                  </div>
-                  {flAdd && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 7, border: "1px solid var(--enki-rule-2, var(--enki-rule))", borderRadius: 11, background: "var(--enki-paper)", padding: "10px 12px", marginBottom: 8 }}>
-                      {([
-                        ["Name", flName, setFlName, 1, false],
-                        ["Address / collection ID", flAddr, setFlAddr, 1.4, true],
-                        ["Notes", flNotes, setFlNotes, 1.2, false],
-                      ] as [string, string, (v: string) => void, number, boolean][]).map(([ph, val, set, grow, mono]) => (
-                        <input key={ph} placeholder={ph} value={val} onChange={(e) => set(e.target.value)} style={{ flex: grow, minWidth: 110, height: 28, border: "1px solid var(--enki-rule)", borderRadius: 8, background: "var(--enki-paper-2)", color: "var(--enki-ink)", fontSize: 11.5, padding: "0 9px", fontFamily: mono ? MONO : undefined, outline: "none" }} />
-                      ))}
-                      <select value={flType} onChange={(e) => setFlType(e.target.value)} style={{ height: 28, border: "1px solid var(--enki-rule)", borderRadius: 8, background: "var(--enki-paper-2)", color: "var(--enki-ink)", fontSize: 11.5 }}>
-                        {["EOA", "Collection", "Multi-sig"].map((t) => <option key={t}>{t}</option>)}
-                      </select>
-                      {/* network picker — greyed out until there is more than Solana */}
-                      <select value="solana" disabled title="More networks are coming — Solana is the only one for now"
-                        style={{ height: 28, border: "1px solid var(--enki-rule)", borderRadius: 8, background: "var(--enki-paper-2)", color: "var(--enki-ink-3)", fontSize: 11.5, opacity: 0.55, cursor: "not-allowed" }}>
-                        <option value="solana">Solana</option>
-                      </select>
-                      <Pill kind="green" label="Save" onClick={() => {
-                        if (!flName.trim() || !flAddr.trim()) { say("Name and address are required."); return; }
-                        void (async () => {
-                          const ok = await post({ resource: "friends", action: "add", name: flName, address: flAddr, type: flType, notes: flNotes }, "Whitelist entry added.", (cur) => cur);
-                          if (ok) {
-                            setFlAdd(false); setFlName(""); setFlAddr(""); setFlNotes("");
-                            // re-fetch to pick up the server-assigned id
-                            try {
-                              const res = await fetch("/api/admin", { headers: sessionAuthHeaders() });
-                              if (res.ok) setData(await res.json());
-                            } catch { /* next visit reconciles */ }
-                          }
-                        })();
-                      }} />
-                    </div>
-                  )}
-                  <div style={cardStyle}>
-                    {d.friends.length === 0 && <div style={{ padding: 30, textAlign: "center", fontSize: 12, color: "var(--enki-ink-3)" }}>Whitelist is empty.</div>}
-                    {d.friends.map((r) => (
-                      <div key={r.id} style={rowStyle}>
-                        <span style={{ width: 140, fontSize: 12.5, fontWeight: 600, color: "var(--enki-ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
-                        <span style={{ flex: 1, minWidth: 0, fontFamily: MONO, fontSize: 10.5, color: "var(--enki-ink-2)", overflow: "hidden", textOverflow: "ellipsis" }}>{r.address}</span>
-                        <Badge pal={PILL.blue} label={r.type} />
-                        <Badge pal={{ bg: "var(--enki-paper-2)", ink: "var(--enki-ink-2)" }} label={r.chain} />
-                        <span style={{ flex: 1, fontSize: 11, color: "var(--enki-ink-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.notes ?? "—"}</span>
-                        <Pill kind="red" label="Delete" onClick={() => setDelPending(r)} />
                       </div>
                     ))}
                   </div>
@@ -1212,27 +1149,6 @@ export default function AdminPage() {
           )}
         </div>
       </div>
-
-      {/* ── whitelist delete confirm (honest — no fake device approval) ── */}
-      {delPending && (
-        <div onClick={() => setDelPending(null)} style={{ position: "fixed", inset: 0, zIndex: 350, background: "rgba(26,23,21,0.45)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", animation: "adm-fade .15s ease" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ width: 380, maxWidth: "92vw", background: "var(--enki-paper)", border: "1px solid var(--enki-rule)", borderRadius: 14, padding: "24px 22px", boxShadow: "0 24px 64px rgba(0,0,0,0.3)", animation: "adm-pop .2s ease" }}>
-            <div style={{ ...microLabel, fontSize: 8, letterSpacing: "0.18em", marginBottom: 6 }}>Whitelist</div>
-            <div style={{ fontFamily: SERIF, fontStyle: "italic", fontSize: 20, fontWeight: 700, color: "var(--enki-ink)", marginBottom: 8 }}>Remove this entry?</div>
-            <p style={{ margin: "0 0 16px", fontSize: 12.5, color: "var(--enki-ink-3)", lineHeight: 1.6 }}>
-              “{delPending.name}” loses its whitelist access. The entry is deactivated (kept for the audit trail) and disappears from this list.
-            </p>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <Pill kind="plain" label="Cancel" onClick={() => setDelPending(null)} />
-              <Pill kind="red" label="Remove entry" onClick={() => {
-                const f = delPending;
-                setDelPending(null);
-                void post({ resource: "friends", action: "remove", id: f.id }, "Whitelist entry removed.", (cur) => ({ ...cur, friends: cur.friends.filter((x) => x.id !== f.id) }));
-              }} />
-            </div>
-          </div>
-        </div>
-      )}
 
       {toast && (
         <div style={{ position: "fixed", bottom: 22, left: "50%", transform: "translateX(-50%)", zIndex: 400, background: "var(--enki-ink)", color: "var(--enki-paper)", fontSize: 12.5, padding: "9px 16px", borderRadius: 999, boxShadow: "0 10px 30px rgba(0,0,0,0.3)", animation: "adm-toast .2s ease", whiteSpace: "nowrap" }}>
