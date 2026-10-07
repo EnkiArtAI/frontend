@@ -59,7 +59,7 @@ export async function GET(
     const { data: prompt, error } = await supabase
       .from("prompts")
       .select(
-        "id,title,encrypted_content,encrypted_content_iv,encrypted_content_tag,encrypted_content_kid,creator_id,category,tags,ai_model,ai_settings,price_usd_cents,aspect_ratio,photo_count,prompt_type,showcase_images,resolution,is_free_showcase,is_listed,listing_status,deleted_at,public_prompt_text,description,published_at,created_at,updated_at,is_adult"
+        "id,title,encrypted_content,encrypted_content_iv,encrypted_content_tag,encrypted_content_kid,creator_id,category,tags,ai_model,ai_settings,price_usd_cents,aspect_ratio,photo_count,prompt_type,showcase_images,showcase_before_images,resolution,is_free_showcase,is_listed,listing_status,deleted_at,public_prompt_text,description,published_at,created_at,updated_at,is_adult"
       )
       .eq("id", id)
       .maybeSingle();
@@ -186,6 +186,13 @@ export async function GET(
         // while the DB row carries an array of plain URL strings.
         showcaseImages: (Array.isArray(prompt.showcase_images)
           ? prompt.showcase_images
+          : []
+        )
+          .filter((url: unknown): url is string => typeof url === "string")
+          .map((url: string) => ({ url })),
+        // The images the prompt starts from, beside the showcase (CUR-2).
+        beforeImages: (Array.isArray(prompt.showcase_before_images)
+          ? prompt.showcase_before_images
           : []
         )
           .filter((url: unknown): url is string => typeof url === "string")

@@ -162,7 +162,7 @@ describe("the routes", () => {
     const check = SAVE.indexOf("const check = first ? NOT_CHECKED : await checkPrompt(judged, { hidden: false, signal: req.signal });");
     expect(check).toBeGreaterThan(-1);
     expect(SAVE.indexOf("const promptRow = {")).toBeGreaterThan(check);
-    expect(SAVE).toMatch(/const shownAdult = await showsAdultRender\(supabase, uploadedPhotos\);\n\s+if \(shownAdult === null\) \{/);
+    expect(SAVE).toMatch(/const shownAdult = await showsAdultRender\(supabase, \[\.\.\.uploadedPhotos, \.\.\.\(referenceImages \?\? savedBefore\)\]\);\n\s+if \(shownAdult === null\) \{/);
     expect(SAVE).toMatch(/const adult = check\.adult === true \|\| shownAdult;/);
     expect(SAVE).toMatch(/const promptRow = \{\n\s+is_adult: adult,/);
   });
