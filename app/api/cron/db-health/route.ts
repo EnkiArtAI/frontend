@@ -35,8 +35,10 @@ export async function GET(req: NextRequest) {
   const denied = cronDenied(req);
   if (denied) return denied;
   const to = (process.env.OPS_ALERT_EMAILS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-  if (!to.length || !process.env.BLOB_READ_WRITE_TOKEN) {
-    return NextResponse.json({ error: "Outage alerts are not configured on this environment (OPS_ALERT_EMAILS, BLOB_READ_WRITE_TOKEN)." }, { status: 503 });
+  // Without any of these the alert could never go out, so the run says so
+  // instead of answering 200 every five minutes.
+  if (!to.length || !process.env.BLOB_READ_WRITE_TOKEN || !process.env.RESEND_API_KEY) {
+    return NextResponse.json({ error: "Outage alerts are not configured on this environment (OPS_ALERT_EMAILS, BLOB_READ_WRITE_TOKEN, RESEND_API_KEY)." }, { status: 503 });
   }
 
   const up = await databaseAnswers();

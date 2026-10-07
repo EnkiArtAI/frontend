@@ -49,6 +49,7 @@ beforeEach(() => {
   process.env.CRON_SECRET = "cron-secret";
   process.env.OPS_ALERT_EMAILS = "ops@enki.test, kev@enki.test";
   process.env.BLOB_READ_WRITE_TOKEN = "vercel_blob_rw_test";
+  process.env.RESEND_API_KEY = "re_test";
   process.env.SUPABASE_URL = "https://db.enki.test";
 });
 
@@ -97,12 +98,13 @@ describe("the database outage alert", () => {
     expect(mails.map((m) => m.subject).slice(2)).toEqual(["Enki: database back", "Enki: database back"]);
   });
 
-  it("refuses to run without recipients or a store for its state", async () => {
-    delete process.env.OPS_ALERT_EMAILS;
-    expect((await run()).status).toBe(503);
-    process.env.OPS_ALERT_EMAILS = "ops@enki.test";
-    delete process.env.BLOB_READ_WRITE_TOKEN;
-    expect((await run()).status).toBe(503);
+  it("refuses to run without recipients, a mail sender or a store for its state", async () => {
+    for (const key of ["OPS_ALERT_EMAILS", "RESEND_API_KEY", "BLOB_READ_WRITE_TOKEN"]) {
+      const kept = process.env[key];
+      delete process.env[key];
+      expect((await run()).status, key).toBe(503);
+      process.env[key] = kept;
+    }
   });
 
   it("refuses a caller that is not the scheduler", async () => {
