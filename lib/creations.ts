@@ -22,6 +22,17 @@ function safeParse<T>(raw: string | null, fallback: T): T {
 }
 
 /**
+ * Every URL a server gallery row is known by: the original (image_url) and
+ * what galleries display (image_urls, the WebP preview when one exists). A
+ * render the browser kept under either of them is that row, not a second image.
+ */
+export function serverUrls(rows: Array<{ image_url?: string | null; image_urls?: string[] | null }>): Set<string> {
+  return new Set(
+    rows.flatMap((r) => [r.image_url, ...(r.image_urls ?? [])]).filter((u): u is string => typeof u === "string" && u !== ""),
+  );
+}
+
+/**
  * Get user key from Thirdweb account
  */
 export function getUserKeyFromAccount(account: { address: string } | null | undefined): string | null {

@@ -7,6 +7,7 @@ import {
   clearCreations,
   listCreations,
   removeCreation,
+  serverUrls,
   subscribeCreations,
   type StoredCreation,
 } from "@/lib/creations";
@@ -104,7 +105,8 @@ export default function MyGalleryPage() {
           });
 
         /* Merge: DB first, then local-only items not already in DB (dedup by imageUrl) */
-        const dbUrls = new Set(dbMapped.map((c) => c.imageUrl));
+        // Both URLs of a row: the browser kept the original, the row shows the preview.
+        const dbUrls = serverUrls(generations);
         const localOnly = local.filter((c) => c.imageUrl && !dbUrls.has(c.imageUrl));
         const merged = [...dbMapped, ...localOnly].sort(
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
