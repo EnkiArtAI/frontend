@@ -124,6 +124,21 @@ describe("an invited email", () => {
     expect(db.current!.tables.users).toEqual([]);
   });
 
+  it("settles that email's open request only once the account exists", async () => {
+    db.current!.tables.access_requests = [{ id: "r1", email: "new@example.com", status: "pending" }];
+    db.current!.state.failNext = { table: "users", op: "insert", code: "XX000" };
+    await expect(inviteEmail(db.current!.client, "new@example.com")).rejects.toBeInstanceOf(AccessError);
+    expect(db.current!.tables.access_requests[0].status).toBe("pending");
+  });
+
+  it("clears a stale 'mail not sent' once the account has its own password", async () => {
+    mailer.ok = false;
+    await inviteEmail(db.current!.client, "new@example.com");
+    db.current!.tables.password_credentials[0].must_change_password = false; // set through the inbox reset
+    expect(await inviteEmail(db.current!.client, "new@example.com")).toEqual({ outcome: "has-password", mailed: false });
+    expect(db.current!.tables.access_allowlist[0].note).toBe("invited");
+  });
+
   it("directly settles that email's open request, so approving it later mails no second password", async () => {
     db.current!.tables.access_requests = [{ id: "r1", email: "new@example.com", status: "pending" }];
     await inviteEmail(db.current!.client, "new@example.com");
@@ -170,6 +185,20 @@ describe("an access request", () => {
     const results = await Promise.allSettled([approveRequest(db.current!.client, "r1"), approveRequest(db.current!.client, "r1")]);
     expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
     expect(mailer.sent).toHaveLength(1);
+  });
+
+  it("stays settled when another invite for the email just created the account", async () => {
+    db.current!.tables.access_requests = [{ id: "r1", email: "applicant@example.com", status: "pending" }];
+    db.current!.state.failNext = { table: "password_credentials", op: "insert", code: "23505" };
+    await expect(approveRequest(db.current!.client, "r1")).rejects.toMatchObject({ status: 409 });
+    expect(db.current!.tables.access_requests[0].status).toBe("approved");
+  });
+
+  it("says so when its invite fails and it cannot be reopened", async () => {
+    // The form takes looser addresses than the invite: this one fails before any write.
+    db.current!.tables.access_requests = [{ id: "r1", email: "anna&ben@example.com", status: "pending" }];
+    db.current!.state.failNext = { table: "access_requests", op: "update", code: "XX000", skip: 1 };
+    await expect(approveRequest(db.current!.client, "r1")).rejects.toThrow(/could not be reopened/);
   });
 
   it("goes back to pending when its invite fails", async () => {
