@@ -16,12 +16,16 @@ export type VocabularyCategory =
 
 type Entry = { tag: string; category: VocabularyCategory; synonyms: string[] };
 
-/* A paid prompt is the artist's product: which colours, framing and
-   rendering tricks make it work is what the buyer pays for, so only the
-   broad categories of a paid prompt are searchable. */
-const PAID_CATEGORIES: ReadonlySet<VocabularyCategory> = new Set(["subject", "style", "medium", "mood"]);
+/* A paid prompt is the artist's product, and tags are public: whoever
+   collects them across a creator's prompts would read the recipe back out of
+   them. So a paid body yields only WHAT it shows, a few subjects, never HOW:
+   no style, medium, mood, colour, framing or technique (Kev, 2026-10-07:
+   search must keep the prompt private and make distilling it impossible).
+   Title and variables are public on the prompt page anyway and keep the full
+   vocabulary. */
+export const PAID_SUBJECT_CAP = 5;
 
-export const TAG_CAP = 60;
+export const TAG_CAP = 40;
 
 const ENTRIES = vocabulary as Entry[];
 
@@ -55,25 +59,30 @@ export function stemmedKey(phrase: string): string {
   return key(phrase);
 }
 
-/** Canonical vocabulary tags found in the text, in order of first appearance. */
+/**
+ * Canonical vocabulary tags found in the text, in order of first appearance.
+ * The longest term at each position wins and owns its words: "god rays" is
+ * a lighting term, never also the subject "god", and "unreal engine" never
+ * leaves an "engine" behind. A paid body keeps its first few subjects only.
+ */
 export function extractTags(text: string, options: { paid: boolean } = { paid: false }): string[] {
   const stems = tokens(text).map(stem);
   const found = new Set<string>();
-  for (let i = 0; i < stems.length; i++) {
-    for (let n = 1; n <= LONGEST && i + n <= stems.length; n++) {
-      const entry = INDEX.get(stems.slice(i, i + n).join(" "));
-      if (entry && (!options.paid || PAID_CATEGORIES.has(entry.category))) found.add(entry.tag);
-    }
+  for (let i = 0; i < stems.length; ) {
+    let n = Math.min(LONGEST, stems.length - i);
+    let entry: Entry | undefined;
+    for (; n > 0; n--) if ((entry = INDEX.get(stems.slice(i, i + n).join(" ")))) break;
+    if (!entry) { i++; continue; }
+    i += n;
+    if (!options.paid || entry.category === "subject") found.add(entry.tag);
   }
-  return [...found];
+  const tags = [...found];
+  return options.paid ? tags.slice(0, PAID_SUBJECT_CAP) : tags;
 }
 
-/** The creator's own tags first, then the extracted ones, deduplicated and capped. */
-export function mergeTags(existingCreatorTags: string[], extracted: string[]): string[] {
-  const merged = new Set<string>();
-  for (const t of [...existingCreatorTags, ...extracted]) {
-    const tag = t.trim().toLowerCase();
-    if (tag) merged.add(tag);
-  }
-  return [...merged].slice(0, TAG_CAP);
+/** What prompts.tags stores: every group's tags, deduplicated, capped, and
+    sorted so the order says nothing about where in the prompt a word stood. */
+export function storedTags(...groups: string[][]): string[] {
+  const all = new Set(groups.flat().map((t) => t.trim().toLowerCase()).filter(Boolean));
+  return [...all].sort().slice(0, TAG_CAP);
 }

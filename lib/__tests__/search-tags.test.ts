@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import vocabulary from "../search/vocabulary.json";
-import { extractTags, mergeTags, stemmedKey, TAG_CAP } from "../search/tags";
+import { extractTags, storedTags, stemmedKey, TAG_CAP, PAID_SUBJECT_CAP } from "../search/tags";
 import { stem } from "../search/stem";
 
 /**
@@ -102,37 +102,74 @@ describe("extractTags", () => {
     expect(extractTags("castle then dragon")).toEqual(["castle", "dragon"]);
   });
 
-  it("drops technique, color and composition for paid prompts", () => {
+  it("keeps only what a paid prompt shows, never how it is made", () => {
     const text = "a dragon in teal and orange, close up, cross hatching, oil painting, moody";
     expect(extractTags(text, { paid: false })).toEqual(
       expect.arrayContaining(["dragon", "teal and orange", "close up", "cross hatching", "oil painting", "moody"]),
     );
-    const paid = extractTags(text, { paid: true });
-    expect(paid).toEqual(expect.arrayContaining(["dragon", "oil painting", "moody"]));
-    for (const dropped of ["teal and orange", "close up", "cross hatching"]) expect(paid).not.toContain(dropped);
+    expect(extractTags(text, { paid: true })).toEqual(["dragon"]);
   });
 
-  it("does not use a paid category as a way in for other words", () => {
-    // Every category the paid path keeps is one of the four broad ones.
-    const kept = new Set(["subject", "style", "medium", "mood"]);
+  it("lets no other category through the paid path, and at most five subjects", () => {
+    expect(PAID_SUBJECT_CAP).toBe(5);
     const allText = entries.map((e) => e.tag).join(", ");
-    for (const t of extractTags(allText, { paid: true })) {
-      const e = entries.find((x) => x.tag === t)!;
-      expect(kept.has(e.category), `${t} (${e.category}) leaked through the paid path`).toBe(true);
+    const paid = extractTags(allText, { paid: true });
+    expect(paid).toHaveLength(5);
+    for (const t of paid) expect(entries.find((x) => x.tag === t)!.category, t).toBe("subject");
+  });
+
+  it("gives a buyer nothing to distil a paid recipe from (Kev, 2026-10-07)", () => {
+    // Five recipe-heavy paid prompts: their lighting, lens, renderer, film
+    // stock and director style must not survive, only their subjects.
+    const recipes = [
+      "portrait of an elderly fisherman, rembrandt lighting, chiaroscuro, 85mm lens, kodak portra 400, film grain, shallow depth of field",
+      "a dragon over ruins of a church, storm clouds, god rays, volumetric lighting, octane render, unreal engine, trending on artstation",
+      "macro still life of a glass bottle, caustics, rim light, high key lighting, reflections, gold and black palette, 16mm film",
+      "a girl riding a bicycle through the countryside, ghibli style, cel shaded, soft pastel colors, wes anderson style, symmetrical composition",
+      "a hotel lobby, kubrick style one point perspective, muted colors, natural light, long exposure, award winning photography",
+    ];
+    const RECIPE = /lighting|light|chiaroscuro|mm\b|portra|grain|depth|rays|volumetric|render|engine|caustic|key|reflection|palette|film|ghibli|cel|pastel|anderson|symmetr|kubrick|perspective|muted|exposure|award|photograph/;
+    for (const r of recipes) {
+      const paid = extractTags(r, { paid: true });
+      expect(paid.length, r).toBeLessThanOrEqual(5);
+      for (const t of paid) {
+        expect(entries.find((x) => x.tag === t)!.category, `${t} from: ${r}`).toBe("subject");
+        expect(t, `${t} carries the recipe`).not.toMatch(RECIPE);
+      }
     }
+    expect(extractTags(recipes[1], { paid: true })).toEqual(expect.arrayContaining(["dragon", "ruins", "church"]));
+  });
+
+  it("lets the longest term own its words", () => {
+    expect(extractTags("god rays over the sea")).not.toContain("god");
+    expect(extractTags("rendered in unreal engine")).not.toContain("engine");
+    expect(extractTags("high key lighting")).not.toContain("key");
+  });
+
+  it("makes no tag out of ordinary prompt words", () => {
+    const filler = (
+      "the a an and or but of in on at to for with by from as is are was were be been being it its this that these those " +
+      "very highly extremely more most less some any all each every other another such no not only just also too so than then " +
+      "there here where when while into onto over under above below between through during before after about against among " +
+      "around behind beside beyond near off out up down within without high quality resolution best perfect " +
+      "sharp focus hyper hd professional shot image picture render rendered made create show showing " +
+      "looking look looks style styled styles frame framed framing set setting settings long short soft softly wet clean natural " +
+      "angle angled angles field fields ray award awarded shade shaded shading palette muted lots little big large small " +
+      "huge tiny full half new old first last next one two three many few several wide narrow left right top bottom middle " +
+      "side front back towards could would should might must will can may do does did done have has had get got take takes " +
+      "taking give gives giving use uses using way ways thing things something nothing everything anything"
+    ).split(" ");
+    expect(filler.length).toBeGreaterThanOrEqual(150);
+    const hits = filler.map((w) => [w, extractTags(w)] as const).filter(([, t]) => t.length > 0);
+    expect(hits).toEqual([]);
   });
 });
 
-describe("mergeTags", () => {
-  it("keeps the creator's tags first, deduplicates case insensitively and caps at 60", () => {
-    expect(TAG_CAP).toBe(60);
-    const creator = Array.from({ length: 70 }, (_, i) => `creator${i}`);
-    const merged = mergeTags(creator, ["dragon"]);
-    expect(merged).toHaveLength(60);
-    expect(merged[0]).toBe("creator0");
-    expect(merged).not.toContain("dragon");
-
-    expect(mergeTags([" Dragon ", "castle"], ["dragon", "moody"])).toEqual(["dragon", "castle", "moody"]);
-    expect(mergeTags([], [""])).toEqual([]);
+describe("storedTags", () => {
+  it("deduplicates case insensitively, sorts, and caps at 40", () => {
+    expect(TAG_CAP).toBe(40);
+    expect(storedTags([" Dragon ", "castle"], ["dragon", "moody"], [""])).toEqual(["castle", "dragon", "moody"]);
+    const many = Array.from({ length: 50 }, (_, i) => `tag${String(i).padStart(2, "0")}`);
+    expect(storedTags(many.slice().reverse())).toEqual(many.slice(0, 40));
   });
 });
