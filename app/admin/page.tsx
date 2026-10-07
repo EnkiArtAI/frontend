@@ -43,6 +43,17 @@ type Access = { requests: AccessRequest[]; allowlist: Allowed[] } | null;
 type AdminData = { generation: GenPolicy; imports: Imp[]; reports: Rep[]; feedback: Fb[]; hunters: Hunter[]; strikes: StrikeRow[]; recovery: Rec[]; council: Council; automod: Automod[]; people: Person[]; access: Access };
 const COUNCIL_OFF: Council = { ready: false, isOwner: false, enabled: false, quorum: 3, ttlDays: 7, members: [], myEmail: null, proposals: [] };
 
+/** A link as a moderator should read it before clicking: its whole host, then the start of its path. */
+function linkLabel(url: string): string {
+  try {
+    const u = new URL(url);
+    const rest = u.pathname + u.search;
+    return u.hostname + (rest.length > 24 ? rest.slice(0, 24) + "…" : rest);
+  } catch {
+    return url.slice(0, 40);
+  }
+}
+
 type Tab = "people" | "access" | "imports" | "reports" | "feedback" | "hunters" | "strikes" | "automod" | "council" | "recovery" | "settings";
 const REJECT_REASONS = ["Duplicate", "Low quality", "Not a prompt", "Spam", "Policy violation", "Other"];
 
@@ -368,7 +379,8 @@ export default function AdminPage() {
 
   const d: AdminData = data ?? { imports: [], reports: [], feedback: [], hunters: [], strikes: [], recovery: [], council: COUNCIL_OFF, automod: [], people: [], generation: { maxConcurrentPerUser: null, canEdit: false }, access: null };
   const c = d.council ?? COUNCIL_OFF;
-  const filteredImports = d.imports.filter((r) => !q || r.name.toLowerCase().includes(q) || r.hunter.toLowerCase().includes(q));
+  // A referred link has no title yet ("Untitled"), so the link itself is what a moderator searches for.
+  const filteredImports = d.imports.filter((r) => !q || r.name.toLowerCase().includes(q) || r.hunter.toLowerCase().includes(q) || (r.url ?? "").toLowerCase().includes(q));
   const filteredFeedback = d.feedback.filter((r) => !q || r.name.toLowerCase().includes(q) || (r.email ?? "").toLowerCase().includes(q) || r.desc.toLowerCase().includes(q));
   // Searching the prompt text matters most here: it is how you find every
   // block by one offender, or every block that shares a phrasing.
@@ -533,7 +545,7 @@ export default function AdminPage() {
                           <span style={{ display: "block", fontFamily: SERIF, fontSize: 14, color: "var(--enki-ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</span>
                           {r.url && (
                             <a href={r.url} target="_blank" rel="noreferrer" style={{ fontFamily: MONO, fontSize: 9, color: "var(--enki-ember)" }}>
-                              {r.url.replace(/^https?:\/\//, "").slice(0, 30)}…
+                              {linkLabel(r.url)}
                             </a>
                           )}
                         </span>
