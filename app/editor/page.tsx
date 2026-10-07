@@ -8,7 +8,8 @@ import EnkiPromptEditor from "@/components/EnkiPromptEditor";
 
 export default function Editor() {
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 100 }}>
+    // Below the 2FA bar when it shows (--ek-banner-h).
+    <div style={{ position: "fixed", inset: "var(--ek-banner-h, 0px) 0 0 0", zIndex: 100 }}>
       <EnkiPromptEditor />
     </div>
   );

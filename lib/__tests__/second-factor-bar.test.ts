@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { readSource } from "@/lib/__tests__/_read-source";
 
 /**
@@ -17,6 +18,7 @@ const BAR = readSource(join(ROOT, "components", "SecondFactorBar.tsx"));
 const CODES = readSource(join(ROOT, "components", "settings", "CodeFactors.tsx"));
 const GATE = readSource(join(ROOT, "components", "BetaGate.tsx"));
 const HOOK = readSource(join(ROOT, "hooks", "useSecondFactor.ts"));
+const css = (...path: string[]) => readFileSync(join(ROOT, ...path), "utf8");
 
 describe("the red bar", () => {
   it("shows for a signed-in account without a factor, and for no one else", () => {
@@ -57,5 +59,29 @@ describe("the 2FA state behind the bar", () => {
 
   it("is read again when the tab comes back, so a factor set up elsewhere shows at once", () => {
     expect(HOOK).toMatch(/useQuery\(\{ queryKey: STEPUP_FACTORS_KEY, enabled, retry: 2, refetchOnWindowFocus: "always", queryFn: fetchStepUpFactors \}\)/);
+  });
+});
+
+describe("the page under the bar", () => {
+  it("starts below it outside the shell; the shell moves its own layers", () => {
+    expect(BAR).toMatch(/root\.classList\.add\("ek-2fa-bar"\)/);
+    expect(BAR).toMatch(/root\.classList\.remove\("ek-2fa-bar"\)/);
+    expect(css("app", "globals.css")).toMatch(/\nhtml\.ek-2fa-bar:not\(\.ek-in-shell\) body \{ padding-top: var\(--ek-banner-h\); \}/);
+    const shell = readSource(join(ROOT, "components", "enki-shell", "EnkiHome.tsx"));
+    expect(shell).toMatch(/useEffect\(\(\) => \{\s*document\.documentElement\.classList\.add\("ek-in-shell"\);\s*return \(\) => document\.documentElement\.classList\.remove\("ek-in-shell"\);\s*\}, \[\]\);/);
+    // Turbopack's dev build drops :has() from a selector: the rule must not need it.
+    expect(css("app", "globals.css")).not.toMatch(/ek-2fa-bar[^{]*:has\(/);
+    // .ek-app pages outside the shell (admin) must inherit the bar's height.
+    expect(css("components", "enki-shell", "enki-shell.css")).not.toMatch(/\.ek-app \{ --ek-banner-h: 0px; \}/);
+  });
+
+  it("keeps full-height pages and fixed layers out from under it", () => {
+    const pgv = css("components", "prompt-generator.css");
+    expect(pgv).toMatch(/\.pgv-page \{\s*display: flex;\s*height: calc\(100vh - var\(--ek-banner-h, 0px\)\);/);
+    const history = [...pgv.matchAll(/\.pgv-history(-handle)? \{([^}]*)\}/g)].filter((m) => /\btop:/.test(m[2]));
+    expect(history).toHaveLength(4);
+    for (const m of history) expect(m[2]).toMatch(/top: (calc\(12px \+ )?var\(--ek-banner-h, 0px\)/);
+    expect(readSource(join(ROOT, "app", "editor", "page.tsx"))).toMatch(/position: "fixed", inset: "var\(--ek-banner-h, 0px\) 0 0 0"/);
+    expect(readSource(join(ROOT, "app", "admin", "page.tsx"))).not.toMatch(/height: "100vh"/);
   });
 });

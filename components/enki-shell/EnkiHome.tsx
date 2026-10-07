@@ -220,6 +220,12 @@ export default function EnkiHome() {
   // root) wins; the recovery warning then shows inside Settings instead.
   const needs2fa = useNeeds2fa();
   const showRecoveryBanner = authed && recovery !== null && recovery.confirmed === 0 && !bannerDismissed && !needs2fa;
+  // The shell moves its own layers under that slot (.ek-with-banner); a page
+  // outside it starts below the 2FA bar instead (globals.css, html.ek-in-shell).
+  useEffect(() => {
+    document.documentElement.classList.add("ek-in-shell");
+    return () => document.documentElement.classList.remove("ek-in-shell");
+  }, []);
   // Log off: confirm dialog + the actual sign-out across every auth surface.
   const [logoffOpen, setLogoffOpen] = useState(false);
   const [logoffBusy, setLogoffBusy] = useState(false);

@@ -10,7 +10,8 @@ import { useNeeds2fa } from "@/hooks/useSecondFactor";
  * second factor sees it at the top, on every page, with no way to close it.
  * 2FA stays optional; the bar is the reminder that the account is at risk.
  * It opens the 2FA settings in the shell, or the Settings page elsewhere.
- * Pages read --ek-banner-h to move down by its height.
+ * It displaces the page, never covers it: fixed layers read --ek-banner-h,
+ * and a page outside the shell starts below it (html.ek-2fa-bar, globals.css).
  */
 export default function SecondFactorBar() {
   const pathname = usePathname() ?? "/";
@@ -20,8 +21,13 @@ export default function SecondFactorBar() {
 
   useEffect(() => {
     if (!show) return;
-    document.documentElement.style.setProperty("--ek-banner-h", "30px");
-    return () => { document.documentElement.style.removeProperty("--ek-banner-h"); };
+    const root = document.documentElement;
+    root.style.setProperty("--ek-banner-h", "30px");
+    root.classList.add("ek-2fa-bar");
+    return () => {
+      root.style.removeProperty("--ek-banner-h");
+      root.classList.remove("ek-2fa-bar");
+    };
   }, [show]);
 
   if (!show) return null;

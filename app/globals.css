@@ -8,6 +8,12 @@
    moved for a moment, then the "go back" bubble appeared instead). */
 html, body { overscroll-behavior-x: none; }
 
+/* The 2FA bar (SecondFactorBar) displaces the page, never covers it (Kev,
+   2026-08-13). The shell moves its own layers (.ek-with-banner); any other
+   page starts below the bar. (No :has() here: Turbopack's dev build drops
+   it from the selector, and the shell would move down twice.) */
+html.ek-2fa-bar:not(.ek-in-shell) body { padding-top: var(--ek-banner-h); }
+
 /* ─── Enki Design System ─────────────────────────────────────────────────
    The UNSCOPED copy of the tokens: what a component gets when it is not
    inside .ek-app or .enki. Those two scoped copies (components/enki-shell/

@@ -245,8 +245,8 @@
    later, and fixed at top: 0 — was simply never added to it, so it opened
    underneath the banner with its title cut off. A list you must remember to
    extend is a list that will be forgotten; a variable is inherited by
-   whatever comes next. */
-.ek-app { --ek-banner-h: 0px; }
+   whatever comes next. The 2FA bar sets it on the root, so .ek-app pages
+   outside the shell (admin) inherit it. */
 .ek-app.ek-with-banner { --ek-banner-h: 30px; }
 
 .ek-with-banner .ek-sidebar { top: var(--ek-banner-h); }
