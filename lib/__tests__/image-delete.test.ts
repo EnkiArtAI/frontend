@@ -18,6 +18,8 @@ const query = (table: string) => {
     update: (values: Row) => { patch = values; return q; },
     eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
     is: (c: string, v: null) => { filters.push((r) => (r[c] ?? null) === v); return q; },
+    // The step-up also reads code factors with not(); none here, like no passkey.
+    not: (c: string, _op: string, v: null) => { filters.push((r) => (r[c] ?? null) !== v); return q; },
     then: (ok: (v: unknown) => unknown) => {
       const rows = (tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
       if (patch) rows.forEach((r) => Object.assign(r, patch));
