@@ -55,7 +55,7 @@ function stepUpKey(): Uint8Array {
 
 /* What a step-up can be for. A scope names one action, and where the action
    has a target, that target: one tap deletes one image, never another. */
-const SCOPE = /^(add-factor|guardians|delete-work:[0-9a-f-]{36}|remove-factor:([0-9a-f-]{36}|totp|email))$/i;
+const SCOPE = /^(add-factor|guardians|delete-work:[0-9a-f-]{36}|remove-factor:([0-9a-f-]{36}|totp|email)|withdraw:[1-9A-HJ-NP-Za-km-z]{32,44})$/;
 export function isStepUpScope(scope: unknown): scope is string {
   return typeof scope === "string" && SCOPE.test(scope);
 }

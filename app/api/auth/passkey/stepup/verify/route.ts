@@ -11,7 +11,7 @@ import { verifyAuthenticationResponse } from "@simplewebauthn/server";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
-import { requireAuth } from "@/lib/auth";
+import { resolveSessionUserWithBan } from "@/lib/session-user";
 import { rp, resolveStableUserId, readChallengeCookie, clearChallengeCookie, mintStepUpToken, isStepUpScope } from "@/lib/webauthn";
 
 const bodySchema = z.object({
@@ -20,12 +20,10 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  let walletAddress: string;
-  try {
-    ({ walletAddress } = await requireAuth(req));
-  } catch {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
+  // Ban tolerant: a ban locks the marketplace, never the wallet, and moving
+  // funds off a suspended account is a step-up too.
+  const { wallet: walletAddress } = await resolveSessionUserWithBan(getSupabaseServerClient(), req.headers.get("X-Session-Token"));
+  if (!walletAddress) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid request" }, { status: 400 });

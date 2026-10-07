@@ -5,18 +5,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateAuthenticationOptions } from "@simplewebauthn/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
-import { requireAuth } from "@/lib/auth";
+import { resolveSessionUserWithBan } from "@/lib/session-user";
 import { rp, resolveStableUserId, setChallengeCookie } from "@/lib/webauthn";
 
 type Transport = "ble" | "hybrid" | "internal" | "nfc" | "usb" | "cable" | "smart-card";
 
 export async function POST(req: NextRequest) {
-  let walletAddress: string;
-  try {
-    ({ walletAddress } = await requireAuth(req));
-  } catch {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
+  // Ban tolerant: a ban locks the marketplace, never the wallet, and moving
+  // funds off a suspended account is a step-up too.
+  const { wallet: walletAddress } = await resolveSessionUserWithBan(getSupabaseServerClient(), req.headers.get("X-Session-Token"));
+  if (!walletAddress) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
   const supabase = getSupabaseServerClient();
   const userId = await resolveStableUserId(supabase, walletAddress);
