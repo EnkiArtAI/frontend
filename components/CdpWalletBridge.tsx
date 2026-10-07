@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useIsInitialized, useSolanaAddress } from "@coinbase/cdp-hooks";
-import { authenticateWithJWT, exportSolanaAccount, getCurrentUser, isSignedIn, signSolanaTransaction } from "@coinbase/cdp-core";
+import { authenticateWithJWT, exportSolanaAccount, getCurrentUser, getCurrentUserSync, isSignedIn, signOut, signSolanaTransaction } from "@coinbase/cdp-core";
 import { useStepUp } from "@/components/StepUpProvider";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import {
@@ -24,10 +24,11 @@ import {
  *
  *  1. Each mount signs in to CDP itself (authenticateWithJWT, with our JWT via
  *     the provider's customAuth.getJwt) and trusts only that sign-in. CDP keeps
- *     its user in memory for the page's lifetime, across our unmounts: after a
- *     logout and another account's login in a second tab it still holds the
- *     first account, whose wallet must never reach the second one's session.
- *     The runtime is keyed by account (providers), so a switch remounts.
+ *     its user and wallet secret in memory for the page's lifetime, across our
+ *     unmounts: after a logout and another account's login in a second tab it
+ *     still holds the first account, whose wallet must never reach the second
+ *     one's session. So a mount signs that out first, and a call that outlives
+ *     its mount stops. The runtime is keyed by account (providers).
  *  2. The address is published to the app, remembered for this email, and
  *     attached to our session (auth_sessions + user_wallets).
  *  3. Before every wallet action the JWT route decides (Kev, 2026-10-07): it
@@ -44,26 +45,43 @@ export function CdpWalletBridge({ email }: { email: string }) {
   const { solanaAddress } = useSolanaAddress();
   const { tokenFor } = useStepUp();
   const signingIn = useRef<Promise<string> | null>(null);
-  const started = useRef(false);
+  const alive = useRef(true);
+  const own = useRef(false); // this mount's own sign-in succeeded
   const [mine, setMine] = useState(false);
 
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
+  // A call that outlives its mount (another account's login remounted the
+  // runtime meanwhile) must not touch this session or CDP any more.
+  const live = useCallback(() => {
+    if (!alive.current) throw new Error("The account changed. Try again.");
+  }, []);
+
   // One CDP sign-in at a time; resolves with this account's Solana address.
+  // Whatever user CDP still holds then is not this mount's: it is signed out
+  // first, its wallet secret with it.
   const signIn = useCallback(
-    () => (signingIn.current ??= authenticateWithJWT()
-      .then(({ user }) => {
-        const address = user.solanaAccountObjects?.[0]?.address;
-        if (!address) throw new Error("The wallet isn't ready yet. Try again.");
-        rememberCdpAddress(email, address);
-        setMine(true);
-        return address;
-      })
-      .finally(() => { signingIn.current = null; })),
-    [email],
+    () => (signingIn.current ??= (async () => {
+      if (await getCurrentUser()) await signOut().catch(() => { /* already gone */ });
+      const { user } = await authenticateWithJWT();
+      live();
+      const address = user.solanaAccountObjects?.[0]?.address;
+      if (!address) throw new Error("The wallet isn't ready yet. Try again.");
+      rememberCdpAddress(email, address);
+      own.current = true;
+      setMine(true);
+      return address;
+    })().finally(() => { signingIn.current = null; })),
+    [email, live],
   );
 
   // Writes the address into our session; a paid generation needs it there.
+  // Nothing is awaited before the request, so it goes with the session the
+  // caller checked.
   const attach = useCallback(async (solana: string) => {
-    const evm = (await getCurrentUser())?.evmAccountObjects?.[0]?.address ?? null;
+    const evm = getCurrentUserSync()?.evmAccountObjects?.[0]?.address ?? null;
     const res = await fetch("/api/auth/session/attach-wallet", {
       method: "POST",
       headers: { "content-type": "application/json", ...sessionAuthHeaders() },
@@ -80,10 +98,11 @@ export function CdpWalletBridge({ email }: { email: string }) {
       if (!isCdpLocked()) throw new Error("The wallet isn't available right now. Try again.");
       if (!(await tokenFor("wallet"))) throw new Error("Not confirmed, nothing was signed.");
     }
-    const user = mine && (await isSignedIn()) ? await getCurrentUser() : null;
+    const user = own.current && (await isSignedIn()) ? await getCurrentUser() : null;
     const address = user?.solanaAccountObjects?.[0]?.address ?? (await signIn());
+    live();
     if (attached) await attach(address);
-  }, [mine, tokenFor, signIn, attach]);
+  }, [live, tokenFor, signIn, attach]);
 
   useEffect(() => {
     registerCdpEnsure(ensure);
@@ -103,11 +122,11 @@ export function CdpWalletBridge({ email }: { email: string }) {
     if (mine && solanaAddress) attach(solanaAddress).catch(() => { /* a paid generation attaches again */ });
   }, [mine, solanaAddress, attach]);
 
-  // The silent sign-in, once per mount. Right after an email login the landing
-  // leaves a one-shot marker: a locked wallet asks at once then.
+  // The silent sign-in, once per mount (its callbacks never change). Right
+  // after an email login the landing leaves a one-shot marker: a locked
+  // wallet asks at once then.
   useEffect(() => {
-    if (!isInitialized || started.current) return;
-    started.current = true;
+    if (!isInitialized) return;
     let askNow = false;
     try {
       askNow = sessionStorage.getItem("enki:wallet-ask") === "1";

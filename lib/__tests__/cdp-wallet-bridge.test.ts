@@ -4,8 +4,10 @@ import { readSource } from "./_read-source";
 
 /**
  * The CDP bridge, run for real (review of the email login, 2026-10-07):
- * - CDP keeps its user in memory across our unmounts, so a mount trusts only
- *   its own sign-in: another account's wallet never reaches this session.
+ * - CDP keeps its user and wallet secret in memory across our unmounts, so a
+ *   mount signs that out and trusts only its own sign-in, and a call that
+ *   outlives its mount stops: another account's wallet never reaches this
+ *   session.
  * - Before every wallet action the JWT route decides; the unlock dialog shows
  *   only while it still says locked, and before the action, not inside it.
  * - A ban never stops the wallet: only a paid generation needs the attach.
@@ -88,17 +90,26 @@ vi.mock("react", () => rt.react);
 type User = { solanaAccountObjects: { address: string }[]; evmAccountObjects: { address: string }[] };
 const wallet = (sol: string): User => ({ solanaAccountObjects: [{ address: sol }], evmAccountObjects: [{ address: `0x${"0".repeat(39)}1` }] });
 
-// CDP: one user in memory for the page; authenticateWithJWT asks our JWT route
-// (customAuth.getJwt) and replaces it; a refused JWT leaves it as it was.
-const cdp = vi.hoisted(() => ({ user: null as null | User, walletOf: {} as Record<string, User>, signIns: 0 }));
+// CDP: one user and one wallet secret in memory for the page.
+// authenticateWithJWT asks our JWT route (customAuth.getJwt) and replaces the
+// user, but keeps the secret; a refused JWT leaves both as they were. Only
+// signOut clears both. A secret signs for the user who registered it, only.
+// initialized: false is a runtime whose SDK has not started yet; gate holds
+// getCurrentUser until released (a slow read across an account switch).
+const cdp = vi.hoisted(() => ({
+  user: null as null | User, secret: null as null | string, walletOf: {} as Record<string, User>, signIns: 0,
+  initialized: true, gate: null as null | Promise<void>,
+}));
 vi.mock("@coinbase/cdp-hooks", () => ({
-  useIsInitialized: () => ({ isInitialized: true }),
+  useIsInitialized: () => ({ isInitialized: cdp.initialized }),
   useSolanaAddress: () => ({ solanaAddress: cdp.user?.solanaAccountObjects[0]?.address ?? null }),
 }));
 vi.mock("@coinbase/cdp-core", async () => {
   const { fetchWalletJwt } = await import("../cdp-bridge");
   const own = (account: string) => {
     if (cdp.user?.solanaAccountObjects[0]?.address !== account) throw new Error("not this user's account");
+    cdp.secret ??= account;
+    if (cdp.secret !== account) throw new Error("wallet secret of another user");
   };
   return {
     authenticateWithJWT: async () => {
@@ -109,8 +120,18 @@ vi.mock("@coinbase/cdp-core", async () => {
       rt.update(); // CDP's auth state callback re-renders its hooks
       return { user: cdp.user, message: "ok", isNewUser: false };
     },
+    signOut: async () => {
+      if (!cdp.user) throw new Error("User not signed in");
+      cdp.user = null;
+      cdp.secret = null;
+      rt.update();
+    },
     isSignedIn: async () => cdp.user !== null,
-    getCurrentUser: async () => cdp.user,
+    getCurrentUser: async () => {
+      if (cdp.gate) await cdp.gate;
+      return cdp.user;
+    },
+    getCurrentUserSync: () => cdp.user,
     signSolanaTransaction: async ({ solanaAccount, transaction }: { solanaAccount: string; transaction: string }) => {
       own(solanaAccount);
       events.push("sign");
@@ -123,14 +144,16 @@ vi.mock("@coinbase/cdp-core", async () => {
   };
 });
 
-// The step-up dialog: the user confirms (the server then unlocks) or cancels.
-const dialog = vi.hoisted(() => ({ answer: "confirm" as "confirm" | "cancel" }));
+// The step-up dialog: the user confirms (the server then unlocks), cancels,
+// or leaves it open until release().
+const dialog = vi.hoisted(() => ({ answer: "confirm" as "confirm" | "cancel" | "hold", release: () => {} }));
 vi.mock("@/components/StepUpProvider", () => ({
   useStepUp: () => ({ tokenFor }),
 }));
 const tokenFor = vi.fn(async (scope: string) => {
   events.push(`dialog:${scope}`);
   if (dialog.answer === "cancel") return null;
+  if (dialog.answer === "hold") await new Promise<void>((r) => { dialog.release = r; });
   server.jwt = "open";
   return "step-up-token";
 });
@@ -139,19 +162,20 @@ const tokenFor = vi.fn(async (scope: string) => {
 const server = {
   jwt: "open" as "open" | "locked" | "down",
   banned: false,
-  attached: [] as string[],
+  attached: [] as { address: string; session: string }[],
 };
 const events: string[] = [];
-vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { body?: string }) => {
+vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { body?: string; headers?: Record<string, string> }) => {
+  const session = init?.headers?.["X-Session-Token"] ?? "";
   const json = (status: number, body: unknown) => ({ ok: status < 300, status, json: async () => body });
   if (url === "/api/auth/wallet/jwt") {
     if (server.jwt === "locked") return json(403, { error: "Confirm it's you to use the wallet", locked: true, scope: "wallet", factors: ["totp"] });
     if (server.jwt === "down") return json(503, { error: "Could not read the session" });
-    return json(200, { jwt: "jwt-B" });
+    return json(200, { jwt: `jwt-${session}` });
   }
   if (url === "/api/auth/session/attach-wallet") {
     if (server.banned) return json(403, { error: "This account is suspended.", banned: true });
-    server.attached.push(JSON.parse(init!.body!).solanaAddress);
+    server.attached.push({ address: JSON.parse(init!.body!).solanaAddress, session });
     return json(200, {});
   }
   throw new Error(`unexpected fetch ${url}`);
@@ -189,10 +213,14 @@ beforeEach(async () => {
   rt.unmount();
   await settle();
   cdp.user = null;
-  cdp.walletOf = { "jwt-B": wallet(B) };
+  cdp.walletOf = { "jwt-session-of-a": wallet(A), "jwt-session-of-b": wallet(B) };
+  cdp.secret = null;
   cdp.signIns = 0;
+  cdp.initialized = true;
+  cdp.gate = null;
   Object.assign(server, { jwt: "open", banned: false, attached: [] });
   dialog.answer = "confirm";
+  dialog.release = () => {};
   tokenFor.mockClear();
   events.length = 0;
   published.length = 0;
@@ -207,11 +235,13 @@ const mountFor = async (email: string) => {
 };
 
 describe("a second tab, after another account's login", () => {
-  it("never publishes, remembers or attaches the account CDP still holds", async () => {
-    cdp.user = wallet(A); // left in memory by the first account's runtime
+  it("never publishes, remembers or attaches the account CDP still holds, nor signs with its secret", async () => {
+    cdp.user = wallet(A); // left in memory by the first account's runtime,
+    cdp.secret = A;       // with the wallet secret it signed with
     await mountFor("b@example.com");
     expect(published).not.toContain(A);
-    expect(server.attached).toEqual([B]);
+    expect(server.attached).toEqual([{ address: B, session: "session-of-b" }]);
+    await expect(requestCdpSign("tx")).resolves.toBe(`tx signed by ${B}`);
     expect(rememberedCdpAddress("b@example.com")).toBe(B);
     expect(getCdpSolanaAddress()).toBe(B);
     expect(cdp.signIns).toBe(1);
@@ -219,6 +249,7 @@ describe("a second tab, after another account's login", () => {
 
   it("shows nothing of it either while the new account's wallet is locked", async () => {
     cdp.user = wallet(A);
+    cdp.secret = A;
     server.jwt = "locked";
     await mountFor("b@example.com");
     expect(published).not.toContain(A);
@@ -227,6 +258,61 @@ describe("a second tab, after another account's login", () => {
     // Unlocked later, it signs as the new account, never as the one in memory.
     await expect(requestCdpSign("tx")).resolves.toBe(`tx signed by ${B}`);
     expect(published).not.toContain(A);
+  });
+
+  it("stops a wallet action the previous account left waiting, so its wallet never reaches the new session", async () => {
+    local.set("enki_session_token", "session-of-a");
+    await mountFor("a@example.com");
+    server.jwt = "locked"; // A's wallet relocked; a payment waits on A's dialog
+    dialog.answer = "hold";
+    const paying = ensureCdpWallet({ attached: true });
+    await settle();
+    rt.unmount(); // another tab logs out and in as B: this tab remounts for B
+    local.set("enki_session_token", "session-of-b");
+    await mountFor("b@example.com");
+    dialog.release(); // confirmed, now with B's factor
+    await expect(paying).rejects.toThrow(/account changed/);
+    await settle();
+    expect(server.attached.filter((a) => a.session === "session-of-b").map((a) => a.address)).not.toContain(A);
+    expect(rememberedCdpAddress("a@example.com")).toBe(A);
+    expect(rememberedCdpAddress("b@example.com")).not.toBe(A);
+  });
+
+  it("fails a payment the previous account left waiting, even before the new runtime is up", async () => {
+    local.set("enki_session_token", "session-of-a");
+    await mountFor("a@example.com");
+    server.jwt = "locked";
+    dialog.answer = "hold";
+    const paying = requestCdpSign("tx");
+    await settle();
+    rt.unmount();
+    local.set("enki_session_token", "session-of-b");
+    cdp.initialized = false; // B's runtime has not signed anyone out yet: CDP still holds A
+    await mountFor("b@example.com");
+    dialog.release();
+    await expect(paying).rejects.toThrow(/account changed/);
+    expect(events).not.toContain("sign");
+  });
+
+  it("remembers nothing for the previous email from a sign-in that outlived its mount", async () => {
+    local.set("enki_session_token", "session-of-a");
+    let release!: () => void;
+    cdp.gate = new Promise<void>((r) => { release = r; }); // A's sign-in is slow to start
+    await mountFor("a@example.com");
+    rt.unmount();
+    local.set("enki_session_token", "session-of-b"); // so it signs in with B's session
+    cdp.gate = null;
+    release();
+    await settle();
+    expect(rememberedCdpAddress("a@example.com")).toBeNull();
+  });
+
+  it("signs with the new account's own wallet even before its runtime finished starting", async () => {
+    cdp.user = wallet(A);
+    cdp.secret = A;
+    cdp.initialized = false;
+    await mountFor("b@example.com");
+    await expect(requestCdpSign("tx")).resolves.toBe(`tx signed by ${B}`);
   });
 
   it("is one runtime per account: another account's login remounts it", () => {
