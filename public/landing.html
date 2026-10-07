@@ -4618,21 +4618,31 @@ function postJson(url, body) {
     .then((res) => res.json().catch(() => ({})).then((data) => ({ ok: res.ok, data: data })));
 }
 // Sign-up is wired but closed during the private beta (Kev, 2026-10-07):
-// the access form takes applications only. true opens it: email +
-// password create the account, and an email not on the access list falls
-// back to the application.
+// the access form takes applications only. true opens it, together with
+// SIGNUP_OPEN=1 on the server: email + password create the account, and an
+// email not on the access list falls back to the application.
 const SIGNUP_OPEN = false;
 let signupStep = 'apply'; // 'account' while sign-up is open, until an email turns out not to be on the list
+function setSignupStep(step) {
+  signupStep = step;
+  const account = step === 'account';
+  document.getElementById('signupPassField').style.display = account ? '' : 'none';
+  document.getElementById('signupPass').required = account;
+  document.getElementById('applyFields').style.display = account ? 'none' : '';
+  document.getElementById('signupLabel').textContent = account ? 'Create account' : 'Request access';
+}
 if (SIGNUP_OPEN) {
-  signupStep = 'account';
   document.getElementById('tabSignup').textContent = 'Sign up';
   document.getElementById('loginSwitchText').textContent = 'No account yet?';
   document.getElementById('loginSwitchLink').textContent = 'Sign up';
   document.getElementById('signupNote').textContent = "Enki Art is invite-only during the whitelist stage. Whitelisted emails are in right away; everyone else can request access.";
-  document.getElementById('signupPassField').style.display = '';
-  document.getElementById('signupPass').required = true;
-  document.getElementById('applyFields').style.display = 'none';
-  document.getElementById('signupLabel').textContent = 'Create account';
+  setSignupStep('account');
+  // Another email may be on the list, or have an account: it starts over.
+  document.getElementById('signupEmail').addEventListener('input', () => {
+    setSignupStep('account');
+    const note = document.getElementById('formSignup').querySelector('.auth-inline-note');
+    if (note) note.remove();
+  });
 }
 function submitAuth(e, type) {
   e.preventDefault();
@@ -4662,11 +4672,7 @@ function submitAuth(e, type) {
     .then(({ ok, data }) => {
       if (ok && data.token) return adoptSession(data);
       if (data.notWhitelisted) {
-        signupStep = 'apply';
-        document.getElementById('signupPassField').style.display = 'none';
-        document.getElementById('signupPass').required = false;
-        document.getElementById('applyFields').style.display = '';
-        document.getElementById('signupLabel').textContent = 'Request access';
+        setSignupStep('apply');
         return fail("This email isn't on the access list yet. Tell us about you and we'll review your request.");
       }
       if (/already exists/i.test(data.error || '')) {
