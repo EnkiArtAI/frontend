@@ -38,6 +38,8 @@ function isPublic(pathname: string): boolean {
   if (pathname === "/api/header-images") return true;
   // The wallet vendor's servers fetch our signing keys to validate external JWTs
   if (pathname === "/api/auth/wallet/jwks") return true;
+  // Vercel's scheduler holds no cookie; each cron route checks CRON_SECRET.
+  if (pathname.startsWith("/api/cron/")) return true;
   // Recovery flows are used by OUTSIDERS (guardians) and by locked-out users
   // — neither can have the team cookie. The pages/APIs are token- or
   // code-gated and rate-limited themselves.

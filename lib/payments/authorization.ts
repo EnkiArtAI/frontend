@@ -324,10 +324,9 @@ export async function sweepUnsubmitted(
 /**
  * Void every authorisation whose worker went quiet.
  *
- * Opportunistic, not scheduled: there is no cron on this deployment, so each
- * new generation sweeps a handful first — the same pattern generation_slots
- * uses. Under load that runs constantly; with no traffic there is also nobody
- * whose nonce could be misused.
+ * Runs from the five-minute cron (/api/cron/sweep-payments), and each new
+ * generation sweeps a handful first — the same pattern generation_slots
+ * uses.
  *
  * Each row is voided through voidIfStale rather than in one bulk UPDATE, so
  * the staleness is re-checked at the moment of the write. Under the heartbeat
