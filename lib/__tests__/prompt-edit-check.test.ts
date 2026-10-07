@@ -186,10 +186,10 @@ describe("an edit stores only what it judges", () => {
     expect(check).not.toHaveBeenCalled();
   });
 
-  it("drops tags that are not text", async () => {
+  it("ignores tags of any shape: they are ours (Kev, 2026-10-07)", async () => {
     await edit("p1", { tags: ["a", { hidden: "explicit" }, ["explicit"], "b"] });
-    expect(check).toHaveBeenCalledWith({ tags: "a, b" });
-    expect(prompts[0].tags).toEqual(["a", "b"]);
+    expect(check).not.toHaveBeenCalled();
+    expect(prompts[0].tags).toBeUndefined();
   });
 
   it("drops a ratio and a text switch that are not what they say", async () => {

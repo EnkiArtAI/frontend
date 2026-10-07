@@ -193,7 +193,7 @@ describe("the quote of a prompt that is not for sale", () => {
     const PGV = readFileSync(join(__dirname, "..", "..", "components", "PromptGeneratorView.tsx"), "utf8");
     expect(PGV).toContain("const unavailable = quoteError instanceof PromptUnavailable;");
     expect(PGV).toContain("retry: (failures, e) => !(e instanceof PromptUnavailable) && failures < 3,");
-    expect(PGV).toContain("disabled={generating || guest || (!noCharge && (!paidQuote || unavailable))}");
+    expect(PGV).toContain("disabled={generating || refsLoading || guest || (!noCharge && (!paidQuote || unavailable))}");
     // Before the stale price of a quote fetched while the prompt was still for sale.
     expect(PGV.indexOf('? "No longer available"')).toBeGreaterThan(-1);
     expect(PGV.indexOf('? "No longer available"')).toBeLessThan(PGV.indexOf("? `Generate $${paidQuote.totalUsd}`"));
