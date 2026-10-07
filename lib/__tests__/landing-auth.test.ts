@@ -118,6 +118,34 @@ describe("the landing login", () => {
     expect(page.adopted).toEqual([{ token: "t", email: "kev@gmail.com" }]);
   });
 
+  it("once open, checks the email in the field: one corrected while the check ran is checked again", async () => {
+    const page = runSignup(true);
+    page.answer("/api/auth/password/register", false, { error: "not on the list", notWhitelisted: true });
+    page.el("signupEmail").value = "kev@gmial.com";
+    page.el("signupPass").value = "a long password";
+    page.submit(); // the answer for the typo is still on its way
+    page.el("signupEmail").value = "kev@gmail.com";
+    page.el("signupEmail").listeners.input();
+    await settle();
+    expect([page.step(), page.el("formSignup").note]).toEqual(["account", null]);
+    page.answer("/api/auth/password/register", true, { token: "t", email: "kev@gmail.com" });
+    page.submit();
+    await settle();
+    expect(page.posts.map((p) => p.url)).toEqual(["/api/auth/password/register", "/api/auth/password/register"]);
+    expect(page.adopted).toEqual([{ token: "t", email: "kev@gmail.com" }]);
+  });
+
+  it("once open on the landing but not yet on the server, falls back to the application", async () => {
+    const page = runSignup(true);
+    page.answer("/api/auth/password/register", false, { error: "Sign-up opens after the private beta. Request access to join.", closed: true });
+    page.el("signupEmail").value = "new@example.com";
+    page.el("signupPass").value = "a long password";
+    page.submit();
+    await settle();
+    expect(page.step()).toBe("apply");
+    expect(page.el("formSignup").note?.textContent).toBe("Sign-up opens after the private beta. Request access to join.");
+  });
+
   it("no longer sends anyone to a wallet email code that does not exist, nor ships an email list", () => {
     expect(LANDING).not.toMatch(/email-code option|isn't live during the whitelist stage/);
     expect(LANDING).not.toMatch(/const WHITELIST/);
