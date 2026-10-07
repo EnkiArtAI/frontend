@@ -95,31 +95,43 @@ async function factorRow(supabase: SupabaseClient, userId: string, kind: FactorK
   return (data as Row | null) ?? null;
 }
 
-/** (Re)starts a pending factor; a confirmed one stays until it is removed, which is itself a step-up. */
-async function begin(supabase: SupabaseClient, userId: string, kind: FactorKind, secret: string): Promise<"exists" | Row> {
-  const existing = await factorRow(supabase, userId, kind);
+/**
+ * (Re)starts a pending factor from the row as the caller read it; a confirmed
+ * one stays until it is removed, which is itself a step-up. The write is
+ * conditional on that row, so of two requests racing one writes and the
+ * other gets "busy": a loser never wipes the code the winner mailed.
+ */
+async function begin(
+  supabase: SupabaseClient,
+  userId: string,
+  kind: FactorKind,
+  secret: string,
+  existing: Row | null,
+): Promise<"exists" | "busy" | Row> {
   if (existing?.confirmed_at) return "exists";
-  const { data, error } = await supabase
-    .from("mfa_factors")
-    .upsert(
-      {
-        user_id: userId, kind, ...sealed(userId, secret),
-        created_at: new Date().toISOString(), confirmed_at: null, last_step: null, code_hash: null, code_expires_at: null,
-        failed_attempts: 0, locked_until: null,
-      },
-      { onConflict: "user_id,kind" },
-    )
-    .select("*")
-    .single();
+  const fresh = {
+    ...sealed(userId, secret),
+    created_at: new Date().toISOString(), confirmed_at: null, last_step: null, code_hash: null, code_expires_at: null,
+    failed_attempts: 0, locked_until: null,
+  };
+  if (!existing) {
+    const { data, error } = await supabase.from("mfa_factors").insert({ user_id: userId, kind, ...fresh }).select("*").single();
+    if (error?.code === "23505") return "busy";
+    if (error) throw error;
+    return data as Row;
+  }
+  let again = supabase.from("mfa_factors").update(fresh).eq("id", existing.id).eq("secret_ct", existing.secret_ct);
+  again = existing.code_sent_at ? again.eq("code_sent_at", existing.code_sent_at) : again.is("code_sent_at", null);
+  const { data, error } = await again.select("*").maybeSingle();
   if (error) throw error;
-  return data as Row;
+  return (data as Row | null) ?? "busy";
 }
 
 /** Starts enrolling an authenticator app: the secret and the otpauth URI for its QR code. */
 export async function beginTotp(supabase: SupabaseClient, userId: string, label: string) {
   const secret = generateTotpSecret();
-  const row = await begin(supabase, userId, "totp", secret);
-  return row === "exists" ? ("exists" as const) : { secret, uri: otpauthUri(secret, label) };
+  const row = await begin(supabase, userId, "totp", secret, await factorRow(supabase, userId, "totp"));
+  return row === "exists" || row === "busy" ? row : { secret, uri: otpauthUri(secret, label) };
 }
 
 /** Starts enrolling an email address: a code goes to it, and confirming that code proves the inbox. */
@@ -129,7 +141,7 @@ export async function beginEmail(supabase: SupabaseClient, userId: string, addre
   const pending = await factorRow(supabase, userId, "email");
   const refused = pending && !pending.confirmed_at ? sendRefusal(pending, Date.now()) : null;
   if (refused) return refused;
-  const row = await begin(supabase, userId, "email", address.trim().toLowerCase());
+  const row = await begin(supabase, userId, "email", address.trim().toLowerCase(), pending);
   return row === "exists" ? "exists" : sendEmailCode(supabase, userId);
 }
 
@@ -165,8 +177,10 @@ export async function stampVerifiedLogin(supabase: SupabaseClient, userId: strin
 /**
  * Removes one factor, but never an embedded wallet's last (Kev, 2026-10-07):
  * the wallet JWT needs one, and a banned account cannot enroll a new one.
- * Removed first and counted after, and put back when none is left: two
- * removals racing each count what the other left, so one factor stays.
+ * The last one is refused before anything is deleted, so no request ever
+ * sees the account without a factor. Two removals racing past that check
+ * count what is left after deleting, and one that finds nothing (or cannot
+ * count) puts its factor back.
  */
 export async function removeFactor(
   supabase: SupabaseClient,
@@ -178,23 +192,38 @@ export async function removeFactor(
     .select("user_id", { count: "exact", head: true })
     .eq("user_id", userId);
   if (credErr) throw credErr;
+  const key = "passkey" in target ? `passkey:${target.passkey}` : `code:${target.kind}`;
+  if (hasPassword) {
+    const before = await factorKeys(supabase, userId);
+    if (before.length === 1 && before[0] === key) return "last";
+  }
   const table = "passkey" in target ? "webauthn_credentials" : "mfa_factors";
   const del = supabase.from(table).delete().eq("user_id", userId);
   const { data: gone, error } = await ("passkey" in target ? del.eq("id", target.passkey) : del.eq("kind", target.kind)).select("*");
   if (error) throw error;
   if (!gone?.length) return "none";
   if (!hasPassword) return "removed";
-  let left: Factor[];
-  try {
-    left = await enrolledFactors(supabase, userId);
-  } catch (e) {
-    await supabase.from(table).insert(gone);
-    throw e;
-  }
-  if (left.length) return "removed";
+  if ((await factorKeys(supabase, userId).catch(() => [])).length) return "removed";
   const { error: back } = await supabase.from(table).insert(gone);
-  if (back) throw back;
+  if (back) {
+    console.error(`[mfa] could not put back the last factor of ${userId} (${table}):`, back.message);
+    throw back;
+  }
   return "last";
+}
+
+/** The user's confirmed factors, one key each: every passkey, every confirmed code factor. */
+async function factorKeys(supabase: SupabaseClient, userId: string): Promise<string[]> {
+  const [passkeys, codes] = await Promise.all([
+    supabase.from("webauthn_credentials").select("id").eq("user_id", userId),
+    supabase.from("mfa_factors").select("kind").eq("user_id", userId).not("confirmed_at", "is", null),
+  ]);
+  if (passkeys.error) throw passkeys.error;
+  if (codes.error && !missingTable(codes.error)) throw codes.error;
+  return [
+    ...((passkeys.data ?? []) as { id: string }[]).map((p) => `passkey:${p.id}`),
+    ...((codes.data ?? []) as { kind: FactorKind }[]).map((c) => `code:${c.kind}`),
+  ];
 }
 
 /** The address of the user's email factor, pending or confirmed; null without one. */

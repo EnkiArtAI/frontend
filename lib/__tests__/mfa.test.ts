@@ -34,7 +34,7 @@ const scope = "delete-work:1a2b3c4d-1111-4222-8333-444455556666";
 
 async function confirmedTotp() {
   const t = await beginTotp(supabase, U, "me");
-  if (t === "exists") throw new Error("exists");
+  if (typeof t === "string") throw new Error("exists");
   expect(await checkCode(supabase, U, "totp", totpCode(t.secret), { confirm: true })).toBe("ok");
   return t.secret;
 }
@@ -55,7 +55,7 @@ afterEach(() => vi.useRealTimers());
 describe("an authenticator app", () => {
   it("counts once confirmed with a code, and its secret is stored sealed", async () => {
     const t = await beginTotp(supabase, U, "me");
-    if (t === "exists") throw new Error();
+    if (typeof t === "string") throw new Error();
     expect(t.uri).toMatch(/^otpauth:\/\/totp\/Enki%20Art:me\?secret=/);
     expect(await enrolledFactors(supabase, U)).toEqual([]);
     expect(JSON.stringify(factor("totp"))).not.toContain(t.secret);
@@ -74,12 +74,12 @@ describe("an authenticator app", () => {
 
   it("can be confirmed for ten minutes after its setup started, not weeks later", async () => {
     const started = await beginTotp(supabase, U, "me");
-    if (started === "exists") throw new Error();
+    if (typeof started === "string") throw new Error();
     vi.setSystemTime(new Date("2026-10-07T12:10:01Z"));
     expect(await checkCode(supabase, U, "totp", totpCode(started.secret), { confirm: true })).toBe("none");
     expect(factor("totp").confirmed_at ?? null).toBeNull();
     const again = await beginTotp(supabase, U, "me");
-    if (again === "exists") throw new Error();
+    if (typeof again === "string") throw new Error();
     expect(await checkCode(supabase, U, "totp", totpCode(again.secret), { confirm: true })).toBe("ok");
   });
 
@@ -165,12 +165,13 @@ describe("an email code", () => {
   });
 });
 
-/** Hands the next read of the factor row its snapshot now and the caller the answer later. */
-function staleRead() {
+/** Hands the next read of the factor row (after `skip` more) its snapshot now and the caller the answer later. */
+function staleRead(skip = 0) {
   let release!: () => void;
-  db.state.pauseNextRead = { table: "mfa_factors", until: new Promise<void>((r) => { release = r; }) };
+  db.state.pauseNextRead = { table: "mfa_factors", until: new Promise<void>((r) => { release = r; }), skip };
   return () => release();
 }
+const settle = () => new Promise((r) => setTimeout(r, 0));
 
 describe("racing requests", () => {
   it("spend a code once, however many carry it at the same time", async () => {
@@ -208,6 +209,55 @@ describe("racing requests", () => {
     expect(Number(factor("totp").lockouts)).toBe(1);
   });
 
+  it("start one authenticator when two first setups race", async () => {
+    const release = staleRead();
+    const late = beginTotp(supabase, U, "me");
+    expect(typeof (await beginTotp(supabase, U, "me"))).toBe("object");
+    release();
+    expect(await late).toBe("busy");
+    expect(db.tables.mfa_factors).toHaveLength(1);
+  });
+
+  it("re-begin one authenticator when two re-begins race", async () => {
+    await beginTotp(supabase, U, "me");
+    const release = staleRead();
+    const late = beginTotp(supabase, U, "me");
+    const won = await beginTotp(supabase, U, "me");
+    if (typeof won === "string") throw new Error();
+    release();
+    expect(await late).toBe("busy");
+    expect(await checkCode(supabase, U, "totp", totpCode(won.secret), { confirm: true })).toBe("ok");
+  });
+
+  it("keep the mailed code when the loser read the row between the winner's restart and its send", async () => {
+    await beginEmail(supabase, U, "me@example.com");
+    vi.setSystemTime(new Date("2026-10-07T12:01:01Z"));
+    const releaseWinner = staleRead(1); // the winner stops before its send
+    const winner = beginEmail(supabase, U, "me@example.com");
+    await settle();
+    const releaseLoser = staleRead(); // the loser reads the restarted row, not yet sent
+    const loser = beginEmail(supabase, U, "me@example.com");
+    await settle();
+    releaseWinner();
+    expect(await winner).toBe("sent");
+    const code = lastCode();
+    releaseLoser();
+    expect(await loser).toBe("cooldown");
+    expect(await checkCode(supabase, U, "email", code, { confirm: true })).toBe("ok");
+  });
+
+  it("keep the code a racing resend's winner mailed", async () => {
+    await beginEmail(supabase, U, "me@example.com");
+    vi.setSystemTime(new Date("2026-10-07T12:01:01Z"));
+    const release = staleRead();
+    const late = beginEmail(supabase, U, "me@example.com");
+    expect(await beginEmail(supabase, U, "me@example.com")).toBe("sent");
+    const code = lastCode();
+    release();
+    expect(await late).toBe("cooldown");
+    expect(await checkCode(supabase, U, "email", code, { confirm: true })).toBe("ok");
+  });
+
   it("send one code a minute even when sends race", async () => {
     await beginEmail(supabase, U, "me@example.com");
     vi.setSystemTime(new Date("2026-10-07T12:02:00Z"));
@@ -222,7 +272,7 @@ describe("racing requests", () => {
 
   it("never confirm a re-begun authenticator with the old secret's code", async () => {
     const first = await beginTotp(supabase, U, "me");
-    if (first === "exists") throw new Error();
+    if (typeof first === "string") throw new Error();
     const release = staleRead();
     const late = checkCode(supabase, U, "totp", totpCode(first.secret), { confirm: true });
     await beginTotp(supabase, U, "me");

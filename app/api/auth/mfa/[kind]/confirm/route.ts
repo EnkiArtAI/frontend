@@ -10,6 +10,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
 import { checkCode, stampVerifiedLogin } from "@/lib/mfa";
+import { requireStepUp } from "@/lib/webauthn";
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ kind: string }> }) {
   const { kind } = await ctx.params;
@@ -20,6 +21,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ kind: stri
     const supabase = getSupabaseServerClient();
     const userId = await resolveSessionUserId(supabase, req.headers.get("X-Session-Token"));
     if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+    // With a factor in place, confirming another adds one: a step-up, so the
+    // inbox alone never confirms a pending email beside the owner's passkey.
+    const blocked = await requireStepUp(req, userId, "add-factor");
+    if (blocked) return blocked;
     const result = await checkCode(supabase, userId, kind, body.code, { confirm: true });
     if (result === "ok") {
       // A confirmed code to the login address verifies it too; the factor

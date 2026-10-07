@@ -28,6 +28,8 @@ export default function CodeFactors({ onChange }: { onChange?: () => void }) {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
+  // The add-factor step-up of the setup, sent again with its confirm (valid 5 min).
+  const [stepUp, setStepUp] = useState<Record<string, string>>({});
 
   const { data: factors, refetch: load } = useQuery({
     queryKey: ["stepup-factors"],
@@ -45,13 +47,14 @@ export default function CodeFactors({ onChange }: { onChange?: () => void }) {
   const start = async (kind: Kind) => {
     setBusy(true);
     try {
-      const res = await guarded("add-factor", (h) =>
-        fetch(`/api/auth/mfa/${kind}`, {
+      const res = await guarded("add-factor", (h) => {
+        setStepUp(h);
+        return fetch(`/api/auth/mfa/${kind}`, {
           method: "POST",
           headers: { "content-type": "application/json", ...sessionAuthHeaders(), ...h },
           body: JSON.stringify(kind === "email" ? { email } : {}),
-        }),
-      );
+        });
+      });
       if (!res.ok) return say(res, "Could not start the setup");
       const body = (await res.json()) as { uri?: string; secret?: string };
       setCode("");
@@ -65,11 +68,13 @@ export default function CodeFactors({ onChange }: { onChange?: () => void }) {
     if (!setup) return;
     setBusy(true);
     try {
-      const res = await fetch(`/api/auth/mfa/${setup.kind}/confirm`, {
-        method: "POST",
-        headers: { "content-type": "application/json", ...sessionAuthHeaders() },
-        body: JSON.stringify({ code }),
-      });
+      const res = await guarded("add-factor", (h) =>
+        fetch(`/api/auth/mfa/${setup.kind}/confirm`, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...sessionAuthHeaders(), ...stepUp, ...h },
+          body: JSON.stringify({ code }),
+        }),
+      );
       if (!res.ok) return say(res, "Wrong code");
       toast({ title: setup.kind === "totp" ? "Authenticator app added" : "Email code added" });
       setSetup(null);
