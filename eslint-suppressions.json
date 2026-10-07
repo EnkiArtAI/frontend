@@ -108,11 +108,6 @@
       "count": 2
     }
   },
-  "backend/x402-engine.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 5
-    }
-  },
   "components/BetaGate.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 1

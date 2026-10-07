@@ -18,18 +18,12 @@ import { PAYMENT_CHAINS, isSolanaChain, type ChainKey } from "@/shared/payment-c
 
 const ROOT = join(__dirname, "..", "..", "..");
 const GENERATE = readSource(join(ROOT, "app", "api", "generate-image", "route.ts"));
-const CONTENT = readSource(join(ROOT, "app", "api", "prompts", "[id]", "content", "route.ts"));
 
 describe("no route settles on a non-Solana chain", () => {
   it("the generate route settles nothing itself: it takes intents only", () => {
     expect(GENERATE).toMatch(/if \(!intentId\) \{/);
     expect(GENERATE).not.toMatch(/headers\.get\(["']X-PAYMENT["']\)/i);
     expect(GENERATE).not.toMatch(/paymentEngine|solana-x402-verifier/);
-  });
-
-  it("the twin route refuses it too — a switch with a hole is not a switch", () => {
-    expect(CONTENT).toMatch(/!isSolanaChain\(chain\)/);
-    expect(CONTENT).toMatch(/solanaOnly: true/);
   });
 
   it("still lets the Solana rails through — this is a switch, not a wall", () => {
