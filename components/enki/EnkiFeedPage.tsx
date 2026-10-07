@@ -142,8 +142,17 @@ export default function EnkiFeedPage() {
   } = useInfiniteQuery<Page, Error, { pages: Page[]; pageParams: number[] }, string[], number>({
     queryKey: ["/api/marketplace/prompts", "home", genFilter.join(","), showAdult ? "18+" : "safe", query],
     queryFn: async ({ pageParam }) => {
+      /* Generator filter: send EVERY alias of the picked generators — the
+         prompts table's ai_model carries names AND slugs mixed ("Flux
+         (free)", "nano-banana-pro"), so one id would miss half the rows.
+         Search narrows by the same filter as the feed. */
+      const models = genFilter.flatMap((id) => {
+        const entry = catalogue.find((c) => c.id === id);
+        return entry ? [...new Set([entry.id, entry.name, toModelFamily(entry.name)])].filter(Boolean).map(String) : [];
+      });
       if (query) {
         const params = new URLSearchParams({ q: query, type: "all", limit: "24", cursor: String(pageParam) });
+        for (const m of models) params.append("models", m);
         const res = await fetch(`/api/search?${params.toString()}`, { headers: sessionHeadersWith(showAdult), credentials: "include" });
         if (!res.ok) throw new Error(await failureSentence(res, "Search failed"));
         return (await res.json()) as Page;
@@ -153,16 +162,7 @@ export default function EnkiFeedPage() {
         sortBy: "trending",
         cursor: String(pageParam),
       });
-      /* Generator filter: send EVERY alias of the picked generators — the
-         prompts table's ai_model carries names AND slugs mixed ("Flux
-         (free)", "nano-banana-pro"), so one id would miss half the rows. */
-      for (const id of genFilter) {
-        const entry = catalogue.find((c) => c.id === id);
-        if (!entry) continue;
-        for (const alias of new Set([entry.id, entry.name, toModelFamily(entry.name)])) {
-          if (alias) params.append("models", String(alias));
-        }
-      }
+      for (const m of models) params.append("models", m);
       const res = await fetch(`/api/marketplace/prompts?${params.toString()}`, { headers: sessionHeadersWith(showAdult), credentials: "include" });
       // The server's own sentence (e.g. "database unreachable") beats a
       // generic one, and a failure must never look like an empty feed.

@@ -20,8 +20,8 @@ const id = (n: number) => `0000000${n}-0000-4000-8000-000000000000`;
 
 describe("the search SQL", () => {
   let db: PGlite;
-  const prompts = async (q: string, showAdult = false) =>
-    (await db.query<{ id: string }>("select id from search_prompts($1, 20, 0, $2)", [q, showAdult])).rows.map((r) => r.id);
+  const prompts = async (q: string, showAdult = false, models: string[] | null = null) =>
+    (await db.query<{ id: string }>("select id from search_prompts($1, 20, 0, $2, $3)", [q, showAdult, models])).rows.map((r) => r.id);
   const titles = async (q: string, showAdult = false) =>
     (await db.query<{ title: string }>("select title from suggest_titles($1, 20, $2)", [q, showAdult])).rows.map((r) => r.title);
   const creators = async (q: string, showAdult = false) =>
@@ -44,10 +44,11 @@ describe("the search SQL", () => {
         id uuid primary key, creator_id uuid references public.users(id), title text, description text,
         tags text[] not null default '{}', is_listed boolean not null default true,
         listing_status text not null default 'active', deleted_at timestamptz,
-        opens bigint not null default 0, is_adult boolean not null default false,
+        opens bigint not null default 0, is_adult boolean not null default false, ai_model text,
         encrypted_content text
       );
       create table public.bans (user_id uuid, lifted_at timestamptz, expires_at timestamptz);
+      create function public.search_prompts(q text, lim int, off int) returns table (id uuid) language sql as $$ select null::uuid $$;
       grant select on all tables in schema public to service_role, anon, authenticated;
       insert into public.users (id, handle, display_name) values
         ('${ARTIST}', 'brassworks', 'Brass Works'), ('${BANNED}', 'banned_artist', 'Banned'),
@@ -55,6 +56,7 @@ describe("the search SQL", () => {
       insert into public.bans (user_id) values ('${BANNED}');
       insert into public.prompts (id, creator_id, title, description, tags, encrypted_content, is_listed, listing_status, deleted_at, is_adult, opens) values
         ('${id(1)}', '${ARTIST}', 'Brass Astrolabe Study', 'An instrument on linen', '{astrolabe,"still life"}', 'ciphertext-zebrafinch', true, 'active', null, false, 5),
+        ('${id(7)}', '${ARTIST}', 'Brass Sextant', null, '{astrolabe}', null, true, 'active', null, false, 0),
         ('${id(2)}', '${ARTIST}', 'Velvet Boudoir', 'Evening portrait', '{woman}', null, true, 'active', null, true, 1),
         ('${id(3)}', '${ARTIST}', 'Brass Draft', null, '{astrolabe}', null, false, 'draft', null, false, 0),
         ('${id(4)}', '${ARTIST}', 'Brass Deleted', null, '{astrolabe}', null, true, 'active', now(), false, 0),
@@ -62,12 +64,24 @@ describe("the search SQL", () => {
         ('${id(6)}', '${ADULT_ONLY}', 'Brass Nightfall', null, '{astrolabe}', null, true, 'active', null, true, 0);
     `);
     await db.exec(SQL);
+    await db.exec(`update public.prompts set ai_model = 'nano-banana-pro' where id = '${id(1)}'; update public.prompts set ai_model = 'Flux (free)' where id = '${id(7)}';`);
   }, 60_000);
   afterAll(async () => { await db.close(); });
 
   it("finds a prompt by its tags and by a near title", async () => {
     expect(await prompts("still life")).toEqual([id(1)]);
     expect(await prompts("Brass Astrolabbe Studdy")).toContain(id(1)); // a typo full text cannot match
+  });
+
+  it("narrows to the feed's generator filter, any alias matching", async () => {
+    expect((await prompts("astrolabe")).sort()).toEqual([id(1), id(7)].sort());
+    expect(await prompts("astrolabe", false, ["Nano Banana Pro", "nano-banana-pro"])).toEqual([id(1)]);
+    expect(await prompts("astrolabe", false, ["Flux (free)"])).toEqual([id(7)]);
+  });
+
+  it("leaves no earlier draft of a function behind", async () => {
+    const overloads = (await db.query<{ n: number }>("select count(*)::int as n from pg_proc where proname = 'search_prompts'")).rows[0].n;
+    expect(overloads).toBe(1);
   });
 
   it("never reaches the encrypted body", async () => {
@@ -88,7 +102,7 @@ describe("the search SQL", () => {
   });
 
   it("suggests by prefix and treats a typed % or _ as a character", async () => {
-    expect(await titles("brass astro")).toEqual(["Brass Astrolabe Study"]);
+    expect((await titles("brass astro"))[0]).toBe("Brass Astrolabe Study"); // the prefix match first
     expect(await titles("%")).toEqual([]);
     expect(await titles("_rass")).toEqual([]);
   });
@@ -101,12 +115,12 @@ describe("the search SQL", () => {
 
   it("answers the service role and nobody holding the browser key", async () => {
     await db.exec("set role service_role");
-    expect((await db.query("select id from search_prompts('astrolabe', 5, 0, false)")).rows.length).toBe(1);
+    expect((await db.query("select id from search_prompts('astrolabe', 5, 0, false, null)")).rows.length).toBe(2);
     await db.exec("reset role");
     for (const role of ["anon", "authenticated"]) {
       await db.exec(`set role ${role}`);
       for (const call of [
-        "select * from search_prompts('astrolabe', 5, 0, false)",
+        "select * from search_prompts('astrolabe', 5, 0, false, null)",
         "select * from suggest_titles('brass', 5, false)",
         "select * from search_creators('brass', 5, false)",
       ]) {

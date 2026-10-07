@@ -18,14 +18,20 @@ export function isSearchNotMigrated(err: unknown): boolean {
   return typeof code === "string" && MISSING_OBJECT.has(code);
 }
 
-export function searchNotMigratedResponse() {
+export function searchNotMigratedResponse(error?: unknown) {
+  // Also what a drifted column in the card select looks like: say it in the log.
+  console.error("[search] not migrated, or a column is missing:", (error as { message?: string })?.message ?? error);
   return NextResponse.json(
     { error: SEARCH_NOT_MIGRATED_MESSAGE, code: SEARCH_NOT_MIGRATED_CODE },
     { status: 503 },
   );
 }
 
-/** Query text as the SQL functions receive it: trimmed and bounded. */
+/** Query text as the SQL functions receive it: trimmed and bounded, without
+    NUL, which Postgres text cannot hold (22P05 would be a 500). */
 export function searchQuery(raw: string | null): string {
-  return (raw ?? "").trim().slice(0, 200);
+  return (raw ?? "").replace(/\u0000/g, "").trim().slice(0, 200);
 }
+
+/** The deepest page anyone scrolls to; past it the offset only costs. */
+export const MAX_OFFSET = 10_000;

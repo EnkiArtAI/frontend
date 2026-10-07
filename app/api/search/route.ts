@@ -13,8 +13,8 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { PROMPT_CARD_SELECT, mapPromptRow, enrichPromptCards, type PromptCardRow } from "@/lib/marketplace/card";
-import { isSearchNotMigrated, searchNotMigratedResponse, searchQuery } from "@/lib/search/db";
-import { viewer } from "@/lib/adult-content";
+import { MAX_OFFSET, isSearchNotMigrated, searchNotMigratedResponse, searchQuery } from "@/lib/search/db";
+import { SHOW_ADULT_HEADER, viewer } from "@/lib/adult-content";
 
 const TYPES = new Set(["prompts", "creators", "all"]);
 const MAX_LIMIT = 40;
@@ -31,22 +31,25 @@ export async function GET(req: NextRequest) {
   const q = searchQuery(searchParams.get("q"));
   const type = searchParams.get("type") ?? "all";
   const limit = Math.min(MAX_LIMIT, Math.max(1, parseInt(searchParams.get("limit") ?? "20", 10) || 20));
-  const offset = Math.max(0, parseInt(searchParams.get("cursor") ?? "0", 10) || 0);
+  const offset = Math.min(MAX_OFFSET, Math.max(0, parseInt(searchParams.get("cursor") ?? "0", 10) || 0));
+  // The generator filter, as the feed sends it (every alias of each pick).
+  const models = searchParams.getAll("models").filter(Boolean).slice(0, 50);
 
   if (!q) return NextResponse.json({ error: "q is required" }, { status: 400 });
   if (!TYPES.has(type)) return NextResponse.json({ error: "type must be prompts, creators or all" }, { status: 400 });
 
   try {
     const supabase = getSupabaseServerClient();
-    // 18+ only for a confirmed adult with the pill on, like the feed.
-    const { showAdult } = await viewer(supabase, req);
+    // 18+ only for a confirmed adult with the pill on, like the feed; the
+    // session is looked up only when the pill asks.
+    const showAdult = req.headers.get(SHOW_ADULT_HEADER) === "1" && (await viewer(supabase, req)).showAdult;
     let prompts: Awaited<ReturnType<typeof enrichPromptCards>> = [];
     let creators: { id: string; handle: string; displayName: string; avatarUrl: string | null }[] = [];
     let hasMore = false;
 
     if (type !== "creators") {
       // One row past the page tells us whether a next page exists.
-      const { data: ranked, error } = await supabase.rpc("search_prompts", { q, lim: limit + 1, off: offset, show_adult: showAdult });
+      const { data: ranked, error } = await supabase.rpc("search_prompts", { q, lim: limit + 1, off: offset, show_adult: showAdult, models: models.length ? models : null });
       if (error) throw error;
       const page = ((ranked ?? []) as { id: string; rank: number }[]).slice(0, limit);
       hasMore = (ranked?.length ?? 0) > limit;
@@ -85,7 +88,7 @@ export async function GET(req: NextRequest) {
     });
   } catch (error) {
     if (isDbUnreachable(error)) return dbUnavailableResponse();
-    if (isSearchNotMigrated(error)) return searchNotMigratedResponse();
+    if (isSearchNotMigrated(error)) return searchNotMigratedResponse(error);
     console.error("/api/search failed:", error);
     return NextResponse.json({ error: "Search failed" }, { status: 500 });
   }

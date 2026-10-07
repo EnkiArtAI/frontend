@@ -11,7 +11,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { isSearchNotMigrated, searchNotMigratedResponse, searchQuery } from "@/lib/search/db";
-import { viewer } from "@/lib/adult-content";
+import { SHOW_ADULT_HEADER, viewer } from "@/lib/adult-content";
 
 const TITLES = 8;
 const CREATORS = 4;
@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const supabase = getSupabaseServerClient();
-    const { showAdult } = await viewer(supabase, req);
+    const showAdult = req.headers.get(SHOW_ADULT_HEADER) === "1" && (await viewer(supabase, req)).showAdult;
     const [titles, creators] = await Promise.all([
       supabase.rpc("suggest_titles", { q, lim: TITLES, show_adult: showAdult }),
       supabase.rpc("search_creators", { q, lim: CREATORS, show_adult: showAdult }),
@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
     });
   } catch (error) {
     if (isDbUnreachable(error)) return dbUnavailableResponse();
-    if (isSearchNotMigrated(error)) return searchNotMigratedResponse();
+    if (isSearchNotMigrated(error)) return searchNotMigratedResponse(error);
     console.error("/api/search/suggest failed:", error);
     return NextResponse.json({ error: "Suggestions failed" }, { status: 500 });
   }

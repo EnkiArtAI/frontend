@@ -135,7 +135,7 @@ describe("no encrypted column reaches search", () => {
 
   it("the SQL functions select no encrypted or email column", () => {
     const sql = read("migrations", "2026-09-24-search.sql").replace(/--[^\n]*/g, "");
-    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION search_prompts\(q text, lim int, off int, show_adult boolean DEFAULT false\)/);
+    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION search_prompts\(q text, lim int, off int, show_adult boolean DEFAULT false, models text\[\] DEFAULT NULL\)/);
     expect(sql).toMatch(/CREATE OR REPLACE FUNCTION suggest_titles\(q text, lim int, show_adult boolean DEFAULT false\)/);
     expect(sql).toMatch(/CREATE OR REPLACE FUNCTION search_creators\(q text, lim int, show_adult boolean DEFAULT false\)/);
     expect(sql).not.toMatch(ENCRYPTED);
@@ -216,7 +216,7 @@ describe("GET /api/search", () => {
     const res = await GET(get("/api/search?q=dragon&limit=2&type=all"));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(calls[0]).toEqual({ fn: "search_prompts", args: { q: "dragon", lim: 3, off: 0, show_adult: false } });
+    expect(calls[0]).toEqual({ fn: "search_prompts", args: { q: "dragon", lim: 3, off: 0, show_adult: false, models: null } });
     expect(body.prompts.map((p: { id: string }) => p.id)).toEqual(["b", "a"]);
     expect(body.hasMore).toBe(true);
     expect(body.nextCursor).toBe("2");
@@ -242,7 +242,7 @@ describe("GET /api/search", () => {
 
     calls = fakeSupabase(() => ({ data: [], error: null }));
     await GET(get("/api/search?q=kev&type=prompts&limit=100&cursor=80"));
-    expect(calls).toEqual([{ fn: "search_prompts", args: { q: "kev", lim: 41, off: 80, show_adult: false } }]);
+    expect(calls).toEqual([{ fn: "search_prompts", args: { q: "kev", lim: 41, off: 80, show_adult: false, models: null } }]);
     const empty = await (await GET(get("/api/search?q=kev&type=prompts"))).json();
     expect(empty).toEqual({ query: "kev", prompts: [], creators: [], hasMore: false });
   });

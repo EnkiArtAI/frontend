@@ -8,7 +8,7 @@ import { NextRequest } from "next/server";
  */
 
 const view = vi.hoisted(() => ({ showAdult: true }));
-vi.mock("@/lib/adult-content", () => ({ viewer: async () => ({ userId: "u1", showAdult: view.showAdult }) }));
+vi.mock("@/lib/adult-content", () => ({ SHOW_ADULT_HEADER: "X-Show-Adult", viewer: async () => ({ userId: "u1", showAdult: view.showAdult }) }));
 const calls: { fn: string; args: Record<string, unknown> }[] = [];
 vi.mock("@/lib/supabaseServer", () => ({
   getSupabaseServerClient: () => ({
@@ -20,7 +20,8 @@ import { GET as search } from "../../app/api/search/route";
 import { GET as suggest } from "../../app/api/search/suggest/route";
 
 let ip = 0;
-const get = (path: string) => new NextRequest(`http://enki.test${path}`, { headers: { "x-real-ip": `10.9.0.${++ip}` } });
+const get = (path: string, pill = true) =>
+  new NextRequest(`http://enki.test${path}`, { headers: { "x-real-ip": `10.9.0.${++ip}`, ...(pill ? { "X-Show-Adult": "1" } : {}) } });
 
 describe("search and suggestions", () => {
   it.each([true, false])("pass the viewer's 18+ verdict (%s) to every query, whatever the URL says", async (adult) => {
@@ -30,5 +31,21 @@ describe("search and suggestions", () => {
     await suggest(get("/api/search/suggest?q=dra&show_adult=true"));
     expect(calls.map((c) => c.fn)).toEqual(["search_prompts", "search_creators", "suggest_titles", "search_creators"]);
     for (const c of calls) expect(c.args.show_adult, c.fn).toBe(adult);
+  });
+
+  it("ask nobody about the viewer when the pill is off", async () => {
+    view.showAdult = true;
+    calls.length = 0;
+    await search(get("/api/search?q=dragon&type=prompts", false));
+    expect(calls[0].args.show_adult).toBe(false);
+  });
+
+  it("pass the generator filter and bound the cursor", async () => {
+    calls.length = 0;
+    await search(get("/api/search?q=dragon&type=prompts&models=Flux%20(free)&models=flux&cursor=99999999999"));
+    expect(calls[0].args).toMatchObject({ models: ["Flux (free)", "flux"], off: 10_000 });
+    calls.length = 0;
+    await search(get("/api/search?q=dra%00gon&type=prompts"));
+    expect(calls[0].args.q).toBe("dragon");
   });
 });

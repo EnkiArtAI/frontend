@@ -32,6 +32,14 @@
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
+-- Earlier drafts of these functions, wherever one was ever run: without
+-- this they would stay beside the new ones, unfiltered and executable by
+-- PUBLIC.
+DROP FUNCTION IF EXISTS search_prompts(text, int, int);
+DROP FUNCTION IF EXISTS search_prompts(text, int, int, boolean);
+DROP FUNCTION IF EXISTS suggest_titles(text, int);
+DROP FUNCTION IF EXISTS search_creators(text, int);
+
 -- array_to_string is STABLE, which a generated column refuses; this
 -- wrapper is honest about the one call it makes.
 CREATE OR REPLACE FUNCTION tags_to_text(tags text[])
@@ -57,8 +65,10 @@ CREATE INDEX IF NOT EXISTS users_display_name_trgm_idx ON users USING gin (lower
 -- tags) or by title similarity (% = similarity above pg_trgm's threshold,
 -- which the trigram index can answer). rank = text rank + title similarity,
 -- so a near exact title and a tag hit both count. 18+ only when the server
--- says the viewer is a confirmed adult who asked for it.
-CREATE OR REPLACE FUNCTION search_prompts(q text, lim int, off int, show_adult boolean DEFAULT false)
+-- says the viewer is a confirmed adult who asked for it. models narrows to
+-- the feed's generator filter (every alias of each pick, as ai_model stores
+-- names and slugs mixed); NULL means every generator.
+CREATE OR REPLACE FUNCTION search_prompts(q text, lim int, off int, show_adult boolean DEFAULT false, models text[] DEFAULT NULL)
 RETURNS TABLE (id uuid, rank real)
 LANGUAGE sql STABLE SECURITY INVOKER
 SET search_path = public, pg_temp
@@ -71,6 +81,7 @@ AS $$
     AND p.deleted_at IS NULL
     AND p.listing_status = 'active'
     AND (show_adult OR p.is_adult = false)
+    AND (models IS NULL OR p.ai_model = ANY (models))
     AND NOT EXISTS (SELECT 1 FROM bans b
                     WHERE b.user_id = p.creator_id
                       AND b.lifted_at IS NULL
@@ -132,7 +143,7 @@ AS $$
                       AND (b.expires_at IS NULL OR b.expires_at > now()))
     AND (lower(u.handle::text) LIKE lower(replace(replace(replace(q, '\', '\\'), '%', '\%'), '_', '\_')) || '%'
          OR lower(u.handle::text) % lower(q)
-         OR lower(coalesce(u.display_name, '')) % lower(q))
+         OR lower(u.display_name) % lower(q))
   ORDER BY greatest(similarity(lower(u.handle::text), lower(q)),
                     similarity(lower(coalesce(u.display_name, '')), lower(q))) DESC,
            u.id
@@ -142,10 +153,10 @@ $$;
 -- Server only: /api/search and /api/search/suggest call these with the
 -- service role and rate-limit per IP. The anon key ships in every browser
 -- bundle; through it, the functions would be an unlimited query engine.
-REVOKE ALL ON FUNCTION search_prompts(text, int, int, boolean) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION search_prompts(text, int, int, boolean, text[]) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION suggest_titles(text, int, boolean) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION search_creators(text, int, boolean) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION search_prompts(text, int, int, boolean) TO service_role;
+GRANT EXECUTE ON FUNCTION search_prompts(text, int, int, boolean, text[]) TO service_role;
 GRANT EXECUTE ON FUNCTION suggest_titles(text, int, boolean) TO service_role;
 GRANT EXECUTE ON FUNCTION search_creators(text, int, boolean) TO service_role;
 

@@ -7,22 +7,15 @@ import GeneratorLogo from "@/components/generation/GeneratorLogo";
 import "@/components/generation/ratio-select.css";
 import { openCreator } from "@/lib/openCreator";
 import { SUGGEST_DEBOUNCE_MS, flattenSuggestions, stepActive, type SuggestItem } from "@/lib/search/client";
+import { viewerHeaders } from "@/lib/session-headers";
 
 /**
  * Canonical category list — shared between the feed filter bar and the
  * prompt editor's category dropdown so both always offer the same set.
  * Add/rename categories here only.
  */
-export const ENKI_CATEGORIES = [
-  "Portrait",
-  "Poster",
-  "Artstyle",
-  "Product Ads",
-  "Architecture",
-  "Abstract",
-  "Editorial",
-  "Photography",
-] as const;
+import { ENKI_CATEGORIES } from "@/lib/categories";
+export { ENKI_CATEGORIES };
 
 const CATEGORIES = ENKI_CATEGORIES.map((label) => ({ label }));
 
@@ -230,7 +223,7 @@ function SearchChip({ open, setOpen }: { open: boolean; setOpen: (v: boolean | (
     const ctrl = new AbortController();
     const t = setTimeout(() => {
       if (!q) { setItems([]); setActive(-1); return; }
-      fetch(`/api/search/suggest?q=${encodeURIComponent(q)}`, { credentials: "include", signal: ctrl.signal })
+      fetch(`/api/search/suggest?q=${encodeURIComponent(q)}`, { headers: viewerHeaders(), credentials: "include", signal: ctrl.signal })
         .then((res) => (res.ok ? res.json() : null))
         .then((body) => { setItems(body ? flattenSuggestions(body) : []); setActive(-1); })
         .catch(() => {});
