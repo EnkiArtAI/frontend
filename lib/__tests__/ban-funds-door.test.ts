@@ -43,6 +43,8 @@ vi.mock("@/lib/supabaseServer", () => ({
         is: () => chain,
         gt: () => chain,
         in: (_col: string, values: unknown[]) => { ownedQuery = values; return chain; },
+        // attach-wallet's ownership lookup: nobody owns the address yet.
+        ilike: async () => (dbDown || tablesDown ? { data: null, error: DEAD } : { data: [], error: null }),
         limit: async () => (dbDown || tablesDown ? { data: null, error: DEAD } : { data: ownedRows, error: null }),
         maybeSingle: async () =>
           dbDown || tablesDown ? { data: null, error: DEAD }
