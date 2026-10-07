@@ -99,7 +99,7 @@ describe("signing up", () => {
   it("adds the email beside an existing factor only with a step-up: the inbox alone unlocks nothing", async () => {
     const { token, userId } = await signUp();
     const totp = await beginTotp(db.current!.client, userId, "me");
-    if (totp === "exists") throw new Error();
+    if (typeof totp === "string") throw new Error();
     await checkCode(db.current!.client, userId, "totp", totpCode(totp.secret), { confirm: true });
     const code = lastCode();
     at("2026-10-07T12:01:01Z");
@@ -108,6 +108,19 @@ describe("signing up", () => {
     expect(db.current!.tables.mfa_factors.find((f) => f.kind === "email")!.confirmed_at ?? null).toBeNull();
     const stepUp = await mintStepUpToken(userId, "add-factor");
     expect((await verifyEmail(post("/x", { code }, token, stepUp))).status).toBe(200);
+  });
+
+  it("confirms nothing from the inbox alone once another factor exists, in Settings either", async () => {
+    const { token, userId } = await signUp();
+    const code = lastCode();
+    const totp = await beginTotp(db.current!.client, userId, "me");
+    if (typeof totp === "string") throw new Error();
+    await checkCode(db.current!.client, userId, "totp", totpCode(totp.secret), { confirm: true });
+    const email = { params: Promise.resolve({ kind: "email" }) };
+    expect((await confirmFactor(post("/x", { code }, token), email)).status).toBe(401);
+    expect(db.current!.tables.mfa_factors.find((f) => f.kind === "email")!.confirmed_at ?? null).toBeNull();
+    const stepUp = await mintStepUpToken(userId, "add-factor");
+    expect((await confirmFactor(post("/x", { code }, token, stepUp), email)).status).toBe(200);
   });
 
   it("counts a code confirmed for the login address in Settings as verifying it", async () => {

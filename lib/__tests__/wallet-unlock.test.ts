@@ -35,7 +35,7 @@ import { POST as stepUp } from "../../app/api/auth/stepup/route";
 import { POST as passkeyStepUp } from "../../app/api/auth/passkey/stepup/verify/route";
 import { DELETE as removeCode } from "../../app/api/auth/mfa/[kind]/route";
 import { DELETE as removePasskey } from "../../app/api/auth/passkey/credentials/route";
-import { beginTotp, checkCode } from "../mfa";
+import { beginTotp, checkCode, removeFactor } from "../mfa";
 import { totpCode } from "../totp";
 import { mintStepUpToken, setChallengeCookie } from "../webauthn";
 
@@ -125,7 +125,7 @@ describe("a step-up", () => {
   async function totpFactor(): Promise<string> {
     db.current!.tables.mfa_factors = [];
     const started = await beginTotp(db.current!.client, U, "me");
-    if (started === "exists") throw new Error();
+    if (typeof started === "string") throw new Error();
     expect(await checkCode(db.current!.client, U, "totp", totpCode(started.secret), { confirm: true })).toBe("ok");
     at("2026-10-07T12:00:31Z");
     return started.secret;
@@ -185,8 +185,10 @@ describe("the last factor of an embedded wallet", () => {
     }));
   const PK = "22222222-2222-4222-8222-222222222222";
 
-  it("stays; with a second factor beside it, either can go", async () => {
+  it("stays, never even briefly deleted; with a second factor beside it, either can go", async () => {
+    const before = db.current!.tables.mfa_factors[0];
     expect((await removeTotp()).status).toBe(409);
+    expect(db.current!.tables.mfa_factors[0]).toBe(before);
     expect(db.current!.tables.mfa_factors).toHaveLength(1);
     db.current!.tables.webauthn_credentials = [{ id: PK, user_id: U }];
     expect((await removeTotp()).status).toBe(200);
@@ -194,10 +196,11 @@ describe("the last factor of an embedded wallet", () => {
     expect(db.current!.tables.webauthn_credentials).toHaveLength(1);
   });
 
-  it("stays when two removals race", async () => {
+  it("stays when two removals race past the check", async () => {
     db.current!.tables.webauthn_credentials = [{ id: PK, user_id: U }];
-    const answers = await Promise.all([removeTotp(), removeKey(PK)]);
-    expect(answers.map((r) => r.status)).toContain(409);
+    const c = db.current!.client;
+    const answers = await Promise.all([removeFactor(c, U, { kind: "totp" }), removeFactor(c, U, { passkey: PK })]);
+    expect(answers).toContain("last");
     expect(db.current!.tables.mfa_factors.length + db.current!.tables.webauthn_credentials.length).toBeGreaterThan(0);
   });
 
