@@ -11,10 +11,19 @@
  *
  * Ban tolerant on purpose: a ban locks the marketplace, never the wallet, so
  * a suspended account still signs its sends and exports its key.
+ *
+ * Locked by default (Kev, 2026-10-07): CDP calls this before every wallet
+ * request, so it is the one place a stolen session is stopped from signing
+ * or exporting straight through CDP. The account needs a factor (403
+ * { enroll }) and the session a "wallet" or "export" step-up at most 2 h
+ * old, with wallet use in the last 15 min (403 { locked }). Each mint
+ * refreshes the 15 min.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { mintWalletJwt } from "@/lib/wallet-jwt";
+import { enrolledFactors, type Factor } from "@/lib/mfa";
+import { walletUnlocked } from "@/lib/webauthn";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -23,12 +32,13 @@ export async function POST(req: NextRequest) {
   if (!token) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
   const supabase = getSupabaseServerClient();
-  const { data: session } = await supabase
+  const { data: session, error: sessionErr } = await supabase
     .from("auth_sessions")
-    .select("wallet_address")
+    .select("wallet_address, stepup_at, stepup_seen_at")
     .eq("token", token)
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();
+  if (sessionErr) return NextResponse.json({ error: "Could not read the session" }, { status: 503 });
   if (!session) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
   let userId: string | null = UUID.test(session.wallet_address) ? session.wallet_address : null;
@@ -52,6 +62,17 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
   if (credErr) return NextResponse.json({ error: "Could not read the account" }, { status: 503 });
   if (!cred?.email) return NextResponse.json({ error: "Account has no email" }, { status: 400 });
+
+  let factors: Factor[];
+  try {
+    factors = await enrolledFactors(supabase, userId);
+  } catch {
+    return NextResponse.json({ error: "Could not read your security settings" }, { status: 503 });
+  }
+  if (!factors.length) return NextResponse.json({ error: "Set up a second factor to use the wallet", enroll: true }, { status: 403 });
+  if (!walletUnlocked(session)) {
+    return NextResponse.json({ error: "Confirm it's you to use the wallet", locked: true, scope: "wallet", factors }, { status: 403 });
+  }
   const { data: user } = await supabase.from("users").select("handle").eq("id", userId).maybeSingle();
 
   // Verified only once the signup code was confirmed (verify-email).
@@ -61,5 +82,7 @@ export async function POST(req: NextRequest) {
     emailVerified: Boolean(cred.email_verified_at),
     username: user?.handle ?? null,
   });
+  // Using the wallet keeps the unlock alive, never past its 2 h.
+  await supabase.from("auth_sessions").update({ stepup_seen_at: new Date().toISOString() }).eq("token", token);
   return NextResponse.json({ jwt, userId });
 }

@@ -13,7 +13,8 @@ import { createPrivateKey, createPublicKey } from "crypto";
  * fallback so existing .env.local keeps working.)
  */
 const ALG = "RS256";
-const TTL_S = 10 * 60; // only bridges our session → the vendor, so keep it short
+// CDP asks for a fresh JWT before every request, so a lock takes hold within this.
+const TTL_S = 120;
 
 function pem(): string {
   const b64 = process.env.WALLET_JWT_PRIVATE_KEY || process.env.DYNAMIC_JWT_PRIVATE_KEY;

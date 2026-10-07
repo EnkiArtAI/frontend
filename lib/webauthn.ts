@@ -55,9 +55,34 @@ function stepUpKey(): Uint8Array {
 
 /* What a step-up can be for. A scope names one action, and where the action
    has a target, that target: one tap deletes one image, never another. */
-const SCOPE = /^(add-factor|guardians|delete-work:[0-9a-f-]{36}|remove-factor:([0-9a-f-]{36}|totp|email)|withdraw:[1-9A-HJ-NP-Za-km-z]{32,44})$/;
+const SCOPE = /^(wallet|export|add-factor|guardians|delete-work:[0-9a-f-]{36}|remove-factor:([0-9a-f-]{36}|totp|email)|withdraw:[1-9A-HJ-NP-Za-km-z]{32,44})$/;
 export function isStepUpScope(scope: unknown): scope is string {
   return typeof scope === "string" && SCOPE.test(scope);
+}
+
+/* Wallet unlock (Kev, 2026-10-07): the wallet JWT is minted only for a
+   session that passed a "wallet" or "export" step-up at most 2 h ago and
+   used the wallet in the last 15 min. The stamp sits on the session row, so
+   it ends with the session and never reaches another one. */
+const UNLOCK_MAX_MS = 2 * 3600_000;
+const UNLOCK_IDLE_MS = 15 * 60_000;
+
+/** Stamps the session that just passed a wallet or export step-up as unlocked. */
+export async function stampUnlock(
+  supabase: ReturnType<typeof getSupabaseServerClient>,
+  token: string | null,
+  scope: string,
+): Promise<void> {
+  if ((scope !== "wallet" && scope !== "export") || !token) return;
+  const now = new Date().toISOString();
+  const { error } = await supabase.from("auth_sessions").update({ stepup_at: now, stepup_seen_at: now }).eq("token", token);
+  if (error) throw error;
+}
+
+/** Whether a session row is unlocked for the wallet now. A row never stamped
+    parses as NaN, and NaN passes no <= : it stays locked. */
+export function walletUnlocked(s: { stepup_at?: string | null; stepup_seen_at?: string | null }, now = Date.now()): boolean {
+  return now - Date.parse(String(s.stepup_at)) <= UNLOCK_MAX_MS && now - Date.parse(String(s.stepup_seen_at)) <= UNLOCK_IDLE_MS;
 }
 
 export async function mintStepUpToken(userId: string, scope: string): Promise<string> {

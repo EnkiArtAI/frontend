@@ -104,8 +104,13 @@ describe("the wallet JWT", () => {
   };
   beforeEach(() => {
     db.current!.tables.users = [{ id: U, handle: "kev" }];
-    db.current!.tables.auth_sessions = [{ token: "sess", wallet_address: U, expires_at: "2026-10-08T12:00:00.000Z" }];
+    db.current!.tables.auth_sessions = [{
+      token: "sess", wallet_address: U, expires_at: "2026-10-08T12:00:00.000Z",
+      stepup_at: "2026-10-07T11:59:00.000Z", stepup_seen_at: "2026-10-07T11:59:00.000Z",
+    }];
     db.current!.tables.password_credentials = [{ user_id: U, email: EMAIL, email_verified_at: null }];
+    db.current!.tables.webauthn_credentials = [];
+    db.current!.tables.mfa_factors = [{ id: "f1", user_id: U, kind: "totp", confirmed_at: "2026-10-01T00:00:00.000Z" }];
   });
 
   it("calls the email verified only once the signup code was confirmed", async () => {

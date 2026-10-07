@@ -12,7 +12,7 @@ import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserWithBan } from "@/lib/session-user";
-import { rp, resolveStableUserId, readChallengeCookie, clearChallengeCookie, mintStepUpToken, isStepUpScope } from "@/lib/webauthn";
+import { rp, resolveStableUserId, readChallengeCookie, clearChallengeCookie, mintStepUpToken, isStepUpScope, stampUnlock } from "@/lib/webauthn";
 
 const bodySchema = z.object({
   response: z.record(z.string(), z.unknown()),
@@ -74,6 +74,11 @@ export async function POST(req: NextRequest) {
     .eq("user_id", userId)
     .eq("credential_id", cred.credential_id);
 
+  try {
+    await stampUnlock(supabase, req.headers.get("X-Session-Token"), parsed.data.scope);
+  } catch {
+    return NextResponse.json({ error: "Could not unlock the wallet, try again" }, { status: 503 });
+  }
   const token = await mintStepUpToken(userId, parsed.data.scope);
   const res = NextResponse.json({ token });
   clearChallengeCookie(res, "pk_auth_challenge");

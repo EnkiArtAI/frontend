@@ -128,6 +128,33 @@ export async function beginEmail(supabase: SupabaseClient, userId: string, addre
   return row === "exists" ? "exists" : sendEmailCode(supabase, userId);
 }
 
+/**
+ * Every embedded wallet keeps a factor (Kev, 2026-10-07): the wallet JWT
+ * needs one, and a banned account cannot enroll a new one. True when the
+ * account signs in with a password (the accounts that get an embedded
+ * wallet) and `removing` is its last confirmed factor.
+ */
+export async function isLastWalletFactor(
+  supabase: SupabaseClient,
+  userId: string,
+  removing: { passkey: string } | { kind: FactorKind },
+): Promise<boolean> {
+  const [cred, passkeys, codes] = await Promise.all([
+    supabase.from("password_credentials").select("user_id", { count: "exact", head: true }).eq("user_id", userId),
+    supabase.from("webauthn_credentials").select("id").eq("user_id", userId),
+    supabase.from("mfa_factors").select("kind").eq("user_id", userId).not("confirmed_at", "is", null),
+  ]);
+  if (cred.error) throw cred.error;
+  if (passkeys.error) throw passkeys.error;
+  if (codes.error && !missingTable(codes.error)) throw codes.error;
+  if (!cred.count) return false;
+  const left = [
+    ...((passkeys.data ?? []) as { id: string }[]).map((p) => `passkey:${p.id}`),
+    ...((codes.data ?? []) as { kind: FactorKind }[]).map((c) => `code:${c.kind}`),
+  ];
+  return left.length === 1 && left[0] === ("passkey" in removing ? `passkey:${removing.passkey}` : `code:${removing.kind}`);
+}
+
 /** The address of the user's email factor, pending or confirmed; null without one. */
 export async function emailFactorAddress(supabase: SupabaseClient, userId: string): Promise<string | null> {
   const row = await factorRow(supabase, userId, "email");
