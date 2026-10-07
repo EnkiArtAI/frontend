@@ -412,9 +412,11 @@ export async function POST(req: Request) {
       ])
       .filter((s): s is string => typeof s === "string")
       .join("\n");
+    // The body first: past the cap, what the prompt is about outranks words
+    // from its title and options.
     const searchTags = storedTags(
-      extractTags(`${body.title}\n${variableText}`),
       extractTags(body.content, { paid: !publicText }),
+      extractTags(`${body.title}\n${variableText}`),
     );
 
     const promptRow = {

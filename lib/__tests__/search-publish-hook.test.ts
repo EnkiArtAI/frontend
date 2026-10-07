@@ -27,7 +27,8 @@ describe("/api/prompt computes search tags at publish", () => {
 
   it("writes only the tags it computed, never the client's", () => {
     expect(promptRowBlock()).toMatch(/^\s*tags: searchTags,/m);
-    expect(src).toMatch(/const searchTags = storedTags\(\n\s+extractTags\(`\$\{body\.title\}\\n\$\{variableText\}`\),\n\s+extractTags\(body\.content, \{ paid: !publicText \}\),\n\s+\);/);
+    // The body's tags first: they outrank title and options at the cap.
+    expect(src).toMatch(/const searchTags = storedTags\(\n\s+extractTags\(body\.content, \{ paid: !publicText \}\),\n\s+extractTags\(`\$\{body\.title\}\\n\$\{variableText\}`\),\n\s+\);/);
     expect(src).not.toMatch(/body\.tags/);
   });
 

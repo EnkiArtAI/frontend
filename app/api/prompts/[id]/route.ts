@@ -155,7 +155,9 @@ export async function GET(
         _id: id,
         title: prompt.title,
         category: prompt.category,
-        tags: Array.isArray(prompt.tags) ? prompt.tags : [],
+        // Search tags are public once the prompt is listed; a draft's stay
+        // with its creator.
+        tags: Array.isArray(prompt.tags) && (isListed(prompt) || (await owns(prompt.creator_id))) ? prompt.tags : [],
         ai_model: prompt.ai_model,
         ai_settings: prompt.ai_settings,
         // The buyer surface prints this directly (boostedCost(price).toFixed(2)),
@@ -233,6 +235,9 @@ export async function PATCH(
       updated_at: new Date().toISOString(),
     };
 
+    // A title changed here keeps the tags computed from the old one until the
+    // next save through POST /api/prompt, the only route that recomputes them.
+    // No client edits a title through this route today.
     if (typeof body.title === "string") update.title = body.title;
     if (typeof body.description === "string") update.description = body.description;
     if (typeof body.category === "string") update.category = body.category;

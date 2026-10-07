@@ -80,9 +80,10 @@ export function extractTags(text: string, options: { paid: boolean } = { paid: f
   return options.paid ? tags.slice(0, PAID_SUBJECT_CAP) : tags;
 }
 
-/** What prompts.tags stores: every group's tags, deduplicated, capped, and
-    sorted so the order says nothing about where in the prompt a word stood. */
+/** What prompts.tags stores: the groups in priority order, deduplicated and
+    capped, then sorted so the order says nothing about where in the prompt a
+    word stood. */
 export function storedTags(...groups: string[][]): string[] {
   const all = new Set(groups.flat().map((t) => t.trim().toLowerCase()).filter(Boolean));
-  return [...all].sort().slice(0, TAG_CAP);
+  return [...all].slice(0, TAG_CAP).sort();
 }

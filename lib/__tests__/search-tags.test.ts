@@ -140,6 +140,12 @@ describe("extractTags", () => {
     expect(extractTags(recipes[1], { paid: true })).toEqual(expect.arrayContaining(["dragon", "ruins", "church"]));
   });
 
+  it("keeps named looks, era, gear and lighting out of a paid body's tags", () => {
+    expect(extractTags("portrait of a woman, shot on iphone, candlelight, foggy 1980s mood, silhouetted, in the style of van gogh", { paid: true })).toEqual(["woman"]);
+    expect(extractTags("cinematic film still, blade runner aesthetic, eye contact, dust particles, neon", { paid: true })).toEqual([]);
+    expect(extractTags("a knight, lord of the rings, game of thrones, star wars", { paid: true })).toEqual(["knight"]);
+  });
+
   it("lets the longest term own its words", () => {
     expect(extractTags("god rays over the sea")).not.toContain("god");
     expect(extractTags("rendered in unreal engine")).not.toContain("engine");
@@ -166,10 +172,12 @@ describe("extractTags", () => {
 });
 
 describe("storedTags", () => {
-  it("deduplicates case insensitively, sorts, and caps at 40", () => {
+  it("deduplicates case insensitively, caps at 40 in priority order, then sorts", () => {
     expect(TAG_CAP).toBe(40);
     expect(storedTags([" Dragon ", "castle"], ["dragon", "moody"], [""])).toEqual(["castle", "dragon", "moody"]);
     const many = Array.from({ length: 50 }, (_, i) => `tag${String(i).padStart(2, "0")}`);
-    expect(storedTags(many.slice().reverse())).toEqual(many.slice(0, 40));
+    // The first group's tags survive the cap however late they sort.
+    expect(storedTags(["zebra"], many)).toContain("zebra");
+    expect(storedTags(many.slice().reverse())).toEqual(many.slice(10).sort());
   });
 });
