@@ -12,9 +12,14 @@ import { fakePostgrest } from "./_fake-postgrest";
 
 const db = vi.hoisted(() => ({ current: null as ReturnType<typeof import("./_fake-postgrest").fakePostgrest> | null }));
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => db.current!.client }));
-const net = vi.hoisted(() => ({ ipBanned: false, banned: false }));
+const net = vi.hoisted(() => ({ ipBanned: false, banned: false, banDown: false }));
 vi.mock("@/lib/ip-hash", () => ({ getClientIp: () => "203.0.113.9", hashIp: () => "iphash", isIpBanned: async () => net.ipBanned }));
-vi.mock("@/lib/session-user", () => ({ activeBanFor: async () => (net.banned ? { id: "b1", reason: null, expiresAt: null } : null) }));
+vi.mock("@/lib/session-user", () => ({
+  activeBanFor: async () => {
+    if (net.banDown) throw new Error("bans unreadable");
+    return net.banned ? { id: "b1", reason: null, expiresAt: null } : null;
+  },
+}));
 const mails: { to: string; subject: string; text: string }[] = [];
 vi.mock("@/lib/mailer", () => ({ sendMail: async (m: { to: string; subject: string; text: string }) => { mails.push(m); return { ok: true }; } }));
 // Before the imports below: the password hash reads the pepper at load.
@@ -52,7 +57,7 @@ beforeEach(() => {
   t.user_wallets = [];
   t.password_reset_tokens = [];
   t.access_allowlist = [{ kind: "email", value: EMAIL }];
-  Object.assign(net, { ipBanned: false, banned: false });
+  Object.assign(net, { ipBanned: false, banned: false, banDown: false });
   mails.length = 0;
   vi.stubEnv("TEAM_ACCESS_CODE", "beta-code"); // the whitelist stage
   seed(ONE_TIME, true);
@@ -159,6 +164,24 @@ describe("a password reset", () => {
     db.current!.tables.access_allowlist = [];
     const before = { ...cred() };
     expect((await resetCode(post("/api/auth/password/reset-code", { email: EMAIL, code, password: "my own password" }))).status).toBe(401);
+    expect(cred()).toEqual(before);
+    expect(db.current!.tables.password_reset_tokens).toHaveLength(1);
+  });
+
+  it("through the inbox records the network of the login it ends in", async () => {
+    await forgot(post("/api/auth/password/forgot", { email: EMAIL }));
+    const code = /\b(\d{7})\b/.exec(mails[0].text)![1];
+    const res = await resetCode(post("/api/auth/password/reset-code", { email: EMAIL, code, password: "my own password" }));
+    expect(res.status).toBe(200);
+    expect(db.current!.tables.auth_sessions.map((s) => s.ip_hash)).toEqual(["iphash"]);
+  });
+
+  it("through the inbox, when the ban cannot be read, leaves the password and the code as they were", async () => {
+    await forgot(post("/api/auth/password/forgot", { email: EMAIL }));
+    const code = /\b(\d{7})\b/.exec(mails[0].text)![1];
+    net.banDown = true;
+    const before = { ...cred() };
+    await expect(resetCode(post("/api/auth/password/reset-code", { email: EMAIL, code, password: "my own password" }))).rejects.toThrow();
     expect(cred()).toEqual(before);
     expect(db.current!.tables.password_reset_tokens).toHaveLength(1);
   });
