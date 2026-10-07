@@ -27,7 +27,7 @@ vi.hoisted(() => {
   process.env.FIELD_ENCRYPTION_KEY_B64 = Buffer.alloc(32, 4).toString("base64");
 });
 
-import { AccessError, approveRequest, inviteEmail, inviteWallet, loadAccess, oneTimePassword } from "../access-invite";
+import { AccessError, accessFor, approveRequest, inviteEmail, inviteWallet, loadAccess, oneTimePassword } from "../access-invite";
 import { POST as login } from "../../app/api/auth/password/login/route";
 import { POST as firstLogin } from "../../app/api/auth/password/first-login/route";
 import { POST as walletJwt } from "../../app/api/auth/wallet/jwt/route";
@@ -108,11 +108,28 @@ describe("an invited email", () => {
     expect(db.current!.tables.password_credentials[0]).toEqual(before);
   });
 
-  it("reports a mail that did not go out; inviting again mails a fresh one", async () => {
+  it("reports a mail that did not go out, and keeps it on the access list until a resend works", async () => {
     mailer.ok = false;
     expect(await inviteEmail(db.current!.client, "new@example.com")).toEqual({ outcome: "invited", mailed: false });
+    expect(db.current!.tables.access_allowlist[0].note).toBe("invited, mail not sent");
     mailer.ok = true;
     expect(await inviteEmail(db.current!.client, "new@example.com")).toEqual({ outcome: "reinvited", mailed: true });
+    expect(db.current!.tables.access_allowlist[0].note).toBe("invited");
+  });
+
+  it("only for an address every login and reset accepts, or an invitee could never get in", async () => {
+    for (const odd of ["anna&ben@example.com", "user@example.xn--p1ai"]) {
+      await expect(inviteEmail(db.current!.client, odd)).rejects.toBeInstanceOf(AccessError);
+    }
+    expect(db.current!.tables.users).toEqual([]);
+  });
+
+  it("directly settles that email's open request, so approving it later mails no second password", async () => {
+    db.current!.tables.access_requests = [{ id: "r1", email: "new@example.com", status: "pending" }];
+    await inviteEmail(db.current!.client, "new@example.com");
+    expect(db.current!.tables.access_requests[0].status).toBe("approved");
+    await expect(approveRequest(db.current!.client, "r1")).rejects.toMatchObject({ status: 404 });
+    expect(mailer.sent).toHaveLength(1);
   });
 
   it("leaves no account behind when its credential cannot be written", async () => {
@@ -148,7 +165,23 @@ describe("an access request", () => {
     await expect(approveRequest(db.current!.client, "r1")).rejects.toMatchObject({ status: 404 });
   });
 
-  it("is listed for the admin while pending, beside the access list", async () => {
+  it("approved twice at once mails one password: the request is claimed first", async () => {
+    db.current!.tables.access_requests = [{ id: "r1", email: "applicant@example.com", status: "pending" }];
+    const results = await Promise.allSettled([approveRequest(db.current!.client, "r1"), approveRequest(db.current!.client, "r1")]);
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(mailer.sent).toHaveLength(1);
+  });
+
+  it("goes back to pending when its invite fails", async () => {
+    db.current!.tables.access_requests = [{ id: "r1", email: "applicant@example.com", status: "pending" }];
+    db.current!.state.failNext = { table: "users", op: "insert", code: "XX000" };
+    await expect(approveRequest(db.current!.client, "r1")).rejects.toBeInstanceOf(AccessError);
+    expect(db.current!.tables.access_requests[0].status).toBe("pending");
+  });
+
+  it("is listed for the admin while pending, beside the access list; a mod sees none of it", async () => {
+    expect(await accessFor(db.current!.client, "mod")).toBeNull();
+    expect(await accessFor(db.current!.client, "admin")).toEqual({ requests: [], allowlist: [] });
     db.current!.tables.access_requests = [
       { id: "r1", email: "a@example.com", about: "hi", socials: null, status: "pending" },
       { id: "r2", email: "b@example.com", about: "hey", socials: null, status: "approved" },

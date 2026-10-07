@@ -15,13 +15,15 @@
  */
 import { randomInt } from "crypto";
 import { PublicKey } from "@solana/web3.js";
+import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { sendMail } from "@/lib/mailer";
 
 type Supabase = ReturnType<typeof getSupabaseServerClient>;
 
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no I, O, 0, 1
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// The check every login and reset route makes: an invitee must be able to use them.
+const EMAIL = z.string().email().max(254);
 
 /** A refusal the admin sees as it is. */
 export class AccessError extends Error {
@@ -60,8 +62,11 @@ export type EmailInvite = { outcome: "invited" | "reinvited" | "has-password"; m
 
 export async function inviteEmail(supabase: Supabase, raw: string): Promise<EmailInvite> {
   const email = raw.trim().toLowerCase();
-  if (email.length > 254 || !EMAIL.test(email)) throw new AccessError("Enter a valid email address");
+  if (!EMAIL.safeParse(email).success) throw new AccessError("Enter a valid email address");
   await allow(supabase, "email", email, "invited");
+  // A direct invite settles this email's open request too: approving it
+  // later would mail a second password and void the first.
+  await supabase.from("access_requests").update({ status: "approved", updated_at: new Date().toISOString() }).eq("email", email).eq("status", "pending");
 
   const { data: cred, error } = await supabase
     .from("password_credentials")
@@ -105,6 +110,8 @@ export async function inviteEmail(supabase: Supabase, raw: string): Promise<Emai
     }
   }
   const mailed = (await sendMail(inviteMail(email, password)).catch(() => ({ ok: false }))).ok;
+  // The access list keeps whether the password reached them, for a resend.
+  await supabase.from("access_allowlist").update({ note: mailed ? "invited" : "invited, mail not sent" }).eq("kind", "email").eq("value", email);
   return { outcome, mailed };
 }
 
@@ -118,22 +125,29 @@ export async function inviteWallet(supabase: Supabase, raw: string): Promise<{ l
   return { listed: await allow(supabase, "wallet", address, "invited") };
 }
 
-/** Approves a pending access request: its email is invited, the request done. */
+/** Approves a pending access request: claimed first, so a double click or a
+    second admin mails nothing twice; its email is then invited. A failed
+    invite puts the request back. */
 export async function approveRequest(supabase: Supabase, id: string): Promise<EmailInvite> {
-  const { data: request, error } = await supabase
-    .from("access_requests")
-    .select("id, email, status")
-    .eq("id", id)
-    .maybeSingle();
-  if (error) throw new AccessError("Could not read the request", 503);
-  if (!request || request.status !== "pending") throw new AccessError("No pending request with this id", 404);
-  const invite = await inviteEmail(supabase, String(request.email));
-  const { error: doneErr } = await supabase
+  const { data: claimed, error } = await supabase
     .from("access_requests")
     .update({ status: "approved", updated_at: new Date().toISOString() })
-    .eq("id", id);
-  if (doneErr) throw new AccessError("Invited, but the request could not be marked approved", 503);
-  return invite;
+    .eq("id", id)
+    .eq("status", "pending")
+    .select("email");
+  if (error) throw new AccessError("Could not read the request", 503);
+  if (!claimed?.length) throw new AccessError("No pending request with this id", 404);
+  try {
+    return await inviteEmail(supabase, String(claimed[0].email));
+  } catch (e) {
+    await supabase.from("access_requests").update({ status: "pending" }).eq("id", id);
+    throw e;
+  }
+}
+
+/** The Access tab's data, for admins only: it holds applicants' emails. */
+export function accessFor(supabase: Supabase, role: string) {
+  return role === "admin" ? loadAccess(supabase) : Promise.resolve(null);
 }
 
 /** What the admin's Access tab shows: pending requests and the access list. */
