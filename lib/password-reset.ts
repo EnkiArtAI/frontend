@@ -20,12 +20,13 @@ export function numericCode(digits = 7): string {
 
 /** inboxProven: the reset came through the account's inbox (the emailed
     code), so the email counts as confirmed and a one-time password is gone.
-    A guardian recovery proves no inbox and leaves both as they are. */
+    A guardian recovery proves no inbox and leaves both as they are.
+    ipHash: the network of a reset that ends in a login, for IP bans. */
 export async function completePasswordReset(
   supabase: SupabaseClient,
   userId: string,
   password: string,
-  { inboxProven = false } = {},
+  { inboxProven = false, ipHash = null as string | null } = {},
 ): Promise<{ email?: string; token: string; expiresAt: string } | { error: string }> {
   const { hash, salt } = hashPassword(password);
   const now = new Date().toISOString();
@@ -50,6 +51,6 @@ export async function completePasswordReset(
   const keys = [userId, ...(wallets ?? []).map((w) => w.address)];
   await supabase.from("auth_sessions").delete().in("wallet_address", keys);
 
-  const session = await mintUserSession(userId);
+  const session = await mintUserSession(userId, ipHash);
   return { email: updated?.email ?? undefined, ...session };
 }
