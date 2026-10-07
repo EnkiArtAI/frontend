@@ -237,7 +237,7 @@ export default function AdminPage() {
   /** Grants access (approve, invite an email or a wallet) and says what
       happened to whom. One at a time: a double click must not mail twice. */
   const grant = async (payload: Record<string, unknown>, who: string) => {
-    if (granting) return false;
+    if (granting) { say("Still on the last one, one moment."); return false; }
     setGranting(true);
     try {
       const res = await fetch("/api/admin", {
@@ -247,10 +247,10 @@ export default function AdminPage() {
       });
       const r = (await res.json().catch(() => ({}))) as { error?: string; outcome?: string; mailed?: boolean; listed?: boolean };
       if (!res.ok) { say(r.error || "That didn't work."); return false; }
-      say(r.listed === true ? "Wallet added to the access list."
-        : r.listed === false ? "That wallet is on the access list already."
+      say(r.listed === true ? `${who} is on the access list now.`
+        : r.listed === false ? `${who} is on the access list already.`
         : r.outcome === "has-password" ? `${who} has an account with its own password already; it is on the access list.`
-        : !r.mailed ? `Account ready for ${who}, but the mail did not go out. Invite the email again to resend.`
+        : !r.mailed ? `${r.outcome === "reinvited" ? `The earlier password of ${who} no longer works, and the new` : `Account ready for ${who}, but the`} mail did not go out. Invite the email again to resend.`
         : r.outcome === "reinvited" ? `Invited ${who} again: a fresh one-time password is on its way, the earlier one no longer works.`
         : `Invited ${who}: the one-time password is on its way.`);
       await reload();

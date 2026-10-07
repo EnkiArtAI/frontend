@@ -24,12 +24,13 @@ describe("the admin's Access tab", () => {
   });
 
   it("grants one at a time, so a double click mails nothing twice", () => {
-    expect(PAGE).toMatch(/if \(granting\) return false;\s*setGranting\(true\);/);
+    expect(PAGE).toMatch(/if \(granting\) \{ say\("Still on the last one, one moment\."\); return false; \}\s*setGranting\(true\);/);
     expect(PAGE).toMatch(/\} finally \{\s*setGranting\(false\);\s*\}/);
   });
 
   it("says to whom the mail did not go out, and that a re-invite voids the earlier password", () => {
-    expect(PAGE).toMatch(/: !r\.mailed \? `Account ready for \$\{who\}, but the mail did not go out\. Invite the email again to resend\.`/);
+    expect(PAGE).toMatch(/: !r\.mailed \? `\$\{r\.outcome === "reinvited" \? `The earlier password of \$\{who\} no longer works, and the new` : `Account ready for \$\{who\}, but the`\} mail did not go out\. Invite the email again to resend\.`/);
+    expect(PAGE).toMatch(/r\.listed === true \? `\$\{who\} is on the access list now\.`/);
     expect(PAGE).toMatch(/: r\.outcome === "reinvited" \? `Invited \$\{who\} again: a fresh one-time password is on its way, the earlier one no longer works\.`/);
   });
 });
