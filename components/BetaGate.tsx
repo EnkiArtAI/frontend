@@ -17,7 +17,7 @@ import { SHOW_ADULT_KEY, isSessionStorageKey, pillSurvives, sessionAuthHeaders, 
 import { useQueryClient } from "@tanstack/react-query";
 import AccessGate from "@/components/enki-shell/AccessGate";
 
-const PUBLIC_PATHS = new Set(["/", "/landing", "/gate", "/guardian", "/reset-password"]);
+const PUBLIC_PATHS = new Set(["/", "/landing", "/gate", "/guardian", "/reset-password", "/banned"]);
 const BETA_ROLES = new Set(["beta", "mod", "admin"]);
 
 /** Profile bits the gate check already fetches — pages (profile) reuse them
@@ -130,6 +130,11 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
       try {
         const res = await fetch("/api/users/handle", { headers });
         if (dead) return;
+        // A suspended account has exactly one door.
+        if (res.status === 403 && (await res.json().catch(() => null))?.banned) {
+          if (window.location.pathname !== "/banned") window.location.href = "/banned";
+          return;
+        }
         // A dead session forgets the pill; a passing error keeps it for later.
         if (!res.ok) { if (res.status === 401) forgetPill(); void teamFallback(); return; }
         const data = (await res.json()) as {

@@ -13,7 +13,7 @@ import { PublicKey } from "@solana/web3.js";
 import { ed25519 } from "@noble/curves/ed25519";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
-import { whitelistStageActive, isWalletAllowed, grantGateCookie } from "@/lib/allowlist";
+import { whitelistStageActive, isWalletAllowed, grantGateCookie, revokeGateCookie } from "@/lib/allowlist";
 import { getClientIp, hashIp, isIpBanned } from "@/lib/ip-hash";
 import { activeBanFor } from "@/lib/session-user";
 import { APP_NAME } from "@/shared/app-config";
@@ -227,9 +227,10 @@ export async function POST(req: NextRequest) {
   // appeal, funds). The banned flag routes the client to /banned.
   const banned = walletRow?.user_id ? !!(await activeBanFor(supabase, String(walletRow.user_id))) : false;
 
-  // Whitelisted login → grant app access (sets the gate cookie the proxy checks).
+  // Whitelisted login → grant app access (sets the gate cookie the proxy
+  // checks). A banned account loses it: /banned is public without it.
   const res = NextResponse.json({ sessionToken, expiresAt, walletAddress: storedWallet, walletType, ...(banned ? { banned: true } : {}) });
-  return grantGateCookie(res);
+  return banned ? revokeGateCookie(res) : grantGateCookie(res);
 }
 
 export async function DELETE(req: NextRequest) {
