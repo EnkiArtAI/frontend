@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 /**
- * Email + password auth (register / login / forgot / reset).
+ * Email + password auth (register / login / forgot).
  *
  * Stores the session token in localStorage; every session-protected fetch
  * picks it up via lib/session-headers. The wallet is provisioned separately by
@@ -59,10 +59,6 @@ export function useEmailAuth() {
     await post("/api/auth/password/forgot", { email: e });
   }, []);
 
-  const reset = useCallback(async (token: string, password: string) => {
-    store(await post("/api/auth/password/reset", { token, password }));
-  }, []);
-
   const logout = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(EMAIL_KEY);
@@ -75,5 +71,5 @@ export function useEmailAuth() {
     window.dispatchEvent(new Event(EVENT));
   }, []);
 
-  return { email, isAuthed: !!email, register, login, forgot, reset, logout };
+  return { email, isAuthed: !!email, register, login, forgot, logout };
 }
