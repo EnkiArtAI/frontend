@@ -3,9 +3,10 @@ import { join } from "node:path";
 import { readFileSync } from "node:fs";
 
 /**
- * The landing's login is real (Kev, 2026-10-07): email + password log in or
- * create the account and open the app at once; an email not on the access
- * list during the whitelist stage turns the form into the application. The
+ * The landing's login is real (Kev, 2026-10-07): email + password log in and
+ * open the app at once. Sign-up is wired but closed in the private beta: the
+ * access form takes applications; opened, it creates the account and falls
+ * back to the application for an email not on the access list. The
  * page is static HTML, so this reads its script (the flows were also run in
  * a browser against the dev server).
  */
@@ -29,7 +30,15 @@ describe("the landing login", () => {
     expect(adopt).toMatch(/location\.href = d\.banned \? '\/banned' : '\/home'/);
   });
 
-  it("creates the account straight away, and turns into the application when the email is not on the list", () => {
+  it("takes applications only during the private beta: sign-up is wired but closed", () => {
+    expect(LANDING).toMatch(/const SIGNUP_OPEN = false;/);
+    expect(LANDING).toMatch(/let signupStep = 'apply';/);
+    expect(LANDING).toMatch(/id="tabSignup"[^>]*>Request access</);
+    expect(LANDING).toMatch(/id="signupPassField" style="display:none"/);
+    expect(LANDING).toMatch(/id="signupLabel">Request access</);
+  });
+
+  it("once open, creates the account straight away, and turns into the application when the email is not on the list", () => {
     const submit = fn("submitAuth");
     expect(submit).toMatch(/postJson\('\/api\/auth\/password\/register', \{ email: email, password: /);
     expect(submit).toMatch(/if \(data\.notWhitelisted\) \{\s+signupStep = 'apply';/);
