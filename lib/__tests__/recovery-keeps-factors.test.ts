@@ -18,6 +18,9 @@ vi.hoisted(() => { process.env.AUTH_PEPPER = Buffer.alloc(32, 9).toString("base6
 import { POST as complete } from "../../app/api/recovery/complete/route";
 import { requireStepUp } from "../webauthn";
 
+// Every password hash runs Argon2id (64 MiB, 3 passes): under a full parallel run one test takes seconds.
+vi.setConfig({ testTimeout: 60_000 });
+
 const U = "11111111-1111-4111-8111-111111111111";
 const R = "33333333-3333-4333-8333-333333333333";
 const KEY = "owner-key-kept-in-the-browser";
