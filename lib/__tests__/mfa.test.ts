@@ -172,6 +172,12 @@ function staleRead(skip = 0) {
   return () => release();
 }
 const settle = () => new Promise((r) => setTimeout(r, 0));
+/** Holds the next query on the factor table (after `skip` more) until released; it then runs on what is there. */
+function held(skip = 0) {
+  let release!: () => void;
+  db.state.holdNext = { table: "mfa_factors", until: new Promise<void>((r) => { release = r; }), skip };
+  return () => release();
+}
 
 describe("racing requests", () => {
   it("spend a code once, however many carry it at the same time", async () => {
@@ -229,21 +235,35 @@ describe("racing requests", () => {
     expect(await checkCode(supabase, U, "totp", totpCode(won.secret), { confirm: true })).toBe("ok");
   });
 
-  it("keep the mailed code when the loser read the row between the winner's restart and its send", async () => {
+  it("keep the code mailed when another resend read the row before that send and writes after it", async () => {
     await beginEmail(supabase, U, "me@example.com");
     vi.setSystemTime(new Date("2026-10-07T12:01:01Z"));
-    const releaseWinner = staleRead(1); // the winner stops before its send
-    const winner = beginEmail(supabase, U, "me@example.com");
+    const releaseFirst = held(2); // restarted, waiting before its send
+    const first = beginEmail(supabase, U, "me@example.com");
     await settle();
-    const releaseLoser = staleRead(); // the loser reads the restarted row, not yet sent
-    const loser = beginEmail(supabase, U, "me@example.com");
+    const releaseSecond = held(1); // read the restarted row, waiting before its own restart
+    const second = beginEmail(supabase, U, "me@example.com");
     await settle();
-    releaseWinner();
-    expect(await winner).toBe("sent");
+    releaseFirst();
+    expect(await first).toBe("sent");
     const code = lastCode();
-    releaseLoser();
-    expect(await loser).toBe("busy");
+    releaseSecond();
+    expect(await second).toBe("busy");
     expect(await checkCode(supabase, U, "email", code, { confirm: true })).toBe("ok");
+  });
+
+  it("mail one working code when a resend restarts the row before another's send", async () => {
+    await beginEmail(supabase, U, "me@example.com");
+    vi.setSystemTime(new Date("2026-10-07T12:01:01Z"));
+    mails.length = 0;
+    const releaseFirst = held(2); // past its read and its restart, the first resend waits before sending
+    const first = beginEmail(supabase, U, "me@example.com");
+    await settle();
+    expect(await beginEmail(supabase, U, "me@example.com")).toBe("sent");
+    releaseFirst();
+    expect(await first).toBe("busy");
+    expect(mails).toHaveLength(1);
+    expect(await checkCode(supabase, U, "email", lastCode(), { confirm: true })).toBe("ok");
   });
 
   it("start one email factor when two first setups race, and mail only the stored address", async () => {
@@ -253,7 +273,32 @@ describe("racing requests", () => {
     expect(await beginEmail(supabase, U, "a@example.com")).toBe("sent");
     release();
     expect(await late).toBe("busy");
-    expect(mails.map((m) => m.to)).toEqual(["a@example.com"]);
+  });
+
+  it("mail only the address stored, when a restart lands before the first request's send", async () => {
+    const releaseFirst = held(2); // past its read and its insert, the first setup waits before sending
+    const first = beginEmail(supabase, U, "a@example.com");
+    await settle();
+    const releaseSecond = held(2); // past its read and its restart to c@, the second waits too
+    const second = beginEmail(supabase, U, "c@example.com");
+    await settle();
+    releaseFirst();
+    expect(await first).toBe("busy");
+    releaseSecond();
+    expect(await second).toBe("sent");
+    expect(mails.map((m) => m.to)).toEqual(["c@example.com"]);
+  });
+
+  it("never confirm a restarted authenticator with the code of the secret it replaced", async () => {
+    const first = await beginTotp(supabase, U, "me");
+    if (typeof first === "string") throw new Error();
+    const releaseSpend = held(2); // past the read and the claim, the spend waits
+    const confirming = checkCode(supabase, U, "totp", totpCode(first.secret), { confirm: true });
+    await settle();
+    expect(typeof (await beginTotp(supabase, U, "me"))).toBe("object");
+    releaseSpend();
+    expect(await confirming).not.toBe("ok");
+    expect(factor("totp").confirmed_at ?? null).toBeNull();
   });
 
   it("never undo a factor confirmed after a restart read it", async () => {
@@ -292,15 +337,15 @@ describe("racing requests", () => {
     expect(mails).toHaveLength(1);
   });
 
-  it("never confirm a re-begun authenticator with the old secret's code", async () => {
+  it("never confirm a re-begun authenticator with the old secret's code, nor count it as a guess", async () => {
     const first = await beginTotp(supabase, U, "me");
     if (typeof first === "string") throw new Error();
     const release = staleRead();
     const late = checkCode(supabase, U, "totp", totpCode(first.secret), { confirm: true });
     await beginTotp(supabase, U, "me");
     release();
-    expect(await late).not.toBe("ok");
-    expect(factor("totp").confirmed_at ?? null).toBeNull();
+    expect(await late).toBe("busy");
+    expect(factor("totp")).toMatchObject({ confirmed_at: null, failed_attempts: 0 });
   });
 });
 

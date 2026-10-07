@@ -142,9 +142,12 @@ export async function beginEmail(supabase: SupabaseClient, userId: string, addre
   const refused = pending && !pending.confirmed_at ? sendRefusal(pending, Date.now()) : null;
   if (refused) return refused;
   const row = await begin(supabase, userId, "email", address.trim().toLowerCase(), pending);
-  // Only the request that wrote the row mails its code: a loser sending would
-  // mail the winner's address and answer "sent" for one never stored.
-  return row === "exists" || row === "busy" ? row : sendEmailCode(supabase, userId);
+  // Only the request that wrote the row mails its code, from the row it wrote:
+  // a loser, or a winner restarted before its send, would mail an address it
+  // never stored and answer "sent".
+  if (row === "exists" || row === "busy") return row;
+  const sent = await sendEmailCode(supabase, userId, row);
+  return sent === "cooldown" ? "busy" : sent;
 }
 
 /** Why no code may be sent now: one a minute, five a day. */
@@ -250,9 +253,13 @@ export async function emailFactorAddress(supabase: SupabaseClient, userId: strin
   return row ? opened(userId, row) : null;
 }
 
-/** A fresh code to the user's email factor, pending or confirmed. A new code replaces the last. */
-export async function sendEmailCode(supabase: SupabaseClient, userId: string): Promise<SendResult> {
-  const row = await factorRow(supabase, userId, "email");
+/**
+ * A fresh code to the user's email factor, pending or confirmed. A new code
+ * replaces the last. `begun` is the row a restart just wrote: the send is then
+ * conditional on that row, not on a later read.
+ */
+export async function sendEmailCode(supabase: SupabaseClient, userId: string, begun?: Row): Promise<SendResult> {
+  const row = begun ?? (await factorRow(supabase, userId, "email"));
   if (!row) return "none";
   const now = Date.now();
   const refused = sendRefusal(row, now);
@@ -339,7 +346,9 @@ export async function checkCode(
         ...(row.confirmed_at ? {} : { confirmed_at: stamp }),
         ...(kind === "totp" ? { last_step: step } : { code_hash: null, code_expires_at: null }),
       })
-      .eq("id", row.id);
+      .eq("id", row.id)
+      // The secret the code was checked against: a restart in between must not get confirmed by it.
+      .eq("secret_ct", row.secret_ct);
     spend = kind === "totp"
       ? spend.or(`last_step.is.null,last_step.lt.${step}`)
       : spend.eq("code_hash", row.code_hash as string);
