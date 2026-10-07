@@ -19,11 +19,8 @@ import type { StoredReference } from "@/lib/generation/reference-images";
  *   1. No provider we use exposes a seed except Pollinations, which generates
  *      one and discards it. `seed` is NULL for Gemini and WaveSpeed, and NULL
  *      here means "not reproducible", not "not recorded".
- *   2. The route rewrites every prompt through gemini-1.5-flash at temperature
- *      0.7. Replaying the user's prompt re-runs that rewrite and produces a
- *      different request each time — which is why effectivePrompt (the text
- *      that actually reached the model) is stored separately and is what a
- *      replay must send.
+ *   2. effectivePrompt (the text that actually reached the model) is stored
+ *      separately from what the user typed, and it is what a replay must send.
  *
  * So the button this feeds should say "Re-run", not "Reproduce".
  */
@@ -38,6 +35,8 @@ export interface GenerationRecord {
   effectivePrompt: string;
   variableValues: unknown;
   model: ResolvedModel;
+  /** 18+: from the prompt check or the prompt's own mark. Shown to other people only when they opted in. */
+  adult?: boolean;
   route: Route;
   boost: boolean;
   aspectRatio: string | null;
@@ -98,6 +97,7 @@ async function ensurePromptRow(
   userId: string,
   prompt: string,
   model: ResolvedModel,
+  adult = false,
 ): Promise<string | null> {
   // The prompts table predates the `_ct` convention: its ciphertext column is
   // plain `encrypted_content`, while iv/tag/kid carry the prefix. Probed live
@@ -113,7 +113,9 @@ async function ensurePromptRow(
     .from("prompts")
     .insert({
       creator_id: userId,
-      title: prompt.slice(0, 60).trim() || "Untitled",
+      // Never derived from the prompt: the body is encrypted at rest, and a
+      // title made of its first words would carry them in the clear.
+      title: "Untitled",
       tags: [],
       ...sealed,
       ai_model: model.name,
@@ -122,6 +124,7 @@ async function ensurePromptRow(
       is_listed: false,
       listing_status: "draft",
       price_usd_cents: 0,
+      is_adult: adult,
     })
     .select("id")
     .single();
@@ -142,7 +145,7 @@ export async function recordGeneration(
 ): Promise<string | null> {
   try {
     const promptId =
-      rec.promptId ?? (await ensurePromptRow(supabase, rec.userId, rec.finalPrompt, rec.model));
+      rec.promptId ?? (await ensurePromptRow(supabase, rec.userId, rec.finalPrompt, rec.model, rec.adult === true));
     if (!promptId) return null;
 
     const { data, error } = await supabase
@@ -231,6 +234,7 @@ export async function recordGeneration(
         // Generated, not uploaded — the flag the gallery filters on, and the
         // one chk_upload_consistency checks against generation_id.
         is_uploaded: false,
+        is_adult: rec.adult === true,
         is_watermarked: false,
         visibility: "private",
         accepted: true,
@@ -262,4 +266,56 @@ export async function resolveRecordingUserId(
   if (!token) return null;
   const { resolveSessionUserId } = await import("@/lib/session-user");
   return resolveSessionUserId(supabase, token).catch(() => null);
+}
+
+/** What a failed generation asked for, so an admin can see what broke for whom (Kev, 2026-10-03). */
+export interface GenerationFailure {
+  request: { headers: { get(name: string): string | null } };
+  surface: "generate-image" | "generate-free" | "x402-generate";
+  modelId: string | null;
+  resolution: string | null;
+  quality: string | null;
+  boost: boolean;
+  aspectRatio: string | null;
+  referenceImageCount: number;
+  /** The prompt as the user wrote it; for an artist's prompt only the buyer's values; null for an artist's draft. Stored encrypted. */
+  prompt: string | null;
+  error: string;
+  imageUrl?: string | null;
+  intentId?: string | null;
+  txSignature?: string | null;
+}
+
+/**
+ * The other half of recordGeneration: a generation that was accepted and then
+ * broke. Called from after(), and a failure to record never changes what the
+ * user saw.
+ */
+export async function recordGenerationFailure(supabase: SupabaseClient | null, f: GenerationFailure): Promise<void> {
+  if (!supabase) return;
+  try {
+    const userId = await resolveRecordingUserId(supabase, f.request);
+    const { getClientIp, hashIp } = await import("@/lib/ip-hash");
+    const { error } = await supabase.from("generation_failures").insert({
+      user_id: userId,
+      ip_hash: hashIp(getClientIp(f.request)),
+      surface: f.surface,
+      model_id: f.modelId,
+      resolution: f.resolution,
+      quality: f.quality,
+      boost: f.boost,
+      aspect_ratio: f.aspectRatio,
+      reference_image_count: f.referenceImageCount,
+      error: f.error.slice(0, 1000),
+      ...(f.prompt === null ? {} : envelope("prompt", f.prompt.slice(0, 4000))),
+      image_url: f.imageUrl ?? null,
+      intent_id: f.intentId ?? null,
+      tx_signature: f.txSignature ?? null,
+    });
+    // Best effort, but never silent: a missing table or a bad value would
+    // otherwise lose every row without a trace.
+    if (error) console.warn("[generation-failures] not recorded:", error.message);
+  } catch {
+    /* recording is best-effort by design */
+  }
 }

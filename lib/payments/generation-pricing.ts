@@ -35,6 +35,7 @@ export const PRICING_POLICY: {
   feeMode: FeeMode;
   quoteTtlSeconds: number;
   networkFeeMicro: number;
+  extractionCheckMicro: number;
 } = {
   enkiFeeBps: 1000,
   feeBase: "subtotal",
@@ -52,6 +53,15 @@ export const PRICING_POLICY: {
    * again is a one-number change that the checkout displays automatically.
    */
   networkFeeMicro: 0,
+  /**
+   * The prompt check before every paid generation (lib/moderation/
+   * prompt-check), passed on to the buyer (Kev, 2026-10-02: "den openAI
+   * checker können wir ruhig auch als kosten dem kunden auferlegen"). One
+   * gpt-6-luna call is about $0.000055 at 500 tokens in and 10 out; $0.0001
+   * per image covers a longer answer and EU processing. Part of the model
+   * cost, so the fee applies to it like to the rest of the API bill.
+   */
+  extractionCheckMicro: 100,
 };
 
 export const MICRO_PER_USDC = 1_000_000;

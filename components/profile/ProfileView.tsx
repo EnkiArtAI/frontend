@@ -6,7 +6,7 @@ import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useCdpAddress } from "@/hooks/useCdpAddress";
 import { useSolanaAuth } from "@/hooks/useSolanaAuth";
-import { sessionAuthHeaders } from "@/lib/session-headers";
+import { sessionAuthHeaders, viewerHeaders } from "@/lib/session-headers";
 import EnkiCard from "@/components/enki/EnkiCard";
 import EnkiDetailPanel from "@/components/enki/EnkiDetailPanel";
 import {
@@ -456,7 +456,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
   const [myLikes, setMyLikes] = useState<Array<{ promptId: string; title: string; imageUrl: string | null }> | null>(null);
   useEffect(() => {
     if (activeTab !== "Likes" || myLikes !== null) return;
-    fetch("/api/prompts/likes/mine", { headers: { ...sessionAuthHeaders() } })
+    fetch("/api/prompts/likes/mine", { headers: viewerHeaders() })
       .then((r) => (r.ok ? r.json() : { likes: [] }))
       .then((d) => setMyLikes(d.likes ?? []))
       .catch(() => setMyLikes([]));
@@ -519,7 +519,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
     let dead = false;
     (async () => {
       try {
-        const res = await fetch(`/api/creators/${encodeURIComponent(handle)}/profile`);
+        const res = await fetch(`/api/creators/${encodeURIComponent(handle)}/profile`, { headers: viewerHeaders() });
         if (!res.ok || dead) return;
         const d = await res.json();
         if (dead) return;
@@ -616,7 +616,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
       // Foreign: only this creator's shelf — same query and mapping as the
       // feed, narrowed server-side by ?creator.
       if (handle) params.set("creator", handle);
-      const res = await fetch(`/api/marketplace/prompts?${params.toString()}`, { credentials: "include" });
+      const res = await fetch(`/api/marketplace/prompts?${params.toString()}`, { headers: viewerHeaders(), credentials: "include" });
       if (!res.ok) throw new Error("Failed to load prompts");
       return res.json();
     },
@@ -645,7 +645,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
       // Local (unsynced) creations exist only for the device's own user.
       const local = handle ? [] : listCreations(galleryWallet);
       try {
-        const res = await fetch(`/api/generations?userId=${encodeURIComponent(galleryWallet)}&limit=50`);
+        const res = await fetch(`/api/generations?userId=${encodeURIComponent(galleryWallet)}&limit=50`, { headers: viewerHeaders() });
         if (!res.ok) throw new Error("Failed");
         const json = await res.json();
         const raw = json?.data?.generations ?? json?.generations ?? json?.items ?? [];

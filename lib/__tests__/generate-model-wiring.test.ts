@@ -4,49 +4,47 @@ import { readSource } from "@/lib/__tests__/_read-source";
 import { resolveCatalogueEntry, type CatalogueEntry } from "@/hooks/useModelLimits";
 
 /**
- * A missed model lookup does not throw here — it silently downgrades the whole
- * generation.
+ * Editor 2 generates the model the user picked, or nothing.
  *
- * generateWithModel derives `const isFree = !model || model.price <= 0`, so a
- * null model routes to /api/generate-free (Flux) and drops modelIds, boost AND
- * quality with it. The user picks GPT-Image-2, sees its price, and receives a
- * free Flux image. Drafts carry the model as a slug while the catalogue keys by
- * UUID, so an exact-id find at the call site produced exactly that.
+ * A missed lookup used to downgrade silently: generateWithModel read
+ * `isFree = !model || model.price <= 0`, so a null model went to the free
+ * route and Flux rendered for a user who had picked GPT-Image-2. Drafts carry
+ * the model as a slug while the catalogue keys by UUID, so the miss was easy
+ * to hit. Now an unresolved selection blocks Generate, and the editor starts
+ * with no model at all rather than a hardcoded one.
  */
 
 const ROOT = join(__dirname, "..", "..");
 const NODE = readSource(join(ROOT, "components", "enki-shell", "NodeCreator.tsx"));
-const GEN = readSource(join(ROOT, "components", "enki-shell", "generation.ts"));
 
 const CAT: CatalogueEntry[] = [
-  { id: "db00c518-uuid", name: "Nano Banana Pro", price: 0.14, mediaType: "image" as const, supportsQuality: false, maxResolution: "4K", ratios: ["1:1"] },
-  { id: "14b3db65-uuid", name: "GPT-Image-2", price: 0.17, mediaType: "image" as const, supportsQuality: true, maxResolution: "4K", ratios: ["1:1"] },
+  { id: "db00c518-uuid", name: "Nano Banana Pro", price: 0.14, mediaType: "image" as const, supportsQuality: false, maxResolution: "4K", ratios: ["1:1"], free: false },
+  { id: "14b3db65-uuid", name: "GPT-Image-2", price: 0.17, mediaType: "image" as const, supportsQuality: true, maxResolution: "4K", ratios: ["1:1"], free: false },
 ];
 
-describe("the generate call resolves the model the same way the pickers do", () => {
-  it("uses resolveCatalogueEntry, not an exact-id find", () => {
-    expect(NODE).toMatch(/picked = resolveCatalogueEntry\(catalogueRef\.current, stRef\.current\.models\[0\]\)/);
-    expect(NODE).not.toMatch(/catalogueRef\.current\.find\(\(m\) => m\.id ===/);
+describe("Editor 2 generates the selected model or nothing", () => {
+  it("resolves the selection the same way the pickers do", () => {
+    expect(NODE).toMatch(/const picked = resolveCatalogueEntry\(catalogueRef\.current, stRef\.current\.models\[0\]\);/);
+    expect(resolveCatalogueEntry(CAT, "nano-banana-pro")?.name).toBe("Nano Banana Pro");
   });
 
-  it("a slug-carrying draft still resolves to the PAID model", () => {
-    // The live-bug input: st.models starts as ["nano-banana-pro"].
-    const picked = resolveCatalogueEntry(CAT, "nano-banana-pro");
-    expect(picked).toBeDefined();
-    expect(picked!.price).toBeGreaterThan(0);
-    // which is what keeps isFree false in generateWithModel
-    expect(!picked || picked.price <= 0).toBe(false);
+  it("sends through runGeneration, which refuses an unresolved model", () => {
+    expect(NODE).toMatch(/await runGeneration\(\n\s+\{\n\s+model: picked,/);
+    expect(NODE).not.toMatch(/generateWithModel|isFree = !model/);
   });
 
-  it("an unresolved model would silently go free — the reason this matters", () => {
-    // Pins the downgrade rule itself, so a future edit to generation.ts that
-    // changes it cannot pass unnoticed.
-    expect(GEN).toMatch(/const isFree = !model \|\| model\.price <= 0/);
-    const unresolved = resolveCatalogueEntry(CAT, "some-draft-slug-nobody-has");
-    expect(!unresolved || unresolved.price <= 0).toBe(true);
+  it("cannot start without a resolved model", () => {
+    expect(NODE).toMatch(/const canGenerate = st\.body\.trim\(\)\.length > 0 && !!selectedModel;/);
+    expect(NODE.match(/onToast\("Pick a model first"\); return; \}/g)?.length).toBe(2);
   });
 
-  it("quality only travels on the PAID branch, so a downgrade drops it too", () => {
-    expect(GEN).toMatch(/isFree \? \{\} : \{ modelIds: \[model!\.id\], boost: !!boost, quality \}/);
+  it("starts with no model rather than a hardcoded one, and shows the selection only", () => {
+    expect(NODE).not.toMatch(/models: \["nano-banana-pro"\]/);
+    expect(NODE).not.toMatch(/\|\| catalogue\[0\]/);
+  });
+
+  it("leaves a failed slot empty instead of showing a placeholder as a finished image", () => {
+    expect(NODE).toMatch(/if \(!outcome\.ok\) \{[\s\S]{0,400}img: null, status: "empty"/);
+    expect(NODE).not.toMatch(/placeholderArt\("fallback"/);
   });
 });

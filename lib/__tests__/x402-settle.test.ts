@@ -1,13 +1,15 @@
 import { describe, it, expect } from "vitest";
 import {
   Keypair, PublicKey, SystemProgram, TransactionInstruction, TransactionMessage,
-  VersionedTransaction, MessageV0, Transaction,
+  VersionedTransaction, MessageV0, Transaction, SendTransactionError,
 } from "@solana/web3.js";
+import bs58 from "bs58";
 import {
   TOKEN_PROGRAM_ID, createTransferCheckedInstruction, getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import { ComputeBudgetProgram } from "@solana/web3.js";
-import { parseXPayment, verifyAgentPayment, cosignAsFeePayer } from "@/lib/payments/x402-settle";
+import type { Connection } from "@solana/web3.js";
+import { parseXPayment, verifyAgentPayment, cosignAsFeePayer, submitAndConfirm } from "@/lib/payments/x402-settle";
 
 /**
  * Every reject rule in verifyAgentPayment guards the fee payer's key or the
@@ -251,5 +253,31 @@ describe("cosignAsFeePayer", () => {
       return cosignAsFeePayer(tx, feePayer);
     };
     expect(mk()).toBe(mk());
+  });
+});
+
+describe("submitAndConfirm", () => {
+  // A real signed transaction: the signature is read from it before the send.
+  const tx = buildTx([...budget(), transferIx()]);
+  cosignAsFeePayer(tx, feePayer);
+  const SIG = bs58.encode(tx.signatures[0]);
+  const conn = (send: () => Promise<unknown>, statuses: () => Promise<unknown>) =>
+    ({ sendRawTransaction: send, getSignatureStatuses: statuses }) as unknown as Connection;
+  const sent = async () => SIG;
+
+  it("confirms once the status says so", async () => {
+    const c = conn(sent, async () => ({ value: [{ confirmationStatus: "confirmed", err: null }] }));
+    expect(await submitAndConfirm(c, tx, 5_000)).toEqual({ ok: true, signature: SIG });
+  });
+
+  it("keeps the signature and leaves it pending when the status read fails after the broadcast", async () => {
+    const c = conn(sent, async () => { throw new Error("429 Too Many Requests"); });
+    expect(await submitAndConfirm(c, tx, 5_000)).toEqual({ ok: false, pending: true, signature: SIG, error: expect.stringMatching(/429/) });
+  });
+
+  it("is final when the send is refused and the network does not know the transaction", async () => {
+    const refused = new SendTransactionError({ action: "send", signature: SIG, transactionMessage: "Blockhash not found" });
+    const c = conn(async () => { throw refused; }, async () => ({ value: [null] }));
+    expect(await submitAndConfirm(c, tx, 5_000)).toMatchObject({ ok: false, pending: false, signature: SIG, error: expect.stringMatching(/Blockhash/) });
   });
 });

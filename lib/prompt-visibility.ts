@@ -1,12 +1,18 @@
 /**
- * The one rule for whether a prompt's body is shown in the clear. It decides
- * what GET /api/prompts/[id] decrypts for a viewer and, at publish, whether
- * the body may be matched with the full vocabulary or only the paid rules.
- * Both sides must agree, or a sold body leaks its colours and framing into
- * the search index while the buyer sees a 220 character excerpt.
+ * Who may read a prompt's text.
  *
- * prompt_type is the DATABASE value (create-now | showcase | free | paid).
+ * A prompt's body is its creator's secret unless the creator published it as
+ * free. A paid prompt's buyers pay for generations from it and see only its
+ * variables; a create-now draft belongs to nobody else. The body is encrypted
+ * at rest, and only a prompt that passes here may also carry the plaintext
+ * excerpt (prompts.public_prompt_text) or show its text to anyone but its
+ * creator. Every route that hands out prompt text asks this one question.
  */
-export function isFreePrompt(row: { prompt_type: string; is_free_showcase?: boolean | null }): boolean {
-  return row.prompt_type === "showcase" || row.prompt_type === "free" || row.is_free_showcase === true;
+export function isPublicText(row: { prompt_type?: unknown; is_free_showcase?: unknown }): boolean {
+  return row.is_free_showcase === true || row.prompt_type === "free" || row.prompt_type === "showcase";
+}
+
+/** Live on the marketplace: what a non-owner may be shown at all. */
+export function isListed(row: { is_listed?: unknown; listing_status?: unknown; deleted_at?: unknown }): boolean {
+  return row.is_listed === true && row.listing_status === "active" && !row.deleted_at;
 }

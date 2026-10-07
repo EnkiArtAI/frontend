@@ -1,6 +1,7 @@
 import { ImageResponse } from "next/og";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { aspectOf, gridFor } from "@/lib/og-grid";
+import { isListed } from "@/lib/prompt-visibility";
 
 /**
  * Social preview card for a prompt — the image X, Discord, Telegram, Slack
@@ -19,17 +20,21 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   // The card must ALWAYS render: a database blip (or a deleted prompt) shows
   // the brand card rather than a broken unfurl on someone's timeline.
-  type Row = { title?: string | null; showcase_images?: unknown; price_usd_cents?: number | null; is_free_showcase?: boolean | null; creator_id?: string | null; aspect_ratio?: string | null };
+  type Row = { title?: string | null; showcase_images?: unknown; price_usd_cents?: number | null; is_free_showcase?: boolean | null; creator_id?: string | null; aspect_ratio?: string | null; is_listed?: boolean | null; listing_status?: string | null; deleted_at?: string | null };
   let p: Row | null = null;
   let handle: string | null = null;
   try {
     const supabase = getSupabaseServerClient();
     const { data } = await supabase
       .from("prompts")
-      .select("title, showcase_images, price_usd_cents, is_free_showcase, creator_id, aspect_ratio")
+      .select("title, showcase_images, price_usd_cents, is_free_showcase, creator_id, aspect_ratio, is_listed, listing_status, deleted_at")
       .eq("id", id)
+      .eq("is_adult", false) // link previews are public: 18+ gets the brand card
       .maybeSingle();
-    p = (data as Row | null) ?? null;
+    // Only a live prompt gets its own card. A draft's title can be the first
+    // words of a prompt nobody else should read, and its images are private.
+    const row = (data as Row | null) ?? null;
+    p = row && isListed(row) ? row : null;
     if (p?.creator_id) {
       const { data: u } = await supabase.from("users").select("handle").eq("id", p.creator_id).maybeSingle();
       handle = (u?.handle as string | undefined) ?? null;

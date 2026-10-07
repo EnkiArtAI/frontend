@@ -53,15 +53,20 @@ function forbiddenFetch() {
   return spy;
 }
 
+// Every real caller passes the routed model (ENG-01: no adapter guesses one),
+// so these reference-image tests send it too unless a test names its own.
 async function waveSpeed() {
   vi.stubEnv("WAVESPEED_API_KEY", "test-key-not-a-real-one");
-  return (await import("@/backend/services/wavespeed-image-generation"))
+  const generate = (await import("@/backend/services/wavespeed-image-generation"))
     .generateImagesWithWaveSpeed;
+  return (r: Parameters<typeof generate>[0]) =>
+    generate({ modelVersion: "google/nano-banana-pro/text-to-image", ...r });
 }
 
 async function openAI() {
   vi.stubEnv("OPENAI_API_KEY", "test-key-not-a-real-one");
-  return (await import("@/backend/services/openai-image-generation")).generateImagesWithOpenAI;
+  const generate = (await import("@/backend/services/openai-image-generation")).generateImagesWithOpenAI;
+  return (r: Parameters<typeof generate>[0]) => generate({ modelVersion: "gpt-image-2", ...r });
 }
 
 describe("WaveSpeed actually sends the reference images", () => {

@@ -19,7 +19,7 @@ describe("normalizeTier", () => {
   });
 
   it("repairs the lowercase spelling the editor paths send", () => {
-    // GeneratorInterface and CompactPromptCreator send "4k". The route cast it
+    // The old editor paths sent "4k". The route cast it
     // straight to the union, WaveSpeed's map missed it and fell back to '1k',
     // and the price ladder charged $0.25 for the smallest tier.
     expect(normalizeTier("4k")).toBe("4K");

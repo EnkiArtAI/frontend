@@ -11,6 +11,8 @@ import type { EnkiPrompt } from "@/lib/enkiPromptAdapter";
 import { mapMarketplacePromptToEnkiPrompt } from "@/lib/enkiPromptAdapter";
 import { useModelCatalogue } from "@/hooks/useModelLimits";
 import { toModelFamily } from "@/lib/generation/model-family";
+import { useBetaAccess } from "@/components/BetaGate";
+import { sessionHeadersWith } from "@/lib/session-headers";
 import { openCreator } from "@/lib/openCreator";
 import { SEARCH_DEBOUNCE_MS, failureSentence, type SearchCreator } from "@/lib/search/client";
 
@@ -77,6 +79,12 @@ export default function EnkiFeedPage() {
   }, [catalogue]);
   const [open, setOpen] = useState<EnkiPrompt | null>(null);
   const { favs, toggleFav } = useLocalFavorites();
+  /* 18+ pill (Kev, 2026-10-03): only a user who confirmed in Settings that
+     they are 18 or older sees it, off until they turn it on, and it belongs
+     to their account (BetaGate). The page asks for exactly what it shows, and
+     the server checks the confirmation again behind the header. */
+  const { adultConfirmed, adultPill, setAdultPill } = useBetaAccess();
+  const showAdult = adultConfirmed && adultPill;
 
   // OPEN counter: opening a prompt fires a fire-and-forget beacon; the server
   // dedupes per viewer for 10 min and increments prompts.opens atomically.
@@ -132,11 +140,11 @@ export default function EnkiFeedPage() {
     error,
     refetch,
   } = useInfiniteQuery<Page, Error, { pages: Page[]; pageParams: number[] }, string[], number>({
-    queryKey: ["/api/marketplace/prompts", "home", genFilter.join(","), query],
+    queryKey: ["/api/marketplace/prompts", "home", genFilter.join(","), showAdult ? "18+" : "safe", query],
     queryFn: async ({ pageParam }) => {
       if (query) {
         const params = new URLSearchParams({ q: query, type: "all", limit: "24", cursor: String(pageParam) });
-        const res = await fetch(`/api/search?${params.toString()}`, { credentials: "include" });
+        const res = await fetch(`/api/search?${params.toString()}`, { headers: sessionHeadersWith(showAdult), credentials: "include" });
         if (!res.ok) throw new Error(await failureSentence(res, "Search failed"));
         return (await res.json()) as Page;
       }
@@ -155,7 +163,7 @@ export default function EnkiFeedPage() {
           if (alias) params.append("models", String(alias));
         }
       }
-      const res = await fetch(`/api/marketplace/prompts?${params.toString()}`, { credentials: "include" });
+      const res = await fetch(`/api/marketplace/prompts?${params.toString()}`, { headers: sessionHeadersWith(showAdult), credentials: "include" });
       // The server's own sentence (e.g. "database unreachable") beats a
       // generic one, and a failure must never look like an empty feed.
       if (!res.ok) throw new Error(await failureSentence(res, "Couldn't load prompts"));
@@ -297,7 +305,8 @@ export default function EnkiFeedPage() {
       )}
 
       <EnkiFilters active={tags} toggle={toggleTag}
-        generators={generatorGroups} generatorFilter={genFilter} onGeneratorFilter={setGenFilter} />
+        generators={generatorGroups} generatorFilter={genFilter} onGeneratorFilter={setGenFilter}
+        showAdult={showAdult} onShowAdult={adultConfirmed ? setAdultPill : undefined} />
     </>
   );
 }

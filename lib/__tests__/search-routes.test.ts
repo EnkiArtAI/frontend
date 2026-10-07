@@ -63,15 +63,16 @@ const row = {
   resolution: "4k",
   is_free_showcase: false,
   prompt_type: "paid",
+  description: "The artist's own words about it",
 };
 
 describe("lib/marketplace/card", () => {
-  it("maps a prompts row exactly as the marketplace feed always has", () => {
+  it("maps a prompts row exactly as the marketplace feed does, a paid prompt's text withheld", () => {
     expect(mapPromptRow(row)).toEqual({
       id: "0d8c1e7e-1b2c-4d3e-8f90-123456789abc",
       title: "Dragon over Kyoto",
-      description: "A dragon circling the pagoda at golden hour",
-      promptTemplate: "A dragon circling the pagoda at golden hour",
+      description: "The artist's own words about it",
+      promptTemplate: "",
       priceUsdCents: 250,
       category: "fantasy",
       tags: ["dragon", "kyoto", "golden hour"],
@@ -90,8 +91,15 @@ describe("lib/marketplace/card", () => {
       promptType: "paid",
       isVideo: false,
     });
-    expect(mapPromptRow({ ...row, price_usd_cents: null, tags: null, showcase_images: null, public_prompt_text: null })).toMatchObject({
+    expect(mapPromptRow({ ...row, price_usd_cents: null, tags: null, showcase_images: null, public_prompt_text: null, description: null })).toMatchObject({
       priceUsdCents: 0, tags: [], previewImages: [], description: "", promptTemplate: "",
+    });
+  });
+
+  it("shows a free prompt's excerpt", () => {
+    expect(mapPromptRow({ ...row, prompt_type: "free" })).toMatchObject({
+      description: "A dragon circling the pagoda at golden hour",
+      promptTemplate: "A dragon circling the pagoda at golden hour",
     });
   });
 
@@ -112,7 +120,7 @@ describe("no encrypted column reaches search", () => {
 
   it("the card select carries only public columns", () => {
     expect(PROMPT_CARD_SELECT).not.toMatch(ENCRYPTED);
-    expect(PROMPT_CARD_SELECT).toMatch(/^id,title,public_prompt_text,/);
+    expect(PROMPT_CARD_SELECT).toMatch(/^id,title,description,public_prompt_text,/);
   });
 
   it("neither route nor the card module names an encrypted column", () => {

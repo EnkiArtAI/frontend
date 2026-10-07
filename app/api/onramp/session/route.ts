@@ -15,10 +15,12 @@ import { createHmac } from "crypto";
 import { PublicKey } from "@solana/web3.js";
 import { generateJwt } from "@coinbase/cdp-sdk/auth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { resolveSessionUserWithBan } from "@/lib/session-user";
+import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
+import { solanaChainKey } from "@/lib/payments/solana";
 
 const HOST = "api.developer.coinbase.com";
 const PATH = "/onramp/v1/token";
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Accept both env spellings — MoonPay's dashboard calls the pk_ key
 // "publishable key", their widget docs call it "API key".
@@ -77,40 +79,42 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = getSupabaseServerClient();
-  const { data: session } = await supabase
-    .from("auth_sessions")
-    .select("wallet_address")
-    .eq("token", token)
-    .gt("expires_at", new Date().toISOString())
-    .maybeSingle();
-  if (!session) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  let session: Awaited<ReturnType<typeof resolveSessionUserWithBan>>;
+  try {
+    session = await resolveSessionUserWithBan(supabase, token);
+  } catch (e) {
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
+    throw e;
+  }
+  const { userId, ban, wallet } = session;
+  if (!wallet) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  // A ban closes the ramp both ways (Kev, 2026-10-06: no offramp, we do not
+  // know who the person is). The funds stay reachable: Send and the key
+  // export on /banned.
+  if (ban) {
+    return NextResponse.json(
+      { error: "This account is suspended, so buying and selling are closed. Send or export your funds on the suspension page.", banned: true },
+      { status: 403 },
+    );
+  }
 
   // The requested address must be the session wallet or one of the user's
-  // wallets. Compare case-insensitively: the DB stores addresses LOWERCASED
-  // while the client sends the real base58 casing — a strict compare 403'd
-  // every legitimate request. (Coinbase below always gets the client's
-  // real-case address; Solana addresses are case-sensitive.)
-  if (session.wallet_address !== address.toLowerCase()) {
-    let userId: string | null = UUID.test(session.wallet_address) ? session.wallet_address : null;
-    if (!userId) {
-      const { data: row } = await supabase
-        .from("user_wallets")
-        .select("user_id")
-        .eq("address", session.wallet_address)
-        .is("removed_at", null)
-        .maybeSingle();
-      userId = row?.user_id ?? null;
-    }
-    const { data: owned } = userId
+  // wallets. Solana addresses are case-sensitive and stored as they are since
+  // 2d08fe7; rows from before it are lowercased, so both forms count. (Coinbase
+  // below always gets the client's real-case address.)
+  const forms = [address, address.toLowerCase()];
+  if (!forms.includes(wallet)) {
+    const { data: owned, error: ownedErr } = userId
       ? await supabase
           .from("user_wallets")
           .select("address")
           .eq("user_id", userId)
-          .eq("address", address.toLowerCase())
+          .in("address", forms)
           .is("removed_at", null)
-          .maybeSingle()
-      : { data: null };
-    if (!owned) return NextResponse.json({ error: "That wallet isn't linked to your account" }, { status: 403 });
+          .limit(1)
+      : { data: null, error: null };
+    if (isDbUnreachable(ownedErr)) return dbUnavailableResponse();
+    if (!owned?.length) return NextResponse.json({ error: "That wallet isn't linked to your account" }, { status: 403 });
   }
 
   const origin0 = process.env.NEXT_PUBLIC_SITE_ORIGIN || "https://enki.gallery";
@@ -122,6 +126,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "MoonPay isn't configured on the server yet" }, { status: 501 });
     }
     return NextResponse.json({ url: moonpayUrl(side as "buy" | "sell", address, redirect) });
+  }
+
+  // Coinbase sells mainnet USDC only. A deployment that pays on devnet opens
+  // Coinbase's sandbox instead: the whole buy flow, and no card is charged.
+  // Selling has no sandbox, so it stays a mainnet feature.
+  const sandbox = solanaChainKey() !== "solana";
+  if (sandbox && side === "sell") {
+    return NextResponse.json({ error: "Selling has no test mode. It works once payments run on mainnet." }, { status: 501 });
   }
 
   const apiKeyId = process.env.CDP_API_KEY_ID;
@@ -148,12 +160,14 @@ export async function POST(req: NextRequest) {
     const common =
       `sessionToken=${encodeURIComponent(data.token)}` +
       `&defaultAsset=USDC&defaultNetwork=solana&fiatCurrency=EUR` +
-      `&partnerUserRef=${encodeURIComponent(session.wallet_address)}` +
+      `&partnerUserRef=${encodeURIComponent(wallet)}` +
       `&redirectUrl=${encodeURIComponent(`${origin}/settings?tab=payment`)}`;
     const url =
-      side === "buy"
-        ? `https://pay.coinbase.com/buy/select-asset?${common}&presetFiatAmount=5`
-        : `https://pay.coinbase.com/v3/sell/input?${common}`;
+      side === "sell"
+        ? `https://pay.coinbase.com/v3/sell/input?${common}`
+        : sandbox
+          ? `https://pay-sandbox.coinbase.com/?${common}&presetFiatAmount=5`
+          : `https://pay.coinbase.com/buy/select-asset?${common}&presetFiatAmount=5`;
     return NextResponse.json({ url });
   } catch (e) {
     console.error("[onramp] error", e);

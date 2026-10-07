@@ -1,26 +1,9 @@
 /**
- * Image-generation pricing.
- *
- * The displayed "price per generation" in Quick Create reflects the REAL
- * published per-image API cost of the selected model at the chosen resolution,
- * multiplied by the number of images, plus the platform fee.
- *
- *   total = perImage(model, resolution) × count × (1 + PLATFORM_FEE_PERCENT)
- *
- * Per-image costs below are the providers' published standard-API rates
- * (sources verified Feb 2026 — update here if provider pricing changes):
- *   • Nano Banana Pro (Google "Gemini 3 Pro Image"):
- *       1K/2K → $0.134, 4K → $0.24   (token-based: 1120 / 2000 output tokens)
- *   • GPT-Image-2 (OpenAI image model, high-quality tier):
- *       1024² → $0.167, 1536 → $0.25
- *
- * This file is the single source of truth for generation pricing — change the
- * numbers here and both the price label and any breakdown update everywhere.
+ * Per-image provider cost by model family, resolution and (for gpt) quality.
+ * The server prices every generation from these (lib/payments/generation-pricing.ts);
+ * what a buyer sees is the server's quote, never a total computed in the browser.
  */
-import { PLATFORM_FEE_PERCENT } from "@/shared/app-config";
 import { normalizeTier } from "@/lib/generation/resolution";
-
-export { PLATFORM_FEE_PERCENT };
 
 export type ResolutionTier = "2K" | "4K";
 
@@ -40,11 +23,6 @@ export const MODEL_IMAGE_PRICING: Record<
   "gpt-image-2": { "2K": 0.107, "4K": 0.178 },
 };
 
-/** Fallback used when a model id isn't in the table above. */
-export const DEFAULT_IMAGE_PRICING: Record<ResolutionTier, number> = {
-  "2K": 0.134,
-  "4K": 0.24,
-};
 
 /**
  * Normalize an arbitrary resolution string to a priced tier.
@@ -114,7 +92,11 @@ export function apiPricePerImage(modelId: string, resolution: string, quality?: 
   if (modelId === "gpt-image-2") {
     return GPT_OPENAI[effectiveQuality(resolution, quality)][tier];
   }
-  return (MODEL_IMAGE_PRICING[modelId] ?? DEFAULT_IMAGE_PRICING)[tier];
+  // No default: a family without a price table has no price, it does not
+  // borrow Nano Banana Pro's.
+  const ladder = MODEL_IMAGE_PRICING[modelId];
+  if (!ladder) throw new Error(`No price table for model "${modelId}"`);
+  return ladder[tier];
 }
 
 /**
@@ -141,34 +123,3 @@ export function apiBoostPricePerImage(
   return apiPricePerImage(modelId, resolution, quality);
 }
 
-export interface PriceBreakdown {
-  /** API cost for one image at the chosen model + resolution. */
-  perImage: number;
-  /** Number of images requested. */
-  count: number;
-  /** perImage × count (raw provider cost, before fee). */
-  apiSubtotal: number;
-  /** Platform fee applied on top of the API subtotal. */
-  fee: number;
-  /** What the user pays: apiSubtotal + fee. */
-  total: number;
-}
-
-/** Full price breakdown for a generation request. */
-export function computeGenerationPrice(
-  modelId: string,
-  resolution: string,
-  count: number,
-  opts?: { boost?: boolean; quality?: "low" | "medium" | "high" },
-): PriceBreakdown {
-  // Boost swaps the ROUTE, so the price is the boost route's real cost —
-  // never a multiplier on the normal one. Quality feeds the normal path too:
-  // gpt routes by quality, so its normal price depends on it.
-  const perImage = opts?.boost
-    ? apiBoostPricePerImage(modelId, resolution, opts.quality)
-    : apiPricePerImage(modelId, resolution, opts?.quality);
-  const n = Math.max(1, Math.floor(count) || 1);
-  const apiSubtotal = perImage * n;
-  const fee = apiSubtotal * PLATFORM_FEE_PERCENT;
-  return { perImage, count: n, apiSubtotal, fee, total: apiSubtotal + fee };
-}

@@ -1,0 +1,151 @@
+"use client";
+
+/* Self-custody key export for embedded (email) wallets: the account password
+   is re-checked, the key is shown once, and the dialog says what to do with
+   it. Settings and /banned share it: a ban locks the marketplace, never the
+   wallet. Wallet logins (Phantom & co) hold their keys themselves already. */
+
+import { useState } from "react";
+import { Check, Copy, KeyRound, Loader2, X } from "lucide-react";
+import { requestCdpKeyExport } from "@/lib/cdp-bridge";
+
+export default function KeyExport({ email, ready }: { email: string | null; ready: boolean }) {
+  const [step, setStep] = useState<null | "password" | "reveal">(null);
+  const [pw, setPw] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [key, setKey] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const close = () => {
+    // The key never outlives the dialog.
+    setStep(null); setPw(""); setErr(null); setKey(null); setCopied(false);
+  };
+  const confirm = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      // Re-check the account password — nobody walks up to an open laptop
+      // and walks away with the key.
+      const res = await fetch("/api/auth/password/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: pw }),
+      });
+      if (!res.ok) throw new Error("Wrong password");
+      setKey(await requestCdpKeyExport());
+      setStep("reveal");
+      setPw("");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const copy = async () => {
+    if (!key) return;
+    try {
+      await navigator.clipboard.writeText(key);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setErr("Copy failed — select the key and copy it manually.");
+    }
+  };
+
+  return (
+    <>
+      <div className="set-list-item">
+        <div className="set-item-icon"><KeyRound size={14} /></div>
+        <div className="set-item-content">
+          <div className="set-item-title">Your private key</div>
+          <div className="set-item-sub">This wallet is fully yours. Export the key and you can open it in any Solana wallet app.</div>
+        </div>
+        <button
+          className="set-btn set-btn-outline"
+          onClick={() => setStep("password")}
+          disabled={!ready || !email}
+          title={ready ? "Export your private key" : "Wallet is still being set up"}
+        >
+          Export
+        </button>
+      </div>
+
+      {step && (
+        <div className="set-pay-overlay" onClick={() => !busy && close()}>
+          <div className="set-pay-card set-pay-card--fiat" onClick={(e) => e.stopPropagation()}>
+            <button className="set-pay-close" onClick={close} aria-label="Close" disabled={busy}>
+              <X size={16} />
+            </button>
+            {step === "password" ? (
+              <div>
+                <div className="set-item-title" style={{ marginBottom: 6 }}>Confirm it&apos;s you</div>
+                <p className="set-item-sub" style={{ marginBottom: 14 }}>
+                  Enter your account password to reveal the private key.
+                  Anyone with this key controls the money in the wallet. Never share it.
+                </p>
+                <input
+                  type="password"
+                  value={pw}
+                  onChange={(e) => setPw(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && pw && !busy) void confirm(); }}
+                  placeholder="Your password"
+                  autoFocus
+                  style={{
+                    width: "100%", height: 40, padding: "0 12px", borderRadius: 8, fontSize: 14,
+                    border: "1px solid var(--enki-rule)", background: "transparent", color: "var(--enki-ink)", outline: "none",
+                  }}
+                />
+                {err && <p style={{ fontSize: 12.5, color: "#e0584f", marginTop: 8 }}>{err}</p>}
+                <button
+                  className="set-btn set-btn-dark"
+                  style={{ width: "100%", justifyContent: "center", marginTop: 14 }}
+                  onClick={() => void confirm()}
+                  disabled={busy || !pw}
+                >
+                  {busy ? <Loader2 size={14} className="set-spin" /> : "Reveal key"}
+                </button>
+              </div>
+            ) : (
+              <div>
+                <div className="set-item-title" style={{ marginBottom: 6 }}>Your private key</div>
+                <p className="set-item-sub" style={{ marginBottom: 12 }}>
+                  Store it somewhere safe (a password manager). It disappears when you close this window.
+                  We never see or keep it.
+                </p>
+                <code style={{
+                  display: "block", padding: 12, borderRadius: 8, fontSize: 12, lineHeight: 1.5,
+                  border: "1px solid var(--enki-rule)", background: "var(--enki-paper-2)",
+                  color: "var(--enki-ink)", wordBreak: "break-all", userSelect: "all",
+                }}>
+                  {key}
+                </code>
+                <button className="set-btn set-btn-dark" style={{ width: "100%", justifyContent: "center", marginTop: 12 }} onClick={() => void copy()}>
+                  {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? "Copied" : "Copy key"}
+                </button>
+                {err && <p style={{ fontSize: 12.5, color: "#e0584f", marginTop: 8 }}>{err}</p>}
+                <div className="set-item-title" style={{ margin: "16px 0 6px" }}>What to do with it</div>
+                <ol className="set-item-sub" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
+                  <li>Install a Solana wallet app: Phantom or Solflare, on your phone or as a browser extension.</li>
+                  <li>Choose to import an existing wallet with a private key, and paste this key.</li>
+                  <li>The wallet opens with the same address and the same USDC (on Solana) you had here.</li>
+                  <li>From that app you can send the USDC anywhere: to another wallet, or to an exchange that accepts USDC on Solana, to cash it out.</li>
+                </ol>
+                <p className="set-item-sub" style={{ margin: "10px 0 0" }}>
+                  Whoever holds this key controls the money. Enki cannot undo a transfer or restore a lost key.
+                </p>
+                <button
+                  className="set-btn set-btn-outline"
+                  style={{ width: "100%", justifyContent: "center", marginTop: 12 }}
+                  onClick={close}
+                >
+                  Done, close
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}

@@ -8,6 +8,9 @@
  * (wallet_address = users.id) or already carries the real wallet address.
  *
  * The client feeds this to CDP via CdpProvider's customAuth.getJwt callback.
+ *
+ * Ban tolerant on purpose: a ban locks the marketplace, never the wallet, so
+ * a suspended account still signs its sends and exports its key.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";

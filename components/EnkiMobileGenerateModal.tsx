@@ -5,8 +5,6 @@ import { sessionAuthHeaders } from "@/lib/session-headers";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X, Sparkles, Plus, ImageIcon, Ratio, Maximize2, Copy, Settings, FileText, CheckCircle2 } from "lucide-react";
 import { getVariableColors } from "../lib/variableColors";
-import { computeGenerationPrice, PLATFORM_FEE_PERCENT } from "../lib/pricing";
-import { toModelFamily } from "../lib/generation/model-family";
 import "../app/editor/mobile-modal.css"; // We will create this next
 
 const CATEGORY_OPTIONS = [
@@ -132,8 +130,12 @@ interface EnkiMobileGenerateModalProps {
   setModel?: (id: string) => void;
   ratios: { available: string[], selected: string };
   setRatio?: (val: string) => void;
-  pricePerSlot: number;
-  onGenerate: () => void;
+  /** The server quote for n images, "Free", or "…" while none is known. */
+  priceFor: (count: number) => string;
+  /** The server quote for one image on a model, for model options. */
+  modelPriceLabel?: (id: string) => string | undefined;
+  /** Generates exactly the number of images the sheet shows and prices. */
+  onGenerate: (count: number) => void;
   onAutoFill?: () => void;
   isAutoFilling?: boolean;
   /* Which tab to land on when the sheet opens. The editor opens straight into
@@ -144,6 +146,8 @@ interface EnkiMobileGenerateModalProps {
      hide the Release tab and surface reference-image inputs. */
   hideReleaseTab?: boolean;
   referenceImages?: string[];
+  /** Greyed previews of images still being read (useReferenceReads). */
+  pendingReferenceImages?: string[];
   onAddReferenceImages?: (files: FileList) => void;
   onRemoveReferenceImage?: (index: number) => void;
   /* Reorder the image card deck (drag-and-drop in the footer). */
@@ -169,6 +173,8 @@ interface EnkiMobileGenerateModalProps {
   /* Freshly generated images to surface ABOVE the sheet (newest first). */
   resultImages?: string[];
   isGenerating?: boolean;
+  /* Reference images are still being read: Generate waits for them. */
+  generateBlocked?: boolean;
   /* Release flow: how many verified variations are required before publishing.
      Defaults to 1 for free prompts, 4 for paid. onRelease fires the publish action. */
   requiredVariations?: number;
@@ -188,11 +194,6 @@ interface EnkiMobileGenerateModalProps {
   onToggleModel?: (id: string) => void;
   /* Desktop only: opens the full /editor instead of showing the Release flow. */
   onOpenPromptEditor?: () => void;
-  /* Account balance in USD (already abstracted away from any chain) + a way to
-     top it up. When provided, the footer frames spend as "from your balance"
-     and surfaces an "Add funds" action instead of any crypto wording. */
-  balance?: number | null;
-  onTopUp?: () => void;
 }
 
 /**
@@ -282,12 +283,14 @@ export default function EnkiMobileGenerateModal({
   setModel,
   ratios,
   setRatio,
-  pricePerSlot,
+  priceFor,
+  modelPriceLabel,
   onGenerate,
   onAutoFill,
   isAutoFilling = false,
   hideReleaseTab = false,
   referenceImages,
+  pendingReferenceImages = [],
   onAddReferenceImages,
   onRemoveReferenceImage,
   onReorderReferenceImages,
@@ -303,6 +306,7 @@ export default function EnkiMobileGenerateModal({
   resolutionOptions,
   resultImages,
   isGenerating = false,
+  generateBlocked = false,
   requiredVariations,
   onRelease,
   title,
@@ -316,8 +320,6 @@ export default function EnkiMobileGenerateModal({
   setPrice,
   onToggleModel,
   onOpenPromptEditor,
-  balance,
-  onTopUp,
   initialTab,
 }: EnkiMobileGenerateModalProps) {
   const [activeTab, setActiveTab] = useState<"Generate" | "Release">(
@@ -479,37 +481,16 @@ export default function EnkiMobileGenerateModal({
   /* The Quick Create (Generate-only) sheet uses a fixed, user-resizable height
      so it never grows with the number of variables. */
   const fixedSheet = !showRelease;
-  const reqVars = requiredVariations ?? (pricePerSlot > 0 ? 4 : 1);
+  const reqVars = requiredVariations ?? 4;
   const variationsDone = variations.length;
   const releaseReady = variationsDone >= reqVars;
 
-  /* Quick Create shows the real per-generation cost: the selected model's
-     published API price at the chosen resolution × the number of images, plus
-     the platform fee. The editor keeps its own creator-set `pricePerSlot`. */
+  /* The price shown is the parent's server quote for exactly the number of
+     images the button generates (Kev, 2026-10-02: "ich brauche safe überall
+     den server-quote"). Quick Create used to compute it here with a 5% fee
+     against the server's 10%, and the count multiplied a price while one
+     image was generated. */
   const genCountNum = Math.max(1, parseInt(genCount.replace(/\D/g, ""), 10) || 1);
-  /* Boost swaps to the vendor's direct route, so the price is that route's
-     REAL cost — never a flat multiplier (Kev, 2026-08-23). This surface has
-     no gpt quality lever, so NO quality is passed: pricing then applies the
-     same tier default the server routes and renders with — a hardcoded
-     "medium" here priced a 4K request that actually renders high. */
-  /* Priced by the model FAMILY, not the catalogue uuid: pricing tables are
-     keyed "nano-banana-pro"/"gpt-image-2", and an unknown key silently fell
-     to DEFAULT_IMAGE_PRICING — which is why the boost toggle changed nothing
-     here for any generator (Kev, 2026-08-24: "why doesnt boost set up
-     change on quick create for nbp"). */
-  const selectedFamily = toModelFamily(
-    models.available.find((m) => m.id === models.selected[0])?.name || models.selected[0] || "",
-  );
-  const genPrice = computeGenerationPrice(selectedFamily, genResolution, genCountNum, {
-    boost: !!boost,
-  });
-  const useApiPricing = !!hideReleaseTab;
-  const displayPrice = useApiPricing ? genPrice.total : pricePerSlot;
-  const priceTitle = useApiPricing
-    ? `${genPrice.count} × $${genPrice.perImage.toFixed(3)} (${genResolution}) = $${genPrice.apiSubtotal.toFixed(2)} API + $${genPrice.fee.toFixed(2)} fee (${Math.round(
-        PLATFORM_FEE_PERCENT * 100
-      )}%)`
-    : undefined;
 
   /* Declared to the dice under the SAME ids onVariableChange uses, so a rolled
      value lands exactly in the field the user would have typed into. Both
@@ -975,8 +956,8 @@ export default function EnkiMobileGenerateModal({
                               >
                                 <span className={`mobile-modal-checkbox ${active ? "checked" : ""}`}>{active ? "✓" : ""}</span>
                                 <span className="mobile-modal-multiselect-name">{m.name}</span>
-                                {typeof m.price === "number" && (
-                                  <span className="mobile-modal-model-card-price">${m.price.toFixed(2)}</span>
+                                {modelPriceLabel?.(m.id) && (
+                                  <span className="mobile-modal-model-card-price">{modelPriceLabel(m.id)}</span>
                                 )}
                               </button>
                             );
@@ -1063,6 +1044,11 @@ export default function EnkiMobileGenerateModal({
                         >
                           <Plus size={16} />
                         </button>
+                        {pendingReferenceImages.map((src) => (
+                          <div key={src} className="mobile-modal-ref-thumb enki-ref-pending" aria-label="Reference image loading">
+                            <img src={src} alt="" />
+                          </div>
+                        ))}
                         {(referenceImages ?? []).map((src, i) => (
                           <div key={i} className="mobile-modal-ref-thumb">
                             <img src={src} alt={`Reference ${i + 1}`} />
@@ -1211,26 +1197,7 @@ export default function EnkiMobileGenerateModal({
                             ))}
                           </div>
                         )}
-                        <div className="mobile-modal-settings-grid">
-                          <div className="mobile-modal-setting mobile-modal-setting--model" title="Model">
-                            <select className="mobile-modal-select" value={v.model} onChange={(e) => updateVariation(i, { model: e.target.value })}>
-                              {models.available.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                            </select>
-                          </div>
-                          <div className="mobile-modal-setting" title="Aspect ratio">
-                            <Ratio size={15} style={{ color: "#8A7F72", flexShrink: 0 }} aria-label="Aspect ratio" />
-                            <select className="mobile-modal-select" value={v.ratio} onChange={(e) => updateVariation(i, { ratio: e.target.value })}>
-                              {ratios.available.map((r) => <option key={r} value={r}>{r}</option>)}
-                            </select>
-                          </div>
-                          <div className="mobile-modal-setting" title="Resolution">
-                            <Maximize2 size={15} style={{ color: "#8A7F72", flexShrink: 0 }} aria-label="Resolution" />
-                            <select className="mobile-modal-select" value={v.resolution} onChange={(e) => updateVariation(i, { resolution: e.target.value })}>
-                              <option>2K</option><option>4K</option>
-                            </select>
-                          </div>
-                        </div>
-                        <button type="button" className="mobile-modal-varimg-gen" onClick={() => onGenerate()}>
+                        <button type="button" className="mobile-modal-varimg-gen" onClick={() => onGenerate(1)} disabled={generateBlocked}>
                           <Sparkles size={13} />
                           Generate this image
                         </button>
@@ -1243,7 +1210,7 @@ export default function EnkiMobileGenerateModal({
                     className="mobile-modal-generate-btn"
                     style={{ width: "100%", marginTop: 14, ...(releaseReady ? { background: "#1E9E5A" } : { opacity: 0.45 }) }}
                     disabled={!releaseReady}
-                    onClick={() => (onRelease || onGenerate)()}
+                    onClick={() => (onRelease ? onRelease() : onGenerate(1))}
                   >
                     <Sparkles size={14} style={{ fill: "white" }} />
                     Release prompt
@@ -1299,13 +1266,13 @@ export default function EnkiMobileGenerateModal({
                         <Plus size={13} />
                         <ImageIcon size={15} />
                       </button>
-                      {(referenceImages ?? []).length > 0 && (
+                      {(referenceImages ?? []).length + pendingReferenceImages.length > 0 && (
                         <div
-                          className="mobile-modal-ref-chip"
+                          className={`mobile-modal-ref-chip${(referenceImages ?? []).length ? "" : " enki-ref-pending"}`}
                           title={`${(referenceImages ?? []).length} image(s) — hover to reorder`}
                         >
-                          <img src={(referenceImages ?? [])[0]} alt="Uploaded" />
-                          <span className="mobile-modal-ref-chip-count">{(referenceImages ?? []).length}</span>
+                          <img src={(referenceImages ?? [])[0] ?? pendingReferenceImages[0]} alt="Uploaded" />
+                          <span className="mobile-modal-ref-chip-count">{(referenceImages ?? []).length + pendingReferenceImages.length}</span>
                         </div>
                       )}
                       {openDeck === "img" && (referenceImages ?? []).length > 0 &&
@@ -1398,20 +1365,8 @@ export default function EnkiMobileGenerateModal({
                   onChange={setGenCount}
                 />
               </div>
-              <div className="mobile-modal-pay-inline" title={priceTitle}>
-                <span className="mobile-modal-pay-inline-price">${displayPrice.toFixed(2)}</span>
-                {useApiPricing && genPrice.count > 1 && (
-                  <span className="mobile-modal-pay-inline-unit">
-                    {genPrice.count} × ${genPrice.perImage.toFixed(3)}
-                  </span>
-                )}
-                {/* Inline "Add funds" shows only when the price exceeds the
-                    current balance; the Generate button stays actionable. */}
-                {onTopUp && typeof balance === "number" && balance < displayPrice && (
-                  <button type="button" className="mobile-modal-addfunds" onClick={onTopUp}>
-                    Add funds
-                  </button>
-                )}
+              <div className="mobile-modal-pay-inline">
+                <span className="mobile-modal-pay-inline-price">{priceFor(genCountNum)}</span>
               </div>
               {onBoostChange && (
                 <BoostToggle boost={!!boost} onChange={onBoostChange} disabled={isGenerating} />
@@ -1431,7 +1386,7 @@ export default function EnkiMobileGenerateModal({
                   size={14}
                 />
               )}
-              <button className="mobile-modal-generate-btn" onClick={onGenerate} disabled={isGenerating}>
+              <button className="mobile-modal-generate-btn" onClick={() => onGenerate(genCountNum)} disabled={isGenerating || generateBlocked}>
                 <Sparkles size={13} style={{ fill: "white" }} />
                 {generateLabel || "Generate"}
               </button>

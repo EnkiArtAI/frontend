@@ -20,26 +20,23 @@ const ROUTE = read(join(ROOT, "app", "api", "generate-image", "route.ts"));
 afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); });
 
 describe("the caller cannot choose the settlement chain", () => {
-  it("an unknown chain is refused before it can reach PAYMENT_CHAINS", () => {
+  it("an unknown chain key fails loudly in the config", () => {
     // isSolanaChain does PAYMENT_CHAINS[key].isSolana — on an unknown key that
-    // is a TypeError, i.e. a 500 on a payment route from one query parameter.
+    // is a TypeError, which is why no route may pass it a raw query value.
     expect(() => isSolanaChain("not-a-chain" as never)).toThrow();
-    // isChainKey, not `in`: the membership test must not walk the prototype
-    // chain. See lib/payments/__tests__/chain-key.test.ts for why.
-    expect(ROUTE).toMatch(/!isChainKey\(requestedChain\)/);
-    expect(ROUTE).not.toMatch(/requestedChain in PAYMENT_CHAINS/);
-    expect(ROUTE).toMatch(/Unknown chain/);
+    expect("solana-devnet" in PAYMENT_CHAINS).toBe(true);
   });
 
-  it("the Solana branch reads the server's key, not the query string", () => {
-    expect(ROUTE).toMatch(/const solanaChain = solanaChainKey\(\)/);
-    expect(ROUTE).not.toMatch(/const solanaChain = chain as/);
+  it("the generate route reads no chain from the request at all", () => {
+    // Since REC-4 it takes intents only, and the intent rail settles on the
+    // server's chain. The x402 branches that read ?chain= are gone.
+    expect(ROUTE).not.toMatch(/searchParams\.get\(['"]chain['"]\)/);
   });
 
-  it("every key the route may accept really exists in the config", () => {
-    // The default the route falls back to must itself be a real chain.
-    expect("base-sepolia" in PAYMENT_CHAINS).toBe(true);
-    expect(ROUTE).toMatch(/requestedChain \|\| 'base-sepolia'/);
+  it("it records the server's chain, not a default a caller could steer", () => {
+    // Intent-paid generations used to be recorded with the query string's
+    // fallback, 'base-sepolia', on a rail that only ever settles on Solana.
+    expect(ROUTE).toMatch(/chainKey: solanaChainKey\(\),/);
   });
 });
 

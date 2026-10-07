@@ -16,8 +16,8 @@ import "./ratio-select.css";
  */
 export interface ResolutionOption {
   tier: string;
-  /** USD per image at this tier; null hides the price (free routes). */
-  price: number | null;
+  /** The server quote for this tier ("$0.147", "Free"); absent hides it. */
+  priceLabel?: string;
 }
 
 export default function ResolutionSelect({ value, options, onChange, title, disabled = false }: {
@@ -45,7 +45,7 @@ export default function ResolutionSelect({ value, options, onChange, title, disa
               className={"enki-ratio-opt" + (o.tier === value ? " on" : "")}
               onClick={() => { onChange(o.tier); close(); }}>
               <span>{o.tier}</span>
-              {o.price != null && <span className="enki-ratio-opt-sub">${o.price.toFixed(2)}</span>}
+              {o.priceLabel && <span className="enki-ratio-opt-sub">{o.priceLabel}</span>}
             </button>
           ))}
         </div>,

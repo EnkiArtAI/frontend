@@ -5,36 +5,31 @@
    Nano Banana Pro generation (Puter.js) + best-effort DB persistence. */
 
 import BoostToggle from "@/components/generation/BoostToggle";
-import { apiBoostPricePerImage } from "@/lib/pricing";
-import { toModelFamily } from "@/lib/generation/model-family";
 import { type Quality } from "@/components/generation/QualitySelect";
-import { useModelCatalogue, resolveCatalogueEntry, FALLBACK_RATIOS, tierPrice, tierScale } from "@/hooks/useModelLimits";
+import { useModelCatalogue, resolveCatalogueEntry, FALLBACK_RATIOS, type CatalogueEntry } from "@/hooks/useModelLimits";
+import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
+import type { QuoteRequest } from "@/lib/generation-checkout";
 import { moveToken } from "@/lib/editor/move-token";
 import { TOKEN_SRC, variableRange } from "@/lib/editor/selection-variable";
 import RatioRect from "@/components/generation/RatioRect";
-import { FREE_TIERS, tiersUpTo, TIER_PRICE_MULT } from "@/lib/generation/resolution";
+import { tiersUpTo } from "@/lib/generation/resolution";
 import { useState, useRef, useEffect, useMemo, useCallback, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Maximize2, Gem } from "lucide-react";
 import { Icon } from "./icons";
-import { generateWithModel, persistCreation, placeholderArt } from "./generation";
+import { persistCreation, placeholderArt } from "./generation";
+import { runGeneration } from "@/lib/generation/run-generation";
+import { useReferenceReads, REFS_LOADING } from "@/hooks/useReferenceReads";
 import { useModelLimits } from "@/hooks/useModelLimits";
 import DocView from "./DocView";
 import DiceButton from "@/components/DiceButton";
 import WorkflowPicker, { type WorkflowPick } from "./WorkflowPicker";
 import { wfToken, resolveWorkflowTokens } from "@/lib/editor/workflow-tokens";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { usePaymentSigner } from "@/hooks/usePaymentSigner";
 import type { DiceValue } from "@/lib/generation/variable-dice";
 
 /* ── constants ── */
-/**
- * Fallback only — the real list comes from /api/models, so a generator is a
- * row and not a deploy. This constant used to BE the catalogue, with invented
- * prices and a "Seedance 2" that exists nowhere in the database.
- */
-export const NC_MODELS = [
-  { id: "nano-banana-pro", name: "Nano Banana Pro", price: 0.04 },
-];
 /* Ratio options come from the SELECTED MODEL's catalogue entry (DB column
    allowed_ratios) — a literal here was why five of Nano Banana Pro's ten
    ratios never showed (Kev, 2026-08-22). "Any" stays first: it means "let
@@ -114,8 +109,10 @@ export type St = {
  * image under a bigger name, and NC_QUALITY_MULT below charged x2 for it.
  * Premium starts at 2K because the quote and intent schemas do.
  */
-export const ncQualities = (mode: St["mode"], maxResolution?: "1K" | "2K" | "4K"): readonly string[] => {
-  if (mode === "free") return FREE_TIERS;
+export const ncQualities = (_mode: St["mode"], maxResolution?: "1K" | "2K" | "4K"): readonly string[] => {
+  /* The tiers the SELECTED MODEL renders, whatever the prompt's release
+     mode: "free" capped every model at Flux's tiers when generation still
+     followed the prompt type. */
   /* Premium: the tiers the SELECTED MODEL genuinely renders, intersected with
      what the paid checkout accepts (2K floor — the quote and intent schemas
      are z.enum(["2K","4K"])). The list used to be hardcoded, so "2K/4K" showed
@@ -127,12 +124,6 @@ export const ncQualities = (mode: St["mode"], maxResolution?: "1K" | "2K" | "4K"
   const cap = maxResolution ?? "2K";
   return tiersUpTo(cap);
 };
-/* Price multiplier per resolution, relative to the model's base 2K price.
-   1K is 1, not 0.5: both hosts charge 1K and 2K identically (Google, 1120
-   tokens either way; WaveSpeed nano-banana-pro, $0.14 either way), and the
-   server prices a 1K request as the 2K tier (lib/pricing.toResolutionTier).
-   Halving it here made the editor's estimate disagree with the real quote. */
-export const NC_QUALITY_MULT = TIER_PRICE_MULT;
 export type TextNode = NodeT & { name: string; kind: Kind; value: string };
 
 const sigOf = (body: string, texts: TextNode[]) => body + "||" + texts.map((t) => t.name + ":" + t.kind).join(",");
@@ -318,7 +309,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       });
       return {
         title: String(ep.title || ""), mode: (ep.price ?? 0) > 0 ? "premium" : "free",
-        models: ["nano-banana-pro"], cat: "", ratio: "Any", quality: "2K",
+        models: [], cat: "", ratio: "Any", quality: "2K",
         price: typeof ep.price === "number" ? ep.price : 0.1,
         body: String(ep.promptTemplate || ""),
         cons: [], conSeq: 0, genCount: 4, nodes,
@@ -326,13 +317,15 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     }
 
     return {
-      title: "", mode: "premium", models: ["nano-banana-pro"], cat: "", ratio: "Any", quality: "2K",
+      title: "", mode: "premium", models: [], cat: "", ratio: "Any", quality: "2K",
       price: 0.1, body: "", cons: [], conSeq: 0, genCount: 4, nodes,
     };
   };
 
   const [st, setSt] = useState<St>(initial);
   const stRef = useRef(st); stRef.current = st;
+  // Generate waits while a reference image is still being read (Kev, 2026-10-06).
+  const { loading: refsLoading, read: readRef } = useReferenceReads();
   // Doc-style vs node-canvas view. Doc is the default for new sessions; the
   // last-used view survives close/reopen (Kev's "resume where I left off").
   const [view, setView] = useState<EditorView>(() => {
@@ -389,8 +382,8 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const refUploadRef = useRef<HTMLInputElement>(null); // hidden picker for multi reference upload
   // mock-up mode: Generate fills outputs with instant placeholder art (no API)
   // so the whole flow — groups, lightbox, release — can be demoed offline.
-  // The real generator list, from the database. NC_MODELS is only the window
-  // before /api/models answers.
+  // The generator list, from the database. Nothing is preselected: the user
+  // picks (Kev, 2026-10-02: "IMMER DAS AUSGEWÄHLTE").
   const catalogue = useModelCatalogue();
   /* Which way the price is rolling, for the step animation; cleared by
      onAnimationEnd so a held click can re-trigger. */
@@ -401,6 +394,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const [priceEdit, setPriceEdit] = useState(false);
   // Refs, because finalizeOutput is a useCallback: reading these from the
   // render scope would pin it to whatever the catalogue was on first paint.
+  const signPayment = usePaymentSigner();
   const catalogueRef = useRef(catalogue);
   catalogueRef.current = catalogue;
   const [mockMode, setMockMode] = useState(false);
@@ -419,6 +413,10 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const selectedModel = resolveCatalogueEntry(catalogue, st.models[0]);
   const supportsQuality = selectedModel?.supportsQuality ?? false;
   const qualityTiers = ncQualities(st.mode, selectedModel?.maxResolution);
+  /* The tier that runs: the stored pick, or the model's ceiling when the pick
+     is above it. The picker showed this clamped value while the stored one
+     was priced and sent, and the server refused it. */
+  const effTier = qualityTiers.includes(st.quality) ? st.quality : qualityTiers[qualityTiers.length - 1] ?? st.quality;
   const mockModeRef = useRef(false); mockModeRef.current = mockMode;
   // canvas tool: "select" (left = marquee, right = pan) or "hand" (left = pan)
   const [tool, setTool] = useState<"select" | "hand">("select");
@@ -459,7 +457,6 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const canvasRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const ovRef = useRef<HTMLDivElement>(null);
-  const failedOnce = useRef(false);
 
   const pushHist = () => { hist.current.past.push(stRef.current); if (hist.current.past.length > 60) hist.current.past.shift(); hist.current.future = []; };
   const commit = (updater: (p: St) => St) => { pushHist(); setSt(updater); };
@@ -552,7 +549,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       ...p,
       title: typeof data.title === "string" ? data.title : "",
       mode: s.mode === "free" ? "free" : "premium",
-      models: Array.isArray(s.models) && s.models.length ? (s.models as string[]) : ["nano-banana-pro"],
+      models: Array.isArray(s.models) ? (s.models as string[]) : [],
       cat: typeof s.category === "string" ? s.category : "",
       ratio: typeof s.ratio === "string" ? s.ratio : "Any",
       quality: typeof s.quality === "string" ? s.quality : "2K",
@@ -873,9 +870,12 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const outs = st.nodes.filter((n) => n.type === "output");
   // Can only generate once there's an actual prompt and every text var has a value.
   // Only a prompt is required to generate — unfilled variables just resolve to empty.
-  const canGenerate = st.body.trim().length > 0;
+  const canGenerate = st.body.trim().length > 0 && !!selectedModel;
 
   const curSig = sigOf(st.body, texts);
+  /* spawnOutput fills every empty slot of the current composition (one
+     payment each), so its price and title name that count, not "one". */
+  const fillCount = Math.max(1, outs.filter((o) => o.status === "empty" && (!o.sig || o.sig === curSig)).length);
   const layout = useMemo(() => {
     // First group sits to the RIGHT of the prompt at the same height; every
     // further group stacks below it.
@@ -1361,45 +1361,46 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     // buildExportJSON() reads from refs, so calling it here needs no extra
     // dependency. The server pulls the image bytes and the authored text out
     // of it before storing.
-    /* resolveCatalogueEntry, not an exact-id find. Drafts carry the model as
-       a slug while the catalogue keys by UUID, and a miss here does not throw
-       — generateWithModel reads `isFree = !model || model.price <= 0`, so a
-       null model silently routes the whole generation to /api/generate-free
-       and drops `quality` with it. The user picks GPT-Image-2, sees its price,
-       and gets a free Flux image: exactly the failure the comment at the top
-       of generation.ts describes. */
-    const picked = resolveCatalogueEntry(catalogueRef.current, stRef.current.models[0]) ?? null;
-    const outcome = await generateWithModel({
-      prompt: promptText,
-      aspectRatio: ratio,
-      resolution: stRef.current.quality || "2K",
-      model: picked,
-      boost: boostRef.current,
-      quality: qualityRef.current,
-      workflow: buildExportJSON(),
-    });
+    const picked = resolveCatalogueEntry(catalogueRef.current, stRef.current.models[0]);
+    // Clamped to the picked model's ceiling, exactly as the picker shows it.
+    const tiers = tiersUpTo(picked?.maxResolution ?? "2K");
+    const wanted = stRef.current.quality;
+    const tier = (["1K", "2K", "4K"] as const).find((t) => t === (tiers.includes(wanted as never) ? wanted : tiers[tiers.length - 1]));
+    const outcome = tier
+      ? await runGeneration(
+          {
+            model: picked,
+            resolution: tier,
+            quality: qualityRef.current,
+            boost: boostRef.current,
+            prompt: promptText,
+            aspectRatio: ratio,
+            workflow: buildExportJSON(),
+            authoring: true,
+          },
+          signPayment,
+        )
+      : ({ ok: false, error: "Pick a resolution first. Nothing was generated and nothing was charged." } as const);
 
-    let url = "url" in outcome ? outcome.url : null;
-    if (!url) {
-      url = placeholderArt("fallback" + oid, "4:5");
-      // The real reason, not a generic one: "top up your balance" and "the dev
-      // server is unreachable" need different actions from the user.
-      if (!failedOnce.current) {
-        failedOnce.current = true;
-        onToast("error" in outcome ? outcome.error : "Generation failed — showing a placeholder.");
-      }
-    } else {
-      persistCreation({ prompt: promptText, imageUrl: url, model: stRef.current.models[0], title: stRef.current.title, userKey });
+    if (!outcome.ok) {
+      // The slot stays empty and says why. A placeholder used to stand in as a
+      // finished "ready" image, which could be picked and released as if a
+      // model had made it.
+      onToast(outcome.error);
+      setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === oid ? { ...n, img: null, status: "empty" } : n)) }));
+      return;
     }
-    const finalUrl = url;
-    setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === oid ? { ...n, img: finalUrl, status: "ready" } : n)) }));
-  }, [onToast, userKey]);
+    persistCreation({ prompt: promptText, imageUrl: outcome.imageUrl, userKey });
+    setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === oid ? { ...n, img: outcome.imageUrl, status: "ready" } : n)) }));
+  }, [onToast, userKey, signPayment]);
 
   /* ▶ generate → new output in the current constellation row.
      Never reassigns/removes an empty slot that belongs to a DIFFERENT prompt
      composition — those are left alone and offered via a co-generate dialog. */
   const spawnOutput = (autofill?: boolean) => {
     if (!stRef.current.body.trim()) return;
+    if (refsLoading) { onToast(REFS_LOADING); return; }
+    if (!resolveCatalogueEntry(catalogueRef.current, stRef.current.models[0])) { onToast("Pick a model first"); return; }
     // strict check: node-view buttons pass the click event as the first arg
     const wantsAutofill = autofill === true;
     const baseTx = stRef.current.nodes.filter((n) => n.type === "text") as TextNode[];
@@ -1603,20 +1604,48 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   /* Per-model tier scale from the server's own price ladder — the flat x2
      for 4K overstated it (nano-banana-pro's real 4K/2K ratio is ~1.79;
      found by review, 2026-08-22). */
-  const qualityMult = tierScale(selectedModel, st.quality);
-  // Priced from the catalogue, so what is shown is what the server will
-  // charge. It used to come from a constant with invented numbers.
-  const perImage = st.models.reduce((sum, id) => sum + (resolveCatalogueEntry(catalogue, id)?.price ?? 0), 0) * qualityMult;
+  /* Every price shown here is a server quote (Kev, 2026-10-02: "ich brauche
+     safe überall den server-quote"): each model at the current settings for
+     the model picker, each tier of the selected model for the resolution
+     picker, in one request. They were catalogue price x tier scale, without
+     the fee and without quality, so the label was not the charge. The free
+     model reads "Free"; an option without a quote shows no price. */
   const imgCount = st.genCount;
-  const cost = perImage * imgCount;
-  /* Boost price = the BOOST ROUTE's real per-image cost (vendor direct),
-     never a multiplier (Kev, 2026-08-23). Uses the same family key the
-     server prices by; the gpt quality lever feeds in where the model has
-     one. */
-  const boostCost = selectedModel
-    ? apiBoostPricePerImage(toModelFamily(selectedModel.name), st.quality, supportsQuality ? quality : undefined) * imgCount
-    : cost;
-  const shownCost = boost ? boostCost : cost;
+  const asTier = (t: string) => (t === "1K" || t === "2K" || t === "4K" ? t : null);
+  const quoteFor = (m: CatalogueEntry, tier: "1K" | "2K" | "4K"): QuoteRequest => ({
+    modelId: m.id,
+    resolution: tier,
+    quality: m.supportsQuality ? quality : undefined,
+    boost: boost && !!m.boostAvailable,
+  });
+  /* Each model at the tier IT would run: the stored pick, clamped to that
+     model's ceiling, exactly as finalizeOutput clamps it once picked. */
+  const tierFor = (m: CatalogueEntry): "1K" | "2K" | "4K" => {
+    const tiers = tiersUpTo(m.maxResolution ?? "2K");
+    return asTier(tiers.includes(st.quality as never) ? st.quality : tiers[tiers.length - 1]) ?? "2K";
+  };
+  const pricedModels = catalogue.filter((m) => !m.free);
+  const pricedTiers = selectedModel && !selectedModel.free ? qualityTiers.map(asTier).filter((t): t is "1K" | "2K" | "4K" => !!t) : [];
+  const quotes = useServerQuotes([
+    ...pricedModels.map((m) => quoteFor(m, tierFor(m))),
+    ...pricedTiers.map((t) => quoteFor(selectedModel!, t)),
+  ]);
+  const modelPriceLabel = (id: string): string | undefined => {
+    const m = catalogue.find((c) => c.id === id);
+    if (!m) return undefined;
+    if (m.free) return "Free";
+    const i = pricedModels.indexOf(m);
+    return (i >= 0 ? quoteLabel(quotes[i]) : null) ?? undefined;
+  };
+  const tierPriceLabel = (tier: string): string | undefined => {
+    if (selectedModel?.free) return "Free";
+    const i = pricedTiers.indexOf(asTier(tier) as "1K" | "2K" | "4K");
+    return (i >= 0 ? quoteLabel(quotes[pricedModels.length + i]) : null) ?? undefined;
+  };
+  // The selected model's own entry above is priced at tierFor(selected) = effTier.
+  const nowQuote = selectedModel && !selectedModel.free ? quotes[pricedModels.indexOf(selectedModel)] : null;
+  /** The current settings for n images: the quote, "Free", or "…" while none is known. */
+  const priceFor = (n: number) => (selectedModel?.free ? "Free" : quoteLabel(nowQuote, n) ?? "…");
   const pickedOuts = outs.filter((o) => o.picked && o.img); // images marked for public release (always one group)
   const releaseMin = st.mode === "free" ? 1 : 4;            // Free needs ≥1, Premium ≥4 selected
   const canRelease = pickedOuts.length >= releaseMin;
@@ -1624,6 +1653,9 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   /* dock batch generate */
   const runGenerate = (autofill: boolean) => {
     if (!stRef.current.body.trim()) { onToast("Write a prompt first"); return; }
+    if (refsLoading) { onToast(REFS_LOADING); return; }
+    const picked = resolveCatalogueEntry(catalogueRef.current, stRef.current.models[0]);
+    if (!picked) { onToast("Pick a model first"); return; }
     pushHist();
     const n = st.genCount;
     const baseTx = stRef.current.nodes.filter((nn) => nn.type === "text") as TextNode[];
@@ -1645,7 +1677,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       return { ...p, cons, conSeq, nodes };
     });
     created.forEach((c) => finalizeOutput(c.oid, c.prompt));
-    onToast((autofill ? "Auto-filled & generating " : "Generating ") + n + " image" + (n > 1 ? "s" : "") + " · Nano Banana Pro");
+    onToast((autofill ? "Auto-filled & generating " : "Generating ") + n + " image" + (n > 1 ? "s" : "") + " · " + picked.name);
   };
 
   /* Lineage: when this editor was opened from another prompt ("put prompt
@@ -1798,7 +1830,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
   const setRefImg = (id: string, url: string) => setSt((p) => ({ ...p, nodes: p.nodes.map((n) => (n.id === id ? { ...n, img: url } : n)) }));
   const readImages = (fileList: FileList | null): Promise<string[]> => {
     const files = Array.from(fileList || []).filter((f) => f.type.startsWith("image/"));
-    return Promise.all(files.map((f) => new Promise<string>((res) => { const r = new FileReader(); r.onload = () => res(r.result as string); r.readAsDataURL(f); })));
+    return Promise.all(files.map(readRef)).then((urls) => urls.filter((u): u is string => Boolean(u)));
   };
   // Click/drop on one empty node: the first image fills it, extras become new reference nodes.
   const onRefFiles = async (id: string, fileList: FileList | null) => {
@@ -1932,8 +1964,8 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
               <div className={"nc-pm" + (modelFlipUp ? " nc-pm--up" : "")} onPointerDown={(e) => e.stopPropagation()}>
                 <button ref={modelTrigRef} className={"nc-pm-trigger" + (modelOpen ? " open" : "")} title="Model used for this prompt — price shown is the production cost"
                   onClick={(e) => { e.stopPropagation(); if (!modelOpen) { const r = modelTrigRef.current?.getBoundingClientRect(); const ph = catalogue.length * 38 + 16; if (r) setModelFlipUp(window.innerHeight - r.bottom < ph + 14 && r.top > ph + 14); } setModelOpen((o) => !o); }}>
-                  <span className="nc-pm-name">{(resolveCatalogueEntry(catalogue, st.models[0]) || catalogue[0])?.name ?? "—"}</span>
-                  <span className="nc-pm-price">${((resolveCatalogueEntry(catalogue, st.models[0]) || catalogue[0])?.price ?? 0).toFixed(2)}</span>
+                  <span className="nc-pm-name">{selectedModel?.name ?? "Pick a model"}</span>
+                  <span className="nc-pm-price">{selectedModel ? modelPriceLabel(selectedModel.id) : ""}</span>
                   <Icon name="chevronDown" size={13} stroke={2.4} className="nc-pm-chev" />
                 </button>
                 {modelOpen && (
@@ -1943,7 +1975,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                         className={"nc-pm-opt" + (m.id === st.models[0] ? " on" : "")}
                         onClick={() => { setSt((p) => ({ ...p, models: [m.id] })); setModelOpen(false); }}>
                         <span className="nc-pm-opt-name">{m.name}</span>
-                        <span className="nc-pm-opt-cost"><b>${m.price.toFixed(2)}</b> prod. cost</span>
+                        <span className="nc-pm-opt-cost"><b>{modelPriceLabel(m.id) ?? "—"}</b> per image</span>
                       </button>
                     ))}
                   </div>
@@ -2094,7 +2126,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                     options={ncRatios(selectedModel).map((r) => ({ value: r, label: r, icon: <RatioRect ratio={r} size={15} /> }))} onChange={(v) => setSt((p) => ({ ...p, ratio: v }))} />
                   {qualityTiers.length > 0 && (
                     <NcSelect icon={<Maximize2 size={14} style={{ color: "var(--enki-ink-3)" }} />} value={qualityTiers.includes(st.quality) ? st.quality : qualityTiers[qualityTiers.length - 1]} width={72} grow={false} title="Resolution · does not affect grouping"
-                      options={qualityTiers.map((q) => { const p = tierPrice(st.mode === "premium" ? selectedModel : undefined, q); return { value: q, label: q, sub: p != null ? "$" + p.toFixed(2) : undefined }; })} onChange={(v) => setSt((p) => ({ ...p, quality: v }))} />
+                      options={qualityTiers.map((q) => ({ value: q, label: q, sub: tierPriceLabel(q) }))} onChange={(v) => setSt((p) => ({ ...p, quality: v }))} />
                   )}
                   {/* Model-specific settings belong to the PROMPT, so they are
                       set where the prompt is written (Kev, 2026-08-19) — not
@@ -2119,7 +2151,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                       value={quality}
                       width={84}
                       grow={false}
-                      title="Quality — how much detail GPT-Image-2 renders. Your price is the same on every setting."
+                      title="Quality — how much detail GPT-Image-2 renders. Higher quality costs more; the price shown is the server's quote."
                       options={[
                         { value: "low", label: "Low" },
                         { value: "medium", label: "Mid" },
@@ -2143,7 +2175,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                     headers={sessionAuthHeaders()}
                     onValues={applyDiceValues}
                   />
-                  <button className={"nc-prompt-genbtn nc-prompt-genbtn--stack" + (canGenerate ? "" : " disabled")} title={canGenerate ? "Generate one image at " + st.quality : "Write a prompt first"} onClick={() => spawnOutput()}>
+                  <button className={"nc-prompt-genbtn nc-prompt-genbtn--stack" + (canGenerate ? "" : " disabled")} title={canGenerate ? `Generate ${fillCount} image${fillCount > 1 ? "s" : ""} at ${effTier}` : !selectedModel ? "Pick a model first" : "Write a prompt first"} onClick={() => spawnOutput()}>
                     {/* zap, like every Generate — sparkles is Release's icon.
                         The icon sits BESIDE the Generate/price block, so the
                         flex row centers it against both lines, not just the
@@ -2151,7 +2183,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                     <Icon name="zap" size={16} stroke={2.2} fill={canGenerate ? "var(--cta-ink)" : "none"} />
                     <span className="nc-genbtn-txt">
                       <span className="nc-genbtn-top">Generate</span>
-                      <span className="nc-genbtn-sub">${perImage.toFixed(2)}</span>
+                      <span className="nc-genbtn-sub">{priceFor(fillCount)}</span>
                     </span>
                   </button>
                 </div>
@@ -2225,7 +2257,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
               </div>
               <div className="nc-workflow-meta">
                 <span>{w.wf?.author ? `by ${w.wf.author}` : "from your library"}</span>
-                <span>{w.wf?.vars.length ?? 0} input{(w.wf?.vars.length ?? 0) === 1 ? "" : "s"} · {w.wf?.price ? `$${w.wf.price.toFixed(2)}/use` : "free"}</span>
+                <span>{w.wf?.vars.length ?? 0} input{(w.wf?.vars.length ?? 0) === 1 ? "" : "s"}</span>
               </div>
               <button type="button" className="nc-workflow-toggle" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); toggleWorkflowOpen(w.id); }} aria-expanded={!!w.open}>
                 <Icon name="expand" size={12} stroke={2.2} /> {w.open ? "Hide inside" : "Show inside"}
@@ -2408,10 +2440,10 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       {view === "node" && <div className="nc-gp" role="dialog">
         <div className="nc-gp-row">
           <span className="nc-gp-lab">{imgCount} image{imgCount > 1 ? "s" : ""}</span>
-          <span className="nc-gp-cost">${shownCost.toFixed(2)}</span>
+          <span className="nc-gp-cost">{priceFor(imgCount)}</span>
         </div>
         <div className="nc-gp-gen" style={{ marginBottom: 6 }}>
-          <BoostToggle boost={boost} onChange={setBoost} />
+          <BoostToggle boost={boost} onChange={setBoost} available={!!selectedModel?.boostAvailable} />
         </div>
         <div className="nc-gp-gen">
           <button className="nc-gp-btn" onClick={() => runGenerate(true)} title="Autofill variables & generate"><Icon name="wand" size={12} stroke={2} /> Autofill</button>
@@ -2420,7 +2452,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
               model/resolution, boost included), the same number as the
               header row. "Pay & Gen" named the mechanics; the price itself
               says it costs money (Kev, 2026-08-22). */}
-          <button className="nc-gp-btn nc-gp-btn--go" onClick={() => runGenerate(false)} title={"Generate " + imgCount + " image" + (imgCount > 1 ? "s" : "") + " — total for the whole run"}><Icon name="zap" size={12} stroke={2} fill="currentColor" /> Generate<span className="nc-gp-go-price">${shownCost.toFixed(2)}</span></button>
+          <button className="nc-gp-btn nc-gp-btn--go" onClick={() => runGenerate(false)} title={"Generate " + imgCount + " image" + (imgCount > 1 ? "s" : "") + " — total for the whole run"}><Icon name="zap" size={12} stroke={2} fill="currentColor" /> Generate<span className="nc-gp-go-price">{priceFor(imgCount)}</span></button>
         </div>
         <div className="nc-gp-rel">
           <div className="nc-gp-relh"><Icon name="star" size={10} stroke={2} fill="currentColor" /> To release{pickedOuts.length ? " · " + pickedOuts.length : ""}</div>
@@ -2530,7 +2562,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
       {view === "doc" && (
         <DocView api={{
           st, texts, refs, outs, cons: st.cons, curSig, liveTokNames, liveRefCount, pubNames,
-          colorForTok, palOf, perImage, canGenerate, pickedOuts, releaseMin, canRelease,
+          colorForTok, palOf, priceLabel: priceFor(fillCount), modelPriceLabel, tierPriceLabel, effTier, canGenerate, pickedOuts, releaseMin, canRelease,
           modelAccept: modelLimits.accept,
           onBodyChange, pushHist, addText, patchText, setTextKind, renameText, deleteNodeId,
           addRefsFromFiles, onRefFiles, toggleRefUserInput, setRefMax,
@@ -2627,7 +2659,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
           return { id, fp, vars };
         });
         const allOn = genConfirm.checked.size === items.length && items.length > 0;
-        const total = genConfirm.checked.size * perImage;
+        const total = priceFor(genConfirm.checked.size);
         const toggle = (id: string) => setGenConfirm((g) => { if (!g) return g; const n = new Set(g.checked); if (n.has(id)) n.delete(id); else n.add(id); return { ...g, checked: n }; });
         return (
           <div className="nc-gconf-scrim" onPointerDown={() => setGenConfirm(null)}>
@@ -2648,7 +2680,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
                 ); })}
               </div>
               <div className="nc-gconf-foot">
-                <span className="nc-gconf-total">Total to pay: <b>${total.toFixed(2)}</b></span>
+                <span className="nc-gconf-total">Total to pay: <b>{total}</b></span>
                 <div className="nc-gconf-btns">
                   <button className="nc-gconf-cancel" onClick={() => setGenConfirm(null)}>Not now</button>
                   <button className="nc-gconf-go" disabled={!genConfirm.checked.size} onClick={confirmCoGen}><Icon name="zap" size={13} stroke={2} fill="var(--cta-ink)" /> Generate {genConfirm.checked.size}</button>

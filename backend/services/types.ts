@@ -5,7 +5,7 @@
 export interface ImageGenerationRequest {
   prompt: string;
   /**
-   * Every ratio gemini-2.5-flash-image accepts, verified by real API calls
+   * Every ratio Gemini accepts, verified by real API calls
    * (2026-08-06) rather than from the docs alone:
    *   1:1 1024x1024 · 2:3 832x1248 · 3:2 1248x832 · 3:4 864x1184
    *   4:3 1184x864  · 4:5 896x1152 · 5:4 1152x896 · 9:16 768x1344
@@ -38,6 +38,8 @@ export interface ImageGenerationResult {
   imageUrls?: string[];
   imageBuffers?: Buffer[];
   error?: string;
+  /** Machine readable reason for a refusal; MODEL_REQUIRED = no modelVersion sent. */
+  code?: 'MODEL_REQUIRED';
   generationTime?: number;
   retryable?: boolean;
   /**

@@ -12,7 +12,8 @@
  *
  * Order matters: Tier 1 runs first and short-circuits. That is deliberate, not
  * an optimisation — text matching an unambiguous CSAM rule never leaves our
- * infrastructure to a third party.
+ * infrastructure to a third party. The routes also run it alone (screenFirst)
+ * before the prompt check, whose chat model would otherwise see the text first.
  */
 import { createHash } from "crypto";
 import { normaliseForHash } from "./normalize";
@@ -25,16 +26,45 @@ export type { ModerationVerdict, ModerationInput, Decision, Enforcement } from "
 export { screenTier1 } from "./tier1";
 export { isTier2Configured } from "./tier2-openai";
 
-export async function moderate(input: ModerationInput): Promise<ModerationVerdict> {
-  const started = Date.now();
-  const promptHash = createHash("sha256").update(normaliseForHash(input.prompt)).digest("hex");
-
-  const base = {
+function baseFor(prompt: string) {
+  return {
     matchedRules: [] as string[],
     scores: null as Record<string, number> | null,
     tier2Degraded: false,
-    promptHash,
+    promptHash: createHash("sha256").update(normaliseForHash(prompt)).digest("hex"),
   };
+}
+
+/** Tier 1's refusal of this text, or null when no rule matched. */
+function tier1Block(prompt: string, started: number): ModerationVerdict | null {
+  const t1 = screenTier1(prompt);
+  if (!t1.blocked) return null;
+  return {
+    ...baseFor(prompt),
+    allowed: false,
+    decision: "block",
+    enforcement: t1.enforcement,
+    tier: 1,
+    category: t1.category,
+    matchedRules: t1.matchedRules,
+    elapsedMs: Date.now() - started,
+  };
+}
+
+/**
+ * Tier 1 over the text the prompt check would send out, for the routes to run
+ * BEFORE that check: text a rule refuses never reaches the chat model, and the
+ * refusal is the request's moderation verdict (Kev, 2026-10-06: the regex
+ * first, then the LLM). Null when no rule matched.
+ */
+export function screenFirst(inputs: Record<string, string>): ModerationVerdict | null {
+  const text = Object.values(inputs).join("\n");
+  return text.trim() ? tier1Block(text, Date.now()) : null;
+}
+
+export async function moderate(input: ModerationInput): Promise<ModerationVerdict> {
+  const started = Date.now();
+  const base = baseFor(input.prompt);
 
   // Empty or whitespace-only input is not a violation — it is a bad request.
   // PR #54 returned severity null here, which the router coerced to 'strike',
@@ -43,19 +73,8 @@ export async function moderate(input: ModerationInput): Promise<ModerationVerdic
     return { ...base, allowed: true, decision: "allow", enforcement: "none", tier: null, category: null, elapsedMs: Date.now() - started };
   }
 
-  const t1 = screenTier1(input.prompt);
-  if (t1.blocked) {
-    return {
-      ...base,
-      allowed: false,
-      decision: "block",
-      enforcement: t1.enforcement,
-      tier: 1,
-      category: t1.category,
-      matchedRules: t1.matchedRules,
-      elapsedMs: Date.now() - started,
-    };
-  }
+  const t1 = tier1Block(input.prompt, started);
+  if (t1) return t1;
 
   if (!isTier2Configured()) {
     // No AI tier yet. Tier 1 already passed, so allow — and flag the degradation
@@ -64,7 +83,7 @@ export async function moderate(input: ModerationInput): Promise<ModerationVerdic
   }
 
   try {
-    const t2 = await screenTier2(input.prompt, input.signal);
+    const t2 = await screenTier2(input.prompt, input.signal, input.adultJudged === true);
     return {
       ...base,
       allowed: !t2.blocked,

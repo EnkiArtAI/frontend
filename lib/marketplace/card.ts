@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isPublicText } from "@/lib/prompt-visibility";
 
 /*
  * The marketplace card: one row of the prompts table, mapped and enriched
@@ -8,15 +9,17 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  *
  * Live-schema boundary (probed 2026-08-12, re-read 2026-09-24): the columns
  * below exist; price, downloads, rating, user_id and uploaded_photos do not.
- * No encrypted_* column is ever selected here; the card carries the public
- * excerpt only.
+ * No encrypted_* column is ever selected here, and the public excerpt only
+ * for a prompt whose text is public: a paid prompt's card carries the
+ * creator's description, never the words of the prompt.
  */
 export const PROMPT_CARD_SELECT =
-  "id,title,public_prompt_text,price_usd_cents,category,tags,ai_model,created_at,creator_id,showcase_images,aspect_ratio,resolution,is_free_showcase,prompt_type";
+  "id,title,description,public_prompt_text,price_usd_cents,category,tags,ai_model,created_at,creator_id,showcase_images,aspect_ratio,resolution,is_free_showcase,prompt_type";
 
 export type PromptCardRow = {
   id: string;
   title: string | null;
+  description: string | null;
   public_prompt_text: string | null;
   price_usd_cents: number | null;
   category: string | null;
@@ -38,11 +41,12 @@ const images = (value: unknown): Image[] =>
 
 /** The row as the feed reads it, before creator and variables are attached. */
 export function mapPromptRow(p: PromptCardRow) {
+  const text = isPublicText(p) ? p.public_prompt_text || "" : "";
   return {
     id: p.id,
     title: p.title,
-    description: p.public_prompt_text || "",
-    promptTemplate: p.public_prompt_text || "",
+    description: text || p.description || "",
+    promptTemplate: text,
     // Integer cents straight through: the field name carries the unit and
     // the feed adapter (enkiPromptAdapter.dollars) divides by 100.
     priceUsdCents: typeof p.price_usd_cents === "number" ? p.price_usd_cents : 0,

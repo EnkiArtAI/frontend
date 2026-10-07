@@ -17,15 +17,18 @@
  * are the orders that leak a retry rather than a charge.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { Transaction } from "@solana/web3.js";
+import { after } from "next/server";
+import { SendTransactionError, Transaction } from "@solana/web3.js";
+import bs58 from "bs58";
 import {
   captureAuthorization,
   voidAuthorization,
   sweepAbandoned,
+  sweepUnsubmitted,
   type VoidReason,
 } from "@/lib/payments/authorization";
 import { closeNonceAccount } from "@/lib/payments/nonce";
-import { feePayerKeypair, solanaConnection } from "@/lib/payments/solana";
+import { confirmSignature, feePayerKeypair, solanaConnection } from "@/lib/payments/solana";
 import { frontedPlanOf } from "@/lib/payments/authorize-flow";
 import { recordFronted, recordRecovery, ATA_RENT_LAMPORTS } from "@/lib/payments/fronted-ledger";
 
@@ -50,12 +53,20 @@ export async function captureAndBroadcast(
   try {
     const tx = Transaction.from(Buffer.from(held.signedTx, "base64"));
     const connection = solanaConnection();
-    const signature = await connection.sendRawTransaction(tx.serialize(), {
-      // The transaction was built and checked by us; a preflight here only
-      // adds a round trip to something already validated.
-      skipPreflight: true,
-      maxRetries: 3,
-    });
+    const signature = bs58.encode(tx.signature!);
+    try {
+      await connection.sendRawTransaction(tx.serialize(), {
+        // The transaction was built and checked by us; a preflight here only
+        // adds a round trip to something already validated.
+        skipPreflight: true,
+        maxRetries: 3,
+      });
+    } catch (e) {
+      // A refusal stands. A send lost in transit may have been forwarded by
+      // an endpoint the failover gave up on, and the books follow what landed.
+      if (e instanceof SendTransactionError) throw e;
+      await confirmSignature(connection, signature, { timeoutMs: 10_000 });
+    }
 
     const now = new Date().toISOString();
     await supabase
@@ -77,8 +88,11 @@ export async function captureAndBroadcast(
     // showed capture leaving exactly that behind on every sale: ~1.1 cents of
     // SOL per purchase, more than the whole network fee the buyer pays.
     // Best-effort: a failed close costs rent, never the capture.
+    // After the answer: a close waits for its own confirmation, and the buyer
+    // is waiting for the image, not for our rent.
     if (held.nonceAccount) {
-      await closeNonceAccount(connection, held.nonceAccount, feePayerKeypair()).catch(() => "failed");
+      const account = held.nonceAccount;
+      after(() => closeNonceAccount(connection, account, feePayerKeypair()).catch(() => "failed"));
     }
 
     return { signature };
@@ -172,7 +186,8 @@ export async function voidAndFlush(
  */
 export async function sweepAndFlush(supabase: SupabaseClient, limit = 5): Promise<number> {
   try {
-    const flushed = await sweepAbandoned(supabase, limit);
+    // Signed and gone quiet, plus prepared and never signed: both hold a nonce.
+    const flushed = [...(await sweepAbandoned(supabase, limit)), ...(await sweepUnsubmitted(supabase, limit))];
     if (flushed.length === 0) return 0;
 
     const connection = solanaConnection();

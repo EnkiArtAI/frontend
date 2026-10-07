@@ -1,86 +1,27 @@
 import type { Metadata } from "next";
-import {
-  Geist,
-  Geist_Mono,
-  Inter,
-  JetBrains_Mono,
-  Outfit,
-  Sora,
-  Instrument_Serif,
-  Playfair_Display,
-  Cormorant_Garamond,
-  DM_Sans,
-  Fraunces,
-} from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { Providers } from "../providers";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  variable: "--font-jetbrains-mono",
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-});
-
-const sora = Sora({
-  variable: "--font-sora",
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700", "800"],
-});
-
-const instrumentSerif = Instrument_Serif({
-  variable: "--font-instrument-serif",
-  subsets: ["latin"],
-  weight: ["400"],
-});
-
-const playfairDisplay = Playfair_Display({
-  variable: "--font-playfair-display",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
-
-const outfit = Outfit({
-  variable: "--font-outfit",
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
-});
-
-const cormorantGaramond = Cormorant_Garamond({
+/* Self-hosted (app/fonts, OFL-1.1, licenses alongside): next/font/google
+   fetched these from Google on every build, and a flaky answer failed CI
+   three times on 2026-10-06. Variable files, Latin only, as before. Geist
+   Mono, Sora, Playfair Display and Fraunces were loaded on every route and
+   used nowhere, so they are gone. */
+const geistSans = localFont({ src: "./fonts/geist-sans-variable.woff2", variable: "--font-geist-sans", weight: "100 900" });
+const inter = localFont({ src: "./fonts/inter-latin-wght-normal.woff2", variable: "--font-inter", weight: "100 900" });
+const jetbrainsMono = localFont({ src: "./fonts/jetbrains-mono-latin-wght-normal.woff2", variable: "--font-jetbrains-mono", weight: "100 800" });
+const instrumentSerif = localFont({ src: "./fonts/instrument-serif-latin-400-normal.woff2", variable: "--font-instrument-serif", weight: "400" });
+const outfit = localFont({ src: "./fonts/outfit-latin-wght-normal.woff2", variable: "--font-outfit", weight: "100 900" });
+const cormorantGaramond = localFont({
+  src: [
+    { path: "./fonts/cormorant-garamond-latin-wght-normal.woff2", style: "normal" },
+    { path: "./fonts/cormorant-garamond-latin-wght-italic.woff2", style: "italic" },
+  ],
   variable: "--font-cormorant",
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
-  style: ["normal", "italic"],
+  weight: "300 700",
 });
-
-const dmSans = DM_Sans({
-  variable: "--font-dm-sans",
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
-});
-
-const fraunces = Fraunces({
-  variable: "--font-fraunces",
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600"],
-  style: ["normal", "italic"],
-});
-
+const dmSans = localFont({ src: "./fonts/dm-sans-latin-wght-normal.woff2", variable: "--font-dm-sans", weight: "100 1000" });
 
 export const metadata: Metadata = {
   title: {
@@ -179,7 +120,7 @@ export default function RootLayout({
         />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} ${inter.variable} ${jetbrainsMono.variable} ${sora.variable} ${instrumentSerif.variable} ${playfairDisplay.variable} ${outfit.variable} ${cormorantGaramond.variable} ${dmSans.variable} ${fraunces.variable} antialiased`}
+        className={`${geistSans.variable} ${inter.variable} ${jetbrainsMono.variable} ${instrumentSerif.variable} ${outfit.variable} ${cormorantGaramond.variable} ${dmSans.variable} antialiased`}
       >
         <Providers>
           {/* The old top-header Navbar is retired (Kev, 2026-07-12): the app

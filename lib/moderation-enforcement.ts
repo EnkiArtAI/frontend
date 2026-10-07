@@ -18,9 +18,10 @@
  * bans.issued_by is NOT NULL: the schema already assumes a human signs off.
  */
 import { getSupabaseServerClientSafe } from "@/lib/supabaseServer";
-import { resolveSessionUserId } from "@/lib/session-user";
+import { resolveSessionUserWithBan } from "@/lib/session-user";
+import { banUntil } from "@/lib/moderation/bans";
 import { getClientIp, hashIp } from "@/lib/ip-hash";
-import { encryptString } from "@/lib/crypto";
+import { sealEvidence } from "@/lib/moderation/evidence";
 import type { ModerationVerdict } from "@/lib/moderation";
 
 export interface RecordContext {
@@ -32,8 +33,14 @@ export interface RecordContext {
    * cannot report is a route that silently stops being evidence.
    */
   request: { headers: { get(name: string): string | null } };
-  /** The prompt itself; stored encrypted, never in clear. */
+  /** What a moderator may read of the request; stored encrypted, never in clear. */
   prompt: string;
+  /** An artist's words the request carried, kept from every moderator (lib/moderation/evidence). */
+  withheld?: string;
+  /** The marketplace prompt whose text was moderated together with the buyer's values. */
+  promptId?: string;
+  /** withheld is the requester's own editor draft, by their word (lib/moderation/evidence). */
+  draft?: boolean;
 }
 
 /**
@@ -65,27 +72,23 @@ export async function recordModerationEvent(
     // Identity is derived server-side from the session, never from a
     // client-supplied wallet field: PR #54 keyed enforcement on a body
     // parameter, so anyone could get someone else's wallet struck, or omit it
-    // and be untraceable. /api/generate-free has no session at all — those
-    // events are attributed by hashed IP only, which is why user_id is nullable.
+    // and be untraceable. A request without a session (a signed-out caller,
+    // an agent) is attributed by hashed IP only, which is why user_id is nullable.
     const token = ctx.request.headers.get("X-Session-Token");
     let userId: string | null = null;
     if (token) {
-      userId = await resolveSessionUserId(supabase, token).catch(() => null);
+      // The account even while it is suspended: a request made during a
+      // suspension still belongs to it.
+      userId = await resolveSessionUserWithBan(supabase, token).then((s) => s.userId).catch(() => null);
     }
 
     // Evidence is encrypted at rest: a blocked CSAM prompt is itself a liability
     // in plaintext. The hash (in lib/moderation) carries repeat-offender
     // detection without holding the text readable.
-    let evidence: { encrypted: string; iv: string; authTag: string; kid?: string } | null = null;
-    if (!verdict.allowed) {
-      try {
-        evidence = encryptString(ctx.prompt.slice(0, 4000));
-      } catch {
-        evidence = null; // never let a crypto config problem lose the event
-      }
-    }
+    // A crypto config problem stores the event without it rather than lose it.
+    const evidence = verdict.allowed ? null : sealEvidence({ shown: ctx.prompt, withheld: ctx.withheld, promptId: ctx.promptId, draft: ctx.draft });
 
-    await supabase.from("automod_events").insert({
+    const { data: event } = await supabase.from("automod_events").insert({
       user_id: userId,
       ip_hash: hashIp(getClientIp(ctx.request)),
       surface: ctx.surface,
@@ -108,9 +111,13 @@ export async function recordModerationEvent(
       // Only the ambiguous band reaches a human. Everything else is recorded
       // and forgotten unless a pattern shows up in the numbers.
       review_state: verdict.enforcement === "review" ? "pending" : "none",
-    });
+    }).select("id").single();
 
-    if (userId) await maybeAutoBan(supabase, userId, verdict);
+    // On a marketplace prompt the classifier read the artist's words with the
+    // buyer's values, so one score is not grounds to ban the buyer for good:
+    // the route counts it on the buyer's warnings ladder instead, where a
+    // repeat ends in a ban all the same (Kev, 2026-10-03).
+    if (userId && !ctx.promptId) await maybeAutoBan(supabase, userId, verdict, (event?.id as string | undefined) ?? null);
   } catch {
     /* recording is best-effort by design */
   }
@@ -131,13 +138,20 @@ export async function recordModerationEvent(
  */
 const AUTO_BAN_MINORS_SCORE = 0.9;
 
+/** The classifier's sexual/minors score when it is high enough to act on without a human, else null. */
+export function childSafetyScore(verdict: ModerationVerdict): number | null {
+  const minors = verdict.scores?.["sexual/minors"] ?? 0;
+  return verdict.tier === 2 && minors >= AUTO_BAN_MINORS_SCORE ? minors : null;
+}
+
 async function maybeAutoBan(
   supabase: NonNullable<ReturnType<typeof getSupabaseServerClientSafe>>,
   userId: string,
   verdict: ModerationVerdict,
+  eventId: string | null,
 ): Promise<void> {
-  const minors = verdict.scores?.["sexual/minors"] ?? 0;
-  if (verdict.tier !== 2 || minors < AUTO_BAN_MINORS_SCORE) return;
+  const minors = childSafetyScore(verdict);
+  if (minors === null) return;
 
   // bans.issued_by is NOT NULL: the schema assumes a human signs off. An
   // automated ban is issued in the name of the moderation owner, who is
@@ -151,20 +165,11 @@ async function maybeAutoBan(
   const issuedBy = policy?.owner_user_id as string | undefined;
   if (!issuedBy) return; // no owner configured — leave it to human review
 
-  // Never stack a second ban on someone already banned.
-  const { data: existing } = await supabase
-    .from("bans")
-    .select("id")
-    .eq("user_id", userId)
-    .is("lifted_at", null)
-    .limit(1);
-  if (existing?.length) return;
-
-  await supabase.from("bans").insert({
-    user_id: userId,
-    issued_by: issuedBy,
-    scope: "full",
-    reason: `Automated: sexual/minors ${minors.toFixed(2)} (automod ${verdict.promptHash.slice(0, 12)})`,
-  });
+  // For good, as its own row beside any running ban (lib/moderation/bans.ts):
+  // skipping it let this ban vanish when a 3-day suspension ended.
+  // A stable reason, so a repeat adds no row; the event that caused it is
+  // linked through ban_id, its evidence with it.
+  const issued = await banUntil(supabase, { userId, issuedBy, expiresAt: null, reason: "Automated: child-safety classifier" });
+  if (issued?.id && eventId) await supabase.from("automod_events").update({ ban_id: issued.id }).eq("id", eventId);
   console.warn("[automod] auto-ban issued", { userId, minors });
 }

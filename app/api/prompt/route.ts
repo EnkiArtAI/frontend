@@ -1,10 +1,14 @@
 import { NextResponse, after } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { encryptString, decryptString } from "@/lib/crypto";
-import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
+import { moderate, screenFirst, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
+import { checkPrompt, NOT_CHECKED, savedPromptInputs } from "@/lib/moderation/prompt-check";
+import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
+import { showsAdultRender } from "@/lib/adult-content";
+import { resolveOwnerIds, resolveSessionUserId, resolveSessionUserWithBan } from "@/lib/session-user";
+import { isPublicText } from "@/lib/prompt-visibility";
 import { extractTags, mergeTags } from "@/lib/search/tags";
-import { isFreePrompt } from "@/lib/prompt-visibility";
 
 type VariableType =
   | "text"
@@ -184,6 +188,13 @@ async function resolveCreatorId(
   const token = req.headers.get("X-Session-Token");
   if (!token) return null;
 
+  // Every session the rest of the app knows, bans honoured: an email login
+  // carries the users.id itself until a wallet is attached, and looking that
+  // up as a wallet address minted a second, empty user for it.
+  const known = await resolveSessionUserWithBan(supabase, token);
+  if (known.ban) return null;
+  if (known.userId) return known.userId;
+
   const { data: session } = await supabase
     .from("auth_sessions")
     .select("wallet_address, wallet_type")
@@ -222,37 +233,6 @@ async function resolveCreatorId(
   return created.id;
 }
 
-// Ownership scope for updates: the users.id mapped via user_wallets.
-// creator_id is a uuid column, so the raw wallet address (which the dead
-// user_id column historically also held) can never belong in the filter —
-// a non-uuid value in .in() is a Postgres type error, not a miss. Unlike
-// resolveCreatorId this never creates rows: an update on a prompt you don't
-// own must fail, not mint a user. null = no valid session; [] = a session
-// with no user row, which owns nothing.
-async function resolveOwnerIds(
-  supabase: ReturnType<typeof getSupabaseServerClient>,
-  req: Request,
-): Promise<string[] | null> {
-  const token = req.headers.get("X-Session-Token");
-  if (!token) return null;
-
-  const { data: session } = await supabase
-    .from("auth_sessions")
-    .select("wallet_address")
-    .eq("token", token)
-    .gt("expires_at", new Date().toISOString())
-    .maybeSingle();
-  if (!session) return null;
-
-  const { data: walletRow } = await supabase
-    .from("user_wallets")
-    .select("user_id")
-    .eq("address", session.wallet_address)
-    .is("removed_at", null)
-    .maybeSingle();
-  return walletRow?.user_id ? [String(walletRow.user_id)] : [];
-}
-
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as SaveBody;
@@ -289,85 +269,15 @@ export async function POST(req: Request) {
     // (re-saving used to null it), and inserts get the session-resolved
     // creator below — body.userId is ignored entirely.
     const clientPromptType = body.promptType ?? "create-now";
+    /* The model this prompt is made for is the one its creator picked. It
+       defaulted to "gemini", which is no catalogue row, and a re-save without
+       a model overwrote the creator's pick with it. Absent on an update now
+       leaves the stored value; absent on a new prompt is refused below. */
+    const aiModel = typeof body.aiModel === "string" ? body.aiModel.trim() : "";
     const dbPromptType = PROMPT_TYPE_TO_DB[clientPromptType] ?? clientPromptType;
     const isFreeShowcase = Boolean(body.isFreeShowcase ?? false);
-
-    /* Search tags (Kev, 2026-09-24: zero cost search). The vocabulary matcher
-       runs HERE, on the plaintext the client sent, before it is encrypted:
-       only canonical vocabulary tags reach prompts.tags, never a word of the
-       body itself. Title, variable names and option values are matched in
-       full; the body is matched with the paid rules whenever the viewer
-       would not see it in the clear (the same rule GET /api/prompts/[id]
-       decrypts by), so a buyer's product keeps its colours, framing and
-       technique to itself. The creator's own tags stay first. */
-    const variableText = (Array.isArray(body.variables) ? body.variables : [])
-      .flatMap((v) => [
-        v.name,
-        v.label,
-        v.defaultValue,
-        ...(v.options ?? []).flatMap((o) => [o.visibleName, o.label, o.promptValue]),
-      ])
-      .filter((s): s is string => typeof s === "string")
-      .join("\n");
-    const searchTags = mergeTags(tags, [
-      ...extractTags(`${body.title}\n${variableText}`),
-      ...extractTags(body.content, {
-        paid: !isFreePrompt({ prompt_type: dbPromptType, is_free_showcase: isFreeShowcase }),
-      }),
-    ]);
-
-    const promptRow = {
-      title: body.title,
-      encrypted_content: enc.encrypted,
-      encrypted_content_iv: enc.iv,
-      encrypted_content_tag: enc.authTag,
-      encrypted_content_kid: enc.kid,
-      category: body.category ?? "",
-      tags: searchTags,
-      ai_model: body.aiModel ?? "gemini",
-      // The body sends dollars (float); the column is integer cents.
-      price_usd_cents:
-        typeof body.price === "number" ? Math.round(body.price * 100) : 100,
-      aspect_ratio: body.aspectRatio ?? null,
-      photo_count: typeof body.photoCount === "number" ? body.photoCount : 1,
-      prompt_type: dbPromptType,
-      showcase_images: uploadedPhotos,
-      resolution: body.resolution ?? null,
-      is_free_showcase: isFreeShowcase,
-      public_prompt_text: body.content.slice(0, 220),
-      updated_at: nowIso,
-      /* Lineage (Kev, 2026-08-24): a prompt built via "put prompt to
-         editor" records its parent. The key is added only when a valid
-         uuid arrives, so saves without lineage never touch the column
-         (which lands with migrations/2026-08-24-prompt-provenance.sql). */
-      ...(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String((body as { derivedFrom?: unknown }).derivedFrom ?? ""))
-        ? { derived_from_prompt_id: String((body as { derivedFrom?: unknown }).derivedFrom) }
-        : {}),
-    };
-
-    // Moderation. This route had none: a listed prompt is the one piece of
-    // user text we hand to a model on someone else's behalf AND show publicly
-    // (public_prompt_text is the first 220 characters, verbatim), so it is the
-    // most consequential thing on the platform to leave unfiltered.
-    //
-    // Before BOTH branches. Gating only the insert would leave editing an
-    // existing listing as the way round it — create something harmless, then
-    // change it.
-    //
-    // The full content is checked, not just the public excerpt: encryption at
-    // rest protects the artist's work from a database dump, it does not make
-    // the prompt safe to run.
-    const moderatedText = [body.title, body.content, ...(Array.isArray(tags) ? tags : [])]
-      .filter((v): v is string => typeof v === "string" && v.length > 0)
-      .join("\n");
-    if (moderatedText) {
-      const verdict = await moderate({ prompt: moderatedText, surface: "upload", signal: req.signal });
-      after(recordModerationEvent(verdict, { surface: "upload", request: req, prompt: moderatedText }));
-      if (!verdict.allowed) {
-        return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
-      }
-    }
-
+    // A free prompt: its text is public and it has no price.
+    const publicText = isPublicText({ prompt_type: dbPromptType, is_free_showcase: isFreeShowcase });
     /* Every [slot] in the text must be a DEFINED variable WITH a value.
        The showcase image is generated from those values, and a prompt whose
        slots have none shows buyers raw brackets next to an image that
@@ -400,28 +310,153 @@ export async function POST(req: Request) {
       }
     }
 
+    if (!body.id && !aiModel) {
+      return NextResponse.json({ error: "Pick the model this prompt is made for." }, { status: 400 });
+    }
+
+    // Who saves, before anything is judged: an anonymous or foreign save must
+    // neither cost a check nor earn anyone a warning. On an update the
+    // ownership is also part of the WHERE clause below — the service-role
+    // client bypasses RLS, so an unscoped update would let any caller
+    // overwrite any prompt by uuid (same IDOR as the PATCH route, PR #59).
+    // "not found" covers both a missing prompt and someone else's prompt (no
+    // ownership oracle).
+    let ownerIds: string[] = [];
+    let creatorId: string | null = null;
+    // The description is not part of this save (it is edited through the
+    // PATCH route) but is shown with the prompt, so an update judges it too.
+    let storedDescription: string | null = null;
+    if (body.id) {
+      const owners = await resolveOwnerIds(supabase, req.headers.get("X-Session-Token"));
+      if (!owners) {
+        return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+      }
+      // A session whose wallet maps to no user row owns no prompts, and
+      // .in() with an empty list is a PostgREST parse error, not a no-op.
+      if (owners.length === 0) return NextResponse.json({ error: "not found" }, { status: 404 });
+      const { data: own } = await supabase.from("prompts").select("id, description").eq("id", body.id).in("creator_id", owners).maybeSingle();
+      if (!own) return NextResponse.json({ error: "not found" }, { status: 404 });
+      storedDescription = (own.description as string | null) ?? null;
+      ownerIds = owners;
+    } else {
+      creatorId = await resolveCreatorId(supabase, req);
+      if (!creatorId) {
+        return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+      }
+    }
+
+    // Judged like a generation before it is stored, and whole: everything a
+    // saved prompt can put into an image or show a buyer — title, text, tags,
+    // every variable's default and options. Explicit and child-safety text is
+    // refused with a warning; a suggestive prompt is marked 18+ by itself, as
+    // is one whose showcase images are 18+ renders, so the creator never has
+    // to (Kev, 2026-10-03). An outage of the check saves nothing rather than
+    // an unjudged prompt.
+    const judged = savedPromptInputs({ ...body, tags, description: storedDescription });
+    // A record of a refused save shows what a buyer could see; the body is
+    // the artist's and is withheld from every moderator (lib/moderation/evidence).
+    const { content: artistText, ...shownInputs } = judged;
+    // The regex first: what Tier 1 refuses never reaches the chat model, and
+    // its refusal is this request's moderation verdict (Kev, 2026-10-06).
+    const first = screenFirst(judged);
+    const check = first ? NOT_CHECKED : await checkPrompt(judged, { hidden: false, signal: req.signal });
+    if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
+      const outcome = await recordWarning(supabase, {
+        surface: "upload", request: req, category: check.verdict, text: JSON.stringify(shownInputs), withheld: artistText, confidence: check.confidence,
+      });
+      return NextResponse.json({ error: warningMessage(check.verdict, outcome, "save") }, { status: 422 });
+    }
+    if (check.verdict !== "clear") {
+      return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 });
+    }
+    const shownAdult = await showsAdultRender(supabase, uploadedPhotos);
+    if (shownAdult === null) {
+      return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 });
+    }
+    const adult = check.adult === true || shownAdult;
+
+    // Moderation. This route had none: a listed prompt is the one piece of
+    // user text we hand to a model on someone else's behalf AND show publicly
+    // (public_prompt_text is the first 220 characters, verbatim), so it is the
+    // most consequential thing on the platform to leave unfiltered.
+    //
+    // Before BOTH branches. Gating only the insert would leave editing an
+    // existing listing as the way round it — create something harmless, then
+    // change it.
+    //
+    // The full content is checked, not just the public excerpt: encryption at
+    // rest protects the artist's work from a database dump, it does not make
+    // the prompt safe to run.
+    // Tier 2 reads the same whole as the prompt check.
+    const moderatedText = Object.values(judged).join("\n");
+    if (moderatedText) {
+      const verdict = first ?? await moderate({ prompt: moderatedText, surface: "upload", signal: req.signal, adultJudged: true });
+      after(recordModerationEvent(verdict, { surface: "upload", request: req, prompt: Object.values(shownInputs).join("\n"), withheld: artistText }));
+      if (!verdict.allowed) {
+        return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
+      }
+    }
+
+    /* Search tags (Kev, 2026-09-24: zero cost search). The vocabulary matcher
+       runs HERE, on the plaintext the client sent, before it is encrypted:
+       only canonical vocabulary tags reach prompts.tags, never a word of the
+       body itself. Title, variable names and option values are matched in
+       full; the body is matched with the paid rules whenever the viewer
+       would not see it in the clear (isPublicText, the rule GET
+       /api/prompts/[id] decrypts by). The creator's own tags stay first. */
+    const variableText = varsPayload
+      .flatMap((v) => [
+        v.name,
+        v.label,
+        v.defaultValue,
+        ...(v.options ?? []).flatMap((o) => [o.visibleName, o.label, o.promptValue]),
+      ])
+      .filter((s): s is string => typeof s === "string")
+      .join("\n");
+    const searchTags = mergeTags(tags, [
+      ...extractTags(`${body.title}\n${variableText}`),
+      ...extractTags(body.content, { paid: !publicText }),
+    ]);
+
+    const promptRow = {
+      is_adult: adult,
+      title: body.title,
+      encrypted_content: enc.encrypted,
+      encrypted_content_iv: enc.iv,
+      encrypted_content_tag: enc.authTag,
+      encrypted_content_kid: enc.kid,
+      category: body.category ?? "",
+      tags: searchTags,
+      ...(aiModel ? { ai_model: aiModel } : {}),
+      // The body sends dollars (float); the column is integer cents.
+      // A free prompt is stored at 0 whatever was sent: the share card, the
+      // price filter and the card price read "free" from the cents alone.
+      price_usd_cents:
+        publicText ? 0 : typeof body.price === "number" ? Math.round(body.price * 100) : 100,
+      aspect_ratio: body.aspectRatio ?? null,
+      photo_count: typeof body.photoCount === "number" ? body.photoCount : 1,
+      prompt_type: dbPromptType,
+      showcase_images: uploadedPhotos,
+      resolution: body.resolution ?? null,
+      is_free_showcase: isFreeShowcase,
+      // The first 220 characters, verbatim: only a free prompt may carry its
+      // text in the clear. A paid prompt's body is the artist's secret, and a
+      // draft's is nobody else's business.
+      public_prompt_text: publicText ? body.content.slice(0, 220) : null,
+      updated_at: nowIso,
+      /* Lineage (Kev, 2026-08-24): a prompt built via "put prompt to
+         editor" records its parent. The key is added only when a valid
+         uuid arrives, so saves without lineage never touch the column
+         (which lands with migrations/2026-08-24-prompt-provenance.sql). */
+      ...(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String((body as { derivedFrom?: unknown }).derivedFrom ?? ""))
+        ? { derived_from_prompt_id: String((body as { derivedFrom?: unknown }).derivedFrom) }
+        : {}),
+    };
+
     let promptId: string;
 
     if (body.id) {
       promptId = body.id;
-
-      // Ownership is part of the WHERE clause — the service-role client
-      // bypasses RLS, so an unscoped update would let any caller overwrite
-      // any prompt by uuid (same IDOR as the PATCH route, PR #59).
-      // count:"exact" makes the 0-rows branch real; "not found" covers both
-      // a missing prompt and someone else's prompt (no ownership oracle).
-      const ownerIds = await resolveOwnerIds(supabase, req);
-      if (!ownerIds) {
-        return NextResponse.json(
-          { error: "Authentication required" },
-          { status: 401 }
-        );
-      }
-      if (ownerIds.length === 0) {
-        // A session whose wallet maps to no user row owns no prompts, and
-        // .in() with an empty list is a PostgREST parse error, not a no-op.
-        return NextResponse.json({ error: "not found" }, { status: 404 });
-      }
 
       const { error: updateError, count } = await supabase
         .from("prompts")
@@ -446,14 +481,6 @@ export async function POST(req: Request) {
         throw deleteError;
       }
     } else {
-      const creatorId = await resolveCreatorId(supabase, req);
-      if (!creatorId) {
-        return NextResponse.json(
-          { error: "Authentication required" },
-          { status: 401 }
-        );
-      }
-
       const { data: inserted, error: insertError } = await supabase
         .from("prompts")
         .insert({
@@ -513,8 +540,8 @@ export async function POST(req: Request) {
       title: body.title,
       category: body.category ?? "",
       tags: body.tags ?? [],
-      aiModel: body.aiModel ?? "gemini",
-      price: typeof body.price === "number" ? body.price : 1,
+      aiModel: aiModel || null,
+      price: publicText ? 0 : typeof body.price === "number" ? body.price : 1,
       aspectRatio: body.aspectRatio ?? null,
       photoCount: typeof body.photoCount === "number" ? body.photoCount : 1,
       promptType: clientPromptType,
@@ -545,6 +572,14 @@ export async function GET(req: Request) {
 
     const supabase = getSupabaseServerClient();
 
+    // Owner only: this returns the decrypted body, which is the creator's
+    // secret (a paid prompt's buyers see its variables, never its text). It
+    // answered anyone who knew an id, and listed ids are public.
+    const userId = await resolveSessionUserId(supabase, req.headers.get("X-Session-Token"));
+    if (!userId) {
+      return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+    }
+
     const { data: prompt, error: promptError } = await supabase
       .from("prompts")
       .select(
@@ -557,7 +592,13 @@ export async function GET(req: Request) {
       throw promptError;
     }
 
-    if (!prompt) {
+    // Someone else's prompt answers like a missing one: no decrypt, and no
+    // confirmation that the id exists. Ownership is also checked the way a
+    // save checks it (resolveOwnerIds): a prompt an email session saved before
+    // its wallet was attached is owned through that session's own mapping.
+    const owners =
+      prompt && prompt.creator_id !== userId ? ((await resolveOwnerIds(supabase, req.headers.get("X-Session-Token"))) ?? []) : [];
+    if (!prompt || (prompt.creator_id !== userId && !owners.includes(String(prompt.creator_id)))) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
 
@@ -594,7 +635,7 @@ export async function GET(req: Request) {
       userId: (prompt.creator_id as string | null | undefined) ?? null,
       category: (prompt.category as string | undefined) ?? "",
       tags: Array.isArray(prompt.tags) ? (prompt.tags as string[]) : [],
-      aiModel: (prompt.ai_model as string | undefined) ?? "gemini",
+      aiModel: (prompt.ai_model as string | undefined) ?? null,
       price:
         typeof prompt.price_usd_cents === "number"
           ? prompt.price_usd_cents / 100

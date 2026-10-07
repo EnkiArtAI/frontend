@@ -14,8 +14,6 @@
  *  - gemini / gemini-3-pro-image — imageSize accepts "1K" | "2K" | "4K"
  *    (uppercase K is mandatory, "lowercase parameters will be rejected"). 4K is
  *    not square: 4096x4096 at 1:1, 5504x3072 at 16:9, 6336x2688 at 21:9.
- *  - gemini / gemini-2.5-flash-image — has no imageSize at all and always
- *    returns ~1 MP. Measured 2026-08-06, and the docs agree.
  *  - wavespeed / nano-banana-pro and gpt-image-2 — `resolution` enum
  *    "1k" | "2k" | "4k", default 1k. 8k exists only on the -ultra endpoints,
  *    which nothing here routes to.
@@ -102,13 +100,6 @@ export function tiersUpTo(cap: ResolutionTier): ResolutionTier[] {
  * promising a size the route cannot render.
  */
 export const FREE_TIERS: ResolutionTier[] = tiersUpTo(maxTier("pollinations", "flux"));
-/**
- * Price multiplier per resolution tier, relative to the model's base price.
- * 1K is 1, not 0.5: both hosts charge 1K and 2K identically (Google, 1120
- * tokens either way; WaveSpeed nano-banana-pro, $0.14 either way), and the
- * server prices a 1K request as the 2K tier (lib/pricing.toResolutionTier).
- */
-export const TIER_PRICE_MULT: Record<string, number> = { "1K": 1, "2K": 1, "4K": 2 };
 
 /* PAID_TIERS is gone: the paid checkout accepts 1K/2K/4K (quote and intent
    validate z.enum(["1K","2K","4K"]) since 2026-08-22), so paid pickers offer

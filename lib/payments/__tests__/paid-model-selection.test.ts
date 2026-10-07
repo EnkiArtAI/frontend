@@ -73,9 +73,9 @@ describe("resolveModelByFamily", () => {
 });
 
 describe("the route lets the purchase choose the model", () => {
-  it("reads the intent's family BEFORE resolving the model", () => {
-    const family = ROUTE.indexOf("paidFamily = ");
-    const resolve = ROUTE.indexOf("resolveModelByFamily(");
+  it("reads the intent's settings BEFORE resolving the model, and the model by its row id", () => {
+    const family = ROUTE.indexOf('.select("model_id, model_family, resolution, quality, boost, reference_image_count, prompt_id, artist_amount_micro")');
+    const resolve = ROUTE.indexOf("resolveModel(getSupabaseServerClientSafe(), [paid.model_id])");
     const route = ROUTE.indexOf("const preflightRoute = await chooseRoute(");
     expect(family).toBeGreaterThan(-1);
     // The routing, the reference-image eligibility and the quote all hang off
@@ -88,33 +88,25 @@ describe("the route lets the purchase choose the model", () => {
     expect(ROUTE).toMatch(/which is not available right now/);
   });
 
-  it("still refuses an explicit model that disagrees with the purchase", () => {
-    // Pay for the cheap family, ask for the dear one — the only fraud case
-    // left once the intent selects the model.
-    expect(ROUTE).toMatch(/but the request asks for/);
+  it("refuses a request that repeats a setting differently, before the slot", () => {
+    // Pay for the cheap family or quality, ask for the dear one.
+    const check = ROUTE.indexOf("const mismatch = settingMismatch(");
+    expect(check).toBeGreaterThan(-1);
+    expect(ROUTE.indexOf("const slot = await acquireSlot(")).toBeGreaterThan(check);
+    // The refusal answers the check directly, nothing in between.
+    expect(ROUTE).toMatch(/if \(mismatch\) \{\n\s+return NextResponse\.json\(\n\s+\{ error: `This payment does not cover the requested \$\{mismatch\}/);
   });
 
-  /** The `if (paidFamily) { … }` block, isolated from its else. */
-  function paidBranch(): string {
-    const start = ROUTE.indexOf("if (paidFamily) {");
-    expect(start, "the paid branch moved — this test is reading the wrong block").toBeGreaterThan(-1);
-    const end = ROUTE.indexOf("} else {", start);
-    expect(end, "no else branch found after the paid branch").toBeGreaterThan(start);
-    return ROUTE.slice(start, end);
-  }
-
-  it("the PAID branch assigns the model it resolved from the purchase", () => {
-    // The first draft of this test asserted only that the default resolution
-    // appeared SOMEWHERE in the route, which stayed true when the paid branch
-    // was mutated back to using it — the probe passed and proved nothing.
-    const branch = paidBranch();
-    expect(branch).toMatch(/preflightModel = paidModel/);
-    expect(branch).not.toMatch(/preflightModel = await resolveModel\(/);
+  it("runs the model the purchase names, never the request's own pick", () => {
+    expect(ROUTE).toMatch(/const preflightModel = paidModel;/);
+    expect(ROUTE).not.toMatch(/preflightModel = (await )?resolveModel\(/);
   });
 
-  it("falls back to the request's own selection only when nothing was paid", () => {
-    const start = ROUTE.indexOf("} else {", ROUTE.indexOf("if (paidFamily) {"));
-    const unpaid = ROUTE.slice(start, start + 400);
-    expect(unpaid).toMatch(/preflightModel = await resolveModel\(getSupabaseServerClientSafe\(\), body\.modelIds\)/);
+  it("has no unpaid branch: no intent is refused before any model or slot is touched", () => {
+    // REC-4: every generation on this route holds a payment.
+    const refuse = ROUTE.indexOf("if (!intentId) {");
+    expect(refuse).toBeGreaterThan(-1);
+    expect(ROUTE.indexOf("resolveModel(getSupabaseServerClientSafe(), [paid.model_id])")).toBeGreaterThan(refuse);
+    expect(ROUTE.indexOf("const slot = await acquireSlot(")).toBeGreaterThan(refuse);
   });
 });

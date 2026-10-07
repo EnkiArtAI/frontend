@@ -19,7 +19,6 @@ function CdpLauncher() {
   const { isAuthed } = useEmailAuth();
   return isAuthed ? <CdpRuntime /> : null;
 }
-import { PaymentConfirmModal } from "@/components/PaymentConfirmModal";
 import { Toaster } from "@/components/ui/toaster";
 import BetaGate from "@/components/BetaGate";
 
@@ -62,8 +61,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
               <TooltipProvider>
                 {/* Closed-beta wall around EVERY page (public paths excepted). */}
                 <BetaGate>{children}</BetaGate>
-                {/* Mounted once at app root so any payment hook can request confirmation. */}
-                <PaymentConfirmModal />
                 {/* Without this, every toast() (errors included) went nowhere. */}
                 <Toaster />
                 <CdpLauncher />

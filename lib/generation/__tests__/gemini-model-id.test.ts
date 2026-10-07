@@ -3,7 +3,6 @@ import {
   estimateGeminiCost,
   isGemini3ProImage,
 } from "@/backend/services/gemini-image-generation";
-import { DEFAULT_MODEL } from "@/lib/generation/models";
 
 /*
  * Google shut down gemini-3-pro-image-preview on 2026-06-25 ("The
@@ -24,16 +23,15 @@ import { DEFAULT_MODEL } from "@/lib/generation/models";
  * producing, so both get a test rather than a careful rename.
  */
 
-describe("the Gemini 3 Pro Image family is recognised under either id", () => {
+describe("the Gemini 3 Pro Image model is recognised by its GA id only", () => {
   it("matches the GA id", () => {
     expect(isGemini3ProImage("gemini-3-pro-image")).toBe(true);
   });
 
-  it("still matches the shut-down preview id", () => {
-    // Deliberate. The live rows are renamed by a migration Kev runs by hand,
-    // so for a window the deployed code and the table disagree; matching only
-    // one of them breaks whichever side has not caught up yet.
-    expect(isGemini3ProImage("gemini-3-pro-image-preview")).toBe(true);
+  it("no longer matches the shut-down preview id", () => {
+    // ENG-01: the live model_providers rows carry the GA id (read 2026-10-02),
+    // so the transition window that needed both ids is over.
+    expect(isGemini3ProImage("gemini-3-pro-image-preview")).toBe(false);
   });
 
   it("does not match the flash model, which has different behaviour entirely", () => {
@@ -47,12 +45,8 @@ describe("the Gemini 3 Pro Image family is recognised under either id", () => {
 });
 
 describe("a Pro generation is never costed at zero", () => {
-  it("prices the GA id, not just the retired one", () => {
-    const ga = estimateGeminiCost("gemini-3-pro-image", "2K", 1);
-    const preview = estimateGeminiCost("gemini-3-pro-image-preview", "2K", 1);
-
-    expect(ga).toBeGreaterThan(0);
-    expect(ga).toBe(preview);
+  it("prices the GA id", () => {
+    expect(estimateGeminiCost("gemini-3-pro-image", "2K", 1)).toBeGreaterThan(0);
   });
 
   it("still charges more for 4K than for 1K", () => {
@@ -61,15 +55,5 @@ describe("a Pro generation is never costed at zero", () => {
     expect(estimateGeminiCost("gemini-3-pro-image", "4K", 1)).toBeGreaterThan(
       estimateGeminiCost("gemini-3-pro-image", "1K", 1),
     );
-  });
-});
-
-describe("the code's own fallback model id is one that still exists", () => {
-  it("does not name a model Google has switched off", () => {
-    /* DEFAULT_MODEL is what a request falls back to when the lookup fails, so
-       a dead id here is a dead id on exactly the paths that were already
-       having a bad day. */
-    expect(DEFAULT_MODEL.boost.providerModel).toBe("gemini-3-pro-image");
-    expect(DEFAULT_MODEL.boost.providerModel).not.toMatch(/-preview$/);
   });
 });

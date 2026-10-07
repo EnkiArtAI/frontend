@@ -1,12 +1,11 @@
 /**
  * Google Gemini (Nano Banana) Image Generation Service
  *
- * Integrates with Gemini 2.5 Flash Image and Gemini 3 Pro Image models
- * for high-quality image generation with best-in-class text rendering.
+ * Integrates with Gemini 3 Pro Image (Nano Banana Pro) for high-quality
+ * image generation with best-in-class text rendering.
  *
  * Models:
- * - gemini-2.5-flash-image: Fast, efficient ($0.039/image)
- * - gemini-3-pro-image-preview: High-fidelity with "Thinking" mode ($0.134/image)
+ * - gemini-3-pro-image: High-fidelity with "Thinking" mode ($0.134/image at 1K and 2K)
  *
  * Rate Limits (Free Tier):
  * - 2 images per minute
@@ -19,6 +18,7 @@
 
 import { GoogleGenAI, Modality } from '@google/genai';
 import type { ImageGenerationRequest, ImageGenerationResult } from './types';
+import { missingModel } from './model-required';
 
 // Initialize Gemini AI client
 let ai: GoogleGenAI | null = null;
@@ -64,6 +64,8 @@ export async function generateImagesWithGemini(
   request: ImageGenerationRequest
 ): Promise<ImageGenerationResult> {
   const startTime = Date.now();
+  const model = request.modelVersion;
+  if (!model) return missingModel(startTime);
 
   try {
     // 1. Validate request
@@ -78,9 +80,6 @@ export async function generateImagesWithGemini(
 
     // 2. Get Gemini client
     const client = getGeminiClient();
-
-    // 3. Determine model to use
-    const model = request.modelVersion || 'gemini-2.5-flash-image';
 
     // 4. Build generation config
     const config: any = {
@@ -101,7 +100,9 @@ export async function generateImagesWithGemini(
     }
 
     console.log(`[Gemini] Generating image with model: ${model}`);
-    console.log(`[Gemini] Prompt: ${request.prompt.substring(0, 100)}...`);
+    // Length only: a paid marketplace prompt reaches here as the artist's own text,
+    // and these logs are shared output.
+    console.log(`[Gemini] Prompt: ${request.prompt.length} chars`);
 
     // 5. Build the parts: the text prompt, then any reference images as
     // inlineData. `data` must be BARE base64 — leaving the "data:...;base64,"
@@ -414,21 +415,18 @@ export function parseImageInput(input: string): { mimeType: string; data: string
  * fixed offset; JPEG needs a walk to the first Start-Of-Frame marker.
  */
 /**
- * Is this the Gemini 3 Pro Image family, under either of its ids?
+ * Is this the Gemini 3 Pro Image model?
  *
  * Two behaviours branch on it and BOTH fail silently on a miss: the request
  * only carries imageSize for this family (a miss means the buyer pays for 4K
  * and receives 1024², with nothing reporting it), and the cost estimate only
  * has a rate for this family (a miss books the generation at $0).
  *
- * Both ids are matched on purpose. Google shut down gemini-3-pro-image-preview
- * on 2026-06-25 and the GA id is gemini-3-pro-image, but the live rows are
- * renamed by a migration Kev runs by hand — so for a window the code and the
- * table disagree, and an exact match on either one alone breaks the other
- * side of that window.
+ * Only the GA id. Google shut the preview id down on 2026-06-25, and the live
+ * model_providers rows carry gemini-3-pro-image (read 2026-10-02).
  */
 export function isGemini3ProImage(model: string | null | undefined): boolean {
-  return model === 'gemini-3-pro-image' || model === 'gemini-3-pro-image-preview';
+  return model === 'gemini-3-pro-image';
 }
 
 export function readImageDimensions(
@@ -470,7 +468,7 @@ function validateRequest(request: ImageGenerationRequest): { valid: boolean; err
   }
 
   // Kept in step with ImageGenerationRequest['aspectRatio'] in ./types.ts.
-  // Verified by real calls against gemini-2.5-flash-image (2026-08-06): all ten
+  // Verified by real Gemini calls (2026-08-06): all ten
   // are accepted. The previous five-entry list rejected 4:5, which the live
   // models table offers users — a 400 we inflicted on ourselves after payment.
   const validAspectRatios = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
@@ -500,26 +498,6 @@ function validateRequest(request: ImageGenerationRequest): { valid: boolean; err
 }
 
 /**
- * Checks if a prompt requires text rendering (better with Gemini)
- *
- * Use this to decide when to use Gemini vs cheaper alternatives like FAL.ai
- *
- * @param prompt - The prompt text
- * @returns true if prompt likely requires text rendering
- */
-export function detectTextRequirement(prompt: string): boolean {
-  const textKeywords = [
-    'text', 'sign', 'label', 'typography', 'words',
-    'letters', 'title', 'caption', 'writing', 'quote',
-    'message', 'banner', 'poster', 'billboard', 'book',
-    'newspaper', 'magazine', 'graffiti', 'tattoo'
-  ];
-
-  const lowerPrompt = prompt.toLowerCase();
-  return textKeywords.some(keyword => lowerPrompt.includes(keyword));
-}
-
-/**
  * Estimates the cost of a Gemini image generation
  *
  * @param model - The model to use
@@ -528,16 +506,13 @@ export function detectTextRequirement(prompt: string): boolean {
  * @returns Estimated cost in USD
  */
 export function estimateGeminiCost(
-  model: string = 'gemini-2.5-flash-image',
+  model: string,
   imageSize: string = '1K',
   numImages: number = 1
 ): number {
   let costPerImage = 0;
 
-  if (model === 'gemini-2.5-flash-image') {
-    // 1290 tokens per image at $30/1M tokens
-    costPerImage = (1290 / 1_000_000) * 30; // $0.0387
-  } else if (isGemini3ProImage(model)) {
+  if (isGemini3ProImage(model)) {
     // Vertex AI pricing
     const tokenCounts: Record<string, number> = {
       '1K': 1120,
@@ -551,30 +526,8 @@ export function estimateGeminiCost(
   return costPerImage * numImages;
 }
 
-/**
- * Gets recommended model based on prompt and budget
- *
- * @param prompt - The prompt text
- * @param premium - Whether this is a premium/paid prompt
- * @returns Recommended model name
- */
-export function getRecommendedModel(prompt: string, premium: boolean = false): string {
-  const needsText = detectTextRequirement(prompt);
-
-  // If prompt needs text rendering or is premium, use better model
-  if (needsText || premium) {
-    return 'gemini-2.5-flash-image';
-  }
-
-  // For standard prompts, recommend using FAL.ai instead (cheaper)
-  // But if forced to use Gemini, use the flash model
-  return 'gemini-2.5-flash-image';
-}
-
 // Export for testing
 export const __testing__ = {
   validateRequest,
-  detectTextRequirement,
-  estimateGeminiCost,
-  getRecommendedModel
+  estimateGeminiCost
 };
