@@ -54,6 +54,7 @@ beforeEach(() => {
   derivatives = null;
   vi.stubEnv("BLOB_READ_WRITE_TOKEN", "test-token");
   vi.stubEnv("VERCEL_BLOB_API_URL", "http://127.0.0.1:9");
+  vi.stubEnv("SUPABASE_URL", "https://proj.supabase.co"); // the project SUPA's bucket belongs to
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
 });
 afterEach(() => {

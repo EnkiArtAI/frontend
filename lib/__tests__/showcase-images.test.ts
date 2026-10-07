@@ -6,7 +6,8 @@ import { readSource } from "@/lib/__tests__/_read-source";
  * SHR-4. A prompt's showcase images are the share card's pictures, and the
  * card fetches them server side. Only URLs in our stores are kept; a data
  * URL is stored first (the editor sends one for free renders); anything
- * else a creator could type is dropped.
+ * else a creator could type is dropped, other customers' stores on the same
+ * domains included. An edit keeps what the prompt already holds.
  */
 
 const put = vi.fn<(name: string, buf: Buffer) => Promise<{ url: string }>>();
@@ -30,7 +31,8 @@ const PNG = `data:image/png;base64,${Buffer.from([137, 80, 78, 71]).toString("ba
 beforeEach(() => {
   put.mockReset();
   put.mockImplementation(async (name) => ({ url: `https://abc.public.blob.vercel-storage.com/${name}` }));
-  vi.stubEnv("BLOB_READ_WRITE_TOKEN", "test-token");
+  vi.stubEnv("BLOB_READ_WRITE_TOKEN", "vercel_blob_rw_ABC_secret"); // store abc, as @vercel/blob reads it
+  vi.stubEnv("SUPABASE_URL", "https://proj.supabase.co");
   vi.stubEnv("VERCEL_BLOB_API_URL", "http://127.0.0.1:9");
 });
 
@@ -52,12 +54,20 @@ describe("a prompt's showcase images", () => {
       "https://tracker.example/pixel.png",
       "http://169.254.169.254/latest/meta-data",
       "https://proj.supabase.co/storage/v1/object/public/avatars/x.png",
+      "https://xyz.public.blob.vercel-storage.com/generations/u/1.png",
+      "https://other.supabase.co/storage/v1/object/public/generations/u/2.png",
+      "http://abc.public.blob.vercel-storage.com/generations/u/1.png",
       "data:text/html;base64,PHNjcmlwdD4=",
       "data:image/svg+xml;base64,PHN2Zz48c2NyaXB0Lz48L3N2Zz4=",
       "javascript:alert(1)",
     ];
     expect(await ownShowcaseImages([...typed, OURS], USER)).toEqual([OURS]);
     expect(put).not.toHaveBeenCalled();
+  });
+
+  it("keeps on an edit what the prompt already holds, whatever its host", async () => {
+    const legacy = "https://cdn.provider.example/render.png";
+    expect(await ownShowcaseImages([legacy, "https://tracker.example/p.png"], USER, [legacy])).toEqual([legacy]);
   });
 
   it("keeps four at most", async () => {
@@ -74,7 +84,8 @@ describe("the prompt save", () => {
   const SAVE = readSource(join(__dirname, "..", "..", "app", "api", "prompt", "route.ts"));
 
   it("stores the showcase only after the checks, refuses when it cannot, and saves our URLs", () => {
-    const stored = SAVE.indexOf("const showcase = await ownShowcaseImages(uploadedPhotos, creatorId ?? ownerIds[0]);");
+    const stored = SAVE.indexOf("const showcase = await ownShowcaseImages(uploadedPhotos, creatorId ?? ownerIds[0], savedShowcase);");
+    expect(SAVE).toMatch(/\.select\("id, description, showcase_images"\)\.eq\("id", body\.id\)\.in\("creator_id", owners\)/);
     expect(stored).toBeGreaterThan(SAVE.indexOf("if (!verdict.allowed)"));
     expect(stored).toBeLessThan(SAVE.indexOf("const promptRow = {"));
     expect(SAVE).toMatch(/if \(!showcase\) \{\n\s+return NextResponse\.json\(\{ error: "Your showcase images could not be stored right now\. Nothing was saved\." \}, \{ status: 503 \}\);/);
