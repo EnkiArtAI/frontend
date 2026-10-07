@@ -45,14 +45,21 @@ export async function POST(req: NextRequest) {
 
   // Email lives in password_credentials (isolated from the encrypted-email
   // design); handle (optional public username) on users.
-  const { data: cred } = await supabase
+  const { data: cred, error: credErr } = await supabase
     .from("password_credentials")
-    .select("email")
+    .select("email, email_verified_at")
     .eq("user_id", userId)
     .maybeSingle();
+  if (credErr) return NextResponse.json({ error: "Could not read the account" }, { status: 503 });
   if (!cred?.email) return NextResponse.json({ error: "Account has no email" }, { status: 400 });
   const { data: user } = await supabase.from("users").select("handle").eq("id", userId).maybeSingle();
 
-  const jwt = await mintWalletJwt({ id: userId, email: cred.email, username: user?.handle ?? null });
+  // Verified only once the signup code was confirmed (verify-email).
+  const jwt = await mintWalletJwt({
+    id: userId,
+    email: cred.email,
+    emailVerified: Boolean(cred.email_verified_at),
+    username: user?.handle ?? null,
+  });
   return NextResponse.json({ jwt, userId });
 }

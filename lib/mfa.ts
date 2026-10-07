@@ -128,6 +128,12 @@ export async function beginEmail(supabase: SupabaseClient, userId: string, addre
   return row === "exists" ? "exists" : sendEmailCode(supabase, userId);
 }
 
+/** The address of the user's email factor, pending or confirmed; null without one. */
+export async function emailFactorAddress(supabase: SupabaseClient, userId: string): Promise<string | null> {
+  const row = await factorRow(supabase, userId, "email");
+  return row ? opened(userId, row) : null;
+}
+
 /** A fresh code to the user's email factor, pending or confirmed. A new code replaces the last. */
 export async function sendEmailCode(supabase: SupabaseClient, userId: string): Promise<SendResult> {
   const row = await factorRow(supabase, userId, "email");
@@ -158,7 +164,7 @@ export async function sendEmailCode(supabase: SupabaseClient, userId: string): P
   const mail = await sendMail({
     to: opened(userId, row),
     subject: "Your Enki verification code",
-    text: `Your Enki verification code is ${code}. It is valid for 10 minutes.\n\nIf you did not ask for it, someone is using your session: sign out on every device and change your password.`,
+    text: `Your Enki verification code is ${code}. It is valid for 10 minutes.\n\nIf you did not ask for it, someone typed your address or is using your session: if you have an Enki account, sign out on every device and change your password.`,
   });
   return mail.ok ? "sent" : "send_failed";
 }
