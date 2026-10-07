@@ -64,9 +64,8 @@ export async function inviteEmail(supabase: Supabase, raw: string): Promise<Emai
   const email = raw.trim().toLowerCase();
   if (!EMAIL.safeParse(email).success) throw new AccessError("Enter a valid email address");
   await allow(supabase, "email", email, "invited");
-  // A direct invite settles this email's open request too: approving it
-  // later would mail a second password and void the first.
-  await supabase.from("access_requests").update({ status: "approved", updated_at: new Date().toISOString() }).eq("email", email).eq("status", "pending");
+  // The access list keeps whether the password reached them, for a resend.
+  const note = (text: string) => supabase.from("access_allowlist").update({ note: text }).eq("kind", "email").eq("value", email);
 
   const { data: cred, error } = await supabase
     .from("password_credentials")
@@ -90,7 +89,10 @@ export async function inviteEmail(supabase: Supabase, raw: string): Promise<Emai
       .eq("must_change_password", true)
       .select("user_id");
     if (updErr) throw new AccessError("Could not renew the one-time password", 503);
-    if (!renewed?.length) return { outcome: "has-password", mailed: false };
+    if (!renewed?.length) {
+      await note("invited");
+      return { outcome: "has-password", mailed: false };
+    }
     outcome = "reinvited";
   } else {
     const { data: user, error: userErr } = await supabase
@@ -105,13 +107,15 @@ export async function inviteEmail(supabase: Supabase, raw: string): Promise<Emai
     if (credErr) {
       await supabase.from("users").delete().eq("id", user.id);
       throw credErr.code === "23505"
-        ? new AccessError("Another invite for this email is running. Try again.", 409)
+        ? new AccessError("This email was just invited by another action.", 409)
         : new AccessError("Could not create the account", 503);
     }
   }
+  // Once the account exists, this email's open request is settled too:
+  // approving it later would mail a second password and void the first.
+  await supabase.from("access_requests").update({ status: "approved", updated_at: new Date().toISOString() }).eq("email", email).eq("status", "pending");
   const mailed = (await sendMail(inviteMail(email, password)).catch(() => ({ ok: false }))).ok;
-  // The access list keeps whether the password reached them, for a resend.
-  await supabase.from("access_allowlist").update({ note: mailed ? "invited" : "invited, mail not sent" }).eq("kind", "email").eq("value", email);
+  await note(mailed ? "invited" : "invited, mail not sent");
   return { outcome, mailed };
 }
 
@@ -127,7 +131,8 @@ export async function inviteWallet(supabase: Supabase, raw: string): Promise<{ l
 
 /** Approves a pending access request: claimed first, so a double click or a
     second admin mails nothing twice; its email is then invited. A failed
-    invite puts the request back. */
+    invite puts the request back, unless another invite for the email just
+    created the account (409): then it is settled. */
 export async function approveRequest(supabase: Supabase, id: string): Promise<EmailInvite> {
   const { data: claimed, error } = await supabase
     .from("access_requests")
@@ -140,7 +145,9 @@ export async function approveRequest(supabase: Supabase, id: string): Promise<Em
   try {
     return await inviteEmail(supabase, String(claimed[0].email));
   } catch (e) {
-    await supabase.from("access_requests").update({ status: "pending" }).eq("id", id);
+    if (e instanceof AccessError && e.status === 409) throw e;
+    const { error: reopenErr } = await supabase.from("access_requests").update({ status: "pending" }).eq("id", id).eq("status", "approved");
+    if (reopenErr) throw new AccessError(`${e instanceof Error ? e.message : "The invite failed"}; the request could not be reopened`, 503);
     throw e;
   }
 }
