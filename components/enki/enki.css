@@ -2374,3 +2374,83 @@
 
 /* The bar grew a second row — the wall starts below it. */
 .enki-masonry { padding-top: 44px; }
+
+/* ── Shell search (2026-09-24): the typeahead under the field and the
+   creators row above the wall. Same tokens as the bar, nothing new. ── */
+.enki-catbar-search { position: relative; }
+.enki-search-suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--enki-paper);
+  border: 1px solid var(--enki-rule);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.14);
+  z-index: 2;
+}
+.enki-search-suggest-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: 13px;
+  color: var(--enki-ink);
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.enki-search-suggest-item.active { background: var(--enki-paper-2); color: var(--enki-ember); }
+.enki-search-suggest-label { overflow: hidden; text-overflow: ellipsis; }
+.enki-search-suggest-item small { color: var(--enki-ink-3); font-size: 11px; }
+.enki-search-suggest-kind {
+  flex: 0 0 auto;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--enki-ink-3);
+}
+
+.enki-search-creators {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 52px 4px 4px;
+}
+.enki-search-creators + .enki-masonry { padding-top: 8px; }
+.enki-search-creator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 6px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 999px;
+  background: var(--enki-paper-2);
+  color: var(--enki-ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.enki-search-creator:hover { border-color: var(--enki-ember); color: var(--enki-ember); }
+.enki-search-creator img,
+.enki-search-creator-initial {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+.enki-search-creator-initial {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--enki-paper-3);
+  color: var(--enki-ink-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+.enki-search-creator small { color: var(--enki-ink-3); font-size: 11px; }

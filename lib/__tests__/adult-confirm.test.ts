@@ -110,7 +110,7 @@ describe("the screens", () => {
   it("the feed offers the pill only to a confirmed adult and asks for exactly what it shows", () => {
     expect(FEED).toMatch(/onShowAdult=\{adultConfirmed \? setAdultPill : undefined\}/);
     expect(FEED).toMatch(/const showAdult = adultConfirmed && adultPill;/);
-    expect(FEED).toMatch(/genFilter\.join\(","\), showAdult \? "18\+" : "safe"\]/);
+    expect(FEED).toMatch(/genFilter\.join\(","\), showAdult \? "18\+" : "safe", query\]/);
     expect(FEED).toMatch(/\{ headers: sessionHeadersWith\(showAdult\), credentials: "include" \}/);
   });
 

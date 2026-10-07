@@ -61,9 +61,10 @@ beforeEach(() => {
 });
 
 describe("editing a prompt", () => {
-  it("judges the edited title, description and tags", async () => {
+  it("judges the edited title and description, and neither judges nor writes tags a client sends", async () => {
     await edit("p1", { title: "New", description: "A scene", tags: ["a", "b"], category: "Poster" });
-    expect(check).toHaveBeenCalledWith({ title: "New", description: "A scene", tags: "a, b" });
+    expect(check).toHaveBeenCalledWith({ title: "New", description: "A scene" });
+    expect(prompts[0].tags).toBeUndefined();
   });
 
   it("refuses an explicit edit with a warning and changes nothing", async () => {

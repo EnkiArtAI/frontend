@@ -13,7 +13,6 @@ type PatchBody = {
   title?: string;
   description?: string;
   category?: string;
-  tags?: string[];
   aiSettings?: { aspectRatio?: string; includeText?: boolean };
   published?: boolean;
 };
@@ -156,7 +155,9 @@ export async function GET(
         _id: id,
         title: prompt.title,
         category: prompt.category,
-        tags: Array.isArray(prompt.tags) ? prompt.tags : [],
+        // Search tags are public once the prompt is listed; a draft's stay
+        // with its creator.
+        tags: Array.isArray(prompt.tags) && (isListed(prompt) || (await owns(prompt.creator_id))) ? prompt.tags : [],
         ai_model: prompt.ai_model,
         ai_settings: prompt.ai_settings,
         // The buyer surface prints this directly (boostedCost(price).toFixed(2)),
@@ -234,10 +235,12 @@ export async function PATCH(
       updated_at: new Date().toISOString(),
     };
 
+    // A title changed here keeps the tags computed from the old one until the
+    // next save through POST /api/prompt, the only route that recomputes them.
+    // No client edits a title through this route today.
     if (typeof body.title === "string") update.title = body.title;
     if (typeof body.description === "string") update.description = body.description;
     if (typeof body.category === "string") update.category = body.category;
-    if (Array.isArray(body.tags)) update.tags = body.tags;
 
     if (body.aiSettings) {
       update.ai_settings = {
@@ -256,12 +259,12 @@ export async function PATCH(
     // missing prompt and someone else's prompt (no ownership oracle).
 
     // Edited text is judged like a save (Kev, 2026-10-03): a prompt saved
-    // clean must not turn explicit or 18+ through its title, description or
-    // tags afterwards. Only the owner's edit is judged, so nobody else's
+    // clean must not turn explicit or 18+ through its title or description
+    // afterwards. Tags are ours, never edited here (Kev, 2026-10-07). Only the owner's edit is judged, so nobody else's
     // request costs a check or earns a warning. The rest of the prompt was
     // judged at save, so an 18+ mark is only ever raised here.
     const edited = Object.fromEntries(
-      Object.entries({ title: body.title, description: body.description, tags: Array.isArray(body.tags) ? body.tags.join(", ") : undefined })
+      Object.entries({ title: body.title, description: body.description })
         .filter((e): e is [string, string] => typeof e[1] === "string" && e[1].trim() !== ""),
     );
     if (Object.keys(edited).length > 0) {
