@@ -1136,7 +1136,7 @@ input[type="range"].pgv-range::-webkit-slider-thumb {
     display: flex !important;
     flex-direction: column !important;
     height: 100% !important;
-    height: 100dvh !important;
+    height: calc(100dvh - var(--ek-banner-h, 0px)) !important;
     overflow-y: auto !important;
     overflow-x: hidden !important;
     -webkit-overflow-scrolling: touch !important;

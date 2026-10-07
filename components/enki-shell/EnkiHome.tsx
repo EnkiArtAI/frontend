@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
@@ -222,7 +222,8 @@ export default function EnkiHome() {
   const showRecoveryBanner = authed && recovery !== null && recovery.confirmed === 0 && !bannerDismissed && !needs2fa;
   // The shell moves its own layers under that slot (.ek-with-banner); a page
   // outside it starts below the 2FA bar instead (globals.css, html.ek-in-shell).
-  useEffect(() => {
+  // Before paint, so a move between the shell and a page never jumps.
+  useLayoutEffect(() => {
     document.documentElement.classList.add("ek-in-shell");
     return () => document.documentElement.classList.remove("ek-in-shell");
   }, []);

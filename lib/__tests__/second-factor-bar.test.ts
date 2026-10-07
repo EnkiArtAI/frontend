@@ -63,25 +63,42 @@ describe("the 2FA state behind the bar", () => {
 });
 
 describe("the page under the bar", () => {
-  it("starts below it outside the shell; the shell moves its own layers", () => {
+  it("starts below it outside the shell, before paint; the shell moves its own layers", () => {
+    expect(BAR).toMatch(/useLayoutEffect\(\(\) => \{\s*if \(!show\) return;/);
     expect(BAR).toMatch(/root\.classList\.add\("ek-2fa-bar"\)/);
     expect(BAR).toMatch(/root\.classList\.remove\("ek-2fa-bar"\)/);
-    expect(css("app", "globals.css")).toMatch(/\nhtml\.ek-2fa-bar:not\(\.ek-in-shell\) body \{ padding-top: var\(--ek-banner-h\); \}/);
+    const globals = css("app", "globals.css");
+    expect(globals).toMatch(/\nhtml\.ek-2fa-bar:not\(\.ek-in-shell\) \{ --ek-page-top: var\(--ek-banner-h\); \}/);
+    expect(globals).toMatch(/\nhtml\.ek-2fa-bar:not\(\.ek-in-shell\) body \{ padding-top: var\(--ek-page-top\); \}/);
     const shell = readSource(join(ROOT, "components", "enki-shell", "EnkiHome.tsx"));
-    expect(shell).toMatch(/useEffect\(\(\) => \{\s*document\.documentElement\.classList\.add\("ek-in-shell"\);\s*return \(\) => document\.documentElement\.classList\.remove\("ek-in-shell"\);\s*\}, \[\]\);/);
+    expect(shell).toMatch(/useLayoutEffect\(\(\) => \{\s*document\.documentElement\.classList\.add\("ek-in-shell"\);\s*return \(\) => document\.documentElement\.classList\.remove\("ek-in-shell"\);\s*\}, \[\]\);/);
     // Turbopack's dev build drops :has() from a selector: the rule must not need it.
-    expect(css("app", "globals.css")).not.toMatch(/ek-2fa-bar[^{]*:has\(/);
+    expect(globals).not.toMatch(/ek-2fa-bar[^{]*:has\(/);
     // .ek-app pages outside the shell (admin) must inherit the bar's height.
     expect(css("components", "enki-shell", "enki-shell.css")).not.toMatch(/\.ek-app \{ --ek-banner-h: 0px; \}/);
   });
 
-  it("keeps full-height pages and fixed layers out from under it", () => {
+  it("keeps full-height pages, fixed layers and sticky headers out from under it", () => {
     const pgv = css("components", "prompt-generator.css");
     expect(pgv).toMatch(/\.pgv-page \{\s*display: flex;\s*height: calc\(100vh - var\(--ek-banner-h, 0px\)\);/);
+    // Every viewport height the generator page takes subtracts the bar, the phone override included.
+    const pageHeights = [...pgv.matchAll(/\.pgv-page \{([^}]*)\}/g)].flatMap((m) => [...m[1].matchAll(/height: ([^;]*);/g)].map((h) => h[1]));
+    const viewport = pageHeights.filter((h) => /\d+d?vh/.test(h));
+    expect(viewport.length).toBeGreaterThanOrEqual(2);
+    for (const h of viewport) expect(h).toMatch(/^calc\(100d?vh - var\(--ek-banner-h, 0px\)\)( !important)?$/);
     const history = [...pgv.matchAll(/\.pgv-history(-handle)? \{([^}]*)\}/g)].filter((m) => /\btop:/.test(m[2]));
     expect(history).toHaveLength(4);
     for (const m of history) expect(m[2]).toMatch(/top: (calc\(12px \+ )?var\(--ek-banner-h, 0px\)/);
     expect(readSource(join(ROOT, "app", "editor", "page.tsx"))).toMatch(/position: "fixed", inset: "var\(--ek-banner-h, 0px\) 0 0 0"/);
-    expect(readSource(join(ROOT, "app", "admin", "page.tsx"))).not.toMatch(/height: "100vh"/);
+    // Admin: .ek-app's min-height: 100vh would beat the subtracted height.
+    const admin = readSource(join(ROOT, "app", "admin", "page.tsx"));
+    const roots = [...admin.matchAll(/className="ek-app" style=\{\{([^}]*)\}\}/g)].map((m) => m[1]);
+    expect(roots).toHaveLength(3);
+    for (const r of roots) expect(r).toMatch(/height: "calc\(100vh - var\(--ek-banner-h, 0px\)\)", minHeight: 0/);
+    // The profile's sticky headers stop below the bar on its own page, at 0 inside the shell.
+    const profile = readSource(join(ROOT, "components", "profile", "ProfileView.tsx"));
+    expect(profile).toMatch(/position: "sticky", top: "var\(--ek-page-top, 0px\)"/);
+    expect(profile).toMatch(/top: "calc\(52px \+ var\(--ek-page-top, 0px\)\)"/);
+    expect(profile).not.toMatch(/position: "sticky", top: 0\b|top: 52\b/);
   });
 });

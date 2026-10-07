@@ -306,7 +306,7 @@ export default function AdminPage() {
   /* ── gate states ── */
   if (access === "checking" || (access === "ok" && isAdmin && !data && !loadFailed)) {
     return (
-      <div className="ek-app" style={{ height: "calc(100vh - var(--ek-banner-h, 0px))", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, background: "var(--enki-paper)", color: "var(--enki-ink)" }}>
+      <div className="ek-app" style={{ height: "calc(100vh - var(--ek-banner-h, 0px))", minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, background: "var(--enki-paper)", color: "var(--enki-ink)" }}>
         <span style={{ color: "var(--enki-ember)", animation: "adm-pulse 1.1s infinite" }}>
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /></svg>
         </span>
@@ -317,7 +317,7 @@ export default function AdminPage() {
   }
   if (!isAdmin) {
     return (
-      <div className="ek-app" style={{ height: "calc(100vh - var(--ek-banner-h, 0px))", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, background: "var(--enki-paper)" }}>
+      <div className="ek-app" style={{ height: "calc(100vh - var(--ek-banner-h, 0px))", minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, background: "var(--enki-paper)" }}>
         <div style={{ maxWidth: 380, textAlign: "center", border: "1px solid var(--enki-rule-2, var(--enki-rule))", borderRadius: 16, background: "var(--enki-paper)", padding: "34px 30px" }}>
           <span style={{ color: "var(--enki-danger)", display: "inline-block", marginBottom: 10 }}>
             <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /><path d="m14.5 9.5-5 5" /><path d="m9.5 9.5 5 5" /></svg>
@@ -361,7 +361,7 @@ export default function AdminPage() {
   const initials = ((profile?.handle || handle || "?") as string).slice(0, 2).toUpperCase();
 
   return (
-    <div className="ek-app" style={{ display: "flex", height: "calc(100vh - var(--ek-banner-h, 0px))", overflow: "hidden", background: "var(--enki-paper-2)", color: "var(--enki-ink)", animation: "adm-fade .25s ease" }}>
+    <div className="ek-app" style={{ display: "flex", height: "calc(100vh - var(--ek-banner-h, 0px))", minHeight: 0, overflow: "hidden", background: "var(--enki-paper-2)", color: "var(--enki-ink)", animation: "adm-fade .25s ease" }}>
       <style>{`
         @keyframes adm-fade{from{opacity:0}to{opacity:1}}
         @keyframes adm-pop{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:scale(1)}}

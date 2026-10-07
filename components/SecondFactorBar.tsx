@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useLayoutEffect } from "react";
 import { usePathname } from "next/navigation";
 import { PUBLIC_PATHS } from "@/components/BetaGate";
 import { useNeeds2fa } from "@/hooks/useSecondFactor";
@@ -19,7 +19,8 @@ export default function SecondFactorBar() {
   const show = needs2fa && !PUBLIC_PATHS.has(pathname) && !pathname.startsWith("/banned")
     && typeof window !== "undefined" && window.top === window.self;
 
-  useEffect(() => {
+  // Before paint: the page moves with the bar, never a frame later.
+  useLayoutEffect(() => {
     if (!show) return;
     const root = document.documentElement;
     root.style.setProperty("--ek-banner-h", "30px");

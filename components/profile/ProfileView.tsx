@@ -705,7 +705,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
     <div className="enki" style={{ paddingTop: 0 }}>
       {/* ─── Slim top bar: back arrow, name, prompt count ─── */}
       <div style={{
-        position: "sticky", top: 0, zIndex: 60,
+        position: "sticky", top: "var(--ek-page-top, 0px)", zIndex: 60, // below the 2FA bar outside the shell
         display: "flex", alignItems: "center", gap: 14,
         height: 52, padding: "0 12px",
         background: "color-mix(in oklab, var(--enki-paper) 84%, transparent)",
@@ -832,7 +832,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
         borderBottom: "1px solid var(--enki-rule)",
         background: "var(--enki-paper)",
         position: "sticky",
-        top: 52, // below the slim top bar
+        top: "calc(52px + var(--ek-page-top, 0px))", // below the slim top bar
         zIndex: 40
       }}>
         <div style={{
