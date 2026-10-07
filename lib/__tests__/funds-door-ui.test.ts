@@ -19,7 +19,7 @@ const RECOVERY = readSource(join(ROOT, "components", "settings", "RecoveryPanel.
 describe("the key export", () => {
   it("asks for a second factor before it asks the wallet for the key, and no password login", () => {
     for (const src of [EXPORT, RECOVERY]) {
-      const check = src.search(/if \(!\(await tokenFor\("export"\)\)\) return;/);
+      const check = src.search(/if \(!\(await confirm\("export"\)\)\) return;/);
       const exported = src.search(/await requestCdpKeyExport\(\)/);
       expect(check).toBeGreaterThan(-1);
       expect(exported).toBeGreaterThan(check);

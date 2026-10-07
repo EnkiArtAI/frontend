@@ -154,6 +154,19 @@ export function StepUpProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * Whether an action the server cannot see (a key export through CDP) may go
+ * ahead: once the user confirmed it with a factor, or at once when they have
+ * none, since 2FA is optional (Kev, 2026-10-07). False when they cancelled;
+ * throws when the factors cannot be read, which must never read as "none".
+ */
+export async function confirmAction(scope: string, ask: Ask): Promise<boolean> {
+  const res = await fetch("/api/auth/stepup", { headers: sessionAuthHeaders() });
+  if (!res.ok) throw new Error("Could not check your security settings. Try again.");
+  const factors = ((await res.json()) as { factors?: Factor[] }).factors ?? [];
+  return factors.length === 0 || Boolean(await ask(scope, factors));
+}
+
 /** Runs a request; when the server asks for a step-up, asks the user and runs it again with the token. */
 export async function withStepUp(
   scope: string,
@@ -186,5 +199,7 @@ export function useStepUp() {
     [ask],
   );
 
-  return { guarded, tokenFor };
+  const confirm = useCallback((scope: string) => confirmAction(scope, ask), [ask]);
+
+  return { guarded, tokenFor, confirm };
 }

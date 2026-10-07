@@ -169,12 +169,6 @@ function sendRefusal(row: Row, now: number): "cooldown" | "daily_cap" | null {
   return (row.sends_day === today ? row.sends_count : 0) >= SENDS_PER_DAY ? "daily_cap" : null;
 }
 
-/** The address of the user's confirmed email factor; null without one. */
-export async function confirmedEmail(supabase: SupabaseClient, userId: string): Promise<string | null> {
-  const row = await factorRow(supabase, userId, "email");
-  return row?.confirmed_at ? opened(userId, row) : null;
-}
-
 /**
  * A fresh code to the user's email factor, pending or confirmed. A new code
  * replaces the last. `begun` is the row a restart just wrote: the send is then

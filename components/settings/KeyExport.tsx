@@ -1,7 +1,8 @@
 "use client";
 
 /* Self-custody key export for embedded (email) wallets: the user confirms with
-   a second factor (step-up "export", which also mails them a notice), the key
+   their second factor if they set one up (step-up "export", which also mails
+   them a notice), the key
    is shown once, and the dialog says what to do with it. Settings and /banned
    share it: a ban locks the marketplace, never the wallet. Wallet logins
    (Phantom & co) hold their keys themselves already. */
@@ -12,7 +13,7 @@ import { requestCdpKeyExport } from "@/lib/cdp-bridge";
 import { useStepUp } from "@/components/StepUpProvider";
 
 export default function KeyExport({ ready }: { ready: boolean }) {
-  const { tokenFor } = useStepUp();
+  const { confirm } = useStepUp();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -27,10 +28,10 @@ export default function KeyExport({ ready }: { ready: boolean }) {
     setBusy(true);
     setErr(null);
     try {
-      // A second factor first: nobody walks up to an open laptop and walks
-      // away with the key. Asked before the overlay opens, which would cover
-      // the step-up dialog.
-      if (!(await tokenFor("export"))) return;
+      // The second factor first, when there is one: nobody walks up to an open
+      // laptop and walks away with the key. Asked before the overlay opens,
+      // which would cover the step-up dialog.
+      if (!(await confirm("export"))) return;
       setOpen(true);
       setKey(await requestCdpKeyExport());
     } catch (e) {

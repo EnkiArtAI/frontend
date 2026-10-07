@@ -60,7 +60,7 @@ beforeEach(() => {
   db.current = fakePostgrest();
   const t = db.current.tables;
   t.users = [{ id: U, handle: "kev" }];
-  t.password_credentials = [{ user_id: U, email: "me@example.com", email_verified_at: "2026-10-01T00:00:00.000Z" }];
+  t.password_credentials = [{ user_id: U, email: "me@example.com" }];
   t.auth_sessions = [
     { token: "sess", wallet_address: U, expires_at: "2026-10-08T12:00:00.000Z" },
     { token: "other", wallet_address: U, expires_at: "2026-10-08T12:00:00.000Z" },
@@ -186,32 +186,14 @@ describe("a step-up", () => {
     expect(res.status).toBe(200);
     expect(session("sess").stepup_at).toBe("2026-10-07T12:00:00.000Z");
   });
-  it("mails the export notice to the confirmed email factor when the login email is unproven", async () => {
-    const secret = await totpFactor();
-    db.current!.tables.password_credentials[0].email_verified_at = null;
-    await beginEmail(db.current!.client, U, "factor@example.com");
-    const code = (mails[mails.length - 1] as unknown as { text: string }).text.match(/\b(\d{6})\b/)![1];
-    expect(await checkCode(db.current!.client, U, "email", code, { confirm: true })).toBe("ok");
-    mails.length = 0;
-    at("2026-10-07T12:01:01Z");
-    expect((await codeStepUp(secret, "export")).status).toBe(200);
-    expect(mails.map((m) => m.to)).toEqual(["factor@example.com"]);
-  });
-
   // Last in its block: the rate limiter lives in the process, and this fills U's bucket.
-  it("mails the export notice to a proven address only, three an hour", async () => {
+  it("mails the export notice to the login email, three an hour at most", async () => {
     const secret = await totpFactor();
-    db.current!.tables.password_credentials[0].email_verified_at = null;
     at("2026-10-07T20:00:00Z");
-    await beginEmail(db.current!.client, U, "pending@example.com"); // typed in, never confirmed
-    mails.length = 0;
-    expect((await codeStepUp(secret, "export")).status).toBe(200);
-    expect(mails).toEqual([]);
-    db.current!.tables.password_credentials[0].email_verified_at = "2026-10-01T00:00:00.000Z";
     for (let i = 1; i <= 4; i++) {
       at(new Date(Date.parse("2026-10-07T20:00:00Z") + i * 31_000).toISOString());
       expect((await codeStepUp(secret, "export")).status).toBe(200);
     }
-    expect(mails).toHaveLength(3);
+    expect(mails.map((m) => m.to)).toEqual(["me@example.com", "me@example.com", "me@example.com"]);
   });
 });

@@ -49,7 +49,7 @@ let guardianCache: { guardians: Guardian[]; threshold: number } | null = null;
 export default function RecoveryPanel({ focus = false }: { focus?: boolean } = {}) {
   const { toast } = useToast();
   const { enroll: enrollPasskey, busy: passkeyBusy } = usePasskey();
-  const { guarded, tokenFor } = useStepUp();
+  const { guarded, tokenFor, confirm } = useStepUp();
 
   // When arrived here via the red "no recovery" banner: scroll the Guardians
   // area into view and pulse it (same heartbeat as the Payment "Add money").
@@ -99,7 +99,7 @@ export default function RecoveryPanel({ focus = false }: { focus?: boolean } = {
       if (!me.id) throw new Error("Could not confirm who you are — try signing in again.");
 
       // The key leaves the wallet only after a second factor, as in Payment.
-      if (!(await tokenFor("export"))) return;
+      if (!(await confirm("export"))) return;
       const privateKey = await requestCdpKeyExport();
       const file = await buildRecoveryFile({
         privateKey,
