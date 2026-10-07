@@ -33,9 +33,10 @@ import { referenceImageLimit } from '@/lib/generation/provider-capabilities';
  * OUTPUT variants, the second only offers 4k and 8k. /edit is the one that
  * takes many references and returns one image.
  */
-function toEditModel(model: string): string {
+export function toEditModel(model: string): string {
   if (/\/(edit|edit-multi|edit-ultra|image-to-image)$/.test(model)) return model;
-  return model.replace(/\/text-to-image(-multi|-ultra)?$/, '/edit');
+  // Fast has an edit endpoint of its own: /text-to-image-fast pairs with /edit-fast.
+  return model.replace(/\/text-to-image-fast$/, '/edit-fast').replace(/\/text-to-image(-multi|-ultra)?$/, '/edit');
 }
 
 const API_BASE = 'https://api.wavespeed.ai/api/v3';

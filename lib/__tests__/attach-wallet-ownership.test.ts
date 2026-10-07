@@ -118,9 +118,10 @@ beforeEach(() => {
       // The wallet login stores EVM addresses lowercased.
       { user_id: VICTIM, address: VICTIM_EVM.toLowerCase(), chain_family: "evm", removed_at: null },
     ],
+    // Confirmed emails: the wallet JWT opens only for one (INV-2).
     password_credentials: [
-      { user_id: ATTACKER, email: "attacker@example.test" },
-      { user_id: VICTIM, email: "victim@example.test" },
+      { user_id: ATTACKER, email: "attacker@example.test", email_verified_at: "2026-10-01T00:00:00.000Z", must_change_password: false },
+      { user_id: VICTIM, email: "victim@example.test", email_verified_at: "2026-10-01T00:00:00.000Z", must_change_password: false },
     ],
     users: [{ id: ATTACKER, handle: null }, { id: VICTIM, handle: null }],
     bans: [],

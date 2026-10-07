@@ -1,7 +1,7 @@
 "use client";
 
 import { sessionAuthHeaders, viewerHeaders } from "@/lib/session-headers";
-import { fetchGenerationQuote, toModelFamily } from "@/lib/generation-checkout";
+import { fetchGenerationQuote, PromptUnavailable, toModelFamily } from "@/lib/generation-checkout";
 import { runGeneration } from "@/lib/generation/run-generation";
 import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
 import { useModelCatalogue, resolveCatalogueEntry } from "@/hooks/useModelLimits";
@@ -426,24 +426,29 @@ export default function PromptGeneratorView({
     }
   }, [resolutions, resolution]);
 
-  const { data: paidQuote } = useQuery({
+  const { data: paidQuote, error: quoteError } = useQuery({
     /* boost + quality are part of the key: toggling either MUST refetch, or
        the shown price is the old route's (Kev, 2026-08-23: boost = real cost
        everywhere). */
-    queryKey: ["generation-quote", promptId, core.entry?.id, quoteResolution, core.boostAvailable && boost, quality],
+    queryKey: ["generation-quote", promptId, core.entry?.id, quoteResolution, core.boostAt(quoteResolution) && boost, quality],
     queryFn: () =>
-      fetchGenerationQuote({ promptId: promptId!, modelId: core.entry!.id, resolution: quoteResolution, boost: core.boostAvailable && boost, quality }),
+      fetchGenerationQuote({ promptId: promptId!, modelId: core.entry!.id, resolution: quoteResolution, boost: core.boostAt(quoteResolution) && boost, quality }),
     enabled: !noCharge && !!promptId && !loading && !!core.entry,
     // Quotes expire server-side after 5 minutes; refresh a little sooner.
     refetchInterval: 4 * 60 * 1000,
+    // "Not for sale" is an answer, not a failure to ask again.
+    retry: (failures, e) => !(e instanceof PromptUnavailable) && failures < 3,
   });
+  /* Taken down, deleted or unlisted while this page was open (or before): the
+     button said "Generate …" forever, waiting for a price that could not come. */
+  const unavailable = quoteError instanceof PromptUnavailable;
   /* Each tier's price is the server's quote for this prompt at the current
      settings (Kev, 2026-10-02: "ich brauche safe überall den server-quote");
      it was the catalogue price x tier scale, without the artist share and
      without the fee. */
   const tierQuotes = useServerQuotes(
     !noCharge && promptId && core.entry && !loading
-      ? resolutions.map((t) => ({ promptId, modelId: core.entry!.id, resolution: t, boost: core.boostAvailable && boost, quality }))
+      ? resolutions.map((t) => ({ promptId, modelId: core.entry!.id, resolution: t, boost: core.boostAt(t) && boost, quality }))
       : [],
   );
   const showcaseImages = prompt?.showcaseImages?.length ? prompt.showcaseImages : propShowcaseImages;
@@ -910,7 +915,7 @@ export default function PromptGeneratorView({
           model: core.entry,
           resolution: quoteResolution,
           quality,
-          boost: core.boostAvailable && boost,
+          boost: core.boostAt(quoteResolution) && boost,
           prompt: final.trim(),
           promptId: promptId || undefined,
           // Fills a paid prompt's own text on the server, which this client never sees.
@@ -954,42 +959,8 @@ export default function PromptGeneratorView({
         window.dispatchEvent(new Event("gallery-refresh"));
       }
 
-      /* 4. Persist to Supabase: POST record, then PATCH image_urls */
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (userKey && isUuid.test(userKey)) {
-        try {
-          const postRes = await fetch("/api/generations", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: userKey,
-              promptId,
-              encryptedPrompt: final,
-              variableValues: Object.entries(vars).map(([k, v]) => ({ variableName: k, value: v })),
-              settings: { aspectRatio: aspect, resolution, referenceImageCount: refs.length },
-              boost,
-            }),
-          });
-          if (postRes.ok) {
-            const postData = await postRes.json();
-            const genId = postData?.data?.generationId ?? postData?.generationId;
-            if (genId) {
-              /* PATCH image_urls + mark completed */
-              await fetch(`/api/generations/${genId}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
-                body: JSON.stringify({
-                  status: "completed",
-                  imageUrls: [data.imageUrl],
-                  completedAt: new Date().toISOString(),
-                }),
-              });
-            }
-          }
-        } catch { /* non-critical */ }
-        /* Refetch history panel */
-        queryClient.invalidateQueries({ queryKey: genQueryKey });
-      }
+      /* 4. The generate route records the image itself; refetch the history panel. */
+      if (userKey) queryClient.invalidateQueries({ queryKey: genQueryKey });
 
       toast({ title: "Image Generated!", description: `Generated using ${data.provider || "AI"}` });
     } catch (e: any) {
@@ -1726,7 +1697,7 @@ export default function PromptGeneratorView({
               could not happen, on a button labelled "Generate free" (Kev,
               2026-08-19). A control that changes nothing is the lie this
               codebase keeps relearning. */}
-          {!guest && !noCharge && <BoostToggle boost={boost} onChange={setBoost} available={core.boostAvailable} disabled={generating} />}
+          {!guest && !noCharge && <BoostToggle boost={boost} onChange={setBoost} available={core.boostAvailable} sameHost={!core.boostAt(quoteResolution)} disabled={generating} />}
           {/* publicPromptText is the only prompt text this surface may hold
               for a paid prompt; sliced because the route's zod max REJECTS an
               over-long context rather than clipping it. */}
@@ -1768,8 +1739,8 @@ export default function PromptGeneratorView({
             <button
               className="pgv-generate-btn"
               onClick={generate}
-              disabled={generating || refsLoading || guest || (!noCharge && !paidQuote)}
-              title={guest ? "Sign in to generate" : undefined}
+              disabled={generating || refsLoading || guest || (!noCharge && (!paidQuote || unavailable))}
+              title={guest ? "Sign in to generate" : unavailable ? quoteError.message : undefined}
             >
               {generating ? <Loader2 size={14} className="pgv-spinner" /> : <Sparkles size={14} />}
               {/* A guest sees WHY the button is dead, not a "Generate …"
@@ -1781,9 +1752,11 @@ export default function PromptGeneratorView({
                 ? "Loading images…"
                 : noCharge
                   ? "Generate free"
-                  : paidQuote
-                    ? `Generate $${paidQuote.totalUsd}`
-                    : "Generate …"}
+                  : unavailable
+                    ? "No longer available"
+                    : paidQuote
+                      ? `Generate $${paidQuote.totalUsd}`
+                      : "Generate …"}
             </button>
             {/* ToS §4 requires the network fee to be itemised before the buyer
                 confirms. It used to occupy its own line above the footer,

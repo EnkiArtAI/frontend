@@ -75,12 +75,19 @@ type SavedVariable = {
 /**
  * Everything a saved prompt can put into an image or show a buyer, for the
  * check at save: title, text, description, tags, and every variable's label,
- * description, default and options — all of it is shown or used.
+ * description, default and options — all of it is shown or used. So are the
+ * category, ratio, resolution and model: the editor picks them from lists, but
+ * the API stores and hands out whatever text a direct caller sends.
  */
-export function savedPromptInputs(p: { title: string; content: string; tags: string[]; description?: string | null; variables?: SavedVariable[] }): Record<string, string> {
+export function savedPromptInputs(p: {
+  title: string; content: string; tags: string[]; description?: string | null; variables?: SavedVariable[];
+  category?: string | null; aspectRatio?: string | null; resolution?: string | null; aiModel?: string | null;
+}): Record<string, string> {
   const inputs: Record<string, string> = { title: p.title, content: p.content };
   if (p.description?.trim()) inputs.description = p.description;
   if (p.tags.length) inputs.tags = p.tags.join(", ");
+  const settings = [p.category, p.aspectRatio, p.resolution, p.aiModel].filter((x): x is string => typeof x === "string" && x.trim() !== "");
+  if (settings.length) inputs.settings = settings.join(" | ");
   // Keyed by position: two variables may share a name, and a later one must
   // not hide an earlier one from the check. The name itself is shown when a
   // variable has no label, so it is judged too.

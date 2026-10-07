@@ -1,9 +1,10 @@
 "use client";
 
+import { forgetCdpAddresses } from "@/lib/cdp-bridge";
 import { useCallback, useEffect, useState } from "react";
 
 /**
- * Email + password auth (register / login / forgot / reset).
+ * Email + password auth (register / login / forgot).
  *
  * Stores the session token in localStorage; every session-protected fetch
  * picks it up via lib/session-headers. The wallet is provisioned separately by
@@ -59,13 +60,13 @@ export function useEmailAuth() {
     await post("/api/auth/password/forgot", { email: e });
   }, []);
 
-  const reset = useCallback(async (token: string, password: string) => {
-    store(await post("/api/auth/password/reset", { token, password }));
-  }, []);
-
   const logout = useCallback(() => {
+    // The session dies on the server too: a copied token must not outlive the logout.
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (token) void fetch("/api/auth/session", { method: "DELETE", headers: { "X-Session-Token": token }, keepalive: true }).catch(() => {});
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(EMAIL_KEY);
+    forgetCdpAddresses();
     // Kill the Dynamic SDK session too: its runtime unmounts on logout (lazy
     // mount, see providers), so it can't log itself out — clearing its storage
     // keeps wallet sessions from leaking into the next account's login.
@@ -75,5 +76,5 @@ export function useEmailAuth() {
     window.dispatchEvent(new Event(EVENT));
   }, []);
 
-  return { email, isAuthed: !!email, register, login, forgot, reset, logout };
+  return { email, isAuthed: !!email, register, login, forgot, logout };
 }

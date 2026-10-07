@@ -10,6 +10,7 @@ import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { sha256 } from "@/lib/password-reset";
+import { recoveryThreshold } from "@/lib/recovery/threshold";
 
 const bodySchema = z.object({
   requestId: z.string().uuid(),
@@ -58,15 +59,14 @@ export async function POST(req: NextRequest) {
       .eq("guardian_id", guardianId);
   }
 
-  const [{ count: approved }, { data: settings }] = await Promise.all([
+  const [{ count: approved }, threshold] = await Promise.all([
     supabase
       .from("recovery_approvals")
       .select("guardian_id", { count: "exact", head: true })
       .eq("request_id", requestId)
       .not("approved_at", "is", null),
-    supabase.from("recovery_settings").select("threshold").eq("user_id", request.user_id).maybeSingle(),
+    recoveryThreshold(supabase, request.user_id),
   ]);
-  const threshold = settings?.threshold ?? 2;
 
   if ((approved ?? 0) >= threshold) {
     await supabase.from("recovery_requests").update({ status: "approved" }).eq("id", requestId).eq("status", "pending");

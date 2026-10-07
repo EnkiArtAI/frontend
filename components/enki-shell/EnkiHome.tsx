@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useTheme } from "../../providers/ThemeProvider";
@@ -15,6 +15,7 @@ import AnalyticsPanel from "./AnalyticsPanel";
 import NotificationsPanel from "./NotificationsPanel";
 import MessagesPanel from "./MessagesPanel";
 import { useRecoveryStatus } from "@/hooks/useRecoveryStatus";
+import { useNeeds2fa } from "@/hooks/useSecondFactor";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useMessages } from "@/hooks/useMessages";
 import EnkiFeedPage from "@/components/enki/EnkiFeedPage";
@@ -193,7 +194,10 @@ export default function EnkiHome() {
     setPanel(id);
     setPanelNonce((n) => n + 1);
   };
-  const openRecoverySettings = () => { setNodeOpen(false); setActiveNav("settings"); openPanel("settings", "recovery"); };
+  // Guardians get the focus only when the recovery banner asked; the 2FA bar
+  // opens the same tab, whose top section is the 2FA itself.
+  const [guardianFocus, setGuardianFocus] = useState(false);
+  const openRecoverySettings = () => { setGuardianFocus(true); setNodeOpen(false); setActiveNav("settings"); openPanel("settings", "recovery"); };
 
   // Unread notifications → badge on Notifications. The shared store polls +
   // refreshes on focus (near-realtime) and clears optimistically on open, so
@@ -212,7 +216,17 @@ export default function EnkiHome() {
     setBannerDismissed(true);
     try { localStorage.setItem("ek-recovery-banner", "1"); } catch { /* session-only then */ }
   };
-  const showRecoveryBanner = authed && recovery !== null && recovery.confirmed === 0 && !bannerDismissed;
+  // One 30 px slot at the top: the permanent 2FA bar (SecondFactorBar, at the
+  // root) wins; the recovery warning then shows inside Settings instead.
+  const needs2fa = useNeeds2fa();
+  const showRecoveryBanner = authed && recovery !== null && recovery.confirmed === 0 && !bannerDismissed && !needs2fa;
+  // The shell moves its own layers under that slot (.ek-with-banner); a page
+  // outside it starts below the 2FA bar instead (globals.css, html.ek-in-shell).
+  // Before paint, so a move between the shell and a page never jumps.
+  useLayoutEffect(() => {
+    document.documentElement.classList.add("ek-in-shell");
+    return () => document.documentElement.classList.remove("ek-in-shell");
+  }, []);
   // Log off: confirm dialog + the actual sign-out across every auth surface.
   const [logoffOpen, setLogoffOpen] = useState(false);
   const [logoffBusy, setLogoffBusy] = useState(false);
@@ -233,6 +247,18 @@ export default function EnkiHome() {
     }
   };
   const [activeNav, setActiveNav] = useState("home");
+  // The 2FA bar (SecondFactorBar) opens the 2FA settings here, in place.
+  useEffect(() => {
+    const onOpen2fa = (e: Event) => {
+      e.preventDefault();
+      setGuardianFocus(false);
+      setNodeOpen(false);
+      setActiveNav("settings");
+      openPanel("settings", "recovery");
+    };
+    window.addEventListener("enki:open-2fa", onOpen2fa);
+    return () => window.removeEventListener("enki:open-2fa", onOpen2fa);
+  }, []);
   const [toast, setToast] = useState<string | null>(null);
   const [panel, setPanel] = useState<string | null>(null); // which menu item shows in the right panel
   const [editPrompt, setEditPrompt] = useState<unknown>(null); // prompt being edited in the node creator
@@ -250,11 +276,6 @@ export default function EnkiHome() {
     return () => window.removeEventListener(EDIT_PROMPT_EVENT, onEdit);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const searchParams = useSearchParams();
-  const [query, setQuery] = useState(searchParams.get("q") || "");
-  const searchRef = useRef<HTMLInputElement>(null);
-  const debRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // The node creator no longer forces the rail — the collapse toggle stays a
   // pure menu open/close even while Create Prompt 2 is open.
@@ -274,17 +295,8 @@ export default function EnkiHome() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [narrow]);
 
-  /* Ctrl/Cmd+K now lives with the field, in SearchChip. Two listeners on the
-     same chord would both fire and the second would undo the first. */
-
-  // Live search → drives the feed via the ?q= param EnkiFeedPage already reads.
-  const pushQuery = (q: string) => {
-    setQuery(q);
-    if (debRef.current) clearTimeout(debRef.current);
-    debRef.current = setTimeout(() => {
-      router.replace(q ? `/home?q=${encodeURIComponent(q)}` : "/home", { scroll: false });
-    }, 250);
-  };
+  /* Ctrl/Cmd+K and the query itself live with the field, in SearchChip: it
+     writes ?q=, EnkiFeedPage reads it and asks the server. */
 
   const showToast = (msg: string) => { setToast(msg); window.setTimeout(() => setToast(null), 2400); };
 
@@ -397,7 +409,7 @@ export default function EnkiHome() {
         </PanelFrame>
       );
       case "messages": return <MessagesPanel toast={showToast} />;
-      case "settings": return <SettingsView initialTab={settingsTab} globalBannerVisible={showRecoveryBanner} focusGuardians={settingsTab === "recovery"} />;
+      case "settings": return <SettingsView initialTab={settingsTab} globalBannerVisible={showRecoveryBanner} focusGuardians={settingsTab === "recovery" && guardianFocus} />;
       case "profile": return <ProfileView onBack={() => { setPanel(null); setActiveNav("home"); }} />;
       /* A CREATOR's page, in the SAME right-side panel area as everything
          else — the left menu never leaves the screen (Kev, 2026-08-24:
@@ -422,7 +434,7 @@ export default function EnkiHome() {
   };
 
   const rootClass = "ek-app" + (rail ? " ek-root--rail" : "") + (nodeOpen ? " ek-node-open" : "")
-    + (showRecoveryBanner ? " ek-with-banner" : "");
+    + (showRecoveryBanner || needs2fa ? " ek-with-banner" : "");
 
   /* The node editor converts screen coordinates into canvas coordinates by
      subtracting the width of the column the shell reserves on its left. That
@@ -645,14 +657,7 @@ export default function EnkiHome() {
       )}
       <LoginModal open={loginOpen} prewarm={!authed} onClose={() => setLoginOpen(false)} />
       {referOpen && (
-        <ReferModal
-          userKey={walletAddress}
-          onClose={() => setReferOpen(false)}
-          onSubmit={(r) => {
-            setReferOpen(false);
-            showToast("Referral submitted for review · " + String(r.url).replace(/^https?:\/\//, "").slice(0, 32));
-          }}
-        />
+        <ReferModal guest={!authed} onClose={() => setReferOpen(false)} />
       )}
       {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} onToast={showToast} guest={!authed} />}
 

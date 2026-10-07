@@ -59,3 +59,10 @@ export function grantGateCookie(res: NextResponse): NextResponse {
   });
   return res;
 }
+
+// Takes app access back. The cookie opens every page, so a banned account
+// must not keep browsing on one it got before the ban.
+export function revokeGateCookie(res: NextResponse): NextResponse {
+  res.cookies.set(COOKIE, "", { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 0 });
+  return res;
+}

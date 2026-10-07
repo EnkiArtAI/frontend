@@ -28,11 +28,16 @@ import "./boost-toggle.css";
    because x2 overcharged cheap runs and would LOSE money on gpt high/4K
    (Kev, 2026-08-23). */
 
+const SAME_HOST = "Already on the fastest host at this size — nothing to speed up.";
+
 export interface BoostToggleProps {
   boost: boolean;
   onChange: (next: boolean) => void;
   /** Hidden entirely when the chosen model has no faster host. */
   available?: boolean;
+  /** The regular host at the chosen size is already the boost host: shown
+      disabled, and the hover text says why (Kev, 2026-10-06). */
+  sameHost?: boolean;
   disabled?: boolean;
   className?: string;
 }
@@ -41,6 +46,7 @@ export default function BoostToggle({
   boost,
   onChange,
   available = true,
+  sameHost = false,
   disabled = false,
   className = "",
 }: BoostToggleProps) {
@@ -49,15 +55,18 @@ export default function BoostToggle({
   // choice the user has.
   if (!available) return null;
 
+  // Off while there is nothing to boost at this size, whatever the stored
+  // preference: it comes back with a size where boost does something.
+  const on = boost && !sameHost;
   return (
     <button
       type="button"
       role="switch"
-      aria-checked={boost}
-      aria-label="Boost — run this model on its fastest host"
-      disabled={disabled}
+      aria-checked={on}
+      aria-label={sameHost ? SAME_HOST : "Boost — run this model on its fastest host"}
+      disabled={disabled || sameHost}
       onClick={() => onChange(!boost)}
-      className={`enki-boost${boost ? " enki-boost--on" : ""} ${className}`.trim()}
+      className={`enki-boost${on ? " enki-boost--on" : ""} ${className}`.trim()}
       /* Short on purpose. A tooltip is read while the cursor is already moving,
          so it gets one fact: what changes and what it costs. Every claim in it
          is checkable (Kev, 2026-08-22: "it should be realistic"): "fastest
@@ -65,7 +74,9 @@ export default function BoostToggle({
          above — not a rounded "3x" — and "same model & quality" replaces
          "Same image", which promised pixel-identity no two runs deliver. */
       title={
-        boost
+        sameHost
+          ? SAME_HOST
+          : boost
           ? "On: fastest host for this model — measured 2–4x faster, priced at that host's own rate. Same model & quality."
           : "Runs this model on its fastest host — measured 2–4x faster, priced at that host's own rate. Same model & quality."
       }

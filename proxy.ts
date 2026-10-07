@@ -38,10 +38,24 @@ function isPublic(pathname: string): boolean {
   if (pathname === "/api/header-images") return true;
   // The wallet vendor's servers fetch our signing keys to validate external JWTs
   if (pathname === "/api/auth/wallet/jwks") return true;
+  // Vercel's scheduler holds no cookie; each cron route checks CRON_SECRET.
+  if (pathname.startsWith("/api/cron/")) return true;
   // Recovery flows are used by OUTSIDERS (guardians) and by locked-out users
   // — neither can have the team cookie. The pages/APIs are token- or
   // code-gated and rate-limited themselves.
   if (pathname === "/guardian" || pathname === "/reset-password") return true;
+  // A banned account gets no team cookie, so its one door stays open
+  // without it: the /banned page and exactly the APIs it calls (status,
+  // appeal, balance, send). Each of those checks the session itself.
+  if (
+    pathname === "/banned" ||
+    pathname === "/api/ban/me" ||
+    pathname === "/api/ban/appeal" ||
+    pathname === "/api/billing/balance" ||
+    pathname.startsWith("/api/wallet/withdraw/")
+  ) {
+    return true;
+  }
   if (
     pathname === "/api/recovery/guardians/confirm" ||
     pathname === "/api/recovery/request" ||
@@ -58,7 +72,13 @@ function isPublic(pathname: string): boolean {
     pathname === "/api/auth/nonce" ||
     pathname === "/api/auth/session" ||
     pathname === "/api/auth/wallet/jwt" ||
-    pathname.startsWith("/api/auth/password/")
+    pathname.startsWith("/api/auth/password/") ||
+    // Step-ups, public like the withdraw routes: a banned account loses its
+    // gate cookie yet may still withdraw its own money, which takes a step-up
+    // (each route checks the session itself).
+    pathname === "/api/auth/stepup" ||
+    pathname === "/api/auth/stepup/email" ||
+    pathname.startsWith("/api/auth/passkey/stepup/")
   ) {
     return true;
   }

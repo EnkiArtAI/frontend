@@ -20,7 +20,7 @@ const VIEW = read(join(ROOT, "components", "PromptGeneratorView.tsx"));
 
 /** The response literal the handler returns on success. */
 function successPayload(src: string): string {
-  const i = src.indexOf("return NextResponse.json({\n      imageUrl,");
+  const i = src.indexOf("return NextResponse.json({\n      imageUrl: delivered,");
   expect(i, "the success response literal moved — this test is reading the wrong block").toBeGreaterThan(-1);
   return src.slice(i, src.indexOf("});", i));
 }

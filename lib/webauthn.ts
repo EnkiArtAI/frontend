@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { hkdfSync } from "crypto";
+import { createHmac, hkdfSync, timingSafeEqual } from "crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { enrolledFactors, type Factor } from "@/lib/mfa";
+import { sendMail } from "@/lib/mailer";
+import { checkRequestRateLimit } from "@/lib/rate-limit";
 
 /**
  * App-side WebAuthn passkeys for STEP-UP 2FA. Opt-in: a user who registers a
@@ -52,7 +55,61 @@ function stepUpKey(): Uint8Array {
   return new Uint8Array(hkdfSync("sha256", Buffer.from(p, "base64"), new Uint8Array(0), Buffer.from("enki-stepup-v1"), 32));
 }
 
+/* What a step-up can be for. A scope names one action, and where the action
+   has a target, that target: one tap deletes one image, never another. */
+const SCOPE = /^(wallet|export|add-factor|guardians|delete-work:[0-9a-f-]{36}|remove-factor:([0-9a-f-]{36}|totp|email)|withdraw:[1-9A-HJ-NP-Za-km-z]{32,44})$/;
+export function isStepUpScope(scope: unknown): scope is string {
+  return typeof scope === "string" && SCOPE.test(scope);
+}
+
+/* Wallet unlock (Kev, 2026-10-07): the wallet JWT is minted only for a
+   session that passed a "wallet" or "export" step-up at most 2 h ago and
+   used the wallet in the last 15 min. The stamp sits on the session row, so
+   it ends with the session and never reaches another one. */
+const UNLOCK_MAX_MS = 2 * 3600_000;
+const UNLOCK_IDLE_MS = 15 * 60_000;
+
+/**
+ * What a passed step-up does beyond its token: a wallet or export step-up
+ * unlocks the session it came from, and an export one tells the owner by
+ * mail, since the key itself leaves through CDP where we cannot see it.
+ */
+export async function afterStepUp(
+  supabase: ReturnType<typeof getSupabaseServerClient>,
+  token: string | null,
+  userId: string,
+  scope: string,
+): Promise<void> {
+  if (scope !== "wallet" && scope !== "export") return;
+  if (token) {
+    const now = new Date().toISOString();
+    const { error } = await supabase.from("auth_sessions").update({ stepup_at: now, stepup_seen_at: now }).eq("token", token);
+    if (error) throw error;
+  }
+  if (scope !== "export") return;
+  // To the login email (only password accounts have an embedded wallet to
+  // export), three an hour at most: the mail quota every reset needs is shared.
+  // An unconfirmed email has no wallet that could be exported: no alarm.
+  const { data } = await supabase.from("password_credentials").select("email, email_verified_at").eq("user_id", userId).maybeSingle();
+  if (!data?.email || !data.email_verified_at || !checkRequestRateLimit(`export-notice:${userId}`, 3, 3600_000).allowed) return;
+  await sendMail({
+    to: data.email,
+    subject: "Your Enki wallet key is being exported",
+    text:
+      `Someone just confirmed an export of your Enki wallet's private key (${new Date().toUTCString()}). ` +
+      `If that was you, there is nothing to do.\n\n` +
+      `If it was not, move your funds to a new wallet right away, sign out on every device and change your password.`,
+  }).catch(() => { /* the notice is best effort; the step-up stands */ });
+}
+
+/** Whether a session row is unlocked for the wallet now. A row never stamped
+    parses as NaN, and NaN passes no <= : it stays locked. */
+export function walletUnlocked(s: { stepup_at?: string | null; stepup_seen_at?: string | null }, now = Date.now()): boolean {
+  return now - Date.parse(String(s.stepup_at)) <= UNLOCK_MAX_MS && now - Date.parse(String(s.stepup_seen_at)) <= UNLOCK_IDLE_MS;
+}
+
 export async function mintStepUpToken(userId: string, scope: string): Promise<string> {
+  if (!isStepUpScope(scope)) throw new Error(`unknown step-up scope: ${scope}`);
   return new SignJWT({ scope })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(userId)
@@ -70,51 +127,86 @@ async function verifyStepUpToken(token: string, userId: string, scope: string): 
   }
 }
 
-// Throws on DB error so callers FAIL CLOSED — a failed enrollment lookup must
-// never be read as "no passkey" and silently skip 2FA.
-export async function userHasPasskey(
-  supabase: ReturnType<typeof getSupabaseServerClient>,
-  userId: string,
-): Promise<boolean> {
-  const { count, error } = await supabase
-    .from("webauthn_credentials")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", userId);
-  if (error) throw error;
-  return (count ?? 0) > 0;
-}
+// How old a session may be to set up a user's FIRST factor. A factor someone
+// else plants locks the owner out of every gated action and lets the planter
+// through them, so it takes a fresh login, not just any live session.
+const FIRST_FACTOR_SESSION_MS = 10 * 60_000;
 
 /**
- * Gate a sensitive action behind step-up 2FA. Opt-in: if the user has NO
- * passkey enrolled, the action proceeds (2FA not set up). If they DO, a valid
- * X-StepUp-Token for this scope is required — pass a resource-bound scope
- * (e.g. `delete-work:${id}`) so one passkey tap can't authorize others.
- * Returns null when allowed, or a NextResponse to return when blocked. Fails
- * CLOSED: any error looking up enrollment blocks the action.
+ * Gate for adding a factor (passkey, authenticator, email) or a guardian,
+ * who can reset the password. With a factor already in place it is a step-up
+ * like any other; without one it needs a session younger than ten minutes,
+ * answering 403 { reauth } otherwise.
  */
-export async function requireStepUp(
-  req: NextRequest,
-  userId: string,
-  scope: string,
-): Promise<NextResponse | null> {
+export async function requireAddFactor(req: NextRequest, userId: string, scope = "add-factor"): Promise<NextResponse | null> {
   const supabase = getSupabaseServerClient();
-  let enrolled: boolean;
+  let factors: Factor[];
   try {
-    enrolled = await userHasPasskey(supabase, userId);
+    factors = await enrolledFactors(supabase, userId);
   } catch {
     return NextResponse.json({ error: "Could not verify security settings" }, { status: 503 });
   }
-  if (!enrolled) return null; // no passkey → not enforced
-  const token = req.headers.get("X-StepUp-Token");
-  if (token && (await verifyStepUpToken(token, userId, scope))) return null;
-  return NextResponse.json({ error: "Step-up verification required", scope, stepUp: true }, { status: 401 });
+  if (factors.length > 0) return requireStepUp(req, userId, scope, { mandatory: true });
+  const { data, error } = await supabase
+    .from("auth_sessions")
+    .select("created_at")
+    .eq("token", req.headers.get("X-Session-Token") ?? "")
+    .maybeSingle();
+  if (error) return NextResponse.json({ error: "Could not verify security settings" }, { status: 503 });
+  if (!data || Date.now() - Date.parse(String(data.created_at)) > FIRST_FACTOR_SESSION_MS) {
+    return NextResponse.json({ error: "Sign in again to change your security settings", reauth: true }, { status: 403 });
+  }
+  return null;
 }
 
-// ── challenge cookie (single-use, httpOnly; no DB row needed) ──────────────
+/**
+ * Gate a sensitive action behind step-up 2FA. A user with any factor
+ * (passkey, authenticator, email code) needs a valid X-StepUp-Token for this
+ * scope, minted by whichever factor they used; the answer names their
+ * factors so the client can offer them. Without a factor the action proceeds,
+ * unless `mandatory`, which answers 403 { enroll } instead. Fails CLOSED: no
+ * user is 401, a failed factor lookup 503.
+ * Returns null when allowed, or the NextResponse to return when blocked.
+ */
+export async function requireStepUp(
+  req: NextRequest,
+  userId: string | null,
+  scope: string,
+  { mandatory = false }: { mandatory?: boolean } = {},
+): Promise<NextResponse | null> {
+  if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  let factors: Factor[];
+  try {
+    factors = await enrolledFactors(getSupabaseServerClient(), userId);
+  } catch {
+    return NextResponse.json({ error: "Could not verify security settings" }, { status: 503 });
+  }
+  if (factors.length === 0) {
+    return mandatory ? NextResponse.json({ error: "Set up a second factor first", scope, enroll: true }, { status: 403 }) : null;
+  }
+  const token = req.headers.get("X-StepUp-Token");
+  if (token && (await verifyStepUpToken(token, userId, scope))) return null;
+  return NextResponse.json({ error: "Step-up verification required", scope, stepUp: true, factors }, { status: 401 });
+}
+
+// ── challenge cookie (httpOnly; no DB row needed) ───────────────────────────
+// Signed for one user, one purpose and five minutes. Unsigned, the server took
+// whatever challenge the client sent: a script with a stolen session could
+// verify a self-made attestation, and a captured assertion could be replayed
+// with its own challenge for any scope.
 const COOKIE_PATH = "/api/auth/passkey";
 
-export function setChallengeCookie(res: NextResponse, name: string, challenge: string) {
-  res.cookies.set(name, challenge, {
+function challengeMac(name: string, userId: string, challenge: string, expiry: string): Buffer {
+  const p = process.env.AUTH_PEPPER;
+  if (!p) throw new Error("AUTH_PEPPER not configured");
+  const key = hkdfSync("sha256", Buffer.from(p, "base64"), new Uint8Array(0), Buffer.from("enki-webauthn-challenge-v1"), 32);
+  return createHmac("sha256", Buffer.from(key)).update(`${name}|${userId}|${challenge}|${expiry}`).digest();
+}
+
+export function setChallengeCookie(res: NextResponse, name: string, challenge: string, userId: string) {
+  const expiry = String(Date.now() + CHALLENGE_TTL_S * 1000);
+  const mac = challengeMac(name, userId, challenge, expiry).toString("base64url");
+  res.cookies.set(name, `${challenge}.${expiry}.${mac}`, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "strict",
@@ -123,10 +215,16 @@ export function setChallengeCookie(res: NextResponse, name: string, challenge: s
   });
 }
 
-export function readChallengeCookie(req: NextRequest, name: string): string | undefined {
-  return req.cookies.get(name)?.value;
+/** The challenge this server issued to this user for this purpose, still fresh; otherwise undefined. */
+export function readChallengeCookie(req: NextRequest, name: string, userId: string): string | undefined {
+  const [challenge, expiry, mac] = (req.cookies.get(name)?.value ?? "").split(".");
+  if (!challenge || !expiry || !mac || Number(expiry) < Date.now()) return undefined;
+  const expected = challengeMac(name, userId, challenge, expiry);
+  const given = Buffer.from(mac, "base64url");
+  return given.length === expected.length && timingSafeEqual(given, expected) ? challenge : undefined;
 }
 
-export function clearChallengeCookie(res: NextResponse, name: string) {
+export function clearChallengeCookie(res: NextResponse, name: string): NextResponse {
   res.cookies.set(name, "", { path: COOKIE_PATH, maxAge: 0 });
+  return res;
 }

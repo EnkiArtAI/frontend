@@ -8,6 +8,7 @@ import { ArrowLeft, CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
 import { useCdpAddress } from "@/hooks/useCdpAddress";
 import { refreshHoldings, useHoldings } from "@/hooks/useHoldings";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { useStepUp } from "@/components/StepUpProvider";
 import { requestCdpSign } from "@/lib/cdp-bridge";
 import {
   base64ToBytes,
@@ -35,10 +36,10 @@ type Step =
   | { kind: "busy"; label: string }
   | { kind: "sent"; signature: string; amountMicro: number; to: string; explorer: string | null };
 
-async function post(path: string, body: unknown) {
+async function post(path: string, body: unknown, headers: Record<string, string> = {}) {
   const res = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
+    headers: { "Content-Type": "application/json", ...sessionAuthHeaders(), ...headers },
     body: JSON.stringify(body),
   });
   const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
@@ -53,6 +54,7 @@ async function post(path: string, body: unknown) {
  * never locks the user's own money.
  */
 export default function SendUsdcPanel({ fromAddress, onSent }: { fromAddress: string; onSent?: (signature: string) => void }) {
+  const { guarded } = useStepUp();
   const { balance, ready } = useHoldings(fromAddress);
   const { address: cdpAddress } = useCdpAddress();
   const { publicKey: adapterKey, signTransaction: adapterSign } = useWallet();
@@ -103,7 +105,14 @@ export default function SendUsdcPanel({ fromAddress, onSent }: { fromAddress: st
     let explorer: string | null = null;
     try {
       const request = { from: fromAddress, to: toTrimmed, ...(all ? { all: true } : { amountMicro }) };
-      const build = await post("/api/wallet/withdraw/build", request);
+      // With a second factor set up, the server asks for it here, for this destination.
+      let json: Record<string, unknown> | null = null;
+      const res = await guarded(`withdraw:${toTrimmed}`, async (h) => {
+        const r = await post("/api/wallet/withdraw/build", request, h);
+        json = r.json;
+        return r.res;
+      });
+      const build = { res, json: json as Record<string, unknown> | null };
       if (!build.res.ok || !build.json?.transaction) {
         throw new Error(withdrawErrorMessage({ status: build.res.status, body: build.json }, "Could not prepare the transfer, nothing moved."));
       }

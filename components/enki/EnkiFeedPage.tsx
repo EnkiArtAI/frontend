@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import EnkiCard from "@/components/enki/EnkiCard";
 import EnkiFilters from "@/components/enki/EnkiFilters";
 import GenerateLauncher from "@/components/GenerateLauncher";
@@ -13,6 +13,19 @@ import { useModelCatalogue } from "@/hooks/useModelLimits";
 import { toModelFamily } from "@/lib/generation/model-family";
 import { useBetaAccess } from "@/components/BetaGate";
 import { sessionHeadersWith } from "@/lib/session-headers";
+import { openCreator } from "@/lib/openCreator";
+import { SEARCH_DEBOUNCE_MS, failureSentence, type SearchCreator } from "@/lib/search/client";
+
+/* The value a debounce later: the field writes ?q= on every keystroke, the
+   server is asked once the typing pauses. */
+function useDebounced(value: string, ms: number) {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return settled;
+}
 
 function useLocalFavorites() {
   const [favs, setFavs] = useState<Record<string, boolean>>(() => {
@@ -38,7 +51,15 @@ function useLocalFavorites() {
 }
 
 export default function EnkiFeedPage() {
+  const router = useRouter();
   const [tags, setTags] = useState<string[]>([]);
+  /* The shell search: ?q= is written by SearchChip on every keystroke. A
+     non empty query, debounced, swaps the feed's source for /api/search;
+     clearing it restores the normal feed at once. */
+  const searchParams = useSearchParams();
+  const typed = searchParams.get("q")?.trim() || "";
+  const settled = useDebounced(typed, SEARCH_DEBOUNCE_MS);
+  const query = typed ? settled : "";
   /* Which generators feed the wall — ids from the model catalogue, grouped
      Image/Video for the filter chip (Kev, 2026-08-24). The models table has
      no media type yet, so every entry is Image; a Video group appears by
@@ -108,7 +129,7 @@ export default function EnkiFeedPage() {
     if (el) impressionObserver.current?.observe(el);
   }, []);
 
-  type Page = { prompts: unknown[]; hasMore: boolean; nextCursor?: string };
+  type Page = { prompts: unknown[]; creators?: SearchCreator[]; hasMore: boolean; nextCursor?: string };
 
   const {
     data,
@@ -119,32 +140,34 @@ export default function EnkiFeedPage() {
     error,
     refetch,
   } = useInfiniteQuery<Page, Error, { pages: Page[]; pageParams: number[] }, string[], number>({
-    queryKey: ["/api/marketplace/prompts", "home", genFilter.join(","), showAdult ? "18+" : "safe"],
+    queryKey: ["/api/marketplace/prompts", "home", genFilter.join(","), showAdult ? "18+" : "safe", query],
     queryFn: async ({ pageParam }) => {
+      /* Generator filter: send EVERY alias of the picked generators — the
+         prompts table's ai_model carries names AND slugs mixed ("Flux
+         (free)", "nano-banana-pro"), so one id would miss half the rows.
+         Search narrows by the same filter as the feed. */
+      const models = genFilter.flatMap((id) => {
+        const entry = catalogue.find((c) => c.id === id);
+        return entry ? [...new Set([entry.id, entry.name, toModelFamily(entry.name)])].filter(Boolean).map(String) : [];
+      });
+      if (query) {
+        const params = new URLSearchParams({ q: query, type: "all", limit: "24", cursor: String(pageParam) });
+        for (const m of models) params.append("models", m);
+        const res = await fetch(`/api/search?${params.toString()}`, { headers: sessionHeadersWith(showAdult), credentials: "include" });
+        if (!res.ok) throw new Error(await failureSentence(res, "Search failed"));
+        return (await res.json()) as Page;
+      }
       const params = new URLSearchParams({
         limit: "24",
         sortBy: "trending",
         cursor: String(pageParam),
       });
-      /* Generator filter: send EVERY alias of the picked generators — the
-         prompts table's ai_model carries names AND slugs mixed ("Flux
-         (free)", "nano-banana-pro"), so one id would miss half the rows. */
-      for (const id of genFilter) {
-        const entry = catalogue.find((c) => c.id === id);
-        if (!entry) continue;
-        for (const alias of new Set([entry.id, entry.name, toModelFamily(entry.name)])) {
-          if (alias) params.append("models", String(alias));
-        }
-      }
+      for (const m of models) params.append("models", m);
       const res = await fetch(`/api/marketplace/prompts?${params.toString()}`, { headers: sessionHeadersWith(showAdult), credentials: "include" });
-      if (!res.ok) {
-        // The server's own sentence (e.g. "database unreachable") beats a
-        // generic one — and a failure must never look like an empty feed.
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error || `Couldn't load prompts (HTTP ${res.status}).`);
-      }
-      const json = await res.json();
-      return json as Page;
+      // The server's own sentence (e.g. "database unreachable") beats a
+      // generic one, and a failure must never look like an empty feed.
+      if (!res.ok) throw new Error(await failureSentence(res, "Couldn't load prompts"));
+      return (await res.json()) as Page;
     },
     getNextPageParam: (lastPage) => {
       const next = lastPage.nextCursor ? parseInt(lastPage.nextCursor, 10) : undefined;
@@ -179,22 +202,13 @@ export default function EnkiFeedPage() {
     return flat;
   }, [data]);
 
-  const searchParams = useSearchParams();
-  const query = searchParams.get("q")?.toLowerCase() || "";
+  const creators = query ? data?.pages[0]?.creators ?? [] : [];
 
   const visible = useMemo<EnkiPrompt[]>(() => {
-    let filtered = allPrompts;
-    if (tags.length) {
-      filtered = filtered.filter((prompt) => tags.every((tag) => prompt.tags.includes(tag)));
-    }
-    if (query) {
-      filtered = filtered.filter((prompt) =>
-        prompt.title.toLowerCase().includes(query) ||
-        prompt.description.toLowerCase().includes(query)
-      );
-    }
-    return filtered;
-  }, [allPrompts, tags, query]);
+    if (!tags.length) return allPrompts;
+    // The chips are categories: a prompt has one, and any picked chip shows it.
+    return allPrompts.filter((prompt) => tags.includes(prompt.category));
+  }, [allPrompts, tags]);
 
   const toggleTag = (tag: string) => {
     setTags((current) => (current.includes(tag) ? [] : [tag]));
@@ -205,6 +219,20 @@ export default function EnkiFeedPage() {
   return (
     <>
       <main className="enki">
+        {creators.length > 0 && (
+          <div className="enki-search-creators" aria-label="Creators">
+            {creators.map((c) => (
+              <button key={c.id} type="button" className="enki-search-creator" onClick={() => openCreator(c.handle, router)}>
+                {c.avatarUrl
+                  // eslint-disable-next-line @next/next/no-img-element
+                  ? <img src={c.avatarUrl} alt="" draggable={false} />
+                  : <span className="enki-search-creator-initial">{c.handle[0]?.toUpperCase()}</span>}
+                <span>{c.displayName}</span>
+                <small>@{c.handle}</small>
+              </button>
+            ))}
+          </div>
+        )}
         {visible.length > 0 ? (
           <section className="enki-masonry">
             {visible.map((prompt) => (
@@ -235,7 +263,7 @@ export default function EnkiFeedPage() {
         ) : error ? (
           <section className="enki-empty-state">
             <div className="enki-account-card">
-              <div className="serif" style={{ fontSize: 28, marginBottom: 8 }}>Couldn't load the feed.</div>
+              <div className="serif" style={{ fontSize: 28, marginBottom: 8 }}>{query ? "Search failed." : "Couldn't load the feed."}</div>
               <p style={{ margin: 0, color: "var(--enki-ink-2)" }}>{error.message}</p>
               <button type="button" className="ek-btn" style={{ marginTop: 16, minHeight: 40 }} onClick={() => void refetch()}>Try again</button>
             </div>
@@ -243,9 +271,11 @@ export default function EnkiFeedPage() {
         ) : showEmpty ? (
           <section className="enki-empty-state">
             <div className="enki-account-card">
-              <div className="serif" style={{ fontSize: 28, marginBottom: 8 }}>No prompts here yet.</div>
+              <div className="serif" style={{ fontSize: 28, marginBottom: 8 }}>
+                {query ? `No ${creators.length ? "prompts" : "results"} for “${query}”.` : "No prompts here yet."}
+              </div>
               <p style={{ margin: 0, color: "var(--enki-ink-2)" }}>
-                Adjust your filters to widen the results.
+                {query ? "Try another word." : "Adjust your filters to widen the results."}
               </p>
             </div>
           </section>

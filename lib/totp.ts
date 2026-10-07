@@ -52,17 +52,31 @@ function hotp(secret: Buffer, counter: number): string {
   return (code % 10 ** DIGITS).toString().padStart(DIGITS, "0");
 }
 
-/** True if `code` matches the current 30s window (±1 for clock drift). */
-export function verifyTotp(secretB32: string, code: string): boolean {
+/**
+ * The 30s step `code` belongs to (current window ±1 for clock drift), or
+ * null. A factor stores the last step it accepted, so the same code cannot
+ * be used twice inside its window.
+ */
+export function totpStep(secretB32: string, code: string): number | null {
   const clean = String(code ?? "").replace(/\D/g, "");
-  if (clean.length !== DIGITS) return false;
+  if (clean.length !== DIGITS) return null;
   const secret = base32Decode(secretB32);
-  if (secret.length === 0) return false;
+  if (secret.length === 0) return null;
   const counter = Math.floor(Date.now() / 1000 / PERIOD);
   for (let w = -1; w <= 1; w++) {
     // Constant-time compare to avoid leaking match position via timing.
     const cand = hotp(secret, counter + w);
-    if (crypto.timingSafeEqual(Buffer.from(cand), Buffer.from(clean))) return true;
+    if (crypto.timingSafeEqual(Buffer.from(cand), Buffer.from(clean))) return counter + w;
   }
-  return false;
+  return null;
+}
+
+/** True if `code` matches the current 30s window (±1 for clock drift). */
+export function verifyTotp(secretB32: string, code: string): boolean {
+  return totpStep(secretB32, code) !== null;
+}
+
+/** The code for a step: what an authenticator app shows (tests use it). */
+export function totpCode(secretB32: string, step = Math.floor(Date.now() / 1000 / PERIOD)): string {
+  return hotp(base32Decode(secretB32), step);
 }

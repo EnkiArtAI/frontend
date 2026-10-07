@@ -31,7 +31,7 @@ const query = (table: string) => {
 
 const check = vi.fn();
 const warn = vi.fn(async () => ({ total: 1, suspendedUntil: null, nextStepAt: 10 }));
-const tier2 = vi.fn(async () => ({ allowed: true }));
+const tier2 = vi.fn(async (): Promise<{ allowed: boolean; tier2Degraded?: boolean }> => ({ allowed: true }));
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), after: () => {} }));
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => ({ from: query }) }));
 // "tok" owns as u1; "email" is an email login (users.id u3 in the session)
@@ -61,9 +61,11 @@ beforeEach(() => {
 });
 
 describe("editing a prompt", () => {
-  it("judges the edited title, description and tags", async () => {
-    await edit("p1", { title: "New", description: "A scene", tags: ["a", "b"], category: "Poster" });
-    expect(check).toHaveBeenCalledWith({ title: "New", description: "A scene", tags: "a, b" });
+  it("judges the edited title, description and category, and neither judges nor writes tags a client sends", async () => {
+    await edit("p1", { title: "New", description: "A scene", tags: ["a", "b"], category: "Poster", aiSettings: { aspectRatio: "16:9" } });
+    expect(check).toHaveBeenCalledWith({ title: "New", description: "A scene", category: "Poster" });
+    expect(prompts[0].tags).toBeUndefined();
+    expect(prompts[0].ai_settings).toEqual({ aspectRatio: "16:9", includeText: undefined });
   });
 
   it("refuses an explicit edit with a warning and changes nothing", async () => {
@@ -108,16 +110,25 @@ describe("editing a prompt", () => {
   });
 
   it("costs no check when no text changes", async () => {
-    expect((await edit("p1", { category: "Poster" })).status).toBe(200);
+    expect((await edit("p1", { aiSettings: { includeText: true } })).status).toBe(200);
     expect(check).not.toHaveBeenCalled();
+    expect(prompts[0].ai_settings).toEqual({ aspectRatio: undefined, includeText: true });
   });
 });
 
 describe("who edits", () => {
-  it("an email login edits and publishes the prompts it owns", async () => {
+  it("an email login edits the prompts it owns", async () => {
     prompts.push({ id: "p3", creator_id: "u3", title: "Mine" });
+    expect((await edit("p3", { category: "Poster" }, "email")).status).toBe(200);
+    expect(prompts.find((p) => p.id === "p3")?.category).toBe("Poster");
+  });
+
+  it("publishes nothing: a prompt is published by its release", async () => {
+    prompts.push({ id: "p3", creator_id: "u3", title: "Mine" }, { id: "p5", creator_id: "u3", title: "Live", published_at: "2026-09-01T00:00:00.000Z" });
     expect((await edit("p3", { published: true }, "email")).status).toBe(200);
-    expect(prompts.find((p) => p.id === "p3")?.published_at).toBeTruthy();
+    expect(prompts.find((p) => p.id === "p3")).not.toHaveProperty("published_at");
+    await edit("p5", { published: true, category: "Poster" }, "email");
+    expect(prompts.find((p) => p.id === "p5")?.published_at).toBe("2026-09-01T00:00:00.000Z");
   });
 
   it("an email login edits a prompt owned through its first address mapping", async () => {
@@ -129,6 +140,61 @@ describe("who edits", () => {
   it("a suspended account edits nothing", async () => {
     expect((await edit("p1", { title: "New" }, "banned")).status).toBe(401);
     expect(prompts[0].title).toBe("Portrait");
+    expect(check).not.toHaveBeenCalled();
+  });
+});
+
+describe("editing while tier 2 is down", () => {
+  // It answers "allowed" then; no text is stored on a check that never ran.
+  it("changes nothing on a listed prompt", async () => {
+    prompts[0].is_listed = true;
+    tier2.mockResolvedValue({ allowed: true, tier2Degraded: true });
+    expect((await edit("p1", { title: "New" })).status).toBe(503);
+    expect(prompts[0].title).toBe("Portrait");
+  });
+
+  it("changes nothing on a draft either: a release running at that moment would list the edit unread", async () => {
+    tier2.mockResolvedValue({ allowed: true, tier2Degraded: true });
+    expect((await edit("p1", { title: "New" })).status).toBe(503);
+    expect(prompts[0].title).toBe("Portrait");
+  });
+
+  it("still changes what needs no check", async () => {
+    tier2.mockResolvedValue({ allowed: true, tier2Degraded: true });
+    expect((await edit("p1", { aiSettings: { aspectRatio: "16:9" } })).status).toBe(200);
+    expect(tier2).not.toHaveBeenCalled();
+  });
+});
+
+describe("an edit stores only what it judges", () => {
+  // The API stores and hands out whatever a direct caller sends in these fields.
+  it("judges a category on its own", async () => {
+    await edit("p1", { category: "Poster" });
+    expect(check).toHaveBeenLastCalledWith({ category: "Poster" });
+  });
+
+  it("keeps a ratio only in a ratio's shape, which needs no check", async () => {
+    for (const ratio of ["16:9", "1:1", "2.39:1", "1:2.39", "21:9"]) {
+      expect((await edit("p1", { aiSettings: { aspectRatio: ratio } })).status).toBe(200);
+      expect(prompts[0].ai_settings).toEqual({ aspectRatio: ratio, includeText: undefined });
+    }
+    // A save never reads this field back, so text in it would never be judged at a release.
+    for (const text of ["a sultry boudoir scene", "16:9 a sultry scene", "16:9\na sultry scene", "", "16:", "100:1"]) {
+      await edit("p1", { aiSettings: { aspectRatio: text } });
+      expect(prompts[0].ai_settings).toEqual({ aspectRatio: undefined, includeText: undefined });
+    }
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it("ignores tags of any shape: they are ours (Kev, 2026-10-07)", async () => {
+    await edit("p1", { tags: ["a", { hidden: "explicit" }, ["explicit"], "b"] });
+    expect(check).not.toHaveBeenCalled();
+    expect(prompts[0].tags).toBeUndefined();
+  });
+
+  it("drops a ratio and a text switch that are not what they say", async () => {
+    expect((await edit("p1", { aiSettings: { aspectRatio: { hidden: "explicit" }, includeText: "explicit" } })).status).toBe(200);
+    expect(prompts[0].ai_settings).toEqual({ aspectRatio: undefined, includeText: undefined });
     expect(check).not.toHaveBeenCalled();
   });
 });

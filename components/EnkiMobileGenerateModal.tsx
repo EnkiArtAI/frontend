@@ -2,23 +2,15 @@ import BoostToggle from "@/components/generation/BoostToggle";
 import DiceButton from "@/components/DiceButton";
 import type { DiceValue, DiceVariable } from "@/lib/generation/variable-dice";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { ENKI_CATEGORIES } from "@/components/enki/EnkiFilters";
+import { priceInputText, priceOf, priceTextFor } from "@/lib/editor/price-input";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X, Sparkles, Plus, ImageIcon, Ratio, Maximize2, Copy, Settings, FileText, CheckCircle2 } from "lucide-react";
 import { getVariableColors } from "../lib/variableColors";
 import "../app/editor/mobile-modal.css"; // We will create this next
 
-const CATEGORY_OPTIONS = [
-  { value: "portrait", label: "Portrait" },
-  { value: "character", label: "Character" },
-  { value: "landscape", label: "Landscape" },
-  { value: "abstract", label: "Abstract" },
-  { value: "anime", label: "Anime" },
-  { value: "3d-render", label: "3D Render" },
-  { value: "photography", label: "Photography" },
-  { value: "concept-art", label: "Concept Art" },
-  { value: "logo", label: "Logo" },
-  { value: "product", label: "Product" },
-];
+// The categories the desktop editor saves and the feed filters by, stored in lower case.
+const CATEGORY_OPTIONS = ENKI_CATEGORIES.map((label) => ({ value: label.toLowerCase(), label }));
 
 interface PromptVariable {
   id: string;
@@ -164,6 +156,8 @@ interface EnkiMobileGenerateModalProps {
   /** Boost: same model on a priority host. Omit onBoostChange to hide it. */
   boost?: boolean;
   onBoostChange?: (next: boolean) => void;
+  /** Nothing to boost at the chosen size: the toggle shows disabled and says so. */
+  boostSameHost?: boolean;
   /** Resolution, owned by the parent when provided — with the option list
       derived from the model's real ceiling and prices (useGenerationCore).
       Absent, the modal keeps its internal 2K/4K fallback (legacy editor). */
@@ -301,6 +295,7 @@ export default function EnkiMobileGenerateModal({
   generateLabel,
   boost,
   onBoostChange,
+  boostSameHost,
   resolution: resolutionProp,
   setResolution: setResolutionProp,
   resolutionOptions,
@@ -462,6 +457,12 @@ export default function EnkiMobileGenerateModal({
   const [localType, setLocalType] = useState("free-prompt");
   const [localTags, setLocalTags] = useState<string[]>([]);
   const [localPrice, setLocalPrice] = useState(0);
+  const priceVal = price ?? localPrice;
+  /* The price field holds its own text. Bound to the number alone it could
+     not hold "0", "0." or "0.0", so typing 0.05 left a price of 5. What is
+     shown is that text while it stands for the price, and the price itself
+     once that was set from outside. */
+  const [priceText, setPriceText] = useState("");
 
   if (!isOpen) return null;
 
@@ -472,7 +473,6 @@ export default function EnkiMobileGenerateModal({
   const tagsVal = tags ?? localTags;
   const addTagFn = onAddTag ?? ((t: string) => setLocalTags((p) => (p.includes(t) ? p : [...p, t])));
   const removeTagFn = onRemoveTag ?? ((t: string) => setLocalTags((p) => p.filter((x) => x !== t)));
-  const priceVal = price ?? localPrice;
   const onPrice = setPrice ?? setLocalPrice;
   const showReferenceImages = typeof onAddReferenceImages === "function";
   // Web has no Release flow — it offers a "Prompt editor" button instead.
@@ -973,14 +973,16 @@ export default function EnkiMobileGenerateModal({
                       <div className="mobile-modal-price-input-wrap">
                         <span className="mobile-modal-price-input-prefix">$</span>
                         <input
-                          type="number"
+                          type="text"
                           inputMode="decimal"
-                          min={0}
-                          step="0.0001"
                           className="mobile-modal-price-input"
                           placeholder="0.0000"
-                          value={priceVal || ""}
-                          onChange={(e) => onPrice(parseFloat(e.target.value) || 0)}
+                          value={priceTextFor(priceText, priceVal)}
+                          onChange={(e) => {
+                            const text = priceInputText(e.target.value);
+                            setPriceText(text);
+                            onPrice(priceOf(text));
+                          }}
                         />
                         <span className="mobile-modal-price-input-suffix">USDC / render</span>
                       </div>
@@ -1209,8 +1211,8 @@ export default function EnkiMobileGenerateModal({
                     type="button"
                     className="mobile-modal-generate-btn"
                     style={{ width: "100%", marginTop: 14, ...(releaseReady ? { background: "#1E9E5A" } : { opacity: 0.45 }) }}
-                    disabled={!releaseReady}
-                    onClick={() => (onRelease ? onRelease() : onGenerate(1))}
+                    disabled={!releaseReady || !onRelease}
+                    onClick={onRelease}
                   >
                     <Sparkles size={14} style={{ fill: "white" }} />
                     Release prompt
@@ -1369,7 +1371,7 @@ export default function EnkiMobileGenerateModal({
                 <span className="mobile-modal-pay-inline-price">{priceFor(genCountNum)}</span>
               </div>
               {onBoostChange && (
-                <BoostToggle boost={!!boost} onChange={onBoostChange} disabled={isGenerating} />
+                <BoostToggle boost={!!boost} onChange={onBoostChange} sameHost={boostSameHost} disabled={isGenerating} />
               )}
               {/* 🎲 — invents one coherent set of variable values. Without an
                   onVariableChange there is nowhere to put a roll, so no dice.

@@ -89,6 +89,8 @@ describe("withdrawErrorMessage", () => {
     expect(withdrawErrorMessage({ status: 400, body: { code: "NO_RECIPIENT_ACCOUNT", error: "x" } }, fb)).toMatch(/never held USDC/);
     expect(withdrawErrorMessage({ status: 400, body: { code: "FROM_MISMATCH", error: "x" } }, fb)).toMatch(/reload/);
     expect(withdrawErrorMessage({ status: 401, body: { error: "Not signed in" } }, fb)).toMatch(/sign in again/);
+    // A step-up the user closed is not an ended session.
+    expect(withdrawErrorMessage({ status: 401, body: { error: "Step-up verification required", stepUp: true } }, fb)).toBe("Not confirmed, nothing moved.");
   });
 
   it("shows the not-migrated sentence verbatim", () => {

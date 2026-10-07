@@ -171,14 +171,21 @@ export async function putDurably(name: string, buf: Buffer, contentType: string,
   return null;
 }
 
-/** A file already in one of our stores stays where it is, so its stored URL is the one the client was given. */
+/**
+ * A file already in one of our stores stays where it is, so its stored URL is
+ * the one the client was given. Ours by exact host: the Blob store
+ * BLOB_READ_WRITE_TOKEN names (vercel_blob_rw_<storeId>_..., the URL scheme
+ * @vercel/blob builds) and the bucket of our own Supabase project. Every
+ * other customer's store lives on the same two domains.
+ */
 function inOurBlob(url: string): boolean {
   try {
     const u = new URL(url);
-    return (
-      u.hostname.endsWith(".public.blob.vercel-storage.com") ||
-      (u.hostname.endsWith(".supabase.co") && u.pathname.startsWith(`/storage/v1/object/public/${FALLBACK_BUCKET}/`))
-    );
+    if (u.protocol !== "https:") return false;
+    const storeId = process.env.BLOB_READ_WRITE_TOKEN?.split("_")[3]?.toLowerCase();
+    if (storeId && u.hostname === `${storeId}.public.blob.vercel-storage.com`) return true;
+    const project = process.env.SUPABASE_URL ? new URL(process.env.SUPABASE_URL).hostname : null;
+    return u.hostname === project && u.pathname.startsWith(`/storage/v1/object/public/${FALLBACK_BUCKET}/`);
   } catch {
     return false;
   }
@@ -224,4 +231,29 @@ export async function storeGeneratedImage(providerUrl: string, userId: string, d
     console.warn("[derivative-store] failed:", e instanceof Error ? e.message : e);
     return passthrough;
   }
+}
+
+/**
+ * A prompt's showcase images, as URLs in our stores (SHR-4). The editor
+ * sends its finished renders: our URL, or a data URL when the model was free
+ * or storing failed. A raster data URL is stored now; megabytes of text in
+ * prompts.showcase_images would ride along on every listing query, and the
+ * share card drops it. Any other address is dropped, so the share card never
+ * fetches a URL a creator typed, except one the prompt already holds (`saved`):
+ * an edit must not silently lose a picture saved before this rule.
+ * null when a data URL could not be stored.
+ */
+export async function ownShowcaseImages(urls: string[], userId: string, saved: string[] = []): Promise<string[] | null> {
+  const deadline = Date.now() + 20_000;
+  const keptAsIs = (url: string) => saved.includes(url) || inOurBlob(url);
+  const wanted = urls.filter((url) => keptAsIs(url) || /^data:image\/(png|jpeg|webp)[;,]/.test(url)).slice(0, 4);
+  const kept = await Promise.all(wanted.map(async (url) => {
+    if (keptAsIs(url)) return url;
+    const bytes = await fetchBytes(url);
+    if (!bytes) return undefined;
+    const ext = bytes.contentType.includes("png") ? "png" : bytes.contentType.includes("webp") ? "webp" : "jpg";
+    return putDurably(`showcase/${userId}/${Date.now()}_${Math.random().toString(36).slice(2, 9)}.${ext}`, bytes.buf, bytes.contentType, deadline);
+  }));
+  if (kept.includes(null)) return null;
+  return kept.filter((u): u is string => typeof u === "string");
 }

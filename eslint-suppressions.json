@@ -14,14 +14,9 @@
       "count": 1
     }
   },
-  "app/api/generations/[id]/route.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 4
-    }
-  },
   "app/api/generations/route.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 3
+      "count": 1
     }
   },
   "app/api/marketplace/prompts/route.ts": {
@@ -64,7 +59,7 @@
   },
   "app/middleware/validation.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 5
+      "count": 2
     }
   },
   "app/my-gallery/page.tsx": {
@@ -88,11 +83,6 @@
       "count": 2
     }
   },
-  "backend/services/__tests__/variable-substitution.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
   "backend/services/gemini-image-generation.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 3
@@ -108,11 +98,6 @@
       "count": 3
     }
   },
-  "backend/services/variable-substitution.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 6
-    }
-  },
   "backend/services/wavespeed-image-generation.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
@@ -121,11 +106,6 @@
   "backend/solana-x402-verifier.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
-    }
-  },
-  "backend/x402-engine.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 5
     }
   },
   "components/BetaGate.tsx": {

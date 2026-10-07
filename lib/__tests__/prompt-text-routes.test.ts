@@ -110,3 +110,17 @@ describe("the prompt detail route", () => {
     expect((await detailOf(draft)).publicPromptText).toBeUndefined();
   });
 });
+
+describe("a prompt's search tags", () => {
+  const tagged = { ...showcase, tags: ["dragon", "ruins"] };
+
+  it("are public once the prompt is listed", async () => {
+    expect((await detailOf(tagged)).tags).toEqual(["dragon", "ruins"]);
+  });
+
+  it("stay with the creator while the prompt is a draft", async () => {
+    const draft = { ...tagged, is_listed: false, listing_status: "draft" };
+    expect((await detailOf(draft)).tags).toEqual([]);
+    expect((await detailOf(draft, "owner-token")).tags).toEqual(["dragon", "ruins"]);
+  });
+});

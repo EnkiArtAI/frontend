@@ -5,16 +5,17 @@ import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
  * identifier is an email OR a handle (username). Verifies the Argon2id+pepper
  * credential in password_credentials and mints a session. Generic error on any
  * failure so we never reveal whether an account exists.
+ *
+ * An invited account still on its mailed one-time password gets no session:
+ * the answer is { setPassword: true }, and only POST
+ * /api/auth/password/first-login turns it into a login (Kev, 2026-10-07).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { verifyOrDecoy } from "@/lib/password-auth";
-import { mintUserSession } from "@/lib/user-session";
-import { activeBanFor } from "@/lib/session-user";
-import { whitelistStageActive, isEmailAllowed, grantGateCookie } from "@/lib/allowlist";
+import { loginRefusal, openLoginSession } from "@/lib/password-login";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
-import { getClientIp, hashIp, isIpBanned } from "@/lib/ip-hash";
 
 const bodySchema = z.object({
   identifier: z.string().min(1).max(320).optional(),
@@ -45,27 +46,21 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = getSupabaseServerClient();
-  let cred: { user_id: string; email: string; pw_hash: string; pw_salt: string } | null = null;
+  let cred: { user_id: string; email: string; pw_hash: string; pw_salt: string; must_change_password: boolean } | null = null;
+  // A credential that cannot be read is no "wrong password": the honest 503.
+  const COLS = "user_id, email, pw_hash, pw_salt, must_change_password";
 
   if (isEmail) {
-    const { data, error } = await supabase
-      .from("password_credentials")
-      .select("user_id, email, pw_hash, pw_salt")
-      .eq("email", identifier)
-      .maybeSingle();
-    if (isDbUnreachable(error)) return dbUnavailableResponse();
+    const { data, error } = await supabase.from("password_credentials").select(COLS).eq("email", identifier).maybeSingle();
+    if (error) return dbUnavailableResponse();
     cred = data;
   } else {
     // handle → users.id → credential (handle is citext, case-insensitive)
     const { data: u, error: uErr } = await supabase.from("users").select("id").eq("handle", identifier).maybeSingle();
     if (isDbUnreachable(uErr)) return dbUnavailableResponse();
     if (u) {
-      const { data, error } = await supabase
-        .from("password_credentials")
-        .select("user_id, email, pw_hash, pw_salt")
-        .eq("user_id", u.id)
-        .maybeSingle();
-      if (isDbUnreachable(error)) return dbUnavailableResponse();
+      const { data, error } = await supabase.from("password_credentials").select(COLS).eq("user_id", u.id).maybeSingle();
+      if (error) return dbUnavailableResponse();
       cred = data;
     }
   }
@@ -77,27 +72,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Wrong login or password" }, { status: 401 });
   }
 
-  // Private-beta whitelist: the account exists, but app access still needs the
-  // email to be allow-listed. Generic 401 keeps it from being an oracle.
-  let emailAllowed = true;
-  try {
-    emailAllowed = !whitelistStageActive() || (await isEmailAllowed(supabase, cred.email));
-  } catch (e) {
-    if (isDbUnreachable(e)) return dbUnavailableResponse();
-    throw e;
-  }
-  if (!emailAllowed) {
-    return NextResponse.json({ error: "Wrong login or password" }, { status: 401 });
-  }
-
-  const ipHash = hashIp(getClientIp(req));
-  if (await isIpBanned(supabase, ipHash)) {
-    return NextResponse.json({ error: "Access from this network is blocked." }, { status: 403 });
-  }
-  // Banned users still get a session — it only opens /api/ban/* (status,
-  // appeal, funds). The banned flag routes the client to /banned.
-  const banned = !!(await activeBanFor(supabase, cred.user_id));
-  const session = await mintUserSession(cred.user_id, ipHash);
-  // Whitelisted login → grant app access (gate cookie).
-  return grantGateCookie(NextResponse.json({ email: cred.email, ...session, ...(banned ? { banned: true } : {}) }));
+  // Private-beta whitelist and IP bans, as for every password login.
+  const gate = await loginRefusal(req, supabase, cred.email);
+  if (gate.refusal) return gate.refusal;
+  // The one-time password opens only the step that replaces it.
+  if (cred.must_change_password) return NextResponse.json({ setPassword: true });
+  return openLoginSession(supabase, cred.user_id, cred.email, gate.ipHash);
 }

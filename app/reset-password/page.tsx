@@ -101,9 +101,9 @@ function ResetPasswordInner() {
   }, [embed]);
 
   // Inside the login-popup iframe the WHOLE page must navigate, not the frame.
-  const goHome = () => {
-    if (embed && window.top && window.top !== window) window.top.location.href = "/home";
-    else router.replace("/home");
+  const goHome = (path = "/home") => {
+    if (embed && window.top && window.top !== window) window.top.location.href = path;
+    else router.replace(path);
   };
 
   // Embedded choice screen: ← returns to the login form (parent listens).
@@ -155,7 +155,8 @@ function ResetPasswordInner() {
       if (!res.ok) throw new Error(data?.error || "Could not reset");
       adoptSession(data);
       setDone(true);
-      setTimeout(goHome, 900);
+      // An inbox reset enters like a login: a banned account goes to /banned.
+      setTimeout(() => goHome(data.banned ? "/banned" : "/home"), 900);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not reset");
     } finally { setBusy(false); }

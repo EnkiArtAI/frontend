@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUsdcBalance } from "@/lib/usdc-balance";
+import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -10,6 +11,10 @@ export const runtime = "nodejs";
  * instead of a ledger row we control. Enki cannot inflate, freeze or lose it.
  */
 export async function GET(req: NextRequest) {
+  // Public (a banned account reads its balance without the team cookie), and
+  // every call is an RPC request on our provider: bounded per IP.
+  const limit = checkRequestRateLimit(rateLimitKey(req, "billing:balance"), 30, 60_000);
+  if (!limit.allowed) return rateLimitResponse(limit.retryAfterSeconds);
   const address = req.nextUrl.searchParams.get("address");
   if (!address) return NextResponse.json({ balance: 0 });
 

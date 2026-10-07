@@ -5,6 +5,7 @@
  * export is request/response over window events — the private key itself only
  * ever passes through the promise below, nothing is stored.
  */
+import { sessionAuthHeaders } from "@/lib/session-headers";
 
 export const CDP_ADDRESS_EVENT = "enki-cdp-address";
 export const CDP_EXPORT_REQUEST = "enki-cdp-export-request";
@@ -13,6 +14,68 @@ export const CDP_SIGN_REQUEST = "enki-cdp-sign-request";
 export const CDP_SIGN_RESULT = "enki-cdp-sign-result";
 
 let solanaAddress: string | null = null;
+
+/* The wallet unlock (Kev, 2026-10-07). Once an account has a second factor,
+   CDP may act only for a session that passed a wallet step-up: the JWT route
+   answers 403 { locked } otherwise. Its last answer is recorded here. The
+   runtime registers how to get past the lock; a wallet action awaits
+   ensureCdpWallet() before it starts, so no timeout runs while the user
+   answers the dialog. */
+let locked = false;
+// Why the server keeps the wallet closed until the user acts elsewhere (an
+// email to confirm), in its own words; no dialog opens it.
+let closed: string | null = null;
+type Ensure = (opts?: { attached?: boolean }) => Promise<void>;
+let ensure: Ensure | null = null;
+
+/** Our JWT for CDP, or undefined; records whether the wallet is locked. CDP
+    asks for it before every request, the bridge before every wallet action. */
+export async function fetchWalletJwt(): Promise<string | undefined> {
+  const res = await fetch("/api/auth/wallet/jwt", { method: "POST", headers: sessionAuthHeaders() });
+  const body = (await res.json().catch(() => ({}))) as { jwt?: string; locked?: boolean; confirmEmail?: boolean; error?: string };
+  locked = res.status === 403 && body.locked === true;
+  closed = res.status === 403 && body.confirmEmail === true ? body.error ?? "Confirm your email to open your wallet." : null;
+  return res.ok ? body.jwt : undefined;
+}
+
+export function cdpClosedReason(): string | null {
+  return closed;
+}
+
+export function isCdpLocked(): boolean {
+  return locked;
+}
+
+export function registerCdpEnsure(fn: Ensure | null) {
+  ensure = fn;
+}
+
+/** Resolves once the embedded wallet can act: at once without a CDP runtime
+    (wallet logins, guests), after the unlock dialog when it is locked; with
+    attached, once its address is on our session too (a paid generation).
+    Rejects when the user cancels. */
+export function ensureCdpWallet(opts?: { attached?: boolean }): Promise<void> {
+  return ensure ? ensure(opts) : Promise.resolve();
+}
+
+/* The last address per email: CDP forgets it while the wallet is locked, and
+   every wallet screen needs it to offer the action that unlocks. Public data,
+   cleared on logout. */
+const ADDRESS_KEY = "enki-cdp-address:";
+
+export function rememberCdpAddress(email: string, address: string) {
+  try { localStorage.setItem(ADDRESS_KEY + email, address); } catch { /* storage off: no memory */ }
+}
+
+export function rememberedCdpAddress(email: string): string | null {
+  try { return localStorage.getItem(ADDRESS_KEY + email); } catch { return null; }
+}
+
+export function forgetCdpAddresses() {
+  try {
+    Object.keys(localStorage).filter((k) => k.startsWith(ADDRESS_KEY)).forEach((k) => localStorage.removeItem(k));
+  } catch { /* nothing stored */ }
+}
 
 export function setCdpSolanaAddress(addr: string | null) {
   solanaAddress = addr;
@@ -24,7 +87,8 @@ export function getCdpSolanaAddress(): string | null {
 }
 
 /** Ask the CDP runtime to export the Solana private key (resolves with it). */
-export function requestCdpKeyExport(timeoutMs = 30_000): Promise<string> {
+export async function requestCdpKeyExport(timeoutMs = 30_000): Promise<string> {
+  await ensureCdpWallet();
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();
@@ -52,7 +116,8 @@ let signSeq = 0;
  * base64 out). Same request/response shape as the export above, for the same
  * reason: the signing hook only exists inside the lazily-mounted provider.
  */
-export function requestCdpSign(transaction: string, timeoutMs = 60_000): Promise<string> {
+export async function requestCdpSign(transaction: string, timeoutMs = 60_000): Promise<string> {
+  await ensureCdpWallet();
   const id = String(++signSeq);
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {

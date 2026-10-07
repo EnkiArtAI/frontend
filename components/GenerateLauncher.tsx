@@ -91,7 +91,7 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
     paidEntry
       ? [resolution, ...quoteTiers].flatMap((t) => {
           const tier = asTier(t);
-          return tier ? [{ modelId: paidEntry.id, resolution: tier, boost: core.boostAvailable && boost, referenceImageCount: refCount }] : [];
+          return tier ? [{ modelId: paidEntry.id, resolution: tier, boost: core.boostAt(tier) && boost, referenceImageCount: refCount }] : [];
         })
       : [],
   );
@@ -204,7 +204,7 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
           {
             model: core.entry,
             resolution: tier,
-            boost: core.boostAvailable && boost,
+            boost: core.boostAt(tier) && boost,
             prompt: final.trim(),
             promptId: seedPrompt?.id || undefined,
             variableValues: seedPrompt ? variableValues : undefined,
@@ -334,6 +334,7 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
         generateBlocked={refsLoading}
         boost={boost}
         onBoostChange={core.boostAvailable ? setBoost : undefined}
+        boostSameHost={!core.boostAt(resolution)}
         hideReleaseTab
         resultImages={results}
         isGenerating={generating}

@@ -7,11 +7,11 @@ import { normalizeTier } from "@/lib/generation/resolution";
 
 export type ResolutionTier = "2K" | "4K";
 
+/** 2K and 4K always; 1K only where the host prices it apart from 2K. */
+export type PriceRow = Record<ResolutionTier, number> & { "1K"?: number };
+
 /** Real per-image API cost (USD) by model id and resolution tier. */
-export const MODEL_IMAGE_PRICING: Record<
-  string,
-  Record<ResolutionTier, number>
-> = {
+export const MODEL_IMAGE_PRICING: Record<string, PriceRow> = {
   /* nano-banana-pro runs Gemini direct since 2026-09-05: WaveSpeed raised
      its 1K/2K to $0.14 while Gemini stays $0.134 (official page). */
   "nano-banana-pro": { "2K": 0.134, "4K": 0.24 },
@@ -21,6 +21,9 @@ export const MODEL_IMAGE_PRICING: Record<
      is the MEDIUM cell (the picker's "from" price and the tier ratio); the
      charged price per quality is GPT_OPENAI below. */
   "gpt-image-2": { "2K": 0.107, "4K": 0.178 },
+  /* nano-banana-2 runs WaveSpeed Fast at 2K/4K and Google direct at 1K, where
+     Fast has no tier: the cheapest host per size (checked 2026-10-05). */
+  "nano-banana-2": { "1K": 0.0672, "2K": 0.045, "4K": 0.05 },
 };
 
 
@@ -38,6 +41,11 @@ export const MODEL_IMAGE_PRICING: Record<
 export function toResolutionTier(resolution: string | undefined): ResolutionTier {
   const tier = normalizeTier(resolution);
   return tier === "4K" ? "4K" : "2K";
+}
+
+/** A row's price at this resolution: its own 1K cell when it has one. */
+function priceAt(row: PriceRow, resolution: string | undefined): number {
+  return (normalizeTier(resolution) === "1K" ? row["1K"] : undefined) ?? row[toResolutionTier(resolution)];
 }
 
 export type GptQuality = "low" | "medium" | "high";
@@ -96,7 +104,7 @@ export function apiPricePerImage(modelId: string, resolution: string, quality?: 
   // borrow Nano Banana Pro's.
   const ladder = MODEL_IMAGE_PRICING[modelId];
   if (!ladder) throw new Error(`No price table for model "${modelId}"`);
-  return ladder[tier];
+  return priceAt(ladder, resolution);
 }
 
 /**
@@ -112,14 +120,22 @@ export function apiPricePerImage(modelId: string, resolution: string, quality?: 
  * cheapest host, so a paid "faster host" stopped existing. The flag answers
  * the routed normal price.
  */
-const GEMINI_BOOST: Record<ResolutionTier, number> = { "2K": 0.134, "4K": 0.24 };
+const GEMINI_DIRECT: Record<string, PriceRow> = {
+  "nano-banana-pro": { "2K": 0.134, "4K": 0.24 },
+  // gemini-3.1-flash-image: 1120 / 1680 / 2520 tokens at $60 per 1M (official page, 2026-10-05).
+  "nano-banana-2": { "1K": 0.0672, "2K": 0.1008, "4K": 0.1512 },
+};
+
+/** Google direct's price for this model, or null when the model does not run there. */
+export function geminiDirectPricePerImage(modelId: string, resolution: string): number | null {
+  return Object.hasOwn(GEMINI_DIRECT, modelId) ? priceAt(GEMINI_DIRECT[modelId], resolution) : null;
+}
 
 export function apiBoostPricePerImage(
   modelId: string,
   resolution: string,
   quality?: "low" | "medium" | "high",
 ): number {
-  if (modelId === "nano-banana-pro") return GEMINI_BOOST[toResolutionTier(resolution)];
-  return apiPricePerImage(modelId, resolution, quality);
+  return geminiDirectPricePerImage(modelId, resolution) ?? apiPricePerImage(modelId, resolution, quality);
 }
 

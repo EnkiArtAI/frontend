@@ -5,7 +5,6 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
 import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { PAYMENT_CHAINS } from "@/shared/payment-config";
@@ -13,7 +12,7 @@ import { addCreation, getUserKeyFromAccount } from "@/lib/creations";
 import { usePaymentSigner } from "@/hooks/usePaymentSigner";
 import { useCdpAddress } from "@/hooks/useCdpAddress";
 import { useCdpSolanaSigner } from "@/hooks/useCdpSolanaSigner";
-import { useModelLimits, useModelCatalogue, FALLBACK_RATIOS, resolveCatalogueEntry } from "@/hooks/useModelLimits";
+import { useModelLimits, useModelCatalogue, FALLBACK_RATIOS, resolveCatalogueEntry, boostAt } from "@/hooks/useModelLimits";
 import { runGeneration } from "@/lib/generation/run-generation";
 import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
 import { useReferenceReads, REFS_LOADING } from "@/hooks/useReferenceReads";
@@ -58,6 +57,9 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ENKI_CATEGORIES } from "@/components/enki/EnkiFilters";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { DEFAULT_PROMPT_PRICE_USD } from "@/shared/revenue-config";
+import { stepPrice } from "@/lib/editor/price-input";
+import { nameSlotByItsText } from "@/lib/editor/slot-name";
 import {
   loadEditorVersions,
   saveEditorVersions,
@@ -246,9 +248,6 @@ interface EditorDraft {
   promptPrice: number;
   settingsCollapsed: boolean;
   savedAt: number;
-  // Saved-prompt id must survive reloads: without it a Turnkey user's saved
-  // prompt silently falls back to the SOL-requiring x402 flow after refresh.
-  currentPromptId?: string | null;
 }
 
 // (A translation table mapping editor-only ratios to their nearest provider
@@ -781,7 +780,6 @@ export default function EnkiPromptEditor() {
           setUi((prev) => ({
             ...prev,
             maxImages: draft.maxImages ?? prev.maxImages,
-            currentPromptId: draft.currentPromptId ?? null,
           }));
           if (draft.modelsSelected?.length) {
             // One model runs and is saved; older drafts may still hold several.
@@ -844,7 +842,6 @@ export default function EnkiPromptEditor() {
           promptPrice,
           settingsCollapsed: ui.settingsCollapsed,
           savedAt: Date.now(),
-          currentPromptId: ui.currentPromptId,
         };
         localStorage.setItem(EDITOR_DRAFT_KEY, JSON.stringify(draft));
         setDraftSavedAt(draft.savedAt);
@@ -853,7 +850,7 @@ export default function EnkiPromptEditor() {
       }
     }, 400);
     return () => clearTimeout(timeoutId);
-  }, [promptData, variables, models.selected, ratios.selected, ui.maxImages, ui.settingsCollapsed, referenceImages, promptPrice, ui.currentPromptId]);
+  }, [promptData, variables, models.selected, ratios.selected, ui.maxImages, ui.settingsCollapsed, referenceImages, promptPrice]);
 
   /* ─── Restore parked verify cards (images + variable values + per-card
      reference images) from IndexedDB so the session survives a reload ─── */
@@ -1275,11 +1272,11 @@ export default function EnkiPromptEditor() {
   const canUndo = historyVersion >= 0 && historyPastRef.current.length > 0;
   const canRedo = historyVersion >= 0 && historyFutureRef.current.length > 0;
 
-  /* ─── New prompt — wipe everything and start from a clean slate ───
+  /* ─── Clean slate ───
      Resets all editor content + settings, clears the persisted draft
      (localStorage) and verify cards (IndexedDB), and empties the
      undo/redo history so there's nothing to roll back into. */
-  const handleNewPrompt = useCallback(() => {
+  const resetEditor = useCallback(() => {
     setPromptData({ title: "", body: "", type: "free-prompt", tags: [] });
     setVariables([]);
     setReferenceImages([]);
@@ -1315,8 +1312,13 @@ export default function EnkiPromptEditor() {
     historySnapshotRef.current = null;
     gestureFocusRef.current = undefined;
     setHistoryVersion((v) => v + 1);
+  }, []);
+
+  /* ─── New prompt — wipe everything and say so ─── */
+  const handleNewPrompt = useCallback(() => {
+    resetEditor();
     toast({ title: "New prompt", description: "Cleared the editor — starting fresh." });
-  }, [toast]);
+  }, [resetEditor, toast]);
 
   /* ─── ESC → leave the editor ───
      A neutral ESC (no lightbox/dialog/dropdown open, nothing prevented it)
@@ -1449,23 +1451,20 @@ export default function EnkiPromptEditor() {
      having to manually re-space). Caret is repositioned right
      after the inserted space so subsequent input flows naturally. */
   /* ─── Price stepper ───
-     Bumps the price by `delta` USDC, clamps to the allowed minimum,
-     rounds to 4-decimal precision (matches the input's `step`),
+     One arrow press up or down (lib/editor/price-input: the arrows count
+     in cents and stop at one cent; a finer price, down to $0.0001, is typed),
      snapshots the previous value (for digit-diff animation) and
      triggers the roll-direction class. The class self-clears 240ms
      later — long enough for the keyframe to play, short enough that
      rapid clicks restart cleanly. */
   const handlePriceStep = useCallback(
-    (delta: number) => {
+    (direction: 1 | -1) => {
       const current = promptPrice || 0;
-      const next = Math.max(
-        0.0001,
-        parseFloat((current + delta).toFixed(4))
-      );
-      if (next === current) return;
+      const next = stepPrice(current, direction);
+      if (next === null) return;
       prevPriceRollSnapshotRef.current = current;
       priceRollKeyRef.current += 1;
-      setPriceRollDir(delta > 0 ? "up" : "down");
+      setPriceRollDir(direction > 0 ? "up" : "down");
       setPromptPrice(next);
       setUi((p) => ({ ...p, pricePerRenderReviewed: true }));
       if (priceRollTimerRef.current) clearTimeout(priceRollTimerRef.current);
@@ -1646,7 +1645,7 @@ export default function EnkiPromptEditor() {
       modelId: m.id,
       resolution: genResolution,
       quality: m.supportsQuality ? quality : undefined,
-      boost: boost && !!m.boostAvailable,
+      boost: boost && boostAt(m, genResolution),
     })),
   );
   const modelPriceLabel = (id: string): string | undefined => {
@@ -1722,7 +1721,7 @@ export default function EnkiPromptEditor() {
         // Keep existing variables in list order; drop tokens removed from prompt
         for (const existing of prev) {
           if (!detectionByToken.has(existing.fullToken)) continue;
-          merged.push(normalizeVariable(existing, merged));
+          merged.push(normalizeVariable(nameSlotByItsText(existing, isMobileViewport), merged));
           seenTokens.add(existing.fullToken);
         }
 
@@ -1744,14 +1743,14 @@ export default function EnkiPromptEditor() {
             fullToken: det.full,
             colorIndex: pickVariableColorIndex(merged),
           };
-          merged.push(normalizeVariable(draft, merged));
+          merged.push(normalizeVariable(nameSlotByItsText(draft, isMobileViewport), merged));
         }
         return merged;
       });
     }, 400);
 
     return () => clearTimeout(timeoutId);
-  }, [promptData.body]);
+  }, [promptData.body, isMobileViewport]);
 
   useEffect(() => {
     variableLabelRegistryRef.current = buildLabelRegistry(variables, promptData.body);
@@ -2546,7 +2545,7 @@ export default function EnkiPromptEditor() {
           model: picked,
           resolution: genResolution,
           quality,
-          boost,
+          boost: boost && boostAt(picked, genResolution),
           prompt: previewText,
           aspectRatio: ratioForApi ?? "1:1",
           referenceImages: cardRefs.length ? cardRefs : undefined,
@@ -2576,13 +2575,6 @@ export default function EnkiPromptEditor() {
       setVersions(prev => prev.map(v => v.id === versionId ? { ...v, status: "complete", imageUrl: displayUrl, sourceUrl: data.imageUrl } : v));
       const userKey = getUserKeyFromAccount(account);
       if (userKey && data?.imageUrl) {
-        try {
-          await apiRequest("POST", "/api/generations", {
-            userKey, prompt: previewText, imageUrl: String(data.imageUrl),
-            provider: typeof data.provider === "string" ? data.provider : "unknown",
-            meta: { usedGemini: Boolean(data.usedGemini ?? false) },
-          });
-        } catch { /* ignore */ }
         try {
           addCreation(userKey, {
             id: creationId(),
@@ -2889,8 +2881,10 @@ export default function EnkiPromptEditor() {
   };
 
   const savePromptMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (opts?: { release?: boolean }) => {
       const payload = {
+        // A release lists the prompt on the server, in the same save that judges it.
+        ...(opts?.release ? { release: true } : {}),
         id: ui.currentPromptId,
         title: promptData.title,
         /* Persist the canonical wording, not the editor shortcut.
@@ -2900,7 +2894,9 @@ export default function EnkiPromptEditor() {
         content: expandReferenceImageMentions(promptData.body),
         promptType: promptData.type,
         aiModel: models.selected[0],
-        tags: promptData.tags,
+        // The editor keeps its one category in `tags`; the server keeps it in
+        // prompts.category. Search tags are computed there, never sent.
+        category: promptData.tags[0] ?? "",
         variables: variables.map((v) => {
           const n = normalizeVariable(v);
           return {
@@ -2953,37 +2949,31 @@ export default function EnkiPromptEditor() {
 
   const publishPromptMutation = useMutation({
     mutationFn: async () => {
-      let id = ui.currentPromptId;
-      if (!id) {
-        const saved = await savePromptMutation.mutateAsync();
-        if (typeof saved === "object" && saved !== null && "id" in saved) {
-          id = String((saved as { id?: unknown }).id ?? "");
-        }
-      }
+      /* A release is a save: what is in the editor now is what goes live, and
+         the server lists it only once that save has passed its checks. It used
+         to save only a prompt that had no id yet and then set a publish date,
+         which listed nothing; a refusal now stops the release with its reason. */
+      const saved = await savePromptMutation.mutateAsync({ release: true });
+      const id = typeof saved === "object" && saved !== null && "id" in saved ? String((saved as { id?: unknown }).id ?? "") : "";
       if (!id) throw new Error("Could not save prompt before publishing");
-      // Best-effort: try to mark published in DB. Don't fail the whole publish
-      // action if the column/route is missing — the prompt is already saved
-      // and shows on /showcase regardless.
-      try {
-        // The PATCH route requires a session (it used to accept anonymous
-        // edits), so forward it.
-        await fetch(`/api/prompts/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
-          credentials: "include",
-          body: JSON.stringify({ published: true }),
-        });
-      } catch (e) {
-        console.warn("Publish PATCH failed (non-fatal):", e);
-      }
-      return { id };
+      return { id, adult: (saved as { adult?: unknown }).adult === true };
     },
-    onSuccess: ({ id }) => {
+    onSuccess: ({ adult }) => {
       toast({
         title: "Published",
-        description: "Prompt is now live on the marketplace.",
+        // The check marks a prompt 18+ by itself; said here, or the artist
+        // cannot know why most visitors never see it.
+        description: adult
+          ? "Prompt is live. It was marked 18+ and is shown only to viewers who may see 18+ content."
+          : "Prompt is now live on the marketplace.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/prompts"] });
+      /* A release ends the draft. Left in place it came back on the next
+         visit still tied to the live prompt, with nothing saying so: the next
+         prompt written over it replaced the listing for good. The state is
+         reset too, not only the storage, or a pending autosave writes the
+         released prompt back before the editor is left. */
+      resetEditor();
       router.push("/showcase");
     },
     onError: (error: unknown) => {
@@ -3063,6 +3053,13 @@ export default function EnkiPromptEditor() {
     !ui.settingsCollapsed && ui.settingsReleaseAttempted && settingsMissing[key];
 
   const handleReleaseClick = () => {
+    // The desktop button is disabled by these two; the mobile sheet has its
+    // own button, so the rule is asked here, where every release starts.
+    if (publishPromptMutation.isPending) return;
+    if (verifiedCount === 0) {
+      toast({ title: "No image yet", description: "Generate at least one image from this prompt before releasing it.", variant: "destructive" });
+      return;
+    }
     if (hasSettingsErrors) {
       setUi((prev) => ({ ...prev, settingsReleaseAttempted: true }));
       toast({
@@ -3535,6 +3532,8 @@ export default function EnkiPromptEditor() {
               className={`enk-mode-card ${promptData.type === "premium-prompt" ? "enk-mode-card--active" : ""}`}
               onClick={() => {
                 setPromptData((prev) => ({ ...prev, type: "premium-prompt" }));
+                // Premium starts at the default price; one that is set stays.
+                setPromptPrice((p) => p || DEFAULT_PROMPT_PRICE_USD);
                 setUi((p) => ({ ...p, pricePerRenderReviewed: false }));
               }}
             >
@@ -3653,14 +3652,16 @@ export default function EnkiPromptEditor() {
                 changes what the generation IS, not just when it starts. */}
             <div className="enk-label">SPEED</div>
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <BoostToggle boost={boost} onChange={setBoost} available={!!picked?.boostAvailable} />
+              <BoostToggle boost={boost} onChange={setBoost} available={!!picked?.boostAvailable} sameHost={!boostAt(picked, genResolution)} />
               <QualitySelect
                 value={quality}
                 onChange={setQuality}
                 available={!!picked?.supportsQuality}
               />
               <p className="enk-hint-text" style={{ margin: 0 }}>
-                {boost
+                {!boostAt(picked, genResolution)
+                  ? "Already on the fastest host at this size."
+                  : boost
                   ? "Priority provider · about 3x faster · priced at the vendor's own rate"
                   : "Standard queue. Turn on Boost for a priority provider."}
               </p>
@@ -3999,6 +4000,12 @@ export default function EnkiPromptEditor() {
                           onFocus={() =>
                             setUi((p) => ({ ...p, pricePerRenderReviewed: true }))
                           }
+                          onKeyDown={(e) => {
+                            // The arrow keys count like the arrow buttons: one cent.
+                            if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+                            e.preventDefault();
+                            handlePriceStep(e.key === "ArrowUp" ? 1 : -1);
+                          }}
                         />
                         <div
                           className="enk-num-input__visual"
@@ -4041,7 +4048,7 @@ export default function EnkiPromptEditor() {
                           className="enk-num-input__btn"
                           aria-label="Increase price"
                           onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => handlePriceStep(0.0001)}
+                          onClick={() => handlePriceStep(1)}
                         >
                           <ChevronUp size={12} strokeWidth={2.5} />
                         </button>
@@ -4050,7 +4057,7 @@ export default function EnkiPromptEditor() {
                           className="enk-num-input__btn"
                           aria-label="Decrease price"
                           onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => handlePriceStep(-0.0001)}
+                          onClick={() => handlePriceStep(-1)}
                         >
                           <ChevronDown size={12} strokeWidth={2.5} />
                         </button>
@@ -5087,6 +5094,26 @@ export default function EnkiPromptEditor() {
         priceFor={slotPrice}
         modelPriceLabel={modelPriceLabel}
         requiredVariations={promptData.type === "free-prompt" ? 1 : 4}
+        onRelease={handleReleaseClick}
+        /* The sheet's Settings edit the editor's own state: a release sends
+           and checks that state, and on a phone the sheet is the only place
+           to fill it. Unwired, the sheet kept a private copy nobody read. */
+        title={promptData.title}
+        setTitle={(v) => setPromptData((prev) => ({ ...prev, title: v }))}
+        promptType={promptData.type}
+        setPromptType={(v) => {
+          if (v !== "free-prompt" && v !== "premium-prompt") return;
+          setPromptData((prev) => ({ ...prev, type: v }));
+          if (v !== "premium-prompt") return;
+          setPromptPrice((p) => p || DEFAULT_PROMPT_PRICE_USD);
+          setUi((p) => ({ ...p, pricePerRenderReviewed: false }));
+        }}
+        tags={promptData.tags}
+        onAddTag={(t) => setPromptData((prev) => ({ ...prev, tags: [t.toLowerCase()] }))}
+        onRemoveTag={removeTag}
+        price={promptPrice}
+        setPrice={(v) => { setPromptPrice(v); setUi((p) => ({ ...p, pricePerRenderReviewed: true })); }}
+        onToggleModel={toggleModel}
         onAutoFill={handleGrokFill}
         isAutoFilling={ui.isGrokFilling}
         generateBlocked={refsLoading}

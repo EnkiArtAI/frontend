@@ -103,7 +103,7 @@
    the warning banner". */
 .pgv-page {
   display: flex;
-  height: 100vh;
+  height: calc(100vh - var(--ek-banner-h, 0px));
   background: var(--pgv-bg);
   color: var(--pgv-text);
   overflow: hidden;
@@ -1072,7 +1072,7 @@ input[type="range"].pgv-range::-webkit-slider-thumb {
 @media (max-width: 960px) {
   .pgv-history {
     position: fixed;
-    top: 0;
+    top: var(--ek-banner-h, 0px);
     right: 0;
     bottom: 0;
     z-index: 40;
@@ -1084,7 +1084,7 @@ input[type="range"].pgv-range::-webkit-slider-thumb {
 
   .pgv-history-handle {
     position: fixed;
-    top: 12px;
+    top: calc(12px + var(--ek-banner-h, 0px));
     right: 12px;
     z-index: 39;
     display: flex;
@@ -1136,7 +1136,7 @@ input[type="range"].pgv-range::-webkit-slider-thumb {
     display: flex !important;
     flex-direction: column !important;
     height: 100% !important;
-    height: 100dvh !important;
+    height: calc(100dvh - var(--ek-banner-h, 0px)) !important;
     overflow-y: auto !important;
     overflow-x: hidden !important;
     -webkit-overflow-scrolling: touch !important;
@@ -1297,13 +1297,13 @@ input[type="range"].pgv-range::-webkit-slider-thumb {
   /* ── History Drawer on Mobile ── */
   .pgv-history-handle {
     display: flex !important;
-    top: 12px !important;
+    top: calc(12px + var(--ek-banner-h, 0px)) !important;
     right: 48px !important;
     z-index: 55 !important;
   }
   .pgv-history {
     position: fixed !important;
-    top: 0 !important;
+    top: var(--ek-banner-h, 0px) !important;
     right: 0 !important;
     bottom: 0 !important;
     width: min(300px, 84vw) !important;

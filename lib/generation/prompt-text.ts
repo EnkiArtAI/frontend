@@ -90,7 +90,7 @@ const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace
  * slug (a name with no ASCII letters or digits is saved as var_N, which the
  * slot text cannot be traced back to).
  */
-function storedName(slotText: string): string | null {
+export function storedName(slotText: string): string | null {
   const s = slug(slotText);
   if (!s) return null;
   return /^[a-z]/.test(s) ? s : `v_${s}`;

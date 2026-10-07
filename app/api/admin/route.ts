@@ -1,7 +1,7 @@
 /**
  * Admin panel API — the ONLY door to moderation data.
  *
- *   GET  → one payload for every tab (imports, reports, feedback, friends,
+ *   GET  → one payload for every tab (imports, reports, feedback,
  *          hunters, strikes+bans+appeals, recovery). Small beta-scale lists.
  *   POST → { resource, action, ... } mutations, each scoped + audited via
  *          decided_by/issued_by columns.
@@ -24,6 +24,7 @@ import { CHILD_SAFETY, hasChildSafetyCase, inWarningOrBanList, listPeople, parse
 import { readEvidence, withheldEvidence } from "@/lib/moderation/evidence";
 import { loadPromptText } from "@/lib/generation/prompt-text";
 import { banUntil } from "@/lib/moderation/bans";
+import { AccessError, accessFor, approveRequest, inviteEmail, inviteWallet, rejectRequest } from "@/lib/access-invite";
 
 /** A ban counts while it is not lifted and has not run out, as activeBanFor reads it. */
 const unexpired = () => `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`;
@@ -207,7 +208,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(await personDetail(supabase, who, (ct, iv, tag, kid) => tryDecrypt(ct, iv, tag, kid, [undefined])));
   }
 
-  const [imp, rep, fb, fr, hu, st, ba, ap, rec, council, genPolicy, automod, people] = await Promise.all([
+  const [imp, rep, fb, hu, st, ba, ap, rec, council, genPolicy, automod, people, access] = await Promise.all([
     supabase.from("hunt_submissions")
       .select("id, hunter_user_id, source_url, suggested_title, suggested_tags, submitted_at")
       .eq("status", "pending").order("submitted_at", { ascending: false }).limit(100),
@@ -217,9 +218,6 @@ export async function GET(req: NextRequest) {
     supabase.from("feedback_submissions")
       .select("id, user_id, submitter_name, submitter_email_ct, submitter_email_iv, submitter_email_tag, submitter_email_kid, description, category, severity, payout_cents, paid_at, created_at")
       .order("created_at", { ascending: false }).limit(100),
-    supabase.from("friends_whitelist")
-      .select("id, label, address, address_type, chain_key, notes, added_at")
-      .eq("is_active", true).order("added_at", { ascending: false }).limit(200),
     supabase.from("hunter_stats")
       .select("user_id, total_submissions, approved_count, rejected_count, duplicate_count, earnings_cents")
       .order("approved_count", { ascending: false }).limit(50),
@@ -248,6 +246,7 @@ export async function GET(req: NextRequest) {
       .eq("decision", "block")
       .order("created_at", { ascending: false }).limit(150),
     listPeople(supabase),
+    accessFor(supabase, role),
   ]);
 
   // attachments per feedback + evidence per recovery request
@@ -354,14 +353,6 @@ export async function GET(req: NextRequest) {
       payoutCents: (r.payout_cents as number | null) ?? null,
       at: r.created_at,
     })),
-    friends: (fr.data ?? []).map((r) => ({
-      id: String(r.id),
-      name: (r.label as string) ?? "—",
-      address: (r.address as string) ?? "",
-      type: (r.address_type as string) ?? "EOA",
-      chain: (r.chain_key as string) ?? "solana",
-      notes: (r.notes as string) ?? null,
-    })),
     hunters: (hu.data ?? []).map((r) => ({
       handle: handles.get(String(r.user_id)) ?? "unknown",
       total: (r.total_submissions as number) ?? 0,
@@ -427,6 +418,7 @@ export async function GET(req: NextRequest) {
       at: r.created_at,
     })),
     council,
+    access,
   });
 }
 
@@ -438,7 +430,7 @@ export async function POST(req: NextRequest) {
 
   let body: {
     resource?: string; action?: string; id?: string; ids?: string[];
-    reason?: string; name?: string; address?: string; type?: string; notes?: string; status?: string;
+    reason?: string; address?: string; status?: string;
     userId?: string; severity?: number; days?: number; permanent?: boolean;
     maxConcurrentPerUser?: number | null;
     handle?: string; kind?: string; violation?: string; vote?: string;
@@ -522,25 +514,18 @@ export async function POST(req: NextRequest) {
     return error ? fail(error, "mark paid") : NextResponse.json({ ok: true });
   }
 
-  // ── friends whitelist ──
-  if (body.resource === "friends") {
-    if (body.action === "add") {
-      const label = (body.name ?? "").trim(), address = (body.address ?? "").trim();
-      if (!label || !address) return NextResponse.json({ error: "Name and address are required" }, { status: 400 });
-      const { data, error } = await supabase.from("friends_whitelist")
-        .insert({
-          label: label.slice(0, 80), address: address.slice(0, 120),
-          address_type: ["EOA", "Collection", "Multi-sig"].includes(body.type ?? "") ? body.type : "EOA",
-          notes: (body.notes ?? "").trim().slice(0, 200) || null,
-          chain_key: "solana", is_active: true, added_by: userId,
-        })
-        .select("id").single();
-      return error ? fail(error, "add the entry") : NextResponse.json({ ok: true, id: String(data.id) });
-    }
-    if (body.action === "remove" && body.id) {
-      // soft delete — the row stays for the audit trail
-      const { error } = await supabase.from("friends_whitelist").update({ is_active: false }).eq("id", body.id);
-      return error ? fail(error, "remove the entry") : NextResponse.json({ ok: true });
+  // ── private-beta access (Kev, 2026-10-07): approve or reject a request,
+  // invite an email (account + mailed one-time password) or a wallet. Admins only. ──
+  if (body.resource === "access") {
+    if (role !== "admin") return NextResponse.json({ error: "Only admins grant access" }, { status: 403 });
+    try {
+      if (body.action === "approve" && body.id) return NextResponse.json(await approveRequest(supabase, body.id));
+      if (body.action === "reject" && body.id) return NextResponse.json(await rejectRequest(supabase, body.id));
+      if (body.action === "inviteEmail" && body.email) return NextResponse.json(await inviteEmail(supabase, body.email));
+      if (body.action === "inviteWallet" && body.address) return NextResponse.json(await inviteWallet(supabase, body.address));
+    } catch (e) {
+      if (e instanceof AccessError) return NextResponse.json({ error: e.message }, { status: e.status });
+      throw e;
     }
   }
 

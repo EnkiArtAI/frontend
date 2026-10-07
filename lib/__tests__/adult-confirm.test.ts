@@ -30,7 +30,10 @@ function chain() {
 }
 
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => ({ from: chain }) }));
-vi.mock("@/lib/session-user", () => ({ resolveSessionUserId: async (_s: unknown, t: string | null) => (t === "tok" ? "user-1" : null) }));
+vi.mock("@/lib/session-user", () => ({
+  resolveSessionUserId: async (_s: unknown, t: string | null) => (t === "tok" ? "user-1" : null),
+  resolveSessionUserWithBan: async (_s: unknown, t: string | null) => ({ userId: t === "tok" ? "user-1" : null, ban: null, wallet: null }),
+}));
 
 import { GET, PATCH } from "../../app/api/users/handle/route";
 
@@ -107,7 +110,7 @@ describe("the screens", () => {
   it("the feed offers the pill only to a confirmed adult and asks for exactly what it shows", () => {
     expect(FEED).toMatch(/onShowAdult=\{adultConfirmed \? setAdultPill : undefined\}/);
     expect(FEED).toMatch(/const showAdult = adultConfirmed && adultPill;/);
-    expect(FEED).toMatch(/genFilter\.join\(","\), showAdult \? "18\+" : "safe"\]/);
+    expect(FEED).toMatch(/genFilter\.join\(","\), showAdult \? "18\+" : "safe", query\]/);
     expect(FEED).toMatch(/\{ headers: sessionHeadersWith\(showAdult\), credentials: "include" \}/);
   });
 

@@ -9,13 +9,13 @@ import { recordModerationEvent } from "@/lib/moderation-enforcement";
 import { checkPrompt, NOT_CHECKED } from "@/lib/moderation/prompt-check";
 import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 
+const RATIO_SHAPE = /^[0-9]{1,2}([.][0-9]{1,2})?:[0-9]{1,2}([.][0-9]{1,2})?$/;
+
 type PatchBody = {
   title?: string;
   description?: string;
   category?: string;
-  tags?: string[];
   aiSettings?: { aspectRatio?: string; includeText?: boolean };
-  published?: boolean;
 };
 
 /*
@@ -156,7 +156,9 @@ export async function GET(
         _id: id,
         title: prompt.title,
         category: prompt.category,
-        tags: Array.isArray(prompt.tags) ? prompt.tags : [],
+        // Search tags are public once the prompt is listed; a draft's stay
+        // with its creator.
+        tags: Array.isArray(prompt.tags) && (isListed(prompt) || (await owns(prompt.creator_id))) ? prompt.tags : [],
         ai_model: prompt.ai_model,
         ai_settings: prompt.ai_settings,
         // The buyer surface prints this directly (boostedCost(price).toFixed(2)),
@@ -234,21 +236,28 @@ export async function PATCH(
       updated_at: new Date().toISOString(),
     };
 
+    // A title changed here keeps the tags computed from the old one until the
+    // next save through POST /api/prompt, the only route that recomputes them.
+    // No client edits a title through this route today.
     if (typeof body.title === "string") update.title = body.title;
     if (typeof body.description === "string") update.description = body.description;
     if (typeof body.category === "string") update.category = body.category;
-    if (Array.isArray(body.tags)) update.tags = body.tags;
+    // The ratio is kept only in a ratio's shape ("16:9", "2.39:1"): a save
+    // never reads this field back, so free text in it would sit beside a
+    // released prompt without the release judging it.
 
+    const sent = body.aiSettings?.aspectRatio;
+    const ratio = typeof sent === "string" && RATIO_SHAPE.test(sent) ? sent : undefined;
     if (body.aiSettings) {
       update.ai_settings = {
-        aspectRatio: body.aiSettings.aspectRatio,
-        includeText: body.aiSettings.includeText,
+        aspectRatio: ratio,
+        includeText: typeof body.aiSettings.includeText === "boolean" ? body.aiSettings.includeText : undefined,
       };
     }
 
-    if (body.published === true) {
-      update.published_at = new Date().toISOString();
-    }
+    // No publish date from here: a prompt is published by its release, a
+    // save that judges and lists it (POST /api/prompt). This stamped the date
+    // on a draft that was listed nowhere, and overwrote a listed prompt's.
 
     // Ownership is part of the WHERE clause — the service-role client bypasses
     // RLS, so without it any valid session could edit any prompt (IDOR).
@@ -257,11 +266,12 @@ export async function PATCH(
 
     // Edited text is judged like a save (Kev, 2026-10-03): a prompt saved
     // clean must not turn explicit or 18+ through its title, description or
-    // tags afterwards. Only the owner's edit is judged, so nobody else's
-    // request costs a check or earns a warning. The rest of the prompt was
-    // judged at save, so an 18+ mark is only ever raised here.
+    // category afterwards. Tags are ours, never edited here (Kev, 2026-10-07).
+    // Only the owner's edit is judged, so nobody else's request costs a check
+    // or earns a warning. The rest of the prompt was judged at save, so an
+    // 18+ mark is only ever raised here.
     const edited = Object.fromEntries(
-      Object.entries({ title: body.title, description: body.description, tags: Array.isArray(body.tags) ? body.tags.join(", ") : undefined })
+      Object.entries({ title: body.title, description: body.description, category: body.category })
         .filter((e): e is [string, string] => typeof e[1] === "string" && e[1].trim() !== ""),
     );
     if (Object.keys(edited).length > 0) {
@@ -286,6 +296,13 @@ export async function PATCH(
       const verdict = first ?? await moderate({ prompt: text, surface: "upload", signal: req.signal, adultJudged: true });
       after(recordModerationEvent(verdict, { surface: "upload", request: req, prompt: text }));
       if (!verdict.allowed) return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
+      // Tier 2 answers "allowed" when it is down, and no text is stored on a
+      // check that never ran. Not a draft's either: a release judges what it
+      // reads when it starts, so an edit landing during one would be listed
+      // with it unread.
+      if (verdict.tier2Degraded) {
+        return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 });
+      }
     }
 
     const { error, count } = await supabase

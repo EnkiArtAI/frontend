@@ -11,10 +11,25 @@
  *
  * Ban tolerant on purpose: a ban locks the marketplace, never the wallet, so
  * a suspended account still signs its sends and exports its key.
+ *
+ * Locked once the account has a second factor (Kev, 2026-10-07): CDP calls
+ * this before every wallet request, so it is the one place a stolen session
+ * is stopped from signing or exporting straight through CDP. Such a session
+ * needs a "wallet" or "export" step-up at most 2 h old, with wallet use in
+ * the last 15 min (403 { locked }); each mint refreshes the 15 min. 2FA is
+ * optional: without a factor the session alone opens the wallet, and the
+ * red bar asks the user to protect it.
+ *
+ * Closed until the email is confirmed and the mailed one-time password is
+ * replaced (Kev, 2026-10-07): an invitee's first login does both, a reset
+ * through the inbox too (403 { confirmEmail }). Nobody can open the wallet
+ * of an address they never received mail at.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { mintWalletJwt } from "@/lib/wallet-jwt";
+import { enrolledFactors, type Factor } from "@/lib/mfa";
+import { walletUnlocked } from "@/lib/webauthn";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -23,12 +38,13 @@ export async function POST(req: NextRequest) {
   if (!token) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
   const supabase = getSupabaseServerClient();
-  const { data: session } = await supabase
+  const { data: session, error: sessionErr } = await supabase
     .from("auth_sessions")
-    .select("wallet_address")
+    .select("wallet_address, stepup_at, stepup_seen_at")
     .eq("token", token)
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();
+  if (sessionErr) return NextResponse.json({ error: "Could not read the session" }, { status: 503 });
   if (!session) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
   let userId: string | null = UUID.test(session.wallet_address) ? session.wallet_address : null;
@@ -45,14 +61,34 @@ export async function POST(req: NextRequest) {
 
   // Email lives in password_credentials (isolated from the encrypted-email
   // design); handle (optional public username) on users.
-  const { data: cred } = await supabase
+  const { data: cred, error: credErr } = await supabase
     .from("password_credentials")
-    .select("email")
+    .select("email, email_verified_at, must_change_password")
     .eq("user_id", userId)
     .maybeSingle();
+  if (credErr) return NextResponse.json({ error: "Could not read the account" }, { status: 503 });
   if (!cred?.email) return NextResponse.json({ error: "Account has no email" }, { status: 400 });
+  // Before the unlock: a wallet that cannot open asks for no second factor.
+  if (!cred.email_verified_at || cred.must_change_password) {
+    return NextResponse.json(
+      { error: "Confirm your email to open your wallet: use “Forgot password” once.", confirmEmail: true },
+      { status: 403 },
+    );
+  }
+
+  let factors: Factor[];
+  try {
+    factors = await enrolledFactors(supabase, userId);
+  } catch {
+    return NextResponse.json({ error: "Could not read your security settings" }, { status: 503 });
+  }
+  if (factors.length && !walletUnlocked(session)) {
+    return NextResponse.json({ error: "Confirm it's you to use the wallet", locked: true, scope: "wallet", factors }, { status: 403 });
+  }
   const { data: user } = await supabase.from("users").select("handle").eq("id", userId).maybeSingle();
 
   const jwt = await mintWalletJwt({ id: userId, email: cred.email, username: user?.handle ?? null });
+  // Using the wallet keeps the unlock alive, never past its 2 h.
+  if (factors.length) await supabase.from("auth_sessions").update({ stepup_seen_at: new Date().toISOString() }).eq("token", token);
   return NextResponse.json({ jwt, userId });
 }

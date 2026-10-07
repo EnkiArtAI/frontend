@@ -1,0 +1,37 @@
+import { describe, it, expect } from "vitest";
+import { join } from "node:path";
+import { readSource } from "./_read-source";
+import { mapMarketplacePromptToEnkiPrompt } from "../enkiPromptAdapter";
+import { ENKI_CATEGORIES } from "../../components/enki/EnkiFilters";
+
+/**
+ * prompts.tags is ours now (automatic search tags, Kev 2026-10-07), so the
+ * editor's one category no longer travels in it: the editor saves it as
+ * prompts.category, and the feed's category chips filter on that.
+ */
+
+const ROOT = join(__dirname, "..", "..");
+
+describe("the category", () => {
+  it("is read from prompts.category, lowercased like the chips", () => {
+    const p = mapMarketplacePromptToEnkiPrompt({ id: "p1", title: "Brass", category: "Photography", tags: ["brass", "still life"] });
+    expect(p.category).toBe("photography");
+    expect(mapMarketplacePromptToEnkiPrompt({ id: "p2", title: "None" }).category).toBe("");
+  });
+
+  it("is what the feed's chips filter on, any picked chip matching", () => {
+    const feed = readSource(join(ROOT, "components", "enki", "EnkiFeedPage.tsx"));
+    expect(feed).toMatch(/return allPrompts\.filter\(\(prompt\) => tags\.includes\(prompt\.category\)\);/);
+    expect(feed).not.toMatch(/prompt\.tags\.includes\(tag\)/);
+  });
+
+  it("is saved by the editor as category, and no tags are sent", () => {
+    const editor = readSource(join(ROOT, "components", "EnkiPromptEditor.tsx"));
+    expect(editor).toMatch(/category: promptData\.tags\[0\] \?\? "",/);
+    expect(editor).not.toMatch(/^\s*tags: promptData\.tags,$/m);
+  });
+
+  it("offers Photography, the category live prompts already carry", () => {
+    expect(ENKI_CATEGORIES).toContain("Photography");
+  });
+});

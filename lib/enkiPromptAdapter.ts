@@ -27,6 +27,8 @@ export type EnkiPrompt = {
   title: string;
   description: string;
   artist: EnkiArtist;
+  /** prompts.category, lowercased: what the feed's category chips filter on. */
+  category: string;
   tags: string[];
   price: number;
   downloads: number;
@@ -178,6 +180,7 @@ export function mapMarketplacePromptToEnkiPrompt(prompt: unknown, index = 0): En
         "",
       avatar: initials(name),
     },
+    category: (readString(record.category) || "").toLowerCase(),
     tags: readArray(record.tags).slice(0, 5).map(String),
     price,
     downloads: Number(readNumber(record.totalSales) ?? readNumber(record.downloads) ?? readNumber(stats.totalGenerations) ?? 0),
