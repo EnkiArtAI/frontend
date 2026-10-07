@@ -55,12 +55,14 @@ function runSignup(open: boolean) {
   expect(script).toContain(`const SIGNUP_OPEN = ${open};`);
   const page = new Function(
     "document", "fetch", "adoptSession", "switchAuthTab", "showAuthSuccess",
-    `${script}\nreturn { submitAuth, step: () => signupStep };`,
+    `${script}\nreturn { submitAuth, submitFirstLogin, step: () => signupStep };`,
   )({ getElementById: el, createElement: make }, fetch, (d: unknown) => adopted.push(d), () => {}, () => {});
   return {
     el, posts, adopted,
     step: page.step as () => string,
     submit: () => page.submitAuth({ preventDefault() {} }, "signup"),
+    login: () => page.submitAuth({ preventDefault() {} }, "login"),
+    firstLogin: () => page.submitFirstLogin({ preventDefault() {} }),
     answer: (url: string, ok: boolean, body: unknown) => answers.set(url, { ok, body }),
   };
 }
@@ -69,7 +71,7 @@ const settle = async () => { for (let i = 0; i < 10; i++) await new Promise((r) 
 describe("the landing login", () => {
   it("logs in with the password and opens the app with the session", () => {
     expect(fn("submitAuth")).toMatch(/postJson\('\/api\/auth\/password\/login', \{ identifier: email, password: /);
-    expect(fn("submitAuth")).toMatch(/ok && data\.token \? adoptSession\(data\) : fail\(data\.error\)/);
+    expect(fn("submitAuth")).toMatch(/if \(ok && data\.token\) return adoptSession\(data\);/);
     const adopt = fn("adoptSession");
     expect(adopt).toMatch(/localStorage\.setItem\('enki_session_token', d\.token\)/);
     expect(adopt).toMatch(/localStorage\.setItem\('enki_session_email', d\.email\)/);
@@ -144,6 +146,35 @@ describe("the landing login", () => {
     await settle();
     expect(page.step()).toBe("apply");
     expect(page.el("formSignup").note?.textContent).toBe("Sign-up opens after the private beta. Request access to join.");
+  });
+
+  it("turns a login with the mailed one-time password into choosing your own, then enters", async () => {
+    const page = runSignup(false);
+    page.el("formFirstLogin").style.display = "none";
+    page.answer("/api/auth/password/login", true, { setPassword: true });
+    page.el("loginEmail").value = "New@Example.com";
+    page.el("loginPass").value = "K7QM2XWB9RTPHDZA4NVC";
+    page.login();
+    await settle();
+    expect([page.el("formLogin").style.display, page.el("formFirstLogin").style.display]).toEqual(["none", ""]);
+    expect(page.adopted).toEqual([]);
+
+    page.el("firstPass").value = "my own password";
+    page.el("firstPass2").value = "my own pasword";
+    page.firstLogin();
+    await settle();
+    expect(page.el("formFirstLogin").note?.textContent).toMatch(/differ/);
+    expect(page.posts.map((p) => p.url)).toEqual(["/api/auth/password/login"]);
+
+    page.el("firstPass2").value = "my own password";
+    page.answer("/api/auth/password/first-login", true, { token: "t", email: "new@example.com" });
+    page.firstLogin();
+    await settle();
+    expect(page.posts[1]).toEqual({
+      url: "/api/auth/password/first-login",
+      body: { email: "new@example.com", password: "K7QM2XWB9RTPHDZA4NVC", newPassword: "my own password" },
+    });
+    expect(page.adopted).toEqual([{ token: "t", email: "new@example.com" }]);
   });
 
   it("no longer sends anyone to a wallet email code that does not exist, nor ships an email list", () => {

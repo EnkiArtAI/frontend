@@ -37,10 +37,14 @@ type PersonDetail = {
   failures: { id: string; surface: string; model: string | null; resolution: string | null; quality: string | null; boost: boolean; aspectRatio: string | null; referenceImageCount: number; error: string; prompt: string | null; draft: boolean; imageUrl: string | null; txSignature: string | null; at: string }[];
   bans: { id: string; reason: string | null; expiresAt: string | null; liftedAt: string | null; at: string }[];
 };
-type AdminData = { generation: GenPolicy; imports: Imp[]; reports: Rep[]; feedback: Fb[]; friends: Friend[]; hunters: Hunter[]; strikes: StrikeRow[]; recovery: Rec[]; council: Council; automod: Automod[]; people: Person[] };
+type AccessRequest = { id: string; email: string; about: string; socials: string | null; created_at: string };
+type Allowed = { id: string; kind: string; value: string; note: string | null; created_at: string };
+// Who may enter: admins only (null for a mod).
+type Access = { requests: AccessRequest[]; allowlist: Allowed[] } | null;
+type AdminData = { generation: GenPolicy; imports: Imp[]; reports: Rep[]; feedback: Fb[]; friends: Friend[]; hunters: Hunter[]; strikes: StrikeRow[]; recovery: Rec[]; council: Council; automod: Automod[]; people: Person[]; access: Access };
 const COUNCIL_OFF: Council = { ready: false, isOwner: false, enabled: false, quorum: 3, ttlDays: 7, members: [], myEmail: null, proposals: [] };
 
-type Tab = "people" | "imports" | "reports" | "feedback" | "friends" | "hunters" | "strikes" | "automod" | "council" | "recovery" | "settings";
+type Tab = "people" | "access" | "imports" | "reports" | "feedback" | "friends" | "hunters" | "strikes" | "automod" | "council" | "recovery" | "settings";
 const REJECT_REASONS = ["Duplicate", "Low quality", "Not a prompt", "Spam", "Policy violation", "Other"];
 
 /* ── the admin sidebar's own palette: inverted warm dark, theme-independent ── */
@@ -102,6 +106,7 @@ function Badge({ pal, label }: { pal: { bg: string; ink: string }; label: string
 
 const TABS: { id: Tab; label: string; icon: string; sub: string; search: boolean }[] = [
   { id: "people", label: "People", icon: "user", sub: "Everyone who was warned, blocked, suspended or whose generations failed this week. Click a row for every event with its prompt and settings.", search: true },
+  { id: "access", label: "Access", icon: "userPlus", sub: "Requests to join the beta, and who may enter. Approving or inviting an email creates the account and mails a one-time password; a wallet goes on the list.", search: false },
   { id: "imports", label: "Pending imports", icon: "inbox", sub: "Hunt submissions waiting for review before they hit the marketplace.", search: true },
   { id: "reports", label: "Reports", icon: "flag", sub: "User-flagged prompts and profiles, grouped by target.", search: false },
   { id: "feedback", label: "Feedback", icon: "message", sub: "Submissions from the “Earn $100 for feedback” program. Click a row to read it all.", search: true },
@@ -138,6 +143,8 @@ export default function AdminPage() {
   const [impReason, setImpReason] = useState(REJECT_REASONS[0]);
   const [fbOpen, setFbOpen] = useState<string | null>(null);
   const [flAdd, setFlAdd] = useState(false);
+  const [invEmail, setInvEmail] = useState("");
+  const [invWallet, setInvWallet] = useState("");
   const [flName, setFlName] = useState(""); const [flAddr, setFlAddr] = useState("");
   const [flType, setFlType] = useState("EOA"); const [flNotes, setFlNotes] = useState("");
   const [delPending, setDelPending] = useState<Friend | null>(null);
@@ -226,6 +233,29 @@ export default function AdminPage() {
     }
   };
 
+  /** Grants access (approve, invite an email or a wallet) and says what happened. */
+  const grant = async (payload: Record<string, unknown>) => {
+    try {
+      const res = await fetch("/api/admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
+        body: JSON.stringify({ resource: "access", ...payload }),
+      });
+      const r = (await res.json().catch(() => ({}))) as { error?: string; outcome?: string; mailed?: boolean; listed?: boolean };
+      if (!res.ok) { say(r.error || "That didn't work."); return false; }
+      say(r.listed === true ? "Wallet added to the access list."
+        : r.listed === false ? "That wallet is on the access list already."
+        : r.outcome === "has-password" ? "That email has an account with its own password already; it is on the access list."
+        : r.mailed ? "Invited: the one-time password is on its way."
+        : "Account ready, but the mail did not go out. Invite the email again to resend.");
+      await reload();
+      return true;
+    } catch {
+      say("Network hiccup — nothing was changed.");
+      return false;
+    }
+  };
+
   /** One person's events and failures, fetched when the row opens. */
   const loadPerson = async (id: string) => {
     try {
@@ -289,6 +319,7 @@ export default function AdminPage() {
   const counts = useMemo(() => ({
     // Needs attention: open cases only. A reviewed child-safety case keeps its flag on the row.
     people: data?.people.filter((p) => p.pending > 0).length ?? 0,
+    access: data?.access?.requests.length ?? 0,
     imports: data?.imports.length ?? 0,
     reports: data?.reports.length ?? 0,
     feedback: data?.feedback.filter((f) => !f.paid).length ?? 0,
@@ -334,7 +365,7 @@ export default function AdminPage() {
     );
   }
 
-  const d: AdminData = data ?? { imports: [], reports: [], feedback: [], friends: [], hunters: [], strikes: [], recovery: [], council: COUNCIL_OFF, automod: [], people: [], generation: { maxConcurrentPerUser: null, canEdit: false } };
+  const d: AdminData = data ?? { imports: [], reports: [], feedback: [], friends: [], hunters: [], strikes: [], recovery: [], council: COUNCIL_OFF, automod: [], people: [], generation: { maxConcurrentPerUser: null, canEdit: false }, access: null };
   const c = d.council ?? COUNCIL_OFF;
   const filteredImports = d.imports.filter((r) => !q || r.name.toLowerCase().includes(q) || r.hunter.toLowerCase().includes(q));
   const filteredFeedback = d.feedback.filter((r) => !q || r.name.toLowerCase().includes(q) || (r.email ?? "").toLowerCase().includes(q) || r.desc.toLowerCase().includes(q));
@@ -391,7 +422,7 @@ export default function AdminPage() {
           </div>
         </div>
         <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {TABS.map((t) => (
+          {TABS.filter((t) => t.id !== "access" || d.access).map((t) => (
             <button key={t.id} className={"adm-nav" + (tab === t.id ? " on" : "")} onClick={() => { setTab(t.id); setQuery(""); }}>
               <Icon name={t.icon} size={16} stroke={1.9} />
               <span style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.label}</span>
@@ -599,6 +630,40 @@ export default function AdminPage() {
               )}
 
               {/* ── FRIENDS (WHITELIST) ── */}
+              {/* ── ACCESS: approve requests, invite an email or a wallet (admins) ── */}
+              {tab === "access" && d.access && (
+                <>
+                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 7, border: "1px solid var(--enki-rule-2, var(--enki-rule))", borderRadius: 11, background: "var(--enki-paper)", padding: "10px 12px", marginBottom: 8 }}>
+                    <input placeholder="Invite an email" value={invEmail} onChange={(e) => setInvEmail(e.target.value)} style={{ flex: 1, minWidth: 180, height: 28, border: "1px solid var(--enki-rule)", borderRadius: 8, background: "var(--enki-paper-2)", color: "var(--enki-ink)", fontSize: 11.5, padding: "0 9px", outline: "none" }} />
+                    <Pill kind="green" label="Invite email" onClick={() => { if (invEmail.trim()) void grant({ action: "inviteEmail", email: invEmail }).then((ok) => { if (ok) setInvEmail(""); }); }} />
+                    <input placeholder="Invite a wallet (Solana or EVM)" value={invWallet} onChange={(e) => setInvWallet(e.target.value)} style={{ flex: 1.4, minWidth: 220, height: 28, border: "1px solid var(--enki-rule)", borderRadius: 8, background: "var(--enki-paper-2)", color: "var(--enki-ink)", fontSize: 11.5, padding: "0 9px", fontFamily: MONO, outline: "none" }} />
+                    <Pill kind="green" label="Invite wallet" onClick={() => { if (invWallet.trim()) void grant({ action: "inviteWallet", address: invWallet }).then((ok) => { if (ok) setInvWallet(""); }); }} />
+                  </div>
+                  <div style={cardStyle}>
+                    {d.access.requests.length === 0 && <div style={{ padding: 30, textAlign: "center", fontSize: 12, color: "var(--enki-ink-3)" }}>No pending requests.</div>}
+                    {d.access.requests.map((r) => (
+                      <div key={r.id} style={rowStyle}>
+                        <span style={{ width: 210, fontSize: 12.5, fontWeight: 600, color: "var(--enki-ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.email}</span>
+                        <span title={r.about} style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: "var(--enki-ink-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.about}</span>
+                        <span style={{ width: 160, fontSize: 11, color: "var(--enki-ink-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.socials ?? "—"}</span>
+                        <Pill kind="green" label="Approve" onClick={() => void grant({ action: "approve", id: r.id })} />
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "var(--enki-ink-3)", margin: "16px 2px 6px" }}>On the access list</div>
+                  <div style={cardStyle}>
+                    {d.access.allowlist.length === 0 && <div style={{ padding: 30, textAlign: "center", fontSize: 12, color: "var(--enki-ink-3)" }}>Nobody yet.</div>}
+                    {d.access.allowlist.map((r) => (
+                      <div key={r.id} style={rowStyle}>
+                        <Badge pal={r.kind === "email" ? PILL.blue : PILL.purple} label={r.kind} />
+                        <span style={{ flex: 1, minWidth: 0, fontFamily: MONO, fontSize: 10.5, color: "var(--enki-ink-2)", overflow: "hidden", textOverflow: "ellipsis" }}>{r.value}</span>
+                        <span style={{ width: 120, fontSize: 11, color: "var(--enki-ink-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.note ?? "—"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
               {tab === "friends" && (
                 <>
                   <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>

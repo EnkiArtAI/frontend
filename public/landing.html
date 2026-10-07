@@ -4447,6 +4447,26 @@ function closeMobileMenu() {
       </button>
       <div class="auth-switch"><span id="loginSwitchText">Need access?</span> <a href="#" id="loginSwitchLink" onclick="switchAuthTab('signup');return false;">Request access</a></div>
     </form>
+    <!-- FIRST LOGIN (Kev, 2026-10-07): the mailed one-time password opens
+         only this step; the user's own password replaces it. -->
+    <form class="auth-form" id="formFirstLogin" style="display:none" onsubmit="submitFirstLogin(event)">
+      <div class="auth-note">Welcome in. Choose your own password: the one from the email stops working then, and your wallet opens.</div>
+      <div class="auth-field">
+        <label class="auth-label">Your password <span class="auth-optional">(8+ characters)</span></label>
+        <div class="auth-input-wrap">
+          <input class="auth-input" type="password" id="firstPass" placeholder="••••••••" required minlength="8" autocomplete="new-password"/>
+          <button type="button" class="auth-eye" onclick="togglePass('firstPass',this)">👁</button>
+        </div>
+      </div>
+      <div class="auth-field">
+        <label class="auth-label">Repeat it</label>
+        <input class="auth-input" type="password" id="firstPass2" placeholder="••••••••" required minlength="8" autocomplete="new-password"/>
+      </div>
+      <button type="submit" class="auth-submit" id="submitFirstLogin">
+        <span class="auth-submit-text">Set password and enter</span>
+        <span class="auth-submit-spin"></span>
+      </button>
+    </form>
     <!-- ACCESS FORM. While SIGNUP_OPEN is false (private beta) it takes
          applications only; open, it creates the account with email +
          password and falls back to the application for emails not on the
@@ -4514,6 +4534,7 @@ function switchAuthTab(tab) {
   document.getElementById('tabSignup').classList.toggle('active', tab === 'signup');
   document.getElementById('formLogin').style.display  = tab === 'login'  ? '' : 'none';
   document.getElementById('formSignup').style.display = tab === 'signup' ? '' : 'none';
+  document.getElementById('formFirstLogin').style.display = 'none';
 }
 function togglePass(id, btn) {
   const inp = document.getElementById(id);
@@ -4653,8 +4674,14 @@ function submitAuth(e, type) {
   btn.disabled = true;
   if (type === 'login') {
     const email = (document.getElementById('loginEmail').value || '').trim().toLowerCase();
-    postJson('/api/auth/password/login', { identifier: email, password: document.getElementById('loginPass').value })
-      .then(({ ok, data }) => (ok && data.token ? adoptSession(data) : fail(data.error)))
+    const password = document.getElementById('loginPass').value;
+    postJson('/api/auth/password/login', { identifier: email, password: password })
+      .then(({ ok, data }) => {
+        if (ok && data.token) return adoptSession(data);
+        // The mailed one-time password: choose your own first.
+        if (ok && data.setPassword) return (done(), showFirstLogin(email, password));
+        fail(data.error);
+      })
       .catch(() => fail('Network error. Please try again.'));
     return;
   }
@@ -4688,8 +4715,27 @@ function submitAuth(e, type) {
     })
     .catch(() => fail('Network error. Please try again.'));
 }
+// The one-time password, kept in memory between the two steps only.
+let firstLogin = null;
+function showFirstLogin(email, password) {
+  firstLogin = { email: email, password: password };
+  document.getElementById('formLogin').style.display = 'none';
+  document.getElementById('formFirstLogin').style.display = '';
+}
+function submitFirstLogin(e) {
+  e.preventDefault();
+  const btn = document.getElementById('submitFirstLogin');
+  const fail = (msg) => { btn.classList.remove('loading'); btn.disabled = false; showInlineNote('firstLogin', msg || 'Something went wrong. Please try again.'); };
+  const password = document.getElementById('firstPass').value;
+  if (password !== document.getElementById('firstPass2').value) return fail('The two passwords differ.');
+  btn.classList.add('loading');
+  btn.disabled = true;
+  postJson('/api/auth/password/first-login', { email: firstLogin.email, password: firstLogin.password, newPassword: password })
+    .then(({ ok, data }) => (ok && data.token ? adoptSession(data) : fail(data.error)))
+    .catch(() => fail('Network error. Please try again.'));
+}
 function showInlineNote(form, msg) {
-  const f = document.getElementById(form === 'login' ? 'formLogin' : 'formSignup');
+  const f = document.getElementById(form === 'login' ? 'formLogin' : form === 'firstLogin' ? 'formFirstLogin' : 'formSignup');
   if (!f) return;
   let n = f.querySelector('.auth-inline-note');
   if (!n) { n = document.createElement('div'); n.className = 'auth-note auth-inline-note'; f.insertBefore(n, f.firstChild); }
