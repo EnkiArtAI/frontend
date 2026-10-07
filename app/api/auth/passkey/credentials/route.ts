@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { requireStepUp } from "@/lib/webauthn";
-import { isLastWalletFactor } from "@/lib/mfa";
+import { removeFactor } from "@/lib/mfa";
 
 export async function GET(req: NextRequest) {
   const supabase = getSupabaseServerClient();
@@ -47,15 +47,12 @@ export async function DELETE(req: NextRequest) {
   // strip the owner's passkey before doing anything else.
   const blocked = await requireStepUp(req, userId, `remove-factor:${id}`, { mandatory: true });
   if (blocked) return blocked;
+  let removed: Awaited<ReturnType<typeof removeFactor>>;
   try {
-    if (await isLastWalletFactor(supabase, userId, { passkey: id })) {
-      return NextResponse.json({ error: "Add another factor first: your wallet needs one" }, { status: 409 });
-    }
+    removed = await removeFactor(supabase, userId, { passkey: id });
   } catch {
-    return NextResponse.json({ error: "Could not verify security settings" }, { status: 503 });
+    return NextResponse.json({ error: "Could not remove" }, { status: 500 });
   }
-
-  const { error } = await supabase.from("webauthn_credentials").delete().eq("id", id).eq("user_id", userId);
-  if (error) return NextResponse.json({ error: "Could not remove" }, { status: 500 });
+  if (removed === "last") return NextResponse.json({ error: "Add another factor first: your wallet needs one" }, { status: 409 });
   return NextResponse.json({ ok: true });
 }

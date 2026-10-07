@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
-import { checkCode } from "@/lib/mfa";
+import { checkCode, stampVerifiedLogin } from "@/lib/mfa";
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ kind: string }> }) {
   const { kind } = await ctx.params;
@@ -21,7 +21,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ kind: stri
     const userId = await resolveSessionUserId(supabase, req.headers.get("X-Session-Token"));
     if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
     const result = await checkCode(supabase, userId, kind, body.code, { confirm: true });
-    if (result === "ok") return NextResponse.json({ confirmed: true });
+    if (result === "ok") {
+      // A confirmed code to the login address verifies it too; the factor
+      // stands either way, and verify-email can stamp it later.
+      if (kind === "email") await stampVerifiedLogin(supabase, userId).catch(() => false);
+      return NextResponse.json({ confirmed: true });
+    }
     if (result === "none") return NextResponse.json({ error: "This setup expired. Start it again." }, { status: 404 });
     if (result === "locked") return NextResponse.json({ error: "Too many wrong codes. Try again later." }, { status: 429 });
     if (result === "busy") return NextResponse.json({ error: "Another check is running, try again" }, { status: 409 });

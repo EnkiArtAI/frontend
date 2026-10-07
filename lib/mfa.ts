@@ -124,35 +124,77 @@ export async function beginTotp(supabase: SupabaseClient, userId: string, label:
 
 /** Starts enrolling an email address: a code goes to it, and confirming that code proves the inbox. */
 export async function beginEmail(supabase: SupabaseClient, userId: string, address: string): Promise<SendResult | "exists"> {
+  // A send the limits refuse leaves the pending row alone: re-beginning first
+  // would wipe the code already mailed and answer 429 on top.
+  const pending = await factorRow(supabase, userId, "email");
+  const refused = pending && !pending.confirmed_at ? sendRefusal(pending, Date.now()) : null;
+  if (refused) return refused;
   const row = await begin(supabase, userId, "email", address.trim().toLowerCase());
   return row === "exists" ? "exists" : sendEmailCode(supabase, userId);
 }
 
+/** Why no code may be sent now: one a minute, five a day. */
+function sendRefusal(row: Row, now: number): "cooldown" | "daily_cap" | null {
+  if (row.code_sent_at && now - Date.parse(row.code_sent_at) < RESEND_COOLDOWN_MS) return "cooldown";
+  const today = new Date(now).toISOString().slice(0, 10);
+  return (row.sends_day === today ? row.sends_count : 0) >= SENDS_PER_DAY ? "daily_cap" : null;
+}
+
 /**
- * Every embedded wallet keeps a factor (Kev, 2026-10-07): the wallet JWT
- * needs one, and a banned account cannot enroll a new one. True when the
- * account signs in with a password (the accounts that get an embedded
- * wallet) and `removing` is its last confirmed factor.
+ * Stamps password_credentials.email_verified_at once the user's confirmed
+ * email factor is their login address: a code that reached it proves it,
+ * whichever route checked the code. True when the login email is verified.
  */
-export async function isLastWalletFactor(
+export async function stampVerifiedLogin(supabase: SupabaseClient, userId: string): Promise<boolean> {
+  const [{ data: cred, error }, row] = await Promise.all([
+    supabase.from("password_credentials").select("email, email_verified_at").eq("user_id", userId).maybeSingle(),
+    factorRow(supabase, userId, "email"),
+  ]);
+  if (error) throw error;
+  if (!cred) return false;
+  if (cred.email_verified_at) return true;
+  if (!row?.confirmed_at || opened(userId, row) !== cred.email) return false;
+  const { error: stampErr } = await supabase
+    .from("password_credentials")
+    .update({ email_verified_at: new Date().toISOString() })
+    .eq("user_id", userId);
+  if (stampErr) throw stampErr;
+  return true;
+}
+
+/**
+ * Removes one factor, but never an embedded wallet's last (Kev, 2026-10-07):
+ * the wallet JWT needs one, and a banned account cannot enroll a new one.
+ * Removed first and counted after, and put back when none is left: two
+ * removals racing each count what the other left, so one factor stays.
+ */
+export async function removeFactor(
   supabase: SupabaseClient,
   userId: string,
-  removing: { passkey: string } | { kind: FactorKind },
-): Promise<boolean> {
-  const [cred, passkeys, codes] = await Promise.all([
-    supabase.from("password_credentials").select("user_id", { count: "exact", head: true }).eq("user_id", userId),
-    supabase.from("webauthn_credentials").select("id").eq("user_id", userId),
-    supabase.from("mfa_factors").select("kind").eq("user_id", userId).not("confirmed_at", "is", null),
-  ]);
-  if (cred.error) throw cred.error;
-  if (passkeys.error) throw passkeys.error;
-  if (codes.error && !missingTable(codes.error)) throw codes.error;
-  if (!cred.count) return false;
-  const left = [
-    ...((passkeys.data ?? []) as { id: string }[]).map((p) => `passkey:${p.id}`),
-    ...((codes.data ?? []) as { kind: FactorKind }[]).map((c) => `code:${c.kind}`),
-  ];
-  return left.length === 1 && left[0] === ("passkey" in removing ? `passkey:${removing.passkey}` : `code:${removing.kind}`);
+  target: { passkey: string } | { kind: FactorKind },
+): Promise<"removed" | "none" | "last"> {
+  const { count: hasPassword, error: credErr } = await supabase
+    .from("password_credentials")
+    .select("user_id", { count: "exact", head: true })
+    .eq("user_id", userId);
+  if (credErr) throw credErr;
+  const table = "passkey" in target ? "webauthn_credentials" : "mfa_factors";
+  const del = supabase.from(table).delete().eq("user_id", userId);
+  const { data: gone, error } = await ("passkey" in target ? del.eq("id", target.passkey) : del.eq("kind", target.kind)).select("*");
+  if (error) throw error;
+  if (!gone?.length) return "none";
+  if (!hasPassword) return "removed";
+  let left: Factor[];
+  try {
+    left = await enrolledFactors(supabase, userId);
+  } catch (e) {
+    await supabase.from(table).insert(gone);
+    throw e;
+  }
+  if (left.length) return "removed";
+  const { error: back } = await supabase.from(table).insert(gone);
+  if (back) throw back;
+  return "last";
 }
 
 /** The address of the user's email factor, pending or confirmed; null without one. */
@@ -166,10 +208,10 @@ export async function sendEmailCode(supabase: SupabaseClient, userId: string): P
   const row = await factorRow(supabase, userId, "email");
   if (!row) return "none";
   const now = Date.now();
-  if (row.code_sent_at && now - Date.parse(row.code_sent_at) < RESEND_COOLDOWN_MS) return "cooldown";
+  const refused = sendRefusal(row, now);
+  if (refused) return refused;
   const today = new Date(now).toISOString().slice(0, 10);
   const sent = row.sends_day === today ? row.sends_count : 0;
-  if (sent >= SENDS_PER_DAY) return "daily_cap";
   const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
   // Conditional on what was read: of parallel sends one wins, the rest wait
   // their minute, and a code is never written onto a re-begun address.

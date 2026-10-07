@@ -141,6 +141,14 @@ describe("a step-up", () => {
     expect((await mint("other")).status).toBe(403);
   });
 
+  it("that cannot stamp the session says the code is spent, and mints nothing", async () => {
+    const secret = await totpFactor();
+    db.current!.state.failing = { table: "auth_sessions", code: "XX000" };
+    const res = await codeStepUp(secret, "wallet");
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toMatch(/new code/);
+  });
+
   it("for an export unlocks too; for anything else, nothing", async () => {
     const secret = await totpFactor();
     expect((await codeStepUp(secret, "add-factor")).status).toBe(200);
@@ -184,6 +192,13 @@ describe("the last factor of an embedded wallet", () => {
     expect((await removeTotp()).status).toBe(200);
     expect((await removeKey(PK)).status).toBe(409);
     expect(db.current!.tables.webauthn_credentials).toHaveLength(1);
+  });
+
+  it("stays when two removals race", async () => {
+    db.current!.tables.webauthn_credentials = [{ id: PK, user_id: U }];
+    const answers = await Promise.all([removeTotp(), removeKey(PK)]);
+    expect(answers.map((r) => r.status)).toContain(409);
+    expect(db.current!.tables.mfa_factors.length + db.current!.tables.webauthn_credentials.length).toBeGreaterThan(0);
   });
 
   it("goes as before for an account that signs in with its own wallet", async () => {
