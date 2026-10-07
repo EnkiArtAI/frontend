@@ -37,7 +37,7 @@ export const FAILURE_THRESHOLD = 3;
 /** While open, probe at most this often — a dead host must not be hammered. */
 export const PROBE_COOLDOWN_MS = 30_000;
 
-export type FailureKind = "infrastructure" | "content" | "request";
+export type FailureKind = "infrastructure" | "content" | "request" | "config";
 export type FailureScope = "route" | "provider";
 
 export interface Classification {
@@ -60,6 +60,12 @@ export interface Classification {
  */
 export function classifyFailure(message: string, status?: number): Classification {
   const m = message.toLowerCase();
+
+  // This deployment has no key for the provider ("OPENAI_API_KEY is not set").
+  // The host is fine, and breaker state lives in a database other deployments
+  // share: a developer environment without the key must never take
+  // production's routes down (ENV-01).
+  if (/ is not set\b|not configured/.test(m)) return { kind: "config", scope: "route" };
 
   // Content refusals — the provider answered, and the answer was no.
   if (
