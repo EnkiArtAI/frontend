@@ -95,31 +95,43 @@ async function factorRow(supabase: SupabaseClient, userId: string, kind: FactorK
   return (data as Row | null) ?? null;
 }
 
-/** (Re)starts a pending factor; a confirmed one stays until it is removed, which is itself a step-up. */
-async function begin(supabase: SupabaseClient, userId: string, kind: FactorKind, secret: string): Promise<"exists" | Row> {
-  const existing = await factorRow(supabase, userId, kind);
+/**
+ * (Re)starts a pending factor from the row as the caller read it; a confirmed
+ * one stays until it is removed, which is itself a step-up. The write is
+ * conditional on that row, so of two requests racing one writes and the
+ * other gets "busy": a loser never wipes the code the winner mailed.
+ */
+async function begin(
+  supabase: SupabaseClient,
+  userId: string,
+  kind: FactorKind,
+  secret: string,
+  existing: Row | null,
+): Promise<"exists" | "busy" | Row> {
   if (existing?.confirmed_at) return "exists";
-  const { data, error } = await supabase
-    .from("mfa_factors")
-    .upsert(
-      {
-        user_id: userId, kind, ...sealed(userId, secret),
-        created_at: new Date().toISOString(), confirmed_at: null, last_step: null, code_hash: null, code_expires_at: null,
-        failed_attempts: 0, locked_until: null,
-      },
-      { onConflict: "user_id,kind" },
-    )
-    .select("*")
-    .single();
+  const fresh = {
+    ...sealed(userId, secret),
+    created_at: new Date().toISOString(), confirmed_at: null, last_step: null, code_hash: null, code_expires_at: null,
+    failed_attempts: 0, locked_until: null,
+  };
+  if (!existing) {
+    const { data, error } = await supabase.from("mfa_factors").insert({ user_id: userId, kind, ...fresh }).select("*").single();
+    if (error?.code === "23505") return "busy";
+    if (error) throw error;
+    return data as Row;
+  }
+  let again = supabase.from("mfa_factors").update(fresh).eq("id", existing.id).eq("secret_ct", existing.secret_ct);
+  again = existing.code_sent_at ? again.eq("code_sent_at", existing.code_sent_at) : again.is("code_sent_at", null);
+  const { data, error } = await again.select("*").maybeSingle();
   if (error) throw error;
-  return data as Row;
+  return (data as Row | null) ?? "busy";
 }
 
 /** Starts enrolling an authenticator app: the secret and the otpauth URI for its QR code. */
 export async function beginTotp(supabase: SupabaseClient, userId: string, label: string) {
   const secret = generateTotpSecret();
-  const row = await begin(supabase, userId, "totp", secret);
-  return row === "exists" ? ("exists" as const) : { secret, uri: otpauthUri(secret, label) };
+  const row = await begin(supabase, userId, "totp", secret, await factorRow(supabase, userId, "totp"));
+  return row === "exists" || row === "busy" ? row : { secret, uri: otpauthUri(secret, label) };
 }
 
 /** Starts enrolling an email address: a code goes to it, and confirming that code proves the inbox. */
@@ -129,7 +141,7 @@ export async function beginEmail(supabase: SupabaseClient, userId: string, addre
   const pending = await factorRow(supabase, userId, "email");
   const refused = pending && !pending.confirmed_at ? sendRefusal(pending, Date.now()) : null;
   if (refused) return refused;
-  const row = await begin(supabase, userId, "email", address.trim().toLowerCase());
+  const row = await begin(supabase, userId, "email", address.trim().toLowerCase(), pending);
   return row === "exists" ? "exists" : sendEmailCode(supabase, userId);
 }
 

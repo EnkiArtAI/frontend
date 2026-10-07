@@ -42,6 +42,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       const { data: u } = await supabase.from("users").select("handle").eq("id", userId).maybeSingle();
       const started = await beginTotp(supabase, userId, String(u?.handle ?? "Enki account"));
       if (started === "exists") return NextResponse.json({ error: "An authenticator is already set up. Remove it first." }, { status: 409 });
+      if (started === "busy") return NextResponse.json({ error: "Another setup is running, try again" }, { status: 409 });
       return NextResponse.json(started);
     }
     const sent = await beginEmail(supabase, userId, address);

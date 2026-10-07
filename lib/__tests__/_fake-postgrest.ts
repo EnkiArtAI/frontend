@@ -29,12 +29,19 @@ function orFilter(expr: string): (r: Row) => boolean {
   return (r) => branches.some((b) => b(r));
 }
 
+// Column defaults the fake applies on insert, as the migrations declare them.
+const DEFAULTS: Record<string, Row> = {
+  mfa_factors: { lockouts: 0, sends_count: 0, failed_attempts: 0, last_step: null, code_sent_at: null, sends_day: null },
+};
+// Unique keys the fake enforces on insert (23505), as the migrations declare them.
+const UNIQUE: Record<string, string[]> = { mfa_factors: ["user_id", "kind"] };
+
 export function fakePostgrest() {
   const tables: Record<string, Row[]> = {};
   const state = {
     failing: null as { table: string; code: string } | null,
-    // The next select("*") on this table takes its snapshot now and answers when released.
-    pauseNextRead: null as { table: string; until: Promise<void> } | null,
+    // The next select("*") on this table (after `skip` more) takes its snapshot now and answers when released.
+    pauseNextRead: null as { table: string; until: Promise<void>; skip?: number } | null,
   };
 
   function from(table: string) {
@@ -61,7 +68,11 @@ export function fakePostgrest() {
           return Promise.resolve({ data: null, error: { code: state.failing.code, message: "boom" }, count: null }).then(ok);
         }
         if (op.kind === "insert") {
-          const r = { id: `${table}-${rows().length + 1}`, ...op.values };
+          const r: Row = { id: `${table}-${rows().length + 1}`, created_at: new Date().toISOString(), ...DEFAULTS[table], ...op.values };
+          const key = UNIQUE[table];
+          if (key && rows().some((x) => key.every((c) => x[c] === r[c]))) {
+            return Promise.resolve({ data: null, error: { code: "23505", message: "duplicate key" } }).then(ok);
+          }
           rows().push(r);
           return Promise.resolve({ data: { ...r }, error: null }).then(ok);
         }
@@ -81,8 +92,11 @@ export function fakePostgrest() {
         const result = { data: op.head ? null : data, error: null, count: hit.length };
         const pause = state.pauseNextRead;
         if (pause && pause.table === table && op.kind === "select" && op.star) {
-          state.pauseNextRead = null;
-          return pause.until.then(() => ok(result));
+          if (pause.skip) pause.skip -= 1;
+          else {
+            state.pauseNextRead = null;
+            return pause.until.then(() => ok(result));
+          }
         }
         return Promise.resolve(result).then(ok);
       },
