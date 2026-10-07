@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
       const sent = await beginEmail(supabase, userId, cred.email);
       if (sent === "sent") return NextResponse.json({ sent: true });
       if (sent === "exists") return NextResponse.json({ error: "Your email factor is another address" }, { status: 409 });
+      if (sent === "busy") return NextResponse.json({ error: "Another setup is running, try again" }, { status: 409 });
       if (sent === "cooldown" || sent === "daily_cap") return NextResponse.json({ error: "Too many codes. Wait before asking for another." }, { status: 429 });
       return NextResponse.json({ error: "The code could not be sent" }, { status: 502 });
     }

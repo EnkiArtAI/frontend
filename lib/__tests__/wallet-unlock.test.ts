@@ -244,6 +244,25 @@ describe("the last factor of an embedded wallet", () => {
     expect(db.current!.tables.mfa_factors.length + db.current!.tables.webauthn_credentials.length).toBeGreaterThan(0);
   });
 
+  it("is put back, never reported last, when what is left cannot be counted", async () => {
+    db.current!.tables.webauthn_credentials = [{ id: PK, user_id: U }];
+    db.current!.state.failNext = { table: "webauthn_credentials", op: "select", code: "XX000", skip: 1 };
+    await expect(removeFactor(db.current!.client, U, { kind: "totp" })).rejects.toMatchObject({ code: "XX000" });
+    expect(db.current!.tables.mfa_factors).toHaveLength(1);
+  });
+
+  it("that cannot be put back is logged and reported", async () => {
+    db.current!.tables.webauthn_credentials = [{ id: PK, user_id: U }];
+    db.current!.state.failNext = { table: "mfa_factors", op: "insert", code: "XX000" };
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const c = db.current!.client;
+    const [code] = await Promise.allSettled([removeFactor(c, U, { kind: "totp" }), removeFactor(c, U, { passkey: PK })]);
+    expect(code.status).toBe("rejected");
+    expect(String(logged.mock.calls[0]?.[0])).toMatch(/could not put back the last factor/);
+    expect(db.current!.tables.webauthn_credentials).toHaveLength(1);
+    logged.mockRestore();
+  });
+
   it("goes as before for an account that signs in with its own wallet", async () => {
     db.current!.tables.password_credentials = [];
     expect((await removeTotp()).status).toBe(200);

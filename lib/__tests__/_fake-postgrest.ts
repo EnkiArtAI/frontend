@@ -42,6 +42,8 @@ export function fakePostgrest() {
     failing: null as { table: string; code: string } | null,
     // The next select("*") on this table (after `skip` more) takes its snapshot now and answers when released.
     pauseNextRead: null as { table: string; until: Promise<void>; skip?: number } | null,
+    // The next query of this kind on this table (after `skip` more) answers with this error code.
+    failNext: null as { table: string; op: "select" | "insert" | "update" | "upsert" | "delete"; code: string; skip?: number } | null,
   };
 
   function from(table: string) {
@@ -64,6 +66,14 @@ export function fakePostgrest() {
       maybeSingle: () => { one = true; return q; },
       single: () => { one = true; return q; },
       then: (ok: (v: unknown) => unknown) => {
+        const fail = state.failNext;
+        if (fail && fail.table === table && fail.op === op.kind) {
+          if (fail.skip) fail.skip -= 1;
+          else {
+            state.failNext = null;
+            return Promise.resolve({ data: null, error: { code: fail.code, message: "boom" }, count: null }).then(ok);
+          }
+        }
         if (state.failing?.table === table) {
           return Promise.resolve({ data: null, error: { code: state.failing.code, message: "boom" }, count: null }).then(ok);
         }

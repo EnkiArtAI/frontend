@@ -120,7 +120,7 @@ async function begin(
     if (error) throw error;
     return data as Row;
   }
-  let again = supabase.from("mfa_factors").update(fresh).eq("id", existing.id).eq("secret_ct", existing.secret_ct);
+  let again = supabase.from("mfa_factors").update(fresh).eq("id", existing.id).eq("secret_ct", existing.secret_ct).is("confirmed_at", null);
   again = existing.code_sent_at ? again.eq("code_sent_at", existing.code_sent_at) : again.is("code_sent_at", null);
   const { data, error } = await again.select("*").maybeSingle();
   if (error) throw error;
@@ -135,14 +135,16 @@ export async function beginTotp(supabase: SupabaseClient, userId: string, label:
 }
 
 /** Starts enrolling an email address: a code goes to it, and confirming that code proves the inbox. */
-export async function beginEmail(supabase: SupabaseClient, userId: string, address: string): Promise<SendResult | "exists"> {
+export async function beginEmail(supabase: SupabaseClient, userId: string, address: string): Promise<SendResult | "exists" | "busy"> {
   // A send the limits refuse leaves the pending row alone: re-beginning first
   // would wipe the code already mailed and answer 429 on top.
   const pending = await factorRow(supabase, userId, "email");
   const refused = pending && !pending.confirmed_at ? sendRefusal(pending, Date.now()) : null;
   if (refused) return refused;
   const row = await begin(supabase, userId, "email", address.trim().toLowerCase(), pending);
-  return row === "exists" ? "exists" : sendEmailCode(supabase, userId);
+  // Only the request that wrote the row mails its code: a loser sending would
+  // mail the winner's address and answer "sent" for one never stored.
+  return row === "exists" || row === "busy" ? row : sendEmailCode(supabase, userId);
 }
 
 /** Why no code may be sent now: one a minute, five a day. */
@@ -179,8 +181,8 @@ export async function stampVerifiedLogin(supabase: SupabaseClient, userId: strin
  * the wallet JWT needs one, and a banned account cannot enroll a new one.
  * The last one is refused before anything is deleted, so no request ever
  * sees the account without a factor. Two removals racing past that check
- * count what is left after deleting, and one that finds nothing (or cannot
- * count) puts its factor back.
+ * count what is left after deleting, and one that finds nothing puts its
+ * factor back; one that cannot count puts it back and reports the error.
  */
 export async function removeFactor(
   supabase: SupabaseClient,
@@ -203,12 +205,22 @@ export async function removeFactor(
   if (error) throw error;
   if (!gone?.length) return "none";
   if (!hasPassword) return "removed";
-  if ((await factorKeys(supabase, userId).catch(() => [])).length) return "removed";
-  const { error: back } = await supabase.from(table).insert(gone);
-  if (back) {
-    console.error(`[mfa] could not put back the last factor of ${userId} (${table}):`, back.message);
-    throw back;
+  const putBack = async () => {
+    const { error: back } = await supabase.from(table).insert(gone);
+    if (back) {
+      console.error(`[mfa] could not put back the last factor of ${userId} (${table}):`, back.message);
+      throw back;
+    }
+  };
+  let left: string[];
+  try {
+    left = await factorKeys(supabase, userId);
+  } catch (e) {
+    await putBack();
+    throw e;
   }
+  if (left.length) return "removed";
+  await putBack();
   return "last";
 }
 

@@ -242,8 +242,30 @@ describe("racing requests", () => {
     expect(await winner).toBe("sent");
     const code = lastCode();
     releaseLoser();
-    expect(await loser).toBe("cooldown");
+    expect(await loser).toBe("busy");
     expect(await checkCode(supabase, U, "email", code, { confirm: true })).toBe("ok");
+  });
+
+  it("start one email factor when two first setups race, and mail only the stored address", async () => {
+    const release = staleRead();
+    const late = beginEmail(supabase, U, "b@example.com");
+    await settle();
+    expect(await beginEmail(supabase, U, "a@example.com")).toBe("sent");
+    release();
+    expect(await late).toBe("busy");
+    expect(mails.map((m) => m.to)).toEqual(["a@example.com"]);
+  });
+
+  it("never undo a factor confirmed after a restart read it", async () => {
+    const first = await beginTotp(supabase, U, "me");
+    if (typeof first === "string") throw new Error();
+    const release = staleRead();
+    const late = beginTotp(supabase, U, "me");
+    await settle();
+    expect(await checkCode(supabase, U, "totp", totpCode(first.secret), { confirm: true })).toBe("ok");
+    release();
+    expect(await late).toBe("busy");
+    expect(factor("totp").confirmed_at ?? null).not.toBeNull();
   });
 
   it("keep the code a racing resend's winner mailed", async () => {
@@ -254,7 +276,7 @@ describe("racing requests", () => {
     expect(await beginEmail(supabase, U, "me@example.com")).toBe("sent");
     const code = lastCode();
     release();
-    expect(await late).toBe("cooldown");
+    expect(await late).toBe("busy");
     expect(await checkCode(supabase, U, "email", code, { confirm: true })).toBe("ok");
   });
 
