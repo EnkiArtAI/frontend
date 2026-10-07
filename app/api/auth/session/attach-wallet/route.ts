@@ -7,11 +7,15 @@
  * users.id bridge value from email login) and map both chain addresses in
  * user_wallets, scoped to the session's users.id.
  *
- * The addresses are validated (base58 / 0x-hex) and bound to the caller's own
- * session, so a bad value can only mis-route the caller's own identity (no
- * theft — you can't sign for a wallet you don't control).
+ * The addresses are validated (base58 / 0x-hex), and an address another account
+ * owns is refused. Every resolver maps the session's address to users.id
+ * through user_wallets, so accepting a foreign address would make the caller
+ * that account, and /api/auth/wallet/jwt would mint a CDP login for its
+ * embedded wallet. Any lookup or write failure refuses too: the session is
+ * only re-pointed at an address the caller provably owns.
  * HARDENING TODO: verify the address against CDP server-side (@coinbase/cdp-sdk
- * end-user lookup by sub) to reject a forged address outright.
+ * end-user lookup by sub) so nobody can pre-claim an address that no account
+ * owns yet.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
@@ -91,21 +95,29 @@ export async function POST(req: NextRequest) {
   // the user_wallets CHECK allows for a plain owned account).
   const rows = [{ addr: sol, family: "solana", primary: true }];
   if (evm) rows.push({ addr: evm, family: "evm", primary: false });
+
+  // Every address is checked before any row is written. ilike: EVM rows exist in
+  // both cases, and a Solana row lowercased by an old bug is still owned.
+  const missing: typeof rows = [];
   for (const w of rows) {
-    const { data: existing } = await supabase
-      .from("user_wallets")
-      .select("user_id")
-      .eq("address", w.addr)
-      .maybeSingle();
-    if (!existing) {
-      const { error } = await supabase.from("user_wallets").insert({
-        user_id: userId,
-        address: w.addr,
-        chain_family: w.family,
-        wallet_type: "external_eoa",
-        is_primary: w.primary,
-      });
-      if (error) console.error("[attach-wallet] user_wallets insert failed:", error.message);
+    const { data: owners, error } = await supabase.from("user_wallets").select("user_id").ilike("address", w.addr);
+    if (error) return NextResponse.json({ error: "Could not check the wallet" }, { status: 500 });
+    if ((owners ?? []).some((o) => o.user_id !== userId)) {
+      return NextResponse.json({ error: "This wallet belongs to another account" }, { status: 409 });
+    }
+    if (!owners?.length) missing.push(w);
+  }
+  for (const w of missing) {
+    const { error } = await supabase.from("user_wallets").insert({
+      user_id: userId,
+      address: w.addr,
+      chain_family: w.family,
+      wallet_type: "external_eoa",
+      is_primary: w.primary,
+    });
+    if (error) {
+      console.error("[attach-wallet] user_wallets insert failed:", error.message);
+      return NextResponse.json({ error: "Could not save the wallet" }, { status: 500 });
     }
   }
 
