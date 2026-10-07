@@ -12,11 +12,11 @@ import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { requireAuth } from "@/lib/auth";
-import { rp, resolveStableUserId, readChallengeCookie, clearChallengeCookie, mintStepUpToken } from "@/lib/webauthn";
+import { rp, resolveStableUserId, readChallengeCookie, clearChallengeCookie, mintStepUpToken, isStepUpScope } from "@/lib/webauthn";
 
 const bodySchema = z.object({
   response: z.record(z.string(), z.unknown()),
-  scope: z.string().min(1).max(64),
+  scope: z.string().refine(isStepUpScope),
 });
 
 export async function POST(req: NextRequest) {

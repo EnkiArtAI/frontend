@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { hkdfSync } from "crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { enrolledFactors, type Factor } from "@/lib/mfa";
 
 /**
  * App-side WebAuthn passkeys for STEP-UP 2FA. Opt-in: a user who registers a
@@ -52,7 +53,15 @@ function stepUpKey(): Uint8Array {
   return new Uint8Array(hkdfSync("sha256", Buffer.from(p, "base64"), new Uint8Array(0), Buffer.from("enki-stepup-v1"), 32));
 }
 
+/* What a step-up can be for. A scope names one action, and where the action
+   has a target, that target: one tap deletes one image, never another. */
+const SCOPE = /^delete-work:[0-9a-f-]{36}$/i;
+export function isStepUpScope(scope: unknown): scope is string {
+  return typeof scope === "string" && SCOPE.test(scope);
+}
+
 export async function mintStepUpToken(userId: string, scope: string): Promise<string> {
+  if (!isStepUpScope(scope)) throw new Error(`unknown step-up scope: ${scope}`);
   return new SignJWT({ scope })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(userId)
@@ -70,44 +79,34 @@ async function verifyStepUpToken(token: string, userId: string, scope: string): 
   }
 }
 
-// Throws on DB error so callers FAIL CLOSED — a failed enrollment lookup must
-// never be read as "no passkey" and silently skip 2FA.
-export async function userHasPasskey(
-  supabase: ReturnType<typeof getSupabaseServerClient>,
-  userId: string,
-): Promise<boolean> {
-  const { count, error } = await supabase
-    .from("webauthn_credentials")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", userId);
-  if (error) throw error;
-  return (count ?? 0) > 0;
-}
-
 /**
- * Gate a sensitive action behind step-up 2FA. Opt-in: if the user has NO
- * passkey enrolled, the action proceeds (2FA not set up). If they DO, a valid
- * X-StepUp-Token for this scope is required — pass a resource-bound scope
- * (e.g. `delete-work:${id}`) so one passkey tap can't authorize others.
- * Returns null when allowed, or a NextResponse to return when blocked. Fails
- * CLOSED: any error looking up enrollment blocks the action.
+ * Gate a sensitive action behind step-up 2FA. A user with any factor
+ * (passkey, authenticator, email code) needs a valid X-StepUp-Token for this
+ * scope, minted by whichever factor they used; the answer names their
+ * factors so the client can offer them. Without a factor the action proceeds,
+ * unless `mandatory`, which answers 403 { enroll } instead. Fails CLOSED: no
+ * user is 401, a failed factor lookup 503.
+ * Returns null when allowed, or the NextResponse to return when blocked.
  */
 export async function requireStepUp(
   req: NextRequest,
-  userId: string,
+  userId: string | null,
   scope: string,
+  { mandatory = false }: { mandatory?: boolean } = {},
 ): Promise<NextResponse | null> {
-  const supabase = getSupabaseServerClient();
-  let enrolled: boolean;
+  if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  let factors: Factor[];
   try {
-    enrolled = await userHasPasskey(supabase, userId);
+    factors = await enrolledFactors(getSupabaseServerClient(), userId);
   } catch {
     return NextResponse.json({ error: "Could not verify security settings" }, { status: 503 });
   }
-  if (!enrolled) return null; // no passkey → not enforced
+  if (factors.length === 0) {
+    return mandatory ? NextResponse.json({ error: "Set up a second factor first", scope, enroll: true }, { status: 403 }) : null;
+  }
   const token = req.headers.get("X-StepUp-Token");
   if (token && (await verifyStepUpToken(token, userId, scope))) return null;
-  return NextResponse.json({ error: "Step-up verification required", scope, stepUp: true }, { status: 401 });
+  return NextResponse.json({ error: "Step-up verification required", scope, stepUp: true, factors }, { status: 401 });
 }
 
 // ── challenge cookie (single-use, httpOnly; no DB row needed) ──────────────
