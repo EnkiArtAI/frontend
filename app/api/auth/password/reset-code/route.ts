@@ -11,6 +11,9 @@ import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { completePasswordReset, sha256 } from "@/lib/password-reset";
+import { loginRefusal } from "@/lib/password-login";
+import { activeBanFor } from "@/lib/session-user";
+import { grantGateCookie } from "@/lib/allowlist";
 
 const bodySchema = z.object({
   email: z.string().email().max(320),
@@ -48,11 +51,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Wrong or expired code" }, { status: 400 });
   }
 
+  // It ends in a login: the same access list and network checks first.
+  const gate = await loginRefusal(req, supabase, email);
+  if (gate.refusal) return gate.refusal;
+
   // One-shot: burn the code before setting the password.
   await supabase.from("password_reset_tokens").delete().eq("user_id", cred.user_id);
 
   // The code came through the inbox: the email is confirmed (Kev, 2026-10-07).
   const result = await completePasswordReset(supabase, row.user_id, parsed.data.password, { inboxProven: true });
   if ("error" in result) return NextResponse.json({ error: result.error }, { status: 500 });
-  return NextResponse.json(result);
+  // Enters like a login: the gate cookie, and /banned for a banned account.
+  const banned = !!(await activeBanFor(supabase, row.user_id));
+  return grantGateCookie(NextResponse.json({ ...result, ...(banned ? { banned: true } : {}) }));
 }

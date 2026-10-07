@@ -24,7 +24,7 @@ import { CHILD_SAFETY, hasChildSafetyCase, inWarningOrBanList, listPeople, parse
 import { readEvidence, withheldEvidence } from "@/lib/moderation/evidence";
 import { loadPromptText } from "@/lib/generation/prompt-text";
 import { banUntil } from "@/lib/moderation/bans";
-import { AccessError, approveRequest, inviteEmail, inviteWallet, loadAccess } from "@/lib/access-invite";
+import { AccessError, accessFor, approveRequest, inviteEmail, inviteWallet } from "@/lib/access-invite";
 
 /** A ban counts while it is not lifted and has not run out, as activeBanFor reads it. */
 const unexpired = () => `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`;
@@ -249,8 +249,7 @@ export async function GET(req: NextRequest) {
       .eq("decision", "block")
       .order("created_at", { ascending: false }).limit(150),
     listPeople(supabase),
-    // Who may enter: applicants' emails, so admins only (they alone grant access).
-    role === "admin" ? loadAccess(supabase) : null,
+    accessFor(supabase, role),
   ]);
 
   // attachments per feedback + evidence per recovery request
