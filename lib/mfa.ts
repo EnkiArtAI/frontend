@@ -120,7 +120,7 @@ async function begin(
     if (error) throw error;
     return data as Row;
   }
-  let again = supabase.from("mfa_factors").update(fresh).eq("id", existing.id).eq("secret_ct", existing.secret_ct);
+  let again = supabase.from("mfa_factors").update(fresh).eq("id", existing.id).eq("secret_ct", existing.secret_ct).is("confirmed_at", null);
   again = existing.code_sent_at ? again.eq("code_sent_at", existing.code_sent_at) : again.is("code_sent_at", null);
   const { data, error } = await again.select("*").maybeSingle();
   if (error) throw error;
@@ -135,14 +135,16 @@ export async function beginTotp(supabase: SupabaseClient, userId: string, label:
 }
 
 /** Starts enrolling an email address: a code goes to it, and confirming that code proves the inbox. */
-export async function beginEmail(supabase: SupabaseClient, userId: string, address: string): Promise<SendResult | "exists"> {
+export async function beginEmail(supabase: SupabaseClient, userId: string, address: string): Promise<SendResult | "exists" | "busy"> {
   // A send the limits refuse leaves the pending row alone: re-beginning first
   // would wipe the code already mailed and answer 429 on top.
   const pending = await factorRow(supabase, userId, "email");
   const refused = pending && !pending.confirmed_at ? sendRefusal(pending, Date.now()) : null;
   if (refused) return refused;
   const row = await begin(supabase, userId, "email", address.trim().toLowerCase(), pending);
-  return row === "exists" ? "exists" : sendEmailCode(supabase, userId);
+  // Only the request that wrote the row mails its code: a loser sending would
+  // mail the winner's address and answer "sent" for one never stored.
+  return row === "exists" || row === "busy" ? row : sendEmailCode(supabase, userId);
 }
 
 /** Why no code may be sent now: one a minute, five a day. */
