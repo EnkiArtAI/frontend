@@ -58,18 +58,30 @@ type Row = {
 // there yet, which is the truth, not an outage.
 const missingTable = (e: { code?: string } | null) => e?.code === "PGRST205" || e?.code === "42P01";
 
+/**
+ * A password account's inbox resets its password, so an email code is no
+ * second factor for it (Kev, 2026-10-07): the inbox alone would pass. It
+ * uses a passkey or an authenticator app; a wallet account may use all three.
+ */
+export async function isPasswordAccount(supabase: SupabaseClient, userId: string): Promise<boolean> {
+  const { count, error } = await supabase.from("password_credentials").select("user_id", { count: "exact", head: true }).eq("user_id", userId);
+  if (error) throw error;
+  return Boolean(count);
+}
+
 /** Every factor that makes step-up apply. Throws on a database error: a
     failed lookup must never read as "no factor" (fail closed). */
 export async function enrolledFactors(supabase: SupabaseClient, userId: string): Promise<Factor[]> {
-  const [passkeys, factors] = await Promise.all([
+  const [passkeys, factors, password] = await Promise.all([
     supabase.from("webauthn_credentials").select("id", { count: "exact", head: true }).eq("user_id", userId),
     supabase.from("mfa_factors").select("kind").eq("user_id", userId).not("confirmed_at", "is", null),
+    isPasswordAccount(supabase, userId),
   ]);
   if (passkeys.error) throw passkeys.error;
   if (factors.error && !missingTable(factors.error)) throw factors.error;
   return [
     ...((passkeys.count ?? 0) > 0 ? (["passkey"] as const) : []),
-    ...((factors.data ?? []) as { kind: FactorKind }[]).map((r) => r.kind),
+    ...((factors.data ?? []) as { kind: FactorKind }[]).map((r) => r.kind).filter((k) => !(password && k === "email")),
   ];
 }
 
@@ -158,28 +170,6 @@ function sendRefusal(row: Row, now: number): "cooldown" | "daily_cap" | null {
 }
 
 /**
- * Stamps password_credentials.email_verified_at once the user's confirmed
- * email factor is their login address: a code that reached it proves it,
- * whichever route checked the code. True when the login email is verified.
- */
-export async function stampVerifiedLogin(supabase: SupabaseClient, userId: string): Promise<boolean> {
-  const [{ data: cred, error }, row] = await Promise.all([
-    supabase.from("password_credentials").select("email, email_verified_at").eq("user_id", userId).maybeSingle(),
-    factorRow(supabase, userId, "email"),
-  ]);
-  if (error) throw error;
-  if (!cred) return false;
-  if (cred.email_verified_at) return true;
-  if (!row?.confirmed_at || opened(userId, row) !== cred.email) return false;
-  const { error: stampErr } = await supabase
-    .from("password_credentials")
-    .update({ email_verified_at: new Date().toISOString() })
-    .eq("user_id", userId);
-  if (stampErr) throw stampErr;
-  return true;
-}
-
-/**
  * Removes one factor, but never an embedded wallet's last (Kev, 2026-10-07):
  * the wallet JWT needs one, and a banned account cannot enroll a new one.
  * The last one is refused before anything is deleted, so no request ever
@@ -239,12 +229,6 @@ async function factorKeys(supabase: SupabaseClient, userId: string): Promise<str
     ...((passkeys.data ?? []) as { id: string }[]).map((p) => `passkey:${p.id}`),
     ...((codes.data ?? []) as { kind: FactorKind }[]).map((c) => `code:${c.kind}`),
   ];
-}
-
-/** The address of the user's email factor, pending or confirmed; null without one. */
-export async function emailFactorAddress(supabase: SupabaseClient, userId: string): Promise<string | null> {
-  const row = await factorRow(supabase, userId, "email");
-  return row ? opened(userId, row) : null;
 }
 
 /**

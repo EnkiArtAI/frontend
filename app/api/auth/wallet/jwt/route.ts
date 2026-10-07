@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
   // design); handle (optional public username) on users.
   const { data: cred, error: credErr } = await supabase
     .from("password_credentials")
-    .select("email, email_verified_at")
+    .select("email")
     .eq("user_id", userId)
     .maybeSingle();
   if (credErr) return NextResponse.json({ error: "Could not read the account" }, { status: 503 });
@@ -75,13 +75,7 @@ export async function POST(req: NextRequest) {
   }
   const { data: user } = await supabase.from("users").select("handle").eq("id", userId).maybeSingle();
 
-  // Verified only once the signup code was confirmed (verify-email).
-  const jwt = await mintWalletJwt({
-    id: userId,
-    email: cred.email,
-    emailVerified: Boolean(cred.email_verified_at),
-    username: user?.handle ?? null,
-  });
+  const jwt = await mintWalletJwt({ id: userId, email: cred.email, username: user?.handle ?? null });
   // Using the wallet keeps the unlock alive, never past its 2 h.
   await supabase.from("auth_sessions").update({ stepup_seen_at: new Date().toISOString() }).eq("token", token);
   return NextResponse.json({ jwt, userId });

@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
-import { beginEmail, beginTotp, removeFactor, type FactorKind } from "@/lib/mfa";
+import { beginEmail, beginTotp, isPasswordAccount, removeFactor, type FactorKind } from "@/lib/mfa";
 import { requireAddFactor, requireStepUp } from "@/lib/webauthn";
 
 const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
@@ -34,6 +34,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     const body = (await req.json().catch(() => ({}))) as { email?: unknown };
     const address = typeof body.email === "string" ? body.email.trim() : "";
     if (kind === "email" && (address.length > 254 || !EMAIL.test(address))) return NextResponse.json({ error: "Enter a valid email address" }, { status: 400 });
+    if (kind === "email" && (await isPasswordAccount(supabase, userId))) {
+      return NextResponse.json({ error: "Your email resets your password, so it can't be your second factor. Use an authenticator app or a passkey." }, { status: 403 });
+    }
 
     const blocked = await requireAddFactor(req, userId);
     if (blocked) return blocked;

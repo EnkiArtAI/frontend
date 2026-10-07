@@ -416,6 +416,34 @@ describe("the step-up routes", () => {
     await checkCode(supabase, U, "email", lastCode(), { confirm: true });
     vi.setSystemTime(new Date("2026-10-07T12:05:00Z"));
     expect((await send()).status).toBe(200);
-    expect(await (await factors(new NextRequest("http://enki.test/api/auth/stepup"))).json()).toEqual({ factors: ["email"] });
+    expect(await (await factors(new NextRequest("http://enki.test/api/auth/stepup"))).json()).toEqual({ factors: ["email"], emailCodes: true });
+  });
+});
+
+describe("an email account", () => {
+  // Its inbox resets its password: an email code would let the inbox alone through.
+  beforeEach(() => { db.tables.password_credentials = [{ user_id: U, email: "me@example.com" }]; });
+
+  it("counts no email code as a second factor: not listed, not sent, not accepted", async () => {
+    await beginEmail(supabase, U, "me@example.com");
+    expect(await checkCode(supabase, U, "email", lastCode(), { confirm: true })).toBe("ok");
+    expect(await enrolledFactors(supabase, U)).toEqual([]);
+    expect(await (await factors(new NextRequest("http://enki.test/api/auth/stepup"))).json()).toEqual({ factors: [], emailCodes: false });
+    expect((await emailCode(new NextRequest("http://enki.test/api/auth/stepup/email", { method: "POST" }))).status).toBe(404);
+    vi.setSystemTime(new Date("2026-10-07T12:05:00Z"));
+    await sendEmailCode(supabase, U);
+    const post = (body: unknown) => stepUp(new NextRequest("http://enki.test/api/auth/stepup", { method: "POST", body: JSON.stringify(body) }));
+    expect((await post({ scope: "add-factor", factor: "email", code: lastCode() })).status).toBe(404);
+    expect(await requireStepUp(new NextRequest("http://enki.test/x"), U, "add-factor")).toBeNull();
+  });
+
+  it("keeps its authenticator, which does count", async () => {
+    await confirmedTotp();
+    expect(await enrolledFactors(supabase, U)).toEqual(["totp"]);
+  });
+
+  it("fails closed when the account cannot be read", async () => {
+    db.state.failing = { table: "password_credentials", code: "XX000" };
+    expect((await requireStepUp(new NextRequest("http://enki.test/x"), U, "add-factor"))?.status).toBe(503);
   });
 });
