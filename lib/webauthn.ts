@@ -89,8 +89,9 @@ export async function afterStepUp(
   if (scope !== "export") return;
   // To the login email (only password accounts have an embedded wallet to
   // export), three an hour at most: the mail quota every reset needs is shared.
-  const { data } = await supabase.from("password_credentials").select("email").eq("user_id", userId).maybeSingle();
-  if (!data?.email || !checkRequestRateLimit(`export-notice:${userId}`, 3, 3600_000).allowed) return;
+  // An unconfirmed email has no wallet that could be exported: no alarm.
+  const { data } = await supabase.from("password_credentials").select("email, email_verified_at").eq("user_id", userId).maybeSingle();
+  if (!data?.email || !data.email_verified_at || !checkRequestRateLimit(`export-notice:${userId}`, 3, 3600_000).allowed) return;
   await sendMail({
     to: data.email,
     subject: "Your Enki wallet key is being exported",

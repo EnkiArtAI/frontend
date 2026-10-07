@@ -9,6 +9,7 @@ import {
   setCdpSolanaAddress,
   fetchWalletJwt,
   isCdpLocked,
+  cdpClosedReason,
   registerCdpEnsure,
   rememberCdpAddress,
   rememberedCdpAddress,
@@ -99,7 +100,7 @@ export function CdpWalletBridge({ email }: { email: string }) {
   // tab or a removed last factor count at once), then this mount's sign-in.
   const ensure = useCallback(async ({ attached = false } = {}) => {
     if (!(await fetchWalletJwt())) {
-      if (!isCdpLocked()) throw new Error("The wallet isn't available right now. Try again.");
+      if (!isCdpLocked()) throw new Error(cdpClosedReason() ?? "The wallet isn't available right now. Try again.");
       if (!(await tokenFor("wallet"))) throw new Error("Not confirmed, nothing was signed.");
     }
     const held = own.current && (await isSignedIn()) ? solanaOf(await getCurrentUser()) : undefined;

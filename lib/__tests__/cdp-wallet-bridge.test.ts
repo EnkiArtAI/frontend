@@ -163,7 +163,7 @@ const tokenFor = vi.fn(async (scope: string) => {
 
 // Our server: the JWT route and attach-wallet.
 const server = {
-  jwt: "open" as "open" | "locked" | "down",
+  jwt: "open" as "open" | "locked" | "down" | "unconfirmed",
   banned: false,
   attached: [] as { address: string; session: string }[],
 };
@@ -174,6 +174,7 @@ vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { body?: string; headers
   if (url === "/api/auth/wallet/jwt") {
     if (server.jwt === "locked") return json(403, { error: "Confirm it's you to use the wallet", locked: true, scope: "wallet", factors: ["totp"] });
     if (server.jwt === "down") return json(503, { error: "Could not read the session" });
+    if (server.jwt === "unconfirmed") return json(403, { error: "Confirm your email to open your wallet: use “Forgot password” once.", confirmEmail: true });
     return json(200, { jwt: `jwt-${session}` });
   }
   if (url === "/api/auth/session/attach-wallet") {
@@ -392,6 +393,13 @@ describe("before a wallet action, the server decides", () => {
     await mountFor("b@example.com");
     await expect(requestCdpSign("tx")).rejects.toThrow(/Not confirmed/);
     expect(events).toEqual(["dialog:wallet"]);
+  });
+
+  it("says why when the email must be confirmed first, and shows no dialog", async () => {
+    server.jwt = "unconfirmed";
+    await mountFor("b@example.com");
+    await expect(requestCdpSign("tx")).rejects.toThrow(/Confirm your email to open your wallet/);
+    expect(tokenFor).not.toHaveBeenCalled();
   });
 
   it("never shows the dialog when the server is only unreachable", async () => {

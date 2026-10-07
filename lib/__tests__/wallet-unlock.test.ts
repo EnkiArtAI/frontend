@@ -60,7 +60,8 @@ beforeEach(() => {
   db.current = fakePostgrest();
   const t = db.current.tables;
   t.users = [{ id: U, handle: "kev" }];
-  t.password_credentials = [{ user_id: U, email: "me@example.com" }];
+  // A confirmed email: until then the wallet stays closed (see "an email not yet confirmed").
+  t.password_credentials = [{ user_id: U, email: "me@example.com", email_verified_at: "2026-10-01T00:00:00.000Z", must_change_password: false }];
   t.auth_sessions = [
     { token: "sess", wallet_address: U, expires_at: "2026-10-08T12:00:00.000Z" },
     { token: "other", wallet_address: U, expires_at: "2026-10-08T12:00:00.000Z" },
@@ -124,6 +125,38 @@ describe("the wallet JWT", () => {
     expect((await mint()).status).toBe(503);
     db.current!.state.failing = { table: "webauthn_credentials", code: "XX000" };
     expect((await mint()).status).toBe(503);
+  });
+});
+
+describe("an email not yet confirmed", () => {
+  const unconfirmed = (over: Record<string, unknown> = {}) =>
+    Object.assign(db.current!.tables.password_credentials[0], { email_verified_at: null, must_change_password: false, ...over });
+
+  it("keeps the wallet closed with the reason, before it would ask for any unlock", async () => {
+    unconfirmed();
+    const res = await mint();
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body).toMatchObject({ confirmEmail: true, error: expect.stringMatching(/Forgot password/) });
+    expect(body.locked).toBeUndefined();
+    expect(session("sess").stepup_seen_at ?? null).toBeNull();
+  });
+
+  it("keeps it closed while the mailed one-time password is still the password", async () => {
+    unconfirmed({ email_verified_at: "2026-10-01T00:00:00.000Z", must_change_password: true });
+    expect(await (await mint()).json()).toMatchObject({ confirmEmail: true });
+  });
+
+  it("sends no export alarm: there is no wallet that could be exported", async () => {
+    unconfirmed();
+    db.current!.tables.mfa_factors = [];
+    const started = await beginTotp(db.current!.client, U, "me");
+    if (typeof started === "string") throw new Error();
+    expect(await checkCode(db.current!.client, U, "totp", totpCode(started.secret), { confirm: true })).toBe("ok");
+    at("2026-10-07T12:00:31Z");
+    const res = await stepUp(req("/api/auth/stepup", { token: "sess", body: { scope: "export", factor: "totp", code: totpCode(started.secret) } }));
+    expect(res.status).toBe(200);
+    expect(mails).toEqual([]);
   });
 });
 

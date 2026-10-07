@@ -85,7 +85,7 @@ describe("the wallet JWT", () => {
       token: "sess", wallet_address: U, expires_at: "2026-10-08T12:00:00.000Z",
       stepup_at: "2026-10-07T11:59:00.000Z", stepup_seen_at: "2026-10-07T11:59:00.000Z",
     }];
-    db.current!.tables.password_credentials = [{ user_id: U, email: EMAIL }];
+    db.current!.tables.password_credentials = [{ user_id: U, email: EMAIL, email_verified_at: "2026-10-01T00:00:00.000Z", must_change_password: false }];
     db.current!.tables.webauthn_credentials = [];
     db.current!.tables.mfa_factors = [{ id: "f1", user_id: U, kind: "totp", confirmed_at: "2026-10-01T00:00:00.000Z" }];
   });

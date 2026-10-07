@@ -24,7 +24,7 @@ vi.stubGlobal("localStorage", new Proxy({}, {
 
 import {
   CDP_SIGN_REQUEST, CDP_SIGN_RESULT, ensureCdpWallet, registerCdpEnsure, requestCdpSign,
-  rememberCdpAddress, rememberedCdpAddress, forgetCdpAddresses, fetchWalletJwt, isCdpLocked,
+  rememberCdpAddress, rememberedCdpAddress, forgetCdpAddresses, fetchWalletJwt, isCdpLocked, cdpClosedReason,
 } from "../cdp-bridge";
 
 const answerSigns = () => window.addEventListener(CDP_SIGN_REQUEST, (e) => {
@@ -72,6 +72,16 @@ describe("the lock", () => {
     answer(200, { jwt: "jwt" });
     expect(await fetchWalletJwt()).toBe("jwt");
     expect(isCdpLocked()).toBe(false);
+  });
+
+  it("names a refusal the user must answer elsewhere (an email to confirm), and is no lock", async () => {
+    answer(403, { confirmEmail: true, error: "Confirm your email to open your wallet." });
+    expect(await fetchWalletJwt()).toBeUndefined();
+    expect(isCdpLocked()).toBe(false);
+    expect(cdpClosedReason()).toBe("Confirm your email to open your wallet.");
+    answer(200, { jwt: "jwt" });
+    await fetchWalletJwt();
+    expect(cdpClosedReason()).toBeNull();
   });
 
   it("is never an outage or another refusal: no dialog for those", async () => {

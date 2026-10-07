@@ -22,6 +22,9 @@ let solanaAddress: string | null = null;
    ensureCdpWallet() before it starts, so no timeout runs while the user
    answers the dialog. */
 let locked = false;
+// Why the server keeps the wallet closed until the user acts elsewhere (an
+// email to confirm), in its own words; no dialog opens it.
+let closed: string | null = null;
 type Ensure = (opts?: { attached?: boolean }) => Promise<void>;
 let ensure: Ensure | null = null;
 
@@ -29,9 +32,14 @@ let ensure: Ensure | null = null;
     asks for it before every request, the bridge before every wallet action. */
 export async function fetchWalletJwt(): Promise<string | undefined> {
   const res = await fetch("/api/auth/wallet/jwt", { method: "POST", headers: sessionAuthHeaders() });
-  const body = (await res.json().catch(() => ({}))) as { jwt?: string; locked?: boolean };
+  const body = (await res.json().catch(() => ({}))) as { jwt?: string; locked?: boolean; confirmEmail?: boolean; error?: string };
   locked = res.status === 403 && body.locked === true;
+  closed = res.status === 403 && body.confirmEmail === true ? body.error ?? "Confirm your email to open your wallet." : null;
   return res.ok ? body.jwt : undefined;
+}
+
+export function cdpClosedReason(): string | null {
+  return closed;
 }
 
 export function isCdpLocked(): boolean {

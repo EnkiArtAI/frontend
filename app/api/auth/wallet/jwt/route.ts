@@ -19,6 +19,11 @@
  * the last 15 min (403 { locked }); each mint refreshes the 15 min. 2FA is
  * optional: without a factor the session alone opens the wallet, and the
  * red bar asks the user to protect it.
+ *
+ * Closed until the email is confirmed and the mailed one-time password is
+ * replaced (Kev, 2026-10-07): an invitee's first login does both, a reset
+ * through the inbox too (403 { confirmEmail }). Nobody can open the wallet
+ * of an address they never received mail at.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
@@ -58,11 +63,18 @@ export async function POST(req: NextRequest) {
   // design); handle (optional public username) on users.
   const { data: cred, error: credErr } = await supabase
     .from("password_credentials")
-    .select("email")
+    .select("email, email_verified_at, must_change_password")
     .eq("user_id", userId)
     .maybeSingle();
   if (credErr) return NextResponse.json({ error: "Could not read the account" }, { status: 503 });
   if (!cred?.email) return NextResponse.json({ error: "Account has no email" }, { status: 400 });
+  // Before the unlock: a wallet that cannot open asks for no second factor.
+  if (!cred.email_verified_at || cred.must_change_password) {
+    return NextResponse.json(
+      { error: "Confirm your email to open your wallet: use “Forgot password” once.", confirmEmail: true },
+      { status: 403 },
+    );
+  }
 
   let factors: Factor[];
   try {
