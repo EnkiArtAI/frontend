@@ -30,3 +30,17 @@ export function addFeedbackFiles(current: File[], picked: File[]): { files: File
   }
   return { files, refused };
 }
+
+/**
+ * feedback_submissions.status for each decision staff make, as the column's
+ * CHECK constraint names them (probed live 2026-10-08: pending, reviewed,
+ * accepted, rejected, paid, duplicate, spam). A new report is 'pending', the
+ * column's default. Paid is no status: paid_at says it, on a report that is done.
+ */
+export const FEEDBACK_STATUS = { open: "pending", done: "accepted", rejected: "rejected" } as const;
+export type FeedbackDecision = keyof typeof FEEDBACK_STATUS;
+
+/** The decision a stored status stands for; a value this code never writes reads as open. */
+export function feedbackDecision(status: unknown): FeedbackDecision {
+  return (Object.keys(FEEDBACK_STATUS) as FeedbackDecision[]).find((k) => FEEDBACK_STATUS[k] === status) ?? "open";
+}

@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { join } from "node:path";
+import { readSource } from "./_read-source";
 import { fakePostgrest } from "./_fake-postgrest";
+import { FEEDBACK_STATUS } from "@/lib/feedback";
 
 /**
  * The "$100 for feedback" program (Kev, 2026-10-08): staff open a report's
@@ -27,7 +30,7 @@ vi.mock("@/lib/session-user", async (original) => ({
 }));
 vi.mock("@/lib/crypto", async (original) => ({ ...(await original<typeof import("@/lib/crypto")>()), decryptString: () => "anna@enki.test" }));
 
-import { GET as adminGet } from "../../app/api/admin/route";
+import { GET as adminGet, POST as adminPost } from "../../app/api/admin/route";
 
 const FB1 = "aaaaaaaa-0000-4000-8000-000000000001";
 const FB2 = "aaaaaaaa-0000-4000-8000-000000000002";
@@ -35,6 +38,11 @@ const get = async (token: string, query = "") => {
   const res = await adminGet(new NextRequest(`http://enki.test/api/admin${query}`, { headers: { "X-Session-Token": token } }));
   return { status: res.status, body: await res.json() };
 };
+const post = async (token: string, body: unknown) => {
+  const res = await adminPost(new NextRequest("http://enki.test/api/admin", { method: "POST", headers: { "X-Session-Token": token, "Content-Type": "application/json" }, body: JSON.stringify(body) }));
+  return { status: res.status, body: await res.json() };
+};
+const ADMIN_ROUTE = readSource(join(__dirname, "..", "..", "app", "api", "admin", "route.ts"));
 const row = (id: string, extra: Record<string, unknown> = {}) => ({
   id, user_id: "u1", submitter_name: "anna", description: "The save button does nothing at all.", status: "pending",
   payout_cents: 10000, payout_tx_hash: null, payout_chain_key: null, paid_at: null, reviewer_id: null, reviewed_at: null,
@@ -90,5 +98,52 @@ describe("a feedback sender's email", () => {
     Object.assign(fb1(), { submitter_email_ct: "ct", submitter_email_iv: "iv", submitter_email_tag: "tag", submitter_email_kid: "k" });
     expect((await get("admin-tok")).body.feedback[0].email).toBe("anna@enki.test");
     expect((await get("mod-tok")).body.feedback[0].email).toBeNull();
+  });
+});
+
+describe("deciding a feedback report", () => {
+  const decide = (token: string, status: string, id = FB1) => post(token, { resource: "feedback", action: "setStatus", id, status });
+
+  it("writes only values the live column's CHECK takes (probed 2026-10-08)", () => {
+    const allowed = ["pending", "reviewed", "accepted", "rejected", "paid", "duplicate", "spam"];
+    expect(Object.values(FEEDBACK_STATUS).every((v) => allowed.includes(v))).toBe(true);
+    expect(FEEDBACK_STATUS).toEqual({ open: "pending", done: "accepted", rejected: "rejected" });
+  });
+
+  it("an admin marks it done, and who and when are kept", async () => {
+    expect(await decide("admin-tok", "done")).toEqual({ status: 200, body: { ok: true } });
+    expect(fb1()).toMatchObject({ status: FEEDBACK_STATUS.done, reviewer_id: "admin-1" });
+    expect(fb1().reviewed_at).toEqual(expect.any(String));
+  });
+
+  it("a mod rejects and reopens, but never marks it done: done promises the $100", async () => {
+    expect((await decide("mod-tok", "done")).status).toBe(403);
+    expect(fb1()).toMatchObject({ status: "pending", reviewer_id: null });
+    expect((await decide("mod-tok", "rejected")).status).toBe(200);
+    expect(fb1()).toMatchObject({ status: FEEDBACK_STATUS.rejected, reviewer_id: "mod-1" });
+    expect((await decide("mod-tok", "open")).status).toBe(200);
+    expect(fb1().status).toBe("pending");
+  });
+
+  it("takes only the three decisions", async () => {
+    for (const status of ["paid", "pending", "accepted", "constructor", ""]) expect((await decide("admin-tok", status)).status).toBe(400);
+    expect(fb1()).toMatchObject({ status: "pending", reviewer_id: null });
+  });
+
+  it("leaves a paid report as it is", async () => {
+    Object.assign(fb1(), { status: FEEDBACK_STATUS.done, paid_at: "2026-10-08T12:00:00Z" });
+    expect((await decide("admin-tok", "rejected")).status).toBe(409);
+    expect(fb1().status).toBe(FEEDBACK_STATUS.done);
+  });
+
+  it("says so for a report that does not exist", async () => {
+    expect((await decide("admin-tok", "done", "aaaaaaaa-0000-4000-8000-0000000000ff")).status).toBe(404);
+  });
+
+  it("the tab shows each report's decision, read with the report", async () => {
+    fb1().status = FEEDBACK_STATUS.rejected;
+    expect((await get("admin-tok")).body.feedback.map((f: { state: string }) => f.state)).toEqual(["rejected", "open"]);
+    // The fake answers every column; the live read only those it names.
+    expect(ADMIN_ROUTE).toMatch(/\.from\("feedback_submissions"\)\n\s+\.select\("[^"]*\bstatus\b[^"]*"\)/);
   });
 });

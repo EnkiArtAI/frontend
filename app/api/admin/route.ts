@@ -13,7 +13,8 @@
  *   strikes.severity ∈ {1,2,3} · bans.scope ∈ {full} · appeals.status ∈
  *   {pending,approved,denied,withdrawn} · appeals.target_type ∈ {strike,ban} ·
  *   reports.status ∈ {pending,actioned,dismissed,duplicate} · reports.reason ∈
- *   {spam,copyright,hate,impersonation,other}
+ *   {spam,copyright,hate,impersonation,other} · feedback_submissions.status ∈
+ *   {pending,reviewed,accepted,rejected,paid,duplicate,spam} (2026-10-08)
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
@@ -27,7 +28,7 @@ import { banUntil } from "@/lib/moderation/bans";
 import { AccessError, accessFor, approveRequest, inviteEmail, inviteWallet, rejectRequest } from "@/lib/access-invite";
 import { inChunks } from "@/lib/in-chunks";
 import { readImageEvidence } from "@/lib/moderation/image-case";
-import { FEEDBACK_BUCKET } from "@/lib/feedback";
+import { FEEDBACK_BUCKET, FEEDBACK_STATUS, feedbackDecision, type FeedbackDecision } from "@/lib/feedback";
 
 /** A ban counts while it is not lifted and has not run out, as activeBanFor reads it. */
 const unexpired = () => `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`;
@@ -253,7 +254,7 @@ export async function GET(req: NextRequest) {
       .eq("status", "pending").order("submitted_at", { ascending: false }).limit(100),
     pendingReports(supabase),
     supabase.from("feedback_submissions")
-      .select("id, user_id, submitter_name, submitter_email_ct, submitter_email_iv, submitter_email_tag, submitter_email_kid, description, category, severity, payout_cents, paid_at, created_at")
+      .select("id, user_id, submitter_name, submitter_email_ct, submitter_email_iv, submitter_email_tag, submitter_email_kid, description, category, severity, status, payout_cents, paid_at, created_at")
       .order("created_at", { ascending: false }).limit(100),
     supabase.from("hunter_stats")
       .select("user_id, total_submissions, approved_count, rejected_count, duplicate_count, earnings_cents")
@@ -405,6 +406,7 @@ export async function GET(req: NextRequest) {
       desc: (r.description as string) ?? "",
       images: attCount.get(String(r.id)) ?? 0,
       paid: r.paid_at !== null,
+      state: feedbackDecision(r.status),
       payoutCents: (r.payout_cents as number | null) ?? null,
       at: r.created_at,
     })),
@@ -571,7 +573,21 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── feedback ──
+  // ── feedback ($100 program): staff decide; a paid report stays as it is ──
+  if (body.resource === "feedback" && body.action === "setStatus" && body.id) {
+    const to = body.status ?? "";
+    if (!Object.hasOwn(FEEDBACK_STATUS, to)) return NextResponse.json({ error: "Unknown status" }, { status: 400 });
+    // Done promises the $100: an admin's word. A mod may reject or reopen.
+    if (to === "done" && role !== "admin") return NextResponse.json({ error: "Only admins mark a report done" }, { status: 403 });
+    const { data: cur } = await supabase.from("feedback_submissions").select("paid_at").eq("id", body.id).maybeSingle();
+    if (!cur) return NextResponse.json({ error: "Feedback not found" }, { status: 404 });
+    if (cur.paid_at) return NextResponse.json({ error: "This report is paid already" }, { status: 409 });
+    const { error } = await supabase.from("feedback_submissions")
+      .update({ status: FEEDBACK_STATUS[to as FeedbackDecision], reviewer_id: userId, reviewed_at: now })
+      .eq("id", body.id).is("paid_at", null);
+    return error ? fail(error, "decide the report") : NextResponse.json({ ok: true });
+  }
+
   if (body.resource === "feedback" && body.action === "markPaid" && body.id) {
     const { data: cur } = await supabase.from("feedback_submissions").select("payout_cents").eq("id", body.id).maybeSingle();
     const { error } = await supabase.from("feedback_submissions")
