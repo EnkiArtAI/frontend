@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { join } from "node:path";
+import { readSource } from "./_read-source";
 import { addFeedbackFiles } from "@/lib/feedback";
 
 /**
@@ -20,5 +22,13 @@ describe("picking attachments for a feedback report", () => {
   it("stops at five, and refuses a prototype key as a type", () => {
     expect(addFeedbackFiles([], Array.from({ length: 6 }, (_, i) => f("image/png", 1, `${i}.png`))).refused).toEqual(["“5.png” is one too many: 5 attachments at most."]);
     expect(addFeedbackFiles([], [f("constructor", 1)]).files).toEqual([]);
+  });
+
+  it("is the rule the feedback modal applies, to the types the route keeps", () => {
+    const modal = readSource(join(__dirname, "..", "..", "components", "enki-shell", "FeedbackModal.tsx"));
+    expect(modal).toContain("const { files: next, refused } = addFeedbackFiles(files, Array.from(list));");
+    expect(modal).toContain('if (refused.length) onToast(refused.join(" "));');
+    expect(modal).toContain('accept={Object.keys(FEEDBACK_FILE_EXT).join(",")}');
+    expect(modal).toContain("up to {FEEDBACK_MAX_BYTES / 1048576} MB in total");
   });
 });

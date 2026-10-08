@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./icons";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { FEEDBACK_FILE_EXT, FEEDBACK_MAX_BYTES, addFeedbackFiles } from "@/lib/feedback";
 
 const SEVS = [
   { id: "bug", label: "Bug — broken", bg: "#FDE8E8", ink: "#8B2E2E", border: "#E8A0A0" },
@@ -15,8 +16,6 @@ const SEVS = [
   { id: "annoying", label: "Annoying", bg: "#FDF6E8", ink: "#6E4A1E", border: "#E8C89A" },
   { id: "minor", label: "Somewhat annoying", bg: "var(--enki-paper-2)", ink: "var(--enki-ink-3)", border: "var(--enki-rule)" },
 ];
-const MAX_FILES = 5;
-const MAX_MB = 20;
 
 const MONO = "var(--font-mono), monospace";
 const SERIF = "var(--font-serif), Georgia, serif";
@@ -48,17 +47,13 @@ export default function FeedbackModal({ onClose, onToast, guest = false }: { onC
 
   const canSend = !!sev && text.trim().length >= 10 && !busy; // server wants ≥10 chars
 
+  // The route's own rules (lib/feedback): a file it would refuse is named now, not after sending.
   const addFiles = (list: FileList | null) => {
     if (!list) return;
-    setFiles((cur) => {
-      const next = [...cur];
-      for (const f of Array.from(list)) {
-        if (f.size > MAX_MB * 1024 * 1024) { onToast(`“${f.name}” is over ${MAX_MB} MB. Max ${MAX_MB} MB per file.`); continue; }
-        if (next.length >= MAX_FILES) { onToast(`Max ${MAX_FILES} attachments.`); break; }
-        next.push(f);
-      }
-      return next;
-    });
+    const { files: next, refused } = addFeedbackFiles(files, Array.from(list));
+    setFiles(next);
+    // One toast for the lot: each would replace the one before.
+    if (refused.length) onToast(refused.join(" "));
   };
 
   const send = async () => {
@@ -137,8 +132,8 @@ export default function FeedbackModal({ onClose, onToast, guest = false }: { onC
               placeholder="Describe the bug or the change you want — the clearer it is, the easier it is to build (and pay you)."
               style={{ display: "block", width: "100%", border: "1px solid var(--enki-rule)", borderRadius: 9, background: "var(--enki-paper)", padding: "8px 10px", fontSize: 12, lineHeight: 1.55, color: "var(--enki-ink)", outline: "none", resize: "vertical" }} />
 
-            <span style={{ ...microLabel, margin: "11px 0 5px" }}>Attachments · max {MAX_MB} MB each</span>
-            <input ref={fileRef} type="file" accept="image/*,video/*" multiple style={{ display: "none" }}
+            <span style={{ ...microLabel, margin: "11px 0 5px" }}>Attachments · up to {FEEDBACK_MAX_BYTES / 1048576} MB in total</span>
+            <input ref={fileRef} type="file" accept={Object.keys(FEEDBACK_FILE_EXT).join(",")} multiple style={{ display: "none" }}
               onChange={(e) => { addFiles(e.target.files); e.currentTarget.value = ""; }} />
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
               <button onClick={() => fileRef.current?.click()} title="Attach images or videos" style={{ width: 52, height: 40, border: "1px dashed var(--enki-rule)", borderRadius: 9, background: "var(--enki-paper)", color: "var(--enki-ink-3)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
