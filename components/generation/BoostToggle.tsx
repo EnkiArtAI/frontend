@@ -21,6 +21,11 @@ import "./boost-toggle.css";
  * One component for every surface (prompt editor, quick create, node editor,
  * image UI). The three generation paths drifted apart once already; a shared
  * control is what keeps the wording, the icon and the surcharge in step.
+ *
+ * Two looks. The icon-only pill below, and `label`: "⚡ Boost", the word the
+ * redesigned surfaces draw (handoff §0, Kev's product call 2, 2026-10-09).
+ * The label variant is always there (handoff: "immer sichtbar, nie
+ * ausgeblendet"): with nothing to boost it shows disabled and says why.
  */
 
 /* The old BOOST_MULTIPLIER (flat x2) is gone: boost now prices at the boost
@@ -28,32 +33,38 @@ import "./boost-toggle.css";
    because x2 overcharged cheap runs and would LOSE money on gpt high/4K
    (Kev, 2026-08-23). */
 
-const SAME_HOST = "Already on the fastest host at this size — nothing to speed up.";
+export const SAME_HOST = "Already on the fastest host at this size — nothing to speed up.";
 
 export interface BoostToggleProps {
   boost: boolean;
   onChange: (next: boolean) => void;
-  /** Hidden entirely when the chosen model has no faster host. */
+  /** Hidden entirely when the chosen model has no faster host (with `label`:
+      disabled, like sameHost). */
   available?: boolean;
   /** The regular host at the chosen size is already the boost host: shown
       disabled, and the hover text says why (Kev, 2026-10-06). */
   sameHost?: boolean;
   disabled?: boolean;
   className?: string;
+  /** "⚡ Boost" instead of the icon pair, and never hidden. */
+  label?: boolean;
 }
 
 export default function BoostToggle({
   boost,
   onChange,
   available = true,
-  sameHost = false,
+  sameHost: atThisSize = false,
   disabled = false,
   className = "",
+  label = false,
 }: BoostToggleProps) {
   // Hidden rather than disabled: a greyed-out control invites a click and
   // then explains nothing. If a model has no faster host, boost is not a
-  // choice the user has.
-  if (!available) return null;
+  // choice the user has. The label variant is the exception: its title
+  // explains, so it greys out like a size with nothing to boost.
+  if (!available && !label) return null;
+  const sameHost = atThisSize || !available;
 
   // Off while there is nothing to boost at this size, whatever the stored
   // preference: it comes back with a size where boost does something.
@@ -67,6 +78,7 @@ export default function BoostToggle({
       disabled={disabled || sameHost}
       onClick={() => onChange(!boost)}
       className={`enki-boost${on ? " enki-boost--on" : ""} ${className}`.trim()}
+      data-label={label || undefined}
       /* Short on purpose. A tooltip is read while the cursor is already moving,
          so it gets one fact: what changes and what it costs. Every claim in it
          is checkable (Kev, 2026-08-22: "it should be realistic"): "fastest
@@ -81,14 +93,24 @@ export default function BoostToggle({
           : "Runs this model on its fastest host — measured 2–4x faster, priced at that host's own rate. Same model & quality."
       }
     >
-      {/* Clock + bolt, and nothing else. The word "Boost" is gone from every
-          surface: it cost width in toolbars that were already truncating their
-          dropdowns, and it named the control rather than explaining it. The
-          pair IS the claim — time, not quality — so neither icon survives
-          alone, and the full sentence stays on aria-label for anyone who
-          cannot hover. */}
-      <Clock size={12} strokeWidth={2.2} aria-hidden />
-      <Zap size={12} strokeWidth={2.6} aria-hidden />
+      {/* Clock + bolt, and nothing else, unless `label` asks for the word.
+          The icon pair came first: the word cost width in toolbars that were
+          already truncating their dropdowns, and the pair IS the claim —
+          time, not quality — so neither icon survives alone there. The
+          redesign gives the bar room and draws "⚡ Boost" (label), with the
+          bolt as an icon so it takes the control's colour; the full sentence
+          stays on aria-label for anyone who cannot hover. */}
+      {label ? (
+        <>
+          <Zap size={12} strokeWidth={2.4} fill="currentColor" aria-hidden />
+          Boost
+        </>
+      ) : (
+        <>
+          <Clock size={12} strokeWidth={2.2} aria-hidden />
+          <Zap size={12} strokeWidth={2.6} aria-hidden />
+        </>
+      )}
     </button>
   );
 }
