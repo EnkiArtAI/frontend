@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { NextRequest } from "next/server";
+import bs58 from "bs58";
 import { join } from "node:path";
 import { readSource } from "./_read-source";
 import { fakePostgrest } from "./_fake-postgrest";
@@ -145,5 +146,48 @@ describe("deciding a feedback report", () => {
     expect((await get("admin-tok")).body.feedback.map((f: { state: string }) => f.state)).toEqual(["rejected", "open"]);
     // The fake answers every column; the live read only those it names.
     expect(ADMIN_ROUTE).toMatch(/\.from\("feedback_submissions"\)\n\s+\.select\("[^"]*\bstatus\b[^"]*"\)/);
+  });
+});
+
+describe("recording a payout", () => {
+  const SIG = bs58.encode(new Uint8Array(64).fill(7));
+  const pay = (token: string, signature: unknown, id = FB1) => post(token, { resource: "feedback", action: "markPaid", id, signature });
+
+  it("an admin records the transaction, and the report is done and paid", async () => {
+    expect(await pay("admin-tok", ` ${SIG} `)).toEqual({ status: 200, body: { ok: true } });
+    expect(fb1()).toMatchObject({ payout_tx_hash: SIG, payout_chain_key: "solana", status: FEEDBACK_STATUS.done, reviewer_id: "admin-1" });
+    expect(fb1().paid_at).toEqual(expect.any(String));
+    expect(fb1().reviewed_at).toEqual(expect.any(String));
+  });
+
+  it("is not a mod's to record", async () => {
+    expect((await pay("mod-tok", SIG)).status).toBe(403);
+    expect(fb1().paid_at).toBeNull();
+  });
+
+  it("takes a transaction signature and nothing else", async () => {
+    const address = bs58.encode(new Uint8Array(32).fill(7));
+    for (const bad of [undefined, "", "abc", address, SIG.slice(0, -1) + "0", SIG + SIG.slice(0, 2), `https://solscan.io/tx/${SIG}`]) {
+      expect((await pay("admin-tok", bad)).status).toBe(400);
+    }
+    expect(fb1().paid_at).toBeNull();
+  });
+
+  it("pays each report once, and one transfer pays one report", async () => {
+    await pay("admin-tok", SIG);
+    expect((await pay("admin-tok", bs58.encode(new Uint8Array(64).fill(8)))).status).toBe(409);
+    expect(fb1().payout_tx_hash).toBe(SIG);
+    expect((await pay("admin-tok", SIG, FB2)).status).toBe(409);
+    expect(db.current!.tables.feedback_submissions[1].paid_at).toBeNull();
+  });
+
+  it("a rejected report is reopened before it is paid", async () => {
+    fb1().status = FEEDBACK_STATUS.rejected;
+    expect((await pay("admin-tok", SIG)).status).toBe(409);
+    expect(fb1().paid_at).toBeNull();
+  });
+
+  it("says so for a report that does not exist", async () => {
+    expect((await pay("admin-tok", SIG, "aaaaaaaa-0000-4000-8000-0000000000ff")).status).toBe(404);
   });
 });

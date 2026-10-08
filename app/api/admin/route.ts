@@ -17,6 +17,7 @@
  *   {pending,reviewed,accepted,rejected,paid,duplicate,spam} (2026-10-08)
  */
 import { NextRequest, NextResponse } from "next/server";
+import bs58 from "bs58";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { decryptString, encryptString, type EncryptedPayload } from "@/lib/crypto";
@@ -36,6 +37,14 @@ const unexpired = () => `expires_at.is.null,expires_at.gt.${new Date().toISOStri
 type Supabase = ReturnType<typeof getSupabaseServerClient>;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FEEDBACK_SIGN_TTL = 600; // seconds
+
+/** A Solana transaction signature: 64 bytes in base58. Its shape only; nothing asks the chain. */
+function isTxSignature(s: string): boolean {
+  try { return bs58.decode(s).length === 64; } catch { return false; }
+}
+/** Kev pays the $100 by hand, real USDC from his own wallet: on Solana mainnet,
+    whatever chain this deployment settles on (chains.key, a foreign key, verified live 2026-10-08). */
+const PAYOUT_CHAIN = "solana";
 
 // The role comes back too: mods and admins share this panel, but not every
 // control in it. Throttling generation is an admin decision — a mod moderates
@@ -492,7 +501,7 @@ export async function POST(req: NextRequest) {
     maxConcurrentPerUser?: number | null;
     handle?: string; kind?: string; violation?: string; vote?: string;
     email?: string; enabled?: boolean; quorum?: number; ttlDays?: number;
-    what?: string;
+    what?: string; signature?: string;
   };
   try {
     body = await req.json();
@@ -588,12 +597,24 @@ export async function POST(req: NextRequest) {
     return error ? fail(error, "decide the report") : NextResponse.json({ ok: true });
   }
 
+  // The $100 moves by hand from Kev's wallet; this records it (Kev, 2026-10-08).
+  // Admins only: a mod decides on reports, never on money.
   if (body.resource === "feedback" && body.action === "markPaid" && body.id) {
-    const { data: cur } = await supabase.from("feedback_submissions").select("payout_cents").eq("id", body.id).maybeSingle();
-    const { error } = await supabase.from("feedback_submissions")
-      .update({ paid_at: now, payout_cents: cur?.payout_cents ?? 10000, reviewer_id: userId })
-      .eq("id", body.id).is("paid_at", null);
-    return error ? fail(error, "mark paid") : NextResponse.json({ ok: true });
+    if (role !== "admin") return NextResponse.json({ error: "Only admins record a payout" }, { status: 403 });
+    const signature = String(body.signature ?? "").trim();
+    if (!isTxSignature(signature)) return NextResponse.json({ error: "Paste the payment's Solana transaction signature" }, { status: 400 });
+    const { data: cur } = await supabase.from("feedback_submissions").select("status, paid_at").eq("id", body.id).maybeSingle();
+    if (!cur) return NextResponse.json({ error: "Feedback not found" }, { status: 404 });
+    if (cur.paid_at) return NextResponse.json({ error: "This report is paid already" }, { status: 409 });
+    if (cur.status === FEEDBACK_STATUS.rejected) return NextResponse.json({ error: "This report was rejected: reopen it before paying" }, { status: 409 });
+    // One transfer pays one report: the same signature twice is a paste gone wrong.
+    const { data: twice } = await supabase.from("feedback_submissions").select("id").eq("payout_tx_hash", signature).limit(1);
+    if (twice?.length) return NextResponse.json({ error: "That transaction is recorded for another report already" }, { status: 409 });
+    const { error } = await supabase.from("feedback_submissions").update({
+      status: FEEDBACK_STATUS.done, paid_at: now, payout_tx_hash: signature, payout_chain_key: PAYOUT_CHAIN,
+      reviewer_id: userId, reviewed_at: now,
+    }).eq("id", body.id).is("paid_at", null);
+    return error ? fail(error, "record the payout") : NextResponse.json({ ok: true });
   }
 
   // ── private-beta access (Kev, 2026-10-07): approve or reject a request,
