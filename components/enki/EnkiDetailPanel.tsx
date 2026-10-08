@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Loader2 } from "lucide-react";
 import dynamic from "next/dynamic";
-import type { EnkiPrompt } from "@/lib/enkiPromptAdapter";
+import type { ImageViewSeed } from "@/lib/ui/image-view/seed";
 
 /* The spinner is centred in the FRAME, not the viewport.
    The frame starts at the shell's menu edge and below the recovery banner, so
@@ -29,13 +29,13 @@ const PromptGeneratorView = dynamic(() => import("@/components/PromptGeneratorVi
 export const preloadImageUI = () => { void import("@/components/PromptGeneratorView"); };
 
 type EnkiDetailPanelProps = {
-  prompt: EnkiPrompt;
+  seed: ImageViewSeed;
   onClose: () => void;
   faved: boolean;
   toggleFav: (id: string) => void;
 };
 
-export default function EnkiDetailPanel({ prompt, onClose }: EnkiDetailPanelProps) {
+export default function EnkiDetailPanel({ seed, onClose }: EnkiDetailPanelProps) {
   /* Locking the body would otherwise cost the reader their place: a body at
      overflow:hidden collapses to scrollTop 0, so closing the panel drops them
      back at the top of a feed they had scrolled far into. The offset is
@@ -64,7 +64,7 @@ export default function EnkiDetailPanel({ prompt, onClose }: EnkiDetailPanelProp
      While hidden, ESC belongs to whatever covers us. */
   const [hidden, setHidden] = useState(false);
   // A NEW prompt must never inherit the hidden flag of the previous one.
-  useEffect(() => { setHidden(false); }, [prompt?.id]);
+  useEffect(() => { setHidden(false); }, [seed.promptId]);
   const hiddenRef = useRef(false);
   useEffect(() => { hiddenRef.current = hidden; }, [hidden]);
   useEffect(() => {
@@ -96,13 +96,13 @@ export default function EnkiDetailPanel({ prompt, onClose }: EnkiDetailPanelProp
         <X size={16} />
       </button>
       <PromptGeneratorView
-        promptId={prompt.id}
-        title={prompt.title}
-        artistName={prompt.artist?.name}
-        artistId={prompt.artist?.handle || prompt.artist?.id}
-        imageUrl={prompt.art.url}
-        showcaseImages={[prompt.art, ...(prompt.versions || [])].map(v => ({ url: v.url }))}
-        isFreeShowcase={prompt.visibility === "full"}
+        promptId={seed.promptId}
+        title={seed.title}
+        artistName={seed.artist?.name}
+        artistId={seed.artist?.handle || seed.artist?.id}
+        imageUrl={seed.imageUrl}
+        showcaseImages={seed.showcase?.map(url => ({ url }))}
+        isFreeShowcase={seed.isFree}
       />
     </div>
   );

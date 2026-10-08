@@ -7,6 +7,7 @@ import EnkiCard from "@/components/enki/EnkiCard";
 import EnkiFilters from "@/components/enki/EnkiFilters";
 import GenerateLauncher from "@/components/GenerateLauncher";
 import EnkiDetailPanel from "@/components/enki/EnkiDetailPanel";
+import { seedFromEnkiPrompt } from "@/lib/ui/image-view/seed";
 import type { EnkiPrompt } from "@/lib/enkiPromptAdapter";
 import { mapMarketplacePromptToEnkiPrompt } from "@/lib/enkiPromptAdapter";
 import { useModelCatalogue } from "@/hooks/useModelLimits";
@@ -308,7 +309,7 @@ export default function EnkiFeedPage() {
           shell's menu ends, so this inherits that rather than restating it. */}
       {open && (
         <EnkiDetailPanel
-          prompt={open}
+          seed={seedFromEnkiPrompt(open)}
           onClose={() => setOpen(null)}
           faved={Boolean(favs[open.id])}
           toggleFav={toggleFav}

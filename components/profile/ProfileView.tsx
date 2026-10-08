@@ -9,6 +9,7 @@ import { useSolanaAuth } from "@/hooks/useSolanaAuth";
 import { sessionAuthHeaders, viewerHeaders } from "@/lib/session-headers";
 import EnkiCard from "@/components/enki/EnkiCard";
 import EnkiDetailPanel from "@/components/enki/EnkiDetailPanel";
+import { seedFromEnkiPrompt } from "@/lib/ui/image-view/seed";
 import {
   mapMarketplacePromptToEnkiPrompt
 } from "@/lib/enkiPromptAdapter";
@@ -1069,7 +1070,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
       )}
       {open && (
         <EnkiDetailPanel
-          prompt={open}
+          seed={seedFromEnkiPrompt(open)}
           onClose={() => setOpen(null)}
           faved={Boolean(favs[open.id])}
           toggleFav={toggleFav}
