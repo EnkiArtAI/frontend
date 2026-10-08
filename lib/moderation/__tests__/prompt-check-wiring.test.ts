@@ -28,7 +28,7 @@ describe("a real generation failure", () => {
 });
 
 describe("the human rail", () => {
-  const check = HUMAN.indexOf("await checkPrompt(checked, { hidden: fromArtist, signal: request.signal })");
+  const check = HUMAN.indexOf("checkPrompt(checked, { hidden: fromArtist, signal: request.signal })");
 
   it("records an artist's prompt by its id and the buyer's values, never its text", () => {
     expect(HUMAN).toMatch(/const about = fromArtist \? \{ promptId: String\(paid\.prompt_id\) \} : authoring \? \{ withheld: prompt, draft: true \} : \{\};/);

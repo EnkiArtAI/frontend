@@ -46,7 +46,11 @@ describe("every route that runs the prompt check", () => {
   it.each(ROUTES)("%s screens the same inputs first, skips the check on a refusal and takes it as the verdict", (file, inputs) => {
     const src = readSource(join(ROOT, ...file.split("/")));
     const first = src.indexOf(`const first = screenFirst(${inputs});`);
-    const check = src.indexOf(`const check = first ? NOT_CHECKED : await checkPrompt(${inputs}, `);
+    // Awaited on its own, or beside the reference images' check (the paid route).
+    const check = Math.max(
+      src.indexOf(`const check = first ? NOT_CHECKED : await checkPrompt(${inputs}, `),
+      src.indexOf(`first ? NOT_CHECKED : checkPrompt(${inputs}, `),
+    );
     const verdict = src.indexOf("const verdict = first ?? await moderate(");
     expect(first).toBeGreaterThan(-1);
     expect(check).toBeGreaterThan(first);

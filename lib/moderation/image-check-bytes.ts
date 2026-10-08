@@ -21,6 +21,19 @@ export async function checkImageBytes(bytes: Buffer, opts: { signal?: AbortSigna
   return checkImage(`data:image/jpeg;base64,${jpeg.toString("base64")}`, opts);
 }
 
+/**
+ * What the owner of a refused image reads: one sentence for explicit content
+ * and child safety alike, so a noisy verdict never accuses anyone.
+ */
+export const IMAGE_REFUSED = "This image can't be delivered on Enki. Nothing was charged.";
+/** When the judges gave no verdict: the image is held back, never shown unchecked. */
+export const IMAGE_UNCHECKED = "Your image could not be checked right now, so it was not delivered. Nothing was charged. Please try again.";
+export const REFERENCE_REFUSED = "One of your reference images can't be used on Enki. Nothing was generated and nothing was charged.";
+export const REFERENCE_UNCHECKED = "Your reference images could not be checked right now. Nothing was generated and nothing was charged. Please try again.";
+
+/** Refused or not judged: such an image is neither shown nor used. */
+export const heldBack = (v: { verdict: string }) => v.verdict === "blocked" || v.verdict === "child_safety" || v.verdict === "unavailable";
+
 /** The bytes of a base64 data: URL, or null for anything else. */
 export function dataUrlBytes(url: string): Buffer | null {
   const m = /^data:[^;,]+;base64,([\s\S]*)$/.exec(url);
