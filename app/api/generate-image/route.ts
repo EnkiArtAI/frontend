@@ -377,6 +377,16 @@ export async function POST(request: NextRequest) {
       first ? NOT_CHECKED : checkPrompt(checked, { hidden: fromArtist, signal: request.signal }),
       Promise.all(refBytes.map((b) => checkImageBytes(b, { signal: request.signal }))),
     ]);
+    // A child-safety reference becomes a case whatever else refuses the
+    // request, the prompt's own warning below included.
+    refsSeen.forEach((v, i) => {
+      if (v.verdict === "child_safety") {
+        after(recordImageCase(getSupabaseServerClient(), {
+          surface: "generate-image", request, bytes: refBytes[i], scores: v.scores,
+          about: authoring ? "" : JSON.stringify(checked), promptId: about.promptId,
+        }));
+      }
+    });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
       const outcome = await recordWarning(getSupabaseServerClient(), {
         surface: "generate-image", request, category: check.verdict, text: authoring ? "" : JSON.stringify(checked), confidence: check.confidence, ...about,
@@ -386,14 +396,6 @@ export async function POST(request: NextRequest) {
     // A reference the check refuses or cannot judge stops the request before
     // the slot and the claim, so there is nothing to void.
     if (refsSeen.some(heldBack)) {
-      refsSeen.forEach((v, i) => {
-        if (v.verdict === "child_safety") {
-          after(recordImageCase(getSupabaseServerClient(), {
-            surface: "generate-image", request, bytes: refBytes[i], scores: v.scores,
-            about: authoring ? "" : JSON.stringify(checked), promptId: about.promptId,
-          }));
-        }
-      });
       return refsSeen.some((v) => v.verdict === "blocked" || v.verdict === "child_safety")
         ? NextResponse.json({ error: REFERENCE_REFUSED }, { status: 422 })
         : NextResponse.json({ error: REFERENCE_UNCHECKED }, { status: 503 });

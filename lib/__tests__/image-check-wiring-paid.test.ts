@@ -51,6 +51,10 @@ describe("the reference images", () => {
     at(": NextResponse.json({ error: REFERENCE_UNCHECKED }, { status: 503 });");
   });
 
+  it("a child-safety one becomes a case even when the prompt's own warning refuses the request", () => {
+    expect(at("bytes: refBytes[i], scores: v.scores,")).toBeLessThan(at('if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {'));
+  });
+
   it("are stored only as judged: a graph image that never reached the model stays an empty slot", () => {
     at('stripped.images.length ? stripped.images.map((img) => (refs.includes(img) ? img : "")) : refs,');
   });
