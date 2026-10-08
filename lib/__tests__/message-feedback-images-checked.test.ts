@@ -9,7 +9,7 @@ import type { NextRequest } from "next/server";
  * report stands. A child-safety verdict becomes a case on either.
  */
 
-const s = vi.hoisted(() => ({ verdicts: [] as string[], calls: 0, cases: [] as unknown[], uploads: [] as string[], rows: [] as { table: string; row: unknown }[] }));
+const s = vi.hoisted(() => ({ verdicts: [] as string[], calls: 0, cases: [] as unknown[], uploads: [] as string[], rows: [] as { table: string; row: unknown }[], failRows: "", removed: [] as string[] }));
 // As the real check: bytes no decoder reads never reach the judges (here,
 // anything but a PNG or an AVIF, which opens like an MP4, and a JPEG cut
 // short reads as one that does not decode whole); `calls` counts what the
@@ -43,17 +43,18 @@ vi.mock("@/lib/supabaseServer", () => ({
     const query = (table: string) => {
       const q: Record<string, unknown> = {};
       for (const m of ["select", "eq", "update"]) q[m] = () => q;
-      q.insert = (row: unknown) => { s.rows.push({ table, row }); return q; };
+      let failed = false;
+      q.insert = (row: unknown) => { s.rows.push({ table, row }); failed = table === s.failRows; return q; };
       q.single = async () => ({ data: { id: "row-1", created_at: "now" }, error: null });
       q.maybeSingle = async () => ({ data: { handle: "h" }, error: null });
-      q.then = (ok: (v: unknown) => unknown) => Promise.resolve({ data: null, error: null }).then(ok);
+      q.then = (ok: (v: unknown) => unknown) => Promise.resolve({ data: null, error: failed ? { message: "db down" } : null }).then(ok);
       return q;
     };
     return {
       from: query,
       storage: {
         createBucket: async () => ({ error: null }),
-        from: () => ({ upload: async (path: string) => { s.uploads.push(path); return { error: null }; }, remove: async () => ({ error: null }) }),
+        from: () => ({ upload: async (path: string) => { s.uploads.push(path); return { error: null }; }, remove: async (paths: string[]) => { s.removed.push(...paths); return { error: null }; } }),
       },
     };
   },
@@ -71,7 +72,7 @@ const post = async (handler: (r: NextRequest) => Promise<Response>, fields: Reco
   return { status: res.status, body: (await res.json()) as { error?: string; dropped?: number } };
 };
 
-beforeEach(() => Object.assign(s, { verdicts: [], calls: 0, cases: [], uploads: [], rows: [] }));
+beforeEach(() => Object.assign(s, { verdicts: [], calls: 0, cases: [], uploads: [], rows: [], failRows: "", removed: [] }));
 
 describe("an image in a direct message", () => {
   it("clear: stored and sent", async () => {
@@ -108,6 +109,13 @@ describe("an image attached to a feedback report", () => {
     expect(await report([file(), file(), file(), file()])).toEqual({ status: 201, body: { ok: true, dropped: 2 } });
     expect(s.uploads.map((p) => p.split("/")[1].split("-")[0])).toEqual(["0", "1"]);
     expect(s.rows.filter((r) => r.table === "feedback_attachments")).toHaveLength(2);
+  });
+
+  it("an attachment whose row could not be written is taken down and counted as not kept", async () => {
+    s.failRows = "feedback_attachments";
+    expect(await report([file()])).toEqual({ status: 201, body: { ok: true, dropped: 1 } });
+    expect(s.removed).toEqual(s.uploads);
+    expect(s.uploads).toHaveLength(1);
   });
 
   it("child safety: dropped, and a case with the bytes", async () => {

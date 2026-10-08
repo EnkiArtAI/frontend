@@ -123,10 +123,15 @@ export async function POST(req: NextRequest) {
       if (!video && seen.verdict !== "clear" && seen.verdict !== "adult") continue;
       const up = await supabase.storage.from(BUCKET).upload(path, buf, { contentType: f.type, upsert: false });
       if (up.error) continue;
-      await supabase.from("feedback_attachments").insert({
+      const { error: rowError } = await supabase.from("feedback_attachments").insert({
         feedback_id: row.id, image_url: path, storage_key: path,
         file_size_bytes: f.size, mime_type: f.type, sort_order: i,
       });
+      // A file no row points to is one no admin ever sees: taken down, not kept.
+      if (rowError) {
+        await supabase.storage.from(BUCKET).remove([path]);
+        continue;
+      }
       kept++;
     }
   }
