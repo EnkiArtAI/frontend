@@ -15,6 +15,9 @@ function isApng(png: Buffer): boolean {
   return false;
 }
 
+/** The reason "unavailable" gives for bytes no image decoder reads. */
+export const NOT_AN_IMAGE = "not an image";
+
 /** Of two views of one image, the worse verdict stands, a child-safety one above all. */
 const RANK = { clear: 0, adult: 1, unavailable: 2, blocked: 3, child_safety: 4 } as const;
 
@@ -39,7 +42,7 @@ export async function checkImageBytes(bytes: Buffer, opts: { signal?: AbortSigna
     views = await Promise.all(backgrounds.map((background) =>
       sharp(bytes).rotate().resize({ width: EDGE, height: EDGE, fit: "inside", withoutEnlargement: true }).flatten({ background }).jpeg({ quality: 85 }).toBuffer()));
   } catch {
-    return { verdict: "unavailable", reason: "not an image" };
+    return { verdict: "unavailable", reason: NOT_AN_IMAGE };
   }
   const seen = await Promise.all(views.map((v) => checkImage(`data:image/jpeg;base64,${v.toString("base64")}`, opts)));
   return seen.reduce((worst, v) => (RANK[v.verdict] > RANK[worst.verdict] ? v : worst));

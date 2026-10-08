@@ -10,12 +10,24 @@ import type { NextRequest } from "next/server";
  */
 
 const s = vi.hoisted(() => ({ verdicts: [] as string[], calls: 0, cases: [] as unknown[], uploads: [] as string[], rows: [] as { table: string; row: unknown }[] }));
-vi.mock("@/lib/moderation/image-check-bytes", async (orig) => ({
-  ...(await orig<typeof import("@/lib/moderation/image-check-bytes")>()),
-  checkImageBytes: async () => ({ verdict: s.verdicts[s.calls++] ?? "clear" }),
-}));
+// As the real check: bytes no decoder reads never reach the judges (here,
+// anything but a PNG or an AVIF, which opens like an MP4); `calls` counts
+// what the judges see.
+vi.mock("@/lib/moderation/image-check-bytes", async (orig) => {
+  const real = await orig<typeof import("@/lib/moderation/image-check-bytes")>();
+  return {
+    ...real,
+    checkImageBytes: async (b: Buffer) =>
+      b.subarray(0, 4).toString("hex") === "89504e47" || b.toString("latin1", 4, 12) === "ftypavif" ? { verdict: s.verdicts[s.calls++] ?? "clear" } : { verdict: "unavailable", reason: real.NOT_AN_IMAGE },
+  };
+});
 vi.mock("@/lib/moderation/image-case", () => ({ recordImageCase: async (_c: unknown, c: unknown) => { s.cases.push(c); } }));
 vi.mock("@/lib/session-user", () => ({ resolveSessionUserId: async () => "user-1" }));
+// The limits have their own tests; here one account sends more reports than they allow.
+vi.mock("@/lib/rate-limit", async (orig) => ({
+  ...(await orig<typeof import("@/lib/rate-limit")>()),
+  checkRequestRateLimit: () => ({ allowed: true, retryAfterSeconds: 0 }),
+}));
 vi.mock("next/server", async (orig) => ({ ...(await orig<typeof import("next/server")>()), after: (p: unknown) => p }));
 vi.mock("@/lib/crypto", () => ({ encryptString: () => ({ encrypted: "ct", iv: "iv", authTag: "tag", kid: "k" }), decryptString: () => "" }));
 vi.mock("@/lib/dm", async (orig) => ({
@@ -101,9 +113,32 @@ describe("an image attached to a feedback report", () => {
     expect(s.cases).toEqual([expect.objectContaining({ surface: "feedback" })]);
   });
 
-  it("a video is kept unjudged: the check cannot read one", async () => {
-    expect((await report([file("video/mp4", "a.mp4")])).status).toBe(201);
+  const bytes = (type: string, b: number[], name = "a.bin") => new File([new Uint8Array(b)], name, { type });
+  const MP4 = [0, 0, 0, 0x18, ...Buffer.from("ftypmp42")];
+  const WEBM = [0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0];
+
+  it("a video, by its own bytes, is kept unjudged: the check cannot read one", async () => {
+    expect((await report([bytes("video/mp4", MP4), bytes("video/quicktime", MP4), bytes("video/webm", WEBM)])).status).toBe(201);
     expect(s.calls).toBe(0);
-    expect(s.uploads).toHaveLength(1);
+    expect(s.uploads).toHaveLength(3);
+  });
+
+  it("an image labelled a video or a GIF is judged like any", async () => {
+    s.verdicts = ["blocked", "blocked"];
+    expect((await report([file("video/mp4", "a.mp4"), file("image/gif", "a.gif")])).status).toBe(201);
+    expect(s.calls).toBe(2);
+    expect(s.uploads).toEqual([]);
+  });
+
+  it("an image in a video's container, labelled a video, is judged like any", async () => {
+    s.verdicts = ["blocked"];
+    expect((await report([bytes("video/mp4", [0, 0, 0, 0x18, ...Buffer.from("ftypavif")])])).status).toBe(201);
+    expect(s.calls).toBe(1);
+    expect(s.uploads).toEqual([]);
+  });
+
+  it("drops what is neither an image the check reads nor a declared video", async () => {
+    expect((await report([bytes("video/mp4", [1, 2, 3, 4, 5, 6, 7, 8]), bytes("image/gif", MP4)])).status).toBe(201);
+    expect(s.uploads).toEqual([]);
   });
 });
