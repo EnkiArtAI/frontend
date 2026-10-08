@@ -83,7 +83,8 @@ export async function verifyFundedEscrow(plan: EscrowPaymentSnapshot, receipt: {
       escrow.recipientCount !== (plan.artistUnitMicro > 0 ? 2 : 1) ||
       escrow.recipientOwners[0] !== plan.treasuryOwner || escrow.recipientOwners[1] !== plan.artistOwner ||
       escrow.unitAmounts[0] !== BigInt(plan.treasuryUnitMicro) || escrow.unitAmounts[1] !== BigInt(plan.artistUnitMicro) ||
-      escrow.units !== plan.units || escrow.settledUnits !== 0 || escrow.expiresAt !== BigInt(plan.expiresAtSeconds) ||
+      escrow.units !== plan.units || escrow.settledUnits !== 0 || escrow.refundDue !== BigInt(amount) ||
+      escrow.expiresAt !== BigInt(plan.expiresAtSeconds) ||
       escrow.createdAt < BigInt(0) || escrow.createdAt > BigInt(receipt.chainNowSeconds) ||
       escrow.expiresAt - escrow.createdAt < BigInt(ESCROW_MIN_TTL_SECONDS) ||
       escrow.expiresAt - escrow.createdAt > BigInt(ESCROW_MAX_TTL_SECONDS) ||

@@ -44,7 +44,9 @@ deploy a program or activate payments.
    confirmed/finalized commitment and a context slot at least the confirmation's
    slot. Include the current chain clock from that response.
    `verifyFundedEscrow` validates immutable deposit fields, program owners,
-   canonical addresses, state, unexpired lifetime and funds. Only then may the database mark the
+   canonical addresses, state, unexpired lifetime and funds. The funded account's
+   `refundDue` must equal the quoted total. Donated vault tokens do not increase
+   that claim or purchase additional units. Only then may the database mark the
    deposit funded and admit image claims. A client-supplied signature is not proof.
    Generation admission must also check that the remaining chain TTL covers its
    generation budget; a funded, merely unexpired escrow is not sufficient.
@@ -58,6 +60,24 @@ These pure helpers perform no RPC, database writes or paid API calls. The
 generated settlement and reclaim builders share the same program interface;
 delivered-image counting, retry persistence and atomic recovery booking belong
 to the subsequent server lifecycle integration.
+
+## Settlement and reclaim integration contract
+
+- Persist the count of delivered images in the database and use that count as
+  settlement `k`. Never take it from a request. A reconciliation job must compare
+  on-chain `settled_units` with delivered rows and alert on any mismatch.
+- Send settlement regardless of the artist ATA's state. Do not gate settlement
+  on an off-chain `getAccount` result; the program handles an unusable artist ATA
+  by returning only that leg to the buyer while paying the treasury.
+- Send settlement as its own transaction. Never bundle it with reclaim or an
+  artist ATA `CreateIdempotent`: either can revert and roll back settlement.
+  Confirm settlement, then submit reclaim separately with persisted retries.
+- Escrow now has a 231-byte layout with appended `refund_due`. Settlement
+  subtracts actual payments from that claim; reclaim refunds the smaller of the
+  vault balance and the claim under the existing ATA fee rules, then sweeps any
+  surplus to treasury. When the claim is zero, donated dust cannot make buyer
+  ATA contents block closure. The 223-byte layout is rejected; coordinate the
+  program and regenerated client release rather than mixing their layouts.
 
 Base is `main`, with #118 merged before this client (#119); the
 database chain #117 and #120 is already merged. No generation or x402 route changes belong in

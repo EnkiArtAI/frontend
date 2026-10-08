@@ -174,13 +174,16 @@ describe("Escrow transaction preparation and buyer-first sponsorship", () => {
 async function funded(overrides: Partial<EscrowInput> = {}, vaultAmount = 1_000_000) {
   const expected = plan();
   const derived = await escrowAddresses(PROGRAM, buyer.address, INTENT);
+  const unitAmounts = overrides.unitAmounts ?? [100_000, 150_000];
+  const refundDue = unitAmounts.reduce<bigint>((sum, amount) => sum + BigInt(amount), BigInt(0)) *
+    BigInt(overrides.units ?? 4);
   const escrow: EscrowChainAccount = {
     address: derived.escrow, programAddress: PROGRAM, executable: false,
     data: getEscrowEncoder().encode({
       version: 1, state: EscrowState.Funded, bump: derived.escrowBump, vaultBump: derived.vaultBump,
       intentId: derived.intentBytes, buyer: buyer.address, mint: escrowMint(expected.cluster), rentPayer: sponsor.address,
       recipientCount: 2, recipientOwners: [treasury.address, artist.address], unitAmounts: [100_000, 150_000],
-      units: 4, settledUnits: 0, createdAt: 1000, expiresAt: 1900, ...overrides,
+      units: 4, settledUnits: 0, createdAt: 1000, expiresAt: 1900, refundDue, ...overrides,
     }),
   };
   const vault: EscrowChainAccount = {
@@ -202,6 +205,8 @@ describe("Only the expected confirmed escrow releases generation", () => {
     expect(decoded.rent_payer.toBase58()).toBe(sponsor.address);
     expect(decoded.unit_amounts.map((amount: BN) => amount.toNumber())).toEqual([100_000, 150_000]);
     expect(decoded.units).toBe(4);
+    expect(decoded.refund_due.toNumber()).toBe(1_000_000);
+    expect(receipt.escrow.data).toHaveLength(231);
     expect(decoded.state).toEqual({ Funded: {} });
     expect(Buffer.from(decoded.intent_id).toString("hex")).toBe("00112233445566778899aabbccddeeff");
   });
@@ -213,7 +218,17 @@ describe("Only the expected confirmed escrow releases generation", () => {
     const result = await verifyFundedEscrow(plan(), { ...receipt, vault: { ...receipt.vault, data: extra } });
     expect(result.vault.amount).toBe(BigInt(1_000_001));
     expect(result.escrow.units).toBe(4);
+    expect(result.escrow.refundDue).toBe(BigInt(1_000_000));
     expect(result.depositedMicro).toBe(1_000_000);
+  });
+  it.each([0, 999_999, 1_000_001])("rejects a funded refund claim of %s even when its vault has excess funds", async (refundDue) => {
+    await expect(verifyFundedEscrow(plan(), await funded({ refundDue }, 2_000_000)))
+      .rejects.toThrow("does not match");
+  });
+  it("rejects the previous 223-byte account layout before generation admission", async () => {
+    const receipt = await funded();
+    receipt.escrow.data = receipt.escrow.data.slice(0, 223);
+    await expect(verifyFundedEscrow(plan(), receipt)).rejects.toThrow("accounts are invalid");
   });
   it("verifies funded snapshots above the old cap independently of a later Config decrease", async () => {
     const stored = plan({ treasuryUnitMicro: 12_500_000, artistUnitMicro: 0,

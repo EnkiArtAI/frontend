@@ -74,6 +74,7 @@ export type Escrow = {
   settledUnits: number;
   createdAt: bigint;
   expiresAt: bigint;
+  refundDue: bigint;
 };
 
 export type EscrowInput = {
@@ -92,6 +93,7 @@ export type EscrowInput = {
   settledUnits: number;
   createdAt: number | bigint;
   expiresAt: number | bigint;
+  refundDue: number | bigint;
 };
 
 /** Gets the encoder for {@link EscrowInput} account data. */
@@ -114,6 +116,7 @@ export function getEscrowEncoder(): FixedSizeEncoder<EscrowInput> {
       ["settledUnits", getU8Encoder()],
       ["createdAt", getI64Encoder()],
       ["expiresAt", getI64Encoder()],
+      ["refundDue", getU64Encoder()],
     ]),
     (value) => ({ ...value, discriminator: ESCROW_DISCRIMINATOR }),
   );
@@ -138,6 +141,7 @@ export function getEscrowDecoder(): FixedSizeDecoder<Escrow> {
     ["settledUnits", getU8Decoder()],
     ["createdAt", getI64Decoder()],
     ["expiresAt", getI64Decoder()],
+    ["refundDue", getU64Decoder()],
   ]);
 }
 
@@ -200,5 +204,5 @@ export async function fetchAllMaybeEscrow(
 }
 
 export function getEscrowSize(): number {
-  return 223;
+  return 231;
 }

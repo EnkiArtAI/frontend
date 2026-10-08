@@ -1001,6 +1001,10 @@
           {
             "name": "expires_at",
             "type": "i64"
+          },
+          {
+            "name": "refund_due",
+            "type": "u64"
           }
         ]
       }
