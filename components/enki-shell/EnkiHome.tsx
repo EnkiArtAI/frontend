@@ -416,7 +416,9 @@ export default function EnkiHome() {
          "IT SHOULD BE PLACED IN THE RIGHT AREA NEXT TO THE LEFT SIDE
          MENÜ"). Same ProfileView, foreign mode. */
       case "creator": return creatorHandle
-        ? <ProfileView handle={creatorHandle} isOwnProfile={false} onBack={closePanel} />
+        // Keyed by handle: one creator's page never shows the last one's
+        // hero, gallery or Report target while the next one loads.
+        ? <ProfileView key={creatorHandle} handle={creatorHandle} isOwnProfile={false} onBack={closePanel} />
         : null;
       {/* Leaderboard brings its own editorial header (design), no PanelHeadline */}
       case "favorites": return <BookmarksPanel />;
