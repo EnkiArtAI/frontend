@@ -137,7 +137,7 @@ export default function ShowroomUploadZone() {
       try {
         // Made smaller until it arrives: Vercel turns away a body over 4.5 MB (lib/shrink-image).
         const file = await fitUpload(upload.file);
-        if (!file) throw new Error(`${upload.file.name} is too large to upload, even made smaller.`);
+        if (!file) throw new Error(`${upload.file.name} could not be read or made small enough to upload.`);
         const formData = new FormData();
         formData.append('file', file);
         if (upload.prompt) {

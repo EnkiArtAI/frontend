@@ -81,15 +81,17 @@ const UPLOAD_STEPS = [
 ];
 
 /**
- * A showcase or message image as it is sent: the file itself when it fits,
- * so a good one keeps every byte, else the first step that fits; null when
- * none does or the browser cannot decode it. It travels alone in a multipart
- * body, as bytes: no base64 here.
+ * A showcase or message image as it is sent: always drawn anew, so nothing
+ * the camera wrote into the file goes along (a phone photo carries where it
+ * was taken, and a gallery original is public), at the first step that fits.
+ * Null when none does or the browser cannot read it. It travels alone in a
+ * multipart body, as bytes: no base64 here.
  */
 export async function fitUpload(file: File): Promise<File | null> {
-  if (file.size <= REQUEST_MAX_BYTES) return file;
   for (const { edge, quality } of UPLOAD_STEPS) {
     const blob = await shrinkImage(file, edge, quality);
+    // Handed back as it came: the browser could not read it, and no step will.
+    if (blob === file) return null;
     if (blob.size <= REQUEST_MAX_BYTES) return new File([blob], `${file.name.replace(/\.[^.]*$/, "")}.${blob.type.split("/")[1]}`, { type: blob.type });
   }
   return null;

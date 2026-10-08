@@ -25,7 +25,7 @@ describe("the prompt editor's save", () => {
 describe("an upload", () => {
   it("to the gallery is made smaller until it arrives, and the fitted file is sent", () => {
     const zone = src("components", "ShowroomUploadZone.tsx");
-    expect(zone).toMatch(/const file = await fitUpload\(upload\.file\);\n\s+if \(!file\) throw new Error\(`\$\{upload\.file\.name\} is too large to upload, even made smaller\.`\);\n\s+const formData = new FormData\(\);\n\s+formData\.append\('file', file\);/);
+    expect(zone).toMatch(/const file = await fitUpload\(upload\.file\);\n\s+if \(!file\) throw new Error\(`\$\{upload\.file\.name\} could not be read or made small enough to upload\.`\);\n\s+const formData = new FormData\(\);\n\s+formData\.append\('file', file\);/);
     expect(zone).not.toContain("formData.append('file', upload.file)");
   });
 
@@ -35,7 +35,7 @@ describe("an upload", () => {
 
   it("in a message is made smaller until it arrives, and the fitted file is sent", () => {
     const panel = src("components", "enki-shell", "MessagesPanel.tsx");
-    expect(panel).toMatch(/const fit = await fitUpload\(f\);\n\s+if \(!fit\) \{ toast\?\.\(`\$\{f\.name\} is too large to send, even made smaller\.`\); continue; \}/);
+    expect(panel).toMatch(/const fit = await fitUpload\(f\);\n\s+if \(!fit\) \{ toast\?\.\(`\$\{f\.name\} could not be read or made small enough to send\.`\); continue; \}/);
     expect(panel).toContain('fd.append("file", fit);');
     expect(panel).not.toContain('fd.append("file", f);');
   });

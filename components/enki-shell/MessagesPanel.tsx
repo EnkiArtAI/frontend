@@ -255,7 +255,7 @@ export default function MessagesPanel({ toast }: { toast?: (msg: string) => void
       for (const f of files) {
         // Made smaller until it arrives: Vercel turns away a body over 4.5 MB (lib/shrink-image).
         const fit = await fitUpload(f);
-        if (!fit) { toast?.(`${f.name} is too large to send, even made smaller.`); continue; }
+        if (!fit) { toast?.(`${f.name} could not be read or made small enough to send.`); continue; }
         try {
           const fd = new FormData();
           fd.append("threadId", activeId);

@@ -119,11 +119,13 @@ describe("a reference", () => {
 describe("a gallery or message image", () => {
   const file = (size: number, name = "a.png") => new File([new Uint8Array(size)], name, { type: "image/png" });
 
-  it("that already fits goes untouched, every byte", async () => {
-    const { decode } = fakeBrowser();
-    const f = file(REQUEST_MAX_BYTES);
-    await expect(fitUpload(f)).resolves.toBe(f);
-    expect(decode).not.toHaveBeenCalled();
+  it("is drawn anew even when it fits, so nothing the camera wrote (where it was taken) goes along", async () => {
+    const { canvases } = fakeBrowser({ size: [1200, 900] });
+    const f = file(1000, "photo.png");
+    const out = await fitUpload(f);
+    expect(out).not.toBe(f);
+    expect([out?.name, out?.type]).toEqual(["photo.webp", "image/webp"]);
+    expect(canvases.map((c) => [c.width, ...c.asked[0]])).toEqual([[1200, "image/webp", 0.9]]);
   });
 
   it("too large is stepped down at 2560 px, quality first, until it fits", async () => {
@@ -140,11 +142,17 @@ describe("a gallery or message image", () => {
     expect([out?.name, out?.type]).toEqual(["a.png", "image/png"]);
   });
 
-  it("is refused (null) when no step fits, or when one too large cannot be decoded", async () => {
+  it("is refused (null) when no step fits", async () => {
     const { canvases } = fakeBrowser({ bytes: () => REQUEST_MAX_BYTES + 1 });
     await expect(fitUpload(file(REQUEST_MAX_BYTES + 1))).resolves.toBeNull();
     expect(canvases.map((c) => c.width)).toEqual([2560, 2560, 2560, 2048, 1600]);
-    fakeBrowser({ decodes: false });
-    await expect(fitUpload(file(REQUEST_MAX_BYTES + 1))).resolves.toBeNull();
+  });
+
+  it("is refused at once, small or large, when the browser cannot read it: no step would", async () => {
+    for (const size of [100, REQUEST_MAX_BYTES + 1]) {
+      const { decode } = fakeBrowser({ decodes: false });
+      await expect(fitUpload(file(size))).resolves.toBeNull();
+      expect(decode).toHaveBeenCalledTimes(1);
+    }
   });
 });
