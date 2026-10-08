@@ -49,9 +49,10 @@ export async function addBookmark(categoryId: string, promptId: string, imageUrl
   return d.bookmark;
 }
 
-export async function listBookmarks(categoryId: string, cursor?: number | null): Promise<{ bookmarks: Bookmark[]; nextCursor: number | null }> {
+export async function listBookmarks(categoryId: string, cursor?: number | null, limit?: number): Promise<{ bookmarks: Bookmark[]; nextCursor: number | null }> {
   const q = new URLSearchParams({ category: categoryId });
   if (cursor != null) q.set("cursor", String(cursor));
+  if (limit) q.set("limit", String(limit));
   const res = await fetch(`/api/bookmarks?${q}`, { headers: HEADERS() });
   if (!res.ok) throw new Error("bookmarks unavailable");
   return await res.json();
