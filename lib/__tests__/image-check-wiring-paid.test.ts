@@ -25,6 +25,22 @@ describe("the reference images", () => {
     expect(at("if (refsSeen.some(heldBack)) {")).toBeLessThan(at("const slot = await acquireSlot("));
   });
 
+  it("are judged, like the prompt, only after login, the rate limits and the paid count", () => {
+    const judged = at("Promise.all(refBytes.map((b) => checkImageBytes(b, { signal: request.signal }))),");
+    const prompt = at("first ? NOT_CHECKED : checkPrompt(checked, { hidden: fromArtist, signal: request.signal }),");
+    for (const gate of [
+      'const ipLimit = checkRequestRateLimit(rateLimitKey(request, "generate:intent:ip"), 120, 60_000);',
+      'if (!request.headers.get("X-Session-Token")) {',
+      "authUser = await requireAuth(request);",
+      'if (!checkRateLimit(authUser.userId, "generate:intent", 60, 60_000)) {',
+      "if (mismatch) {",
+      "if (attachedRefs > paidModel.maxRefs) {",
+    ]) {
+      expect(at(gate), gate).toBeLessThan(judged);
+      expect(at(gate), gate).toBeLessThan(prompt);
+    }
+  });
+
   it("are read as the providers read them: a data: URL or bare base64", () => {
     at('const refBytes = refs.map((r) => dataUrlBytes(r) ?? Buffer.from(r.trim(), "base64"));');
   });

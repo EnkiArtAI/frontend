@@ -297,6 +297,61 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Too many variables" }, { status: 400 });
     }
 
+    // Login and the rate limits come before the checks below: each of them
+    // is a paid call, so a caller without a session, or over the limit,
+    // never reaches one.
+    const ipLimit = checkRequestRateLimit(rateLimitKey(request, "generate:intent:ip"), 120, 60_000);
+    if (!ipLimit.allowed) return rateLimitResponse(ipLimit.retryAfterSeconds);
+
+    // Session token only — requireAuth's fallback (X-Wallet-Address
+    // signature headers, no server nonce) is replayable and deliberately
+    // not accepted on payment paths (same gate as payments/generation/pay).
+    if (!request.headers.get("X-Session-Token")) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    }
+    let authUser;
+    try {
+      authUser = await requireAuth(request);
+    } catch (e) {
+      return authRefusal(e);
+    }
+    if (!checkRateLimit(authUser.userId, "generate:intent", 60, 60_000)) {
+      return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
+    }
+
+    const paidTier = normalizeTier(paid.resolution);
+    const paidModel = paid.model_id ? await resolveModel(getSupabaseServerClientSafe(), [paid.model_id]) : null;
+    if (!paidTier || !paidModel || toModelFamily(paidModel.name) !== paid.model_family) {
+      // The row it paid for is gone or changed family. Generating on anything
+      // else would be the exact substitution this path exists to prevent.
+      return NextResponse.json(
+        { error: `This payment is for ${paid.model_family}, which is not available right now. Nothing was generated and nothing was charged.` },
+        { status: 409 },
+      );
+    }
+    // A setting the request repeats must agree with the payment, refused here
+    // before the slot and the claim, so there is nothing to void, and before
+    // the checks below, so they judge no more images than were paid for.
+    const attachedRefs = referenceImageCount(body.referenceImages);
+    const mismatch = settingMismatch(
+      paid,
+      { modelIds: body.modelIds, resolution: askedResolution, quality: body.quality, boost: body.boost, referenceImageCount: attachedRefs },
+      paidModel.supportsQuality,
+    );
+    if (mismatch) {
+      return NextResponse.json(
+        { error: `This payment does not cover the requested ${mismatch}. Nothing was generated and nothing was charged.` },
+        { status: 400 },
+      );
+    }
+    // Never sliced away below: a reference the model cannot take is refused.
+    if (attachedRefs > paidModel.maxRefs) {
+      return NextResponse.json(
+        { error: `${paidModel.name} takes at most ${paidModel.maxRefs} reference images. Nothing was generated and nothing was charged.` },
+        { status: 422 },
+      );
+    }
+
     // What the prompt asks for, judged before anything is generated or
     // charged: for an artist's prompt the buyer's values only (the artist's
     // text never goes out for this), otherwise the whole prompt. An explicit
@@ -344,9 +399,9 @@ export async function POST(request: NextRequest) {
         : NextResponse.json({ error: REFERENCE_UNCHECKED }, { status: 503 });
     }
     if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
-    // Refused silently, but only where a real generation fails: after login,
-    // rate limits, slot and claim (below). Answering here, before those,
-    // told a caller without a session which inputs were caught.
+    // Refused silently, but only where a real generation fails: after the
+    // slot and the claim (below). Answering here, before those, told a
+    // caller which inputs were caught.
     const silent = check.verdict !== "clear";
 
     // 18+ (a suggestive prompt, or a prompt marked 18+) is for confirmed adults
@@ -415,37 +470,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const paidTier = normalizeTier(paid.resolution);
-    const paidModel = paid.model_id ? await resolveModel(getSupabaseServerClientSafe(), [paid.model_id]) : null;
-    if (!paidTier || !paidModel || toModelFamily(paidModel.name) !== paid.model_family) {
-      // The row it paid for is gone or changed family. Generating on anything
-      // else would be the exact substitution this path exists to prevent.
-      return NextResponse.json(
-        { error: `This payment is for ${paid.model_family}, which is not available right now. Nothing was generated and nothing was charged.` },
-        { status: 409 },
-      );
-    }
-    // A setting the request repeats must agree with the payment, refused here
-    // before the slot and the claim, so there is nothing to void.
-    const attachedRefs = referenceImageCount(body.referenceImages);
-    const mismatch = settingMismatch(
-      paid,
-      { modelIds: body.modelIds, resolution: askedResolution, quality: body.quality, boost: body.boost, referenceImageCount: attachedRefs },
-      paidModel.supportsQuality,
-    );
-    if (mismatch) {
-      return NextResponse.json(
-        { error: `This payment does not cover the requested ${mismatch}. Nothing was generated and nothing was charged.` },
-        { status: 400 },
-      );
-    }
-    // Never sliced away below: a reference the model cannot take is refused.
-    if (attachedRefs > paidModel.maxRefs) {
-      return NextResponse.json(
-        { error: `${paidModel.name} takes at most ${paidModel.maxRefs} reference images. Nothing was generated and nothing was charged.` },
-        { status: 422 },
-      );
-    }
     const preflightModel = paidModel;
     // Chosen HERE and nowhere else, because the quote below carries the price
     // of a specific host: quoting AceData and then generating on WaveSpeed
@@ -551,24 +575,6 @@ export async function POST(request: NextRequest) {
     // the paid resolution comes from the intent row — neither is taken
     // from the request. Redemption is a one-shot conditional UPDATE, so a
     // replayed intentId can never buy a second generation.
-    const ipLimit = checkRequestRateLimit(rateLimitKey(request, "generate:intent:ip"), 120, 60_000);
-    if (!ipLimit.allowed) return rateLimitResponse(ipLimit.retryAfterSeconds);
-
-    // Session token only — requireAuth's fallback (X-Wallet-Address
-    // signature headers, no server nonce) is replayable and deliberately
-    // not accepted on payment paths (same gate as payments/generation/pay).
-    if (!request.headers.get("X-Session-Token")) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    }
-    let authUser;
-    try {
-      authUser = await requireAuth(request);
-    } catch (e) {
-      return authRefusal(e);
-    }
-    if (!checkRateLimit(authUser.userId, "generate:intent", 60, 60_000)) {
-      return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
-    }
     const supabase = getSupabaseServerClient();
     // One claim function for both payment models. Two independent claim
     // paths against one row is how a double charge happens: each correct on
