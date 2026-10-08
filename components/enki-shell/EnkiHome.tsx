@@ -70,7 +70,9 @@ function useSafeActiveAccount() {
   try { return useActiveAccount(); } catch { return null; }
 }
 
-export default function EnkiHome() {
+/** The shell. `children` take the feed's place, so a route can keep the
+ *  shell (menu, login, billing panel) around its own page. */
+export default function EnkiHome({ children }: { children?: React.ReactNode }) {
   const router = useRouter();
   const { theme, setTheme } = useTheme();
 
@@ -553,7 +555,7 @@ export default function EnkiHome() {
               in the category bar, and an empty 56px strip with a border and a
               background is not "nothing" — it is a band of unused screen above
               the first thing the reader wants (Kev, 2026-08-13). */}
-          <EnkiFeedPage />
+          {children ?? <EnkiFeedPage />}
         </main>
       </div>
 
