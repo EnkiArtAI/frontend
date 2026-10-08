@@ -33,6 +33,7 @@ function orFilter(expr: string): (r: Row) => boolean {
 // Column defaults the fake applies on insert, as the migrations declare them.
 const DEFAULTS: Record<string, Row> = {
   mfa_factors: { lockouts: 0, sends_count: 0, failed_attempts: 0, last_step: null, code_sent_at: null, sends_day: null },
+  reports: { status: "pending" },
 };
 // Unique keys the fake enforces on insert (23505), as the migrations declare them.
 const UNIQUE: Record<string, string[]> = { mfa_factors: ["user_id", "kind"], access_allowlist: ["kind", "value"] };
