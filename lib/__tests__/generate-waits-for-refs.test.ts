@@ -79,6 +79,9 @@ describe("readImageFile", () => {
     await expect(readReference("https://x.test/a.png")).resolves.toBeNull();
     fetching(async () => new Response("gone", { status: 404 }));
     await expect(readReference("https://x.test/a.png")).resolves.toBeNull();
+    // The headers came in time, the body did not: the timeout ends the body read too.
+    fetching(async () => ({ ok: true, blob: async () => { throw new DOMException("timed out", "TimeoutError"); } }) as unknown as Response);
+    await expect(readReference("https://x.test/a.png")).resolves.toBeNull();
   });
 
   it("readReference reads a file in place and fetches nothing", async () => {

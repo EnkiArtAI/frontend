@@ -20,7 +20,7 @@ export function readImageFile(file: Blob): Promise<string | null> {
 export async function readReference(src: Blob | string): Promise<string | null> {
   // A host that never answers would hold Generate for good: 20 s at most.
   const blob = typeof src === "string"
-    ? await fetch(src, { signal: AbortSignal.timeout(20_000) }).then((r) => (r.ok ? r.blob() : null), () => null)
+    ? await fetch(src, { signal: AbortSignal.timeout(20_000) }).then((r) => (r.ok ? r.blob() : null)).catch(() => null)
     : src;
   return blob ? readImageFile(blob) : null;
 }
