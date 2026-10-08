@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { storeGeneratedImage } from "@/lib/generation/derivative-store";
 import { encryptString } from "@/lib/crypto";
+import { isDbUnreachable } from "@/lib/db-error";
 import type { ResolvedModel, Route } from "@/lib/generation/models";
 import type { StoredReference } from "@/lib/generation/reference-images";
 
@@ -267,7 +268,11 @@ export async function resolveRecordingUserId(
   const token = request.headers.get("X-Session-Token");
   if (!token) return null;
   const { resolveSessionUserId } = await import("@/lib/session-user");
-  return resolveSessionUserId(supabase, token).catch(() => null);
+  // An unreachable database reaches the caller (503), it is not "nobody".
+  return resolveSessionUserId(supabase, token).catch((e) => {
+    if (isDbUnreachable(e)) throw e;
+    return null;
+  });
 }
 
 /** What a failed generation asked for, so an admin can see what broke for whom (Kev, 2026-10-03). */

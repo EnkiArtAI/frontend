@@ -8,6 +8,7 @@ import { moderate, screenFirst, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
 import { checkPrompt, NOT_CHECKED } from "@/lib/moderation/prompt-check";
 import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
+import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 
 const RATIO_SHAPE = /^[0-9]{1,2}([.][0-9]{1,2})?:[0-9]{1,2}([.][0-9]{1,2})?$/;
 
@@ -240,7 +241,8 @@ export async function PATCH(
     const ids = await resolveOwnerIds(supabase, req.headers.get("X-Session-Token"));
     if (!ids?.length) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     owners = ids;
-  } catch {
+  } catch (e) {
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 

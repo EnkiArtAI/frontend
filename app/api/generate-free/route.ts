@@ -10,6 +10,7 @@ import { freeRenderPrompt } from "@/lib/generation/free-render-prompt";
 import { resolveOwnerIds } from "@/lib/session-user";
 import { SILENT_FAILURE, silentFailure } from "@/lib/moderation/extraction-hits";
 import { getSupabaseServerClientSafe } from "@/lib/supabaseServer";
+import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
 import { resolveModel } from "@/lib/generation/models";
 import { normalizeTier, RESOLUTION_TIERS } from "@/lib/generation/resolution";
@@ -367,6 +368,8 @@ export async function POST(request: NextRequest) {
     console.error("Generate free image error:", message);
     if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: message }));
     await releaseFreeClaim(getSupabaseServerClientSafe(), claimId);
+    // An outage is said as one, not as "sign in" or a failed generation.
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
     return NextResponse.json(SILENT_FAILURE, { status: 500 });
   }
 }

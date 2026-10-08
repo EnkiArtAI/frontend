@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateRegistrationOptions } from "@simplewebauthn/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
-import { requireAuth } from "@/lib/auth";
+import { authRefusal, requireAuth } from "@/lib/auth";
 import { RP_NAME, rp, resolveStableUserId, setChallengeCookie, requireAddFactor } from "@/lib/webauthn";
 
 type Transport = "ble" | "hybrid" | "internal" | "nfc" | "usb" | "cable" | "smart-card";
@@ -14,8 +14,8 @@ export async function POST(req: NextRequest) {
   let walletAddress: string;
   try {
     ({ walletAddress } = await requireAuth(req));
-  } catch {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  } catch (e) {
+    return authRefusal(e, "Not signed in");
   }
 
   const supabase = getSupabaseServerClient();

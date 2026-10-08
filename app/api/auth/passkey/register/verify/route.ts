@@ -7,7 +7,7 @@ import { verifyRegistrationResponse } from "@simplewebauthn/server";
 import type { RegistrationResponseJSON } from "@simplewebauthn/server";
 import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
-import { requireAuth } from "@/lib/auth";
+import { authRefusal, requireAuth } from "@/lib/auth";
 import { rp, resolveStableUserId, readChallengeCookie, clearChallengeCookie } from "@/lib/webauthn";
 
 const bodySchema = z.object({
@@ -19,8 +19,8 @@ export async function POST(req: NextRequest) {
   let walletAddress: string;
   try {
     ({ walletAddress } = await requireAuth(req));
-  } catch {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  } catch (e) {
+    return authRefusal(e, "Not signed in");
   }
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));

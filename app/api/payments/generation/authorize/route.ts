@@ -15,7 +15,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
-import { requireAuth, checkRateLimit } from "@/lib/auth";
+import { authRefusal, requireAuth, checkRateLimit } from "@/lib/auth";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { createNonceAccount, readNonce } from "@/lib/payments/nonce";
 import { feePayerKeypair, solanaConnection, feePayerBalance, usdcMint } from "@/lib/payments/solana";
@@ -42,8 +42,8 @@ export async function POST(req: NextRequest) {
   let authUser;
   try {
     authUser = await requireAuth(req);
-  } catch {
-    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  } catch (e) {
+    return authRefusal(e);
   }
   if (!checkRateLimit(authUser.userId, "payments:authorize", 60, 60_000)) {
     return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });

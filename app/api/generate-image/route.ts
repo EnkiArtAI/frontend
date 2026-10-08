@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse, after } from "next/server";
+import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { generateImagesWithWaveSpeed } from "@/backend/services/wavespeed-image-generation";
 import { generateImagesWithOpenAI } from "@/backend/services/openai-image-generation";
 import { generateImagesWithGemini } from "@/backend/services/gemini-image-generation";
@@ -787,7 +788,12 @@ export async function POST(request: NextRequest) {
     // generation vanished when the tab closed.
     {
       const recSupabase = getSupabaseServerClientSafe();
-      const recUserId = await resolveRecordingUserId(recSupabase, request);
+      // Paid and delivered: the buyer gets the image whatever this read does.
+      // An unreachable database is logged, never turned into an error here.
+      const recUserId = await resolveRecordingUserId(recSupabase, request).catch((e) => {
+        console.error("[generate] delivered image not recorded:", e instanceof Error ? e.message : e);
+        return null;
+      });
       if (recSupabase && recUserId) {
         // The Grok branch returns a metadata object with only `model`, so read
         // the measured fields defensively rather than assuming the Gemini shape.
@@ -870,6 +876,9 @@ export async function POST(request: NextRequest) {
     console.error("Generate image error:", message);
     if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: message }));
     await releaseIfConsumed();
+    // An outage before anything was charged is said as one, not as "sign in"
+    // or a failed generation.
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
     return NextResponse.json(SILENT_FAILURE, { status: 500 });
   } finally {
     // Unavoidable, because the early returns between taking the slot and

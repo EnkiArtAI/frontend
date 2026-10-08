@@ -14,7 +14,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAuth, checkRateLimit } from "@/lib/auth";
+import { authRefusal, requireAuth, checkRateLimit } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { mayShowAdult, viewer } from "@/lib/adult-content";
 import { isListed, isPublicText } from "@/lib/prompt-visibility";
@@ -77,8 +77,8 @@ export async function POST(req: NextRequest) {
   let authUser;
   try {
     authUser = await requireAuth(req);
-  } catch {
-    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  } catch (e) {
+    return authRefusal(e);
   }
   // A dice button invites mashing; 10/min is more rolls than anyone reads.
   if (!checkRateLimit(authUser.userId, "dice", 10, 60_000)) {
