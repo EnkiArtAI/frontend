@@ -11,4 +11,5 @@ export const REQUEST_MAX_BYTES = 4_000_000;
 /** Whether this body, sent as JSON, is too large to arrive. Counted in UTF-8 bytes, as it travels. */
 export const tooLargeToSend = (body: unknown) => new Blob([JSON.stringify(body)]).size > REQUEST_MAX_BYTES;
 
+export const SAVE_TOO_LARGE = "Your reference images are too large to save together. Remove one and save again. Nothing was saved.";
 export const REFS_TOO_LARGE = "Your reference images are too large to send together. Remove one and try again. Nothing was generated and nothing was charged.";

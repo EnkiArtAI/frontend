@@ -16,6 +16,7 @@ import { useModelLimits, useModelCatalogue, FALLBACK_RATIOS, resolveCatalogueEnt
 import { runGeneration } from "@/lib/generation/run-generation";
 import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
 import { useReferenceReads, REFS_LOADING } from "@/hooks/useReferenceReads";
+import { tooLargeToSend, SAVE_TOO_LARGE } from "@/lib/request-size";
 import { tiersUpTo } from "@/lib/generation/resolution";
 import BoostToggle from "@/components/generation/BoostToggle";
 import QualitySelect, { type Quality } from "@/components/generation/QualitySelect";
@@ -2916,6 +2917,8 @@ export default function EnkiPromptEditor() {
           .slice(0, 4),
         price: promptData.type === "premium-prompt" ? promptPrice : 0,
       };
+      // Vercel turns away a body this large before our route runs, with no JSON to read.
+      if (tooLargeToSend(payload)) throw new Error(SAVE_TOO_LARGE);
       // Forward the session so the server records the creator (user_id) —
       // the intent payment flow can only price prompts whose creator is
       // known. Same header the publish PATCH sends. It read Turnkey's token
