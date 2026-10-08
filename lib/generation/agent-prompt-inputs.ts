@@ -14,6 +14,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isListed, isPublicText } from "@/lib/prompt-visibility";
 import { VALUE_MAX } from "@/lib/generation/prompt-text";
+import { dbOutage, isDbUnreachable, type DbOutage } from "@/lib/db-error";
 
 /** The longest text value an agent may send: the same limit as every buyer's (Kev, 2026-10-03: 300). */
 export const AGENT_TEXT_MAX = VALUE_MAX;
@@ -29,7 +30,8 @@ type Declared = {
 
 export type AgentInputs =
   | { ok: true; paid: boolean; variables: Declared[]; values: Map<string, string> }
-  | { ok: false; status: 400 | 404 | 500; error: string };
+  | { ok: false; status: 400 | 404 | 500; error: string }
+  | DbOutage;
 
 /**
  * The name app/api/prompt stores a slot as (toDbVarName, before its
@@ -103,6 +105,7 @@ export async function checkAgentPromptInputs(
     .select("prompt_type, is_free_showcase, is_listed, listing_status, deleted_at")
     .eq("id", promptId)
     .maybeSingle();
+  if (isDbUnreachable(error)) return dbOutage();
   if (error) return { ok: false, status: 500, error: "Failed to load prompt" };
   if (!row || !isListed(row)) return { ok: false, status: 404, error: "Prompt not found" };
   const paid = !isPublicText(row);
@@ -112,6 +115,7 @@ export async function checkAgentPromptInputs(
     .select("name, label, data_type, options, min_value, max_value")
     .eq("prompt_id", promptId)
     .is("deleted_at", null);
+  if (isDbUnreachable(varsError)) return dbOutage();
   if (varsError) return { ok: false, status: 500, error: "Failed to load the prompt's variables" };
   const variables = (rows ?? []) as Declared[];
 

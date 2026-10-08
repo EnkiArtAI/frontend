@@ -99,3 +99,10 @@ describe("the prompt save", () => {
     expect(SAVE).not.toContain("showcase_images: uploadedPhotos");
   });
 });
+
+describe("the editor", () => {
+  it("offers only stored renders as showcase images: an inline one cannot be matched to a render", () => {
+    const editor = readSource(join(__dirname, "..", "..", "components", "EnkiPromptEditor.tsx"));
+    expect(editor).toContain('.filter((v) => v.status === "complete" && v.sourceUrl?.startsWith("https://"))');
+  });
+});

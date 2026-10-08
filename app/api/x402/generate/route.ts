@@ -34,6 +34,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { computeQuote } from "@/lib/payments/generation-quote";
+import { dbUnavailableResponse, isDbUnreachable, refusalBody, type DbOutage } from "@/lib/db-error";
 import { checkAgentPromptInputs } from "@/lib/generation/agent-prompt-inputs";
 import {
   getModelCostMicro, computeGenerationSplit, UnknownModelError,
@@ -124,9 +125,9 @@ async function agentPrompt(
   supabase: ReturnType<typeof getSupabaseServerClient>,
   promptId: string,
   values: Input["variableValues"],
-): Promise<{ ok: true; text: string; adult: boolean; paid: boolean } | { ok: false; status: 400 | 404 | 422 | 500; error: string }> {
+): Promise<{ ok: true; text: string; adult: boolean; paid: boolean } | { ok: false; status: 400 | 404 | 422 | 500; error: string } | DbOutage> {
   const inputs = await checkAgentPromptInputs(supabase, promptId, values);
-  if (!inputs.ok) return { ok: false, status: inputs.status as 400 | 404 | 500, error: inputs.error };
+  if (!inputs.ok) return inputs;
   const text = await loadPromptText(supabase, promptId);
   if (!text.ok) return text;
   const filled = fillVariables(text.text, Object.fromEntries(inputs.values), inputs.variables);
@@ -154,7 +155,7 @@ async function requirementsFor(input: Input): Promise<Requirements> {
     // Refused here, so the 402 probe already says no, and no payment is ever
     // asked for a draft or for inputs a paid prompt does not take.
     const filled = await agentPrompt(supabase, input.promptId, input.variableValues);
-    if (!filled.ok) return { status: filled.status, body: { error: filled.error } };
+    if (!filled.ok) return { status: filled.status, body: refusalBody(filled) };
     prompt = { text: filled.text, adult: filled.adult, paid: filled.paid };
     const quote = await computeQuote(supabase, {
       promptId: input.promptId,
@@ -162,7 +163,7 @@ async function requirementsFor(input: Input): Promise<Requirements> {
       resolution: input.resolution,
       quality: input.quality,
     });
-    if (!quote.ok) return { status: quote.status, body: { error: quote.error } };
+    if (!quote.ok) return { status: quote.status, body: refusalBody(quote) };
     amountMicro = quote.split.totalMicro;
     const artistMicro = quote.split.artistAmountMicro;
     if (artistMicro > 0 && !quote.artistWallet) {
@@ -335,7 +336,13 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
     return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
   }
 
-  const model = await resolveModelByFamily(supabase, input.modelFamily);
+  let model: Awaited<ReturnType<typeof resolveModelByFamily>>;
+  try {
+    model = await resolveModelByFamily(supabase, input.modelFamily);
+  } catch (e) {
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
+    throw e;
+  }
   if (!model) return NextResponse.json({ error: `Unknown model family: ${input.modelFamily}` }, { status: 422 });
   // The EFFECTIVE quality routes, prices and renders — one value, three uses
   // (gpt's route conditions fail closed on a missing quality).

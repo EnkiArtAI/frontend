@@ -25,6 +25,7 @@ import { readEvidence, withheldEvidence } from "@/lib/moderation/evidence";
 import { loadPromptText } from "@/lib/generation/prompt-text";
 import { banUntil } from "@/lib/moderation/bans";
 import { AccessError, accessFor, approveRequest, inviteEmail, inviteWallet, rejectRequest } from "@/lib/access-invite";
+import { inChunks } from "@/lib/in-chunks";
 
 /** A ban counts while it is not lifted and has not run out, as activeBanFor reads it. */
 const unexpired = () => `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`;
@@ -59,11 +60,31 @@ function tryDecrypt(ct: unknown, iv: unknown, tag: unknown, kid: unknown, aads: 
   return null;
 }
 
+/** The most urgent report first; reports.severity is set from the reason (lib/report-reasons). */
+const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+const severityRank = (s: unknown) => SEVERITY_RANK[String(s)] ?? 4;
+
+/** Open reports: the urgent ones, critical before high (up to PostgREST's 1000-row page), and the 100 newest, each once. */
+async function pendingReports(supabase: Supabase) {
+  const read = (urgent: boolean) => {
+    const q = supabase.from("reports")
+      .select("id, reporter_user_id, target_type, target_uuid, reason, details, severity, status, created_at")
+      .eq("status", "pending");
+    // "critical" sorts before "high", so no pile of high reports pushes a critical one out.
+    return (urgent ? q.in("severity", ["critical", "high"]).order("severity", { ascending: true }) : q).order("created_at", { ascending: false }).limit(urgent ? 1000 : 100);
+  };
+  const [urgent, newest] = await Promise.all([read(true), read(false)]);
+  const seen = new Set<string>();
+  return {
+    data: [...(urgent.data ?? []), ...(newest.data ?? [])].filter((r) => !seen.has(String(r.id)) && !!seen.add(String(r.id))),
+  };
+}
+
 const handleMap = async (supabase: Supabase, ids: string[]): Promise<Map<string, string>> => {
   const uniq = [...new Set(ids.filter(Boolean))];
   if (!uniq.length) return new Map();
-  const { data } = await supabase.from("users").select("id, handle").in("id", uniq);
-  return new Map((data ?? []).map((u) => [String(u.id), (u.handle as string) ?? "unnamed"]));
+  const data = await inChunks(uniq, (chunk) => supabase.from("users").select("id, handle").in("id", chunk));
+  return new Map(data.map((u) => [String(u.id), (u.handle as string) ?? "unnamed"]));
 };
 
 /* ── moderation council (tables from migrations/2026-07-21-moderation-council.sql;
@@ -212,9 +233,7 @@ export async function GET(req: NextRequest) {
     supabase.from("hunt_submissions")
       .select("id, hunter_user_id, source_url, suggested_title, suggested_tags, submitted_at")
       .eq("status", "pending").order("submitted_at", { ascending: false }).limit(100),
-    supabase.from("reports")
-      .select("id, reporter_user_id, target_type, target_uuid, reason, details, severity, status, created_at")
-      .eq("status", "pending").order("created_at", { ascending: false }).limit(100),
+    pendingReports(supabase),
     supabase.from("feedback_submissions")
       .select("id, user_id, submitter_name, submitter_email_ct, submitter_email_iv, submitter_email_tag, submitter_email_kid, description, category, severity, payout_cents, paid_at, created_at")
       .order("created_at", { ascending: false }).limit(100),
@@ -270,11 +289,21 @@ export async function GET(req: NextRequest) {
   const strikeUsers = (st.data ?? []).map((r) => String(r.user_id));
   const banUsers = (ba.data ?? []).map((r) => String(r.user_id));
   const appealUsers = (ap.data ?? []).map((r) => String(r.user_id));
+  // An image report names the image's owner and links the image itself.
+  const images = new Map<string, { owner: string; url: string | null }>();
+  const imageTargets = (rep.data ?? []).filter((r) => r.target_type === "generation").map((r) => String(r.target_uuid));
+  if (imageTargets.length) {
+    const data = await inChunks(imageTargets, (chunk) => supabase.from("generated_images").select("id, user_id, preview_url, storage_url").in("id", chunk));
+    for (const g of data) {
+      images.set(String(g.id), { owner: String(g.user_id), url: (g.preview_url as string) ?? (g.storage_url as string) ?? null });
+    }
+  }
   const handles = await handleMap(supabase, [
     ...(imp.data ?? []).map((r) => String(r.hunter_user_id)),
     ...(hu.data ?? []).map((r) => String(r.user_id)),
     ...(rep.data ?? []).map((r) => String(r.reporter_user_id)),
-    ...(rep.data ?? []).filter((r) => r.target_type !== "prompt").map((r) => String(r.target_uuid)),
+    ...(rep.data ?? []).filter((r) => r.target_type === "user").map((r) => String(r.target_uuid)),
+    ...[...images.values()].map((g) => g.owner),
     ...strikeUsers, ...banUsers, ...appealUsers,
     // automod events carry a user only when the request had a session;
     // /api/generate-free has none, so those rows stay attributed by IP hash.
@@ -283,8 +312,8 @@ export async function GET(req: NextRequest) {
   const promptTargets = (rep.data ?? []).filter((r) => r.target_type === "prompt").map((r) => String(r.target_uuid));
   const promptTitles = new Map<string, string>();
   if (promptTargets.length) {
-    const { data } = await supabase.from("prompts").select("id, title").in("id", promptTargets);
-    for (const p of data ?? []) promptTitles.set(String(p.id), (p.title as string) ?? "Untitled");
+    const data = await inChunks(promptTargets, (chunk) => supabase.from("prompts").select("id, title").in("id", chunk));
+    for (const p of data) promptTitles.set(String(p.id), (p.title as string) ?? "Untitled");
   }
 
   // strikes tab: one row per user with active strikes, ban state and appeal
@@ -330,18 +359,23 @@ export async function GET(req: NextRequest) {
       tags: Array.isArray(r.suggested_tags) ? (r.suggested_tags as string[]).slice(0, 4) : [],
       at: r.submitted_at,
     })),
-    reports: (rep.data ?? []).map((r) => ({
-      id: String(r.id),
-      target: r.target_type === "prompt"
-        ? (promptTitles.get(String(r.target_uuid)) ?? "Deleted prompt")
-        : "@" + (handles.get(String(r.target_uuid)) ?? "unknown"),
-      type: (r.target_type as string) === "prompt" ? "prompt" : "profile",
-      reason: (r.reason as string) ?? "—",
-      details: (r.details as string) ?? null,
-      reporter: handles.get(String(r.reporter_user_id)) ?? "anon",
-      severity: (r.severity as number | string | null) ?? null,
-      at: r.created_at,
-    })),
+    reports: (rep.data ?? []).map((r) => {
+      const id = String(r.target_uuid);
+      const image = images.get(id);
+      return {
+        id: String(r.id),
+        ...(r.target_type === "prompt"
+          ? { type: "prompt", target: promptTitles.get(id) ?? "Deleted prompt", href: `/generator/${id}` }
+          : r.target_type === "generation"
+            ? { type: "image", target: image ? `Image by @${handles.get(image.owner) ?? "unknown"}` : "Deleted image", href: image?.url ?? null }
+            : { type: "profile", target: "@" + (handles.get(id) ?? "unknown"), href: `/creators/${id}` }),
+        reason: (r.reason as string) ?? "—",
+        details: (r.details as string) ?? null,
+        reporter: handles.get(String(r.reporter_user_id)) ?? "anon",
+        severity: (r.severity as string | null) ?? null,
+        at: r.created_at,
+      };
+    }).sort((a, b) => severityRank(a.severity) - severityRank(b.severity)),
     feedback: (fb.data ?? []).map((r) => ({
       id: String(r.id),
       name: (r.submitter_name as string) || "Anonymous",
@@ -471,7 +505,7 @@ export async function POST(req: NextRequest) {
         .eq("id", body.id);
       return error ? fail(error, body.action) : NextResponse.json({ ok: true });
     }
-    if (body.action === "strike" || body.action === "delist") {
+    if (body.action === "strike" || body.action === "delist" || body.action === "hide") {
       const { data: rep } = await supabase.from("reports")
         .select("target_type, target_uuid, reason, status").eq("id", body.id).maybeSingle();
       if (!rep || rep.status !== "pending") {
@@ -482,6 +516,11 @@ export async function POST(req: NextRequest) {
         const { error } = await supabase.from("prompts")
           .update({ is_listed: false, delisted_at: now }).eq("id", rep.target_uuid);
         if (error) return fail(error, "delist the prompt");
+      } else if (body.action === "hide") {
+        // Private: gone from every public read, still the owner's.
+        if (rep.target_type !== "generation") return NextResponse.json({ error: "Only image reports can be hidden" }, { status: 400 });
+        const { error } = await supabase.from("generated_images").update({ visibility: "private" }).eq("id", rep.target_uuid);
+        if (error) return fail(error, "hide the image");
       } else {
         // strike goes to the reported user; for prompt reports that's the creator
         let targetUserId = String(rep.target_uuid);
@@ -489,6 +528,11 @@ export async function POST(req: NextRequest) {
           const { data: p } = await supabase.from("prompts").select("creator_id").eq("id", rep.target_uuid).maybeSingle();
           if (!p) return NextResponse.json({ error: "Prompt no longer exists — dismiss the report instead" }, { status: 400 });
           targetUserId = String(p.creator_id);
+        }
+        if (rep.target_type === "generation") {
+          const { data: g } = await supabase.from("generated_images").select("user_id").eq("id", rep.target_uuid).maybeSingle();
+          if (!g) return NextResponse.json({ error: "Image no longer exists — dismiss the report instead" }, { status: 400 });
+          targetUserId = String(g.user_id);
         }
         const severity = [1, 2, 3].includes(Number(body.severity)) ? Number(body.severity) : 1;
         const { error } = await supabase.from("strikes").insert({

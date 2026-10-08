@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { hiddenOwners } from "@/lib/hidden-owners";
+import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
 
 type VariableSummary = {
   id: string;
@@ -99,7 +101,11 @@ export async function GET(request: NextRequest) {
       throw error;
     }
 
-    const promptRows = Array.isArray(rows) ? rows : [];
+    const pageRows = Array.isArray(rows) ? rows : [];
+    // A banned or deleted creator's prompts leave this list too.
+    const hidden = await hiddenOwners(supabase, pageRows.map((p) => String(p.creator_id ?? "")));
+    if (!hidden) throw new Error("creators could not be read");
+    const promptRows = pageRows.filter((p) => !hidden.has(String(p.creator_id)));
     const promptIds = promptRows.map((p) => String(p.id));
 
     let variablesByPrompt = new Map<string, VariableSummary[]>();
@@ -150,11 +156,13 @@ export async function GET(request: NextRequest) {
       }
       const { data: rateRows } = await supabase
         .from("prompt_comments")
-        .select("prompt_id, rating")
+        .select("prompt_id, rating, user_id")
         .in("prompt_id", pageIds)
         .not("rating", "is", null);
+      // A banned or deleted account's rating no longer counts, as on the prompt page.
+      const raters = await hiddenOwners(supabase, (rateRows ?? []).map((r) => String(r.user_id ?? "")));
       const sums = new Map<string, { s: number; n: number }>();
-      for (const r of rateRows ?? []) {
+      for (const r of raters ? (rateRows ?? []).filter((r) => !raters.has(String(r.user_id))) : []) {
         if (typeof r.rating !== "number") continue;
         const k = String(r.prompt_id);
         const cur = sums.get(k) ?? { s: 0, n: 0 };
@@ -201,10 +209,11 @@ export async function GET(request: NextRequest) {
     });
 
     const nextCursor =
-      items.length === limit ? String(offset + limit) : null;
+      pageRows.length === limit ? String(offset + limit) : null;
 
     return NextResponse.json({ items, nextCursor });
   } catch (e: unknown) {
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
     const message = e instanceof Error ? e.message : String(e);
     console.error("Error in /api/prompts:", message);
     return NextResponse.json({ items: [], nextCursor: null }, { status: 200 });

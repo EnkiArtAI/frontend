@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { failureSentence } from "@/lib/search/client";
 
 type Metric = "generations" | "earnings";
 type Row = {
@@ -65,6 +66,8 @@ export default function LeaderboardPage() {
   const [metric, setMetric] = useState<Metric>("generations");
   const [period, setPeriod] = useState("week");
   const [rows, setRows] = useState<Row[] | null>(null);
+  // Why the board could not load ("the database is unreachable…"), never "No rankings yet".
+  const [failed, setFailed] = useState<string | null>(null);
   const [me, setMe] = useState<string | null>(null);
 
   useEffect(() => {
@@ -73,10 +76,15 @@ export default function LeaderboardPage() {
     (async () => {
       try {
         const res = await fetch(`/api/leaderboard?metric=${metric}&period=${period}`, { headers: sessionAuthHeaders() });
-        const data = res.ok ? await res.json() : { rows: [] };
-        if (!dead) setRows(data.rows ?? []);
+        if (!res.ok) {
+          const why = await failureSentence(res, "The board could not load");
+          if (!dead) { setFailed(why); setRows([]); }
+          return;
+        }
+        const data = await res.json();
+        if (!dead) { setFailed(null); setRows(data.rows ?? []); }
       } catch {
-        if (!dead) setRows([]);
+        if (!dead) { setFailed("The board could not load. Check your connection and try again."); setRows([]); }
       }
     })();
     return () => { dead = true; };
@@ -148,6 +156,8 @@ export default function LeaderboardPage() {
 
       {rows === null ? (
         <div style={{ padding: "60px 0", textAlign: "center", color: "var(--enki-ink-3)", fontSize: 13 }}>Loading…</div>
+      ) : failed ? (
+        <div style={{ padding: "72px 0", textAlign: "center", maxWidth: 460, margin: "0 auto", fontSize: 14, color: "var(--enki-ink-2)" }}>{failed}</div>
       ) : rows.length === 0 ? (
         <div style={{ padding: "72px 0", textAlign: "center", maxWidth: 460, margin: "0 auto" }}>
           <div style={{ fontFamily: SERIF, fontSize: 24, fontStyle: "italic", color: "var(--enki-ink-2)" }}>No rankings yet.</div>

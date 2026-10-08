@@ -38,6 +38,7 @@ import {
   ArrowLeft,
   Braces,
   Type,
+  Flag,
 } from "lucide-react";
 import "./prompt-generator.css";
 import BoostToggle from "@/components/generation/BoostToggle";
@@ -55,6 +56,7 @@ import { openCreator } from "@/lib/openCreator";
 import { requestPromptEdit } from "@/components/enki-shell/editorBridge";
 import ResolutionSelect from "@/components/generation/ResolutionSelect";
 import GeneratorLogo from "@/components/generation/GeneratorLogo";
+import { ReportButton } from "@/components/ReportButton";
 
 /* ── Types ── */
 type VarType = "text" | "checkbox" | "single-select" | "multi-select" | "slider" | "radio";
@@ -300,7 +302,6 @@ export default function PromptGeneratorView({
     if (!m) return "";
     return (catalogue.find((c) => c.name === m) ?? resolveCatalogueEntry(catalogue, m))?.name ?? "";
   }, [prompt?.ai_model, catalogue]);
-  const generator = generatorPick || promptModelName;
   const variables = useMemo(() => prompt?.promptData?.variables || [], [prompt]);
   const title = prompt?.title || propTitle || "Untitled Prompt";
   const artistName = propArtistName || "Unknown Artist";
@@ -310,6 +311,11 @@ export default function PromptGeneratorView({
     prompt?.is_free_showcase === true ||
     propIsFree ||
     false;
+  /* A paid prompt never renders on the free model: that model renders only
+     the text it is sent, never the artist's (Kev, 2026-10-08). */
+  const onFreeHost = (name: string) => catalogue.find((c) => c.name === name)?.free === true;
+  const generator = generatorPick || (!isFree && onFreeHost(promptModelName) ? "" : promptModelName);
+  const generators = isFree ? GENERATORS : GENERATORS.filter((g) => !onFreeHost(g));
   const price = prompt?.price ?? 0;
   const tags = prompt?.tags?.length ? prompt.tags : [];
 
@@ -1243,6 +1249,9 @@ export default function PromptGeneratorView({
               >
                 <Download size={13} />
               </button>
+              <ReportButton targetType="prompt" targetId={promptId} className="pgv-icon-btn">
+                <Flag size={12} />
+              </ReportButton>
               <div className="pgv-share">
                 <button
                   ref={shareBtnRef}
@@ -1695,7 +1704,7 @@ export default function PromptGeneratorView({
             <span className="pgv-section-label">Generator</span>
             <select className="pgv-generator-select" value={generator} onChange={e => setGenerator(e.target.value)}>
               {!generator && <option value="" disabled>Pick a model</option>}
-              {GENERATORS.map(g => <option key={g}>{g}</option>)}
+              {generators.map(g => <option key={g}>{g}</option>)}
             </select>
           </div>
 
@@ -2132,10 +2141,19 @@ export default function PromptGeneratorView({
               ))}
             </div>
           )}
-          {/* Your own render, opened from your history: private until you make it public. */}
+          {/* Your own render, opened from your history: private until you
+              make it public. Someone else's public one: report it. */}
           {(() => {
             const url = lightbox.urls[lightbox.at];
             const own = history.includes(url) ? ownImages.get(url) : undefined;
+            const other = own || ownImages.has(url) ? undefined : publicImages.find((p) => p.url === url);
+            if (other) {
+              return (
+                <ReportButton targetType="generation" targetId={other.id} className="pgv-lb-public pgv-lb-report pgv-lb-chrome">
+                  <Flag size={13} /> Report
+                </ReportButton>
+              );
+            }
             return own ? (
               <label className="pgv-lb-public pgv-lb-chrome" onClick={e => e.stopPropagation()}>
                 <input

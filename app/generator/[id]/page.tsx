@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { isListed } from "@/lib/prompt-visibility";
+import { hiddenOwners } from "@/lib/hidden-owners";
 import GeneratorClient from "./GeneratorClient";
 
 /**
@@ -17,9 +18,10 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   let title = "Enki Art";
   let description = "AI art prompts as tradeable IP — generate with the artist's prompt, pay per image.";
   try {
-    const { data: p } = await getSupabaseServerClient()
+    const supabase = getSupabaseServerClient();
+    const { data: p } = await supabase
       .from("prompts")
-      .select("title, description, is_free_showcase, price_usd_cents, is_listed, listing_status, deleted_at")
+      .select("title, description, is_free_showcase, price_usd_cents, is_listed, listing_status, deleted_at, creator_id")
       .eq("id", id)
       .eq("is_adult", false) // link previews are public: 18+ gets the brand card
       .maybeSingle();
@@ -27,7 +29,9 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
     // it. Only a live prompt gets a card, and its lead is the creator's own
     // description, never the prompt's words: a paid prompt's text is the
     // artist's secret.
-    if (p?.title && isListed(p)) {
+    // A banned or deleted creator's prompt gets the brand card, as does a failed lookup.
+    const hidden = p ? await hiddenOwners(supabase, [String(p.creator_id ?? "")]) : null;
+    if (p?.title && isListed(p) && hidden && !hidden.has(String(p.creator_id))) {
       title = `${p.title} · Enki Art`;
       const free = p.is_free_showcase === true || (p.price_usd_cents ?? 0) === 0;
       const lead = String(p.description || "").trim().slice(0, 160);

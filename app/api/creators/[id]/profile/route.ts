@@ -14,6 +14,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { hideAdult, viewer } from "@/lib/adult-content";
+import { hiddenOwners } from "@/lib/hidden-owners";
+import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -32,12 +34,19 @@ export async function GET(
       .eq(UUID.test(creatorId) ? "id" : "handle", creatorId)
       .maybeSingle();
 
+    if (isDbUnreachable(userError)) return dbUnavailableResponse();
     if (userError || !userData) {
       if (userError) console.error("[API] creator lookup failed:", userError.message);
       return NextResponse.json(
         { success: false, error: "Creator not found" },
         { status: 404 }
       );
+    }
+    // A banned or deleted account has no public profile (and no public wallet).
+    const hidden = await hiddenOwners(supabase, [String(userData.id)]);
+    if (!hidden) return NextResponse.json({ success: false, error: "Creator unavailable" }, { status: 500 });
+    if (hidden.has(String(userData.id))) {
+      return NextResponse.json({ success: false, error: "Creator not found" }, { status: 404 });
     }
 
     // Listed prompts only — the portfolio is the public shelf, not drafts.
@@ -54,6 +63,7 @@ export async function GET(
       userData.id,
     );
 
+    if (isDbUnreachable(promptsError)) return dbUnavailableResponse();
     if (promptsError) console.error("[API] Error fetching creator prompts:", promptsError.message);
 
     const listedPrompts = (promptRows || []).map((p) => ({
@@ -69,13 +79,15 @@ export async function GET(
     // The payout wallet is already public on-chain the moment anyone buys
     // (it rides every 402's legs) — here it keys the foreign profile's
     // gallery, which reads generations by wallet.
-    const { data: wallets } = await supabase
+    const { data: wallets, error: walletsError } = await supabase
       .from("user_wallets")
       .select("address")
       .eq("user_id", userData.id)
       .eq("chain_family", "solana")
       .is("removed_at", null)
       .limit(1);
+    // The foreign gallery reads by this wallet: none would show an empty gallery.
+    if (isDbUnreachable(walletsError)) return dbUnavailableResponse();
 
     return NextResponse.json({
       creator: {
@@ -103,6 +115,7 @@ export async function GET(
       recentSales: [],
     });
   } catch (error) {
+    if (isDbUnreachable(error)) return dbUnavailableResponse();
     console.error("Error fetching creator profile:", error);
     return NextResponse.json(
       { success: false, error: "Internal server error" },

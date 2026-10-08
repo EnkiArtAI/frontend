@@ -3,7 +3,8 @@
  * Wallet-based authentication with signature verification
  */
 
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { isDbUnreachable, dbUnavailableResponse } from '@/lib/db-error';
 import { isAddress, verifyMessage } from 'viem';
 import { PublicKey } from '@solana/web3.js';
 import { ed25519 } from '@noble/curves/ed25519';
@@ -178,7 +179,12 @@ async function resolveSessionToken(token: string): Promise<AuthenticatedUser | n
   // Ban-aware like every other resolver: a suspended account is nobody on the
   // paid rail too. Reading the session row alone let a ban stop the feed but
   // not a purchase or a generation (Kev, 2026-10-06).
-  const session = await resolveSessionUserWithBan(getSupabaseServerClient(), token).catch(() => null);
+  // An unreachable database is not "signed out": it reaches the caller, who
+  // answers 503 (authRefusal) instead of sending the user to sign in again.
+  const session = await resolveSessionUserWithBan(getSupabaseServerClient(), token).catch((e) => {
+    if (isDbUnreachable(e)) throw e;
+    return null;
+  });
   if (!session?.wallet || session.ban) return null;
 
   return {
@@ -203,6 +209,15 @@ export async function requireAuth(request: NextRequest): Promise<AuthenticatedUs
     throw new Error('Authentication failed: a valid session token is required');
   }
   return user;
+}
+
+/**
+ * The answer to a failed requireAuth: 503 DB_UNAVAILABLE when the database
+ * could not be reached, otherwise 401. An outage answered 401 sent signed-in
+ * users to log in again in a loop (Supabase was paused for days in September).
+ */
+export function authRefusal(e: unknown, message = "Authentication required"): NextResponse {
+  return isDbUnreachable(e) ? dbUnavailableResponse() : NextResponse.json({ error: message }, { status: 401 });
 }
 
 /**

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse, after } from "next/server";
+import { isDbUnreachable, dbUnavailableResponse, refusalBody } from "@/lib/db-error";
 import { generateImagesWithWaveSpeed } from "@/backend/services/wavespeed-image-generation";
 import { generateImagesWithOpenAI } from "@/backend/services/openai-image-generation";
 import { generateImagesWithGemini } from "@/backend/services/gemini-image-generation";
@@ -6,7 +7,7 @@ import type { ImageGenerationRequest } from "@/backend/services/types";
 import { referenceImageCount } from "@/lib/generation/provider-capabilities";
 import { getSupabaseServerClient, getSupabaseServerClientSafe } from "@/lib/supabaseServer";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { requireAuth, checkRateLimit } from "@/lib/auth";
+import { authRefusal, requireAuth, checkRateLimit } from "@/lib/auth";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { moderate, screenFirst, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { resolveModel, chooseRoute } from "@/lib/generation/models";
@@ -227,11 +228,12 @@ export async function POST(request: NextRequest) {
        model row, the resolution, the quality that runs, boost and how many
        reference images. Everything below runs those and nothing the request
        body says instead. */
-    const { data: intentRow } = await (getSupabaseServerClientSafe()
+    const { data: intentRow, error: intentError } = await (getSupabaseServerClientSafe()
       ?.from("generation_payment_intents")
       .select("model_id, model_family, resolution, quality, boost, reference_image_count, prompt_id, artist_amount_micro")
       .eq("id", intentId)
-      .maybeSingle() ?? Promise.resolve({ data: null }));
+      .maybeSingle() ?? Promise.resolve({ data: null, error: null }));
+    if (isDbUnreachable(intentError)) return dbUnavailableResponse();
     const paid = intentRow as
       | (StoredSettings & { model_family: string; prompt_id: string | null; artist_amount_micro: number })
       | null;
@@ -253,7 +255,7 @@ export async function POST(request: NextRequest) {
     let promptAdult = false;
     if (fromArtist) {
       const text = await loadPromptText(getSupabaseServerClient(), paid.prompt_id as string);
-      if (!text.ok) return NextResponse.json({ error: text.error }, { status: text.status });
+      if (!text.ok) return NextResponse.json(refusalBody(text), { status: text.status });
       if (overLong(body.variableValues)) {
         return NextResponse.json(
           { error: `Each input can be at most ${VALUE_MAX} characters. Nothing was generated and nothing was charged.` },
@@ -535,8 +537,8 @@ export async function POST(request: NextRequest) {
     let authUser;
     try {
       authUser = await requireAuth(request);
-    } catch {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    } catch (e) {
+      return authRefusal(e);
     }
     if (!checkRateLimit(authUser.userId, "generate:intent", 60, 60_000)) {
       return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
@@ -787,7 +789,12 @@ export async function POST(request: NextRequest) {
     // generation vanished when the tab closed.
     {
       const recSupabase = getSupabaseServerClientSafe();
-      const recUserId = await resolveRecordingUserId(recSupabase, request);
+      // Paid and delivered: the buyer gets the image whatever this read does.
+      // An unreachable database is logged, never turned into an error here.
+      const recUserId = await resolveRecordingUserId(recSupabase, request).catch((e) => {
+        console.error("[generate] delivered image not recorded:", e instanceof Error ? e.message : e);
+        return null;
+      });
       if (recSupabase && recUserId) {
         // The Grok branch returns a metadata object with only `model`, so read
         // the measured fields defensively rather than assuming the Gemini shape.
@@ -870,6 +877,9 @@ export async function POST(request: NextRequest) {
     console.error("Generate image error:", message);
     if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: message }));
     await releaseIfConsumed();
+    // An outage before anything was charged is said as one, not as "sign in"
+    // or a failed generation.
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
     return NextResponse.json(SILENT_FAILURE, { status: 500 });
   } finally {
     // Unavoidable, because the early returns between taking the slot and

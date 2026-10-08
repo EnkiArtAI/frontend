@@ -8,6 +8,8 @@ import { moderate, screenFirst, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
 import { checkPrompt, NOT_CHECKED } from "@/lib/moderation/prompt-check";
 import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
+import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
+import { hiddenOwners } from "@/lib/hidden-owners";
 
 const RATIO_SHAPE = /^[0-9]{1,2}([.][0-9]{1,2})?:[0-9]{1,2}([.][0-9]{1,2})?$/;
 
@@ -71,9 +73,22 @@ export async function GET(
     const token = req.headers.get("X-Session-Token");
     const owns = async (creatorId: unknown) => ((await resolveOwnerIds(supabase, token)) ?? []).includes(String(creatorId));
 
-    // 18+ answers like a missing prompt to anyone who may not see it.
-    if (!prompt || (prompt.is_adult && !mayShowAdult(await viewer(supabase, req), prompt.creator_id) && !(await owns(prompt.creator_id)))) {
+    const isOwner = prompt ? await owns(prompt.creator_id) : false;
+    // Anyone but the creator gets what a missing prompt gets for one that is
+    // not on sale (a draft, a moderator's takedown, a deleted one), as on the
+    // share card, and for an 18+ prompt they may not see.
+    if (
+      !prompt ||
+      (!isListed(prompt) && !isOwner) ||
+      (prompt.is_adult && !mayShowAdult(await viewer(supabase, req), prompt.creator_id) && !isOwner)
+    ) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+    // A banned or deleted creator's prompt answers like a missing one.
+    if (!isOwner) {
+      const hidden = await hiddenOwners(supabase, [String(prompt.creator_id ?? "")]);
+      if (!hidden) return NextResponse.json({ error: "Could not load the prompt" }, { status: 500 });
+      if (hidden.has(String(prompt.creator_id))) return NextResponse.json({ error: "not found" }, { status: 404 });
     }
 
     // Fetch variables for this prompt
@@ -126,11 +141,10 @@ export async function GET(
 
     // Text only for a free prompt, and then in full (decrypted through
     // lib/crypto's keyring). A paid prompt's body is the artist's secret: its
-    // buyers see the variables, never the words. An unlisted prompt's text is
-    // nobody's business but its creator's yet, who may preview it.
-    const isOwner = isPublicText(prompt) && !isListed(prompt) && (await owns(prompt.creator_id));
+    // buyers see the variables, never the words. An unlisted prompt reaches
+    // this point only for its creator (above), who may preview it.
     let publicPromptText: string | undefined;
-    if (isPublicText(prompt) && (isListed(prompt) || isOwner)) {
+    if (isPublicText(prompt)) {
       publicPromptText =
         typeof prompt.public_prompt_text === "string" ? prompt.public_prompt_text : undefined;
       if (prompt.encrypted_content) {
@@ -156,9 +170,9 @@ export async function GET(
         _id: id,
         title: prompt.title,
         category: prompt.category,
-        // Search tags are public once the prompt is listed; a draft's stay
-        // with its creator.
-        tags: Array.isArray(prompt.tags) && (isListed(prompt) || (await owns(prompt.creator_id))) ? prompt.tags : [],
+        // Search tags are public once the prompt is listed; a draft reaches
+        // this point only for its creator (above).
+        tags: Array.isArray(prompt.tags) ? prompt.tags : [],
         ai_model: prompt.ai_model,
         ai_settings: prompt.ai_settings,
         // The buyer surface prints this directly (boostedCost(price).toFixed(2)),
@@ -190,8 +204,10 @@ export async function GET(
         )
           .filter((url: unknown): url is string => typeof url === "string")
           .map((url: string) => ({ url })),
-        // The images the prompt starts from, beside the showcase (CUR-2).
-        beforeImages: (Array.isArray(prompt.showcase_before_images)
+        // The images the prompt starts from (CUR-2): uploads nothing has
+        // checked yet, so only its creator gets them until an image check
+        // runs (Kev, 2026-10-08).
+        beforeImages: (isOwner && Array.isArray(prompt.showcase_before_images)
           ? prompt.showcase_before_images
           : []
         )
@@ -203,6 +219,7 @@ export async function GET(
       },
     });
   } catch (e: unknown) {
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
     const message = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -232,7 +249,8 @@ export async function PATCH(
     const ids = await resolveOwnerIds(supabase, req.headers.get("X-Session-Token"));
     if (!ids?.length) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     owners = ids;
-  } catch {
+  } catch (e) {
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 

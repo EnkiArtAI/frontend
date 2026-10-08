@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { MessageSquare, Star, X, Heart } from "lucide-react";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { failureSentence } from "@/lib/search/client";
 import { useToast } from "@/hooks/use-toast";
 
 interface CommentRow {
@@ -25,6 +26,8 @@ export default function PromptEngagement({ promptId }: { promptId: string }) {
   const [openPanel, setOpenPanel] = useState(false);
   const [comments, setComments] = useState<CommentRow[]>([]);
   const [stats, setStats] = useState<{ count: number; avgRating: number | null }>({ count: 0, avgRating: null });
+  // Why the feedback could not load, never "No feedback yet".
+  const [failed, setFailed] = useState<string | null>(null);
   // Likes ride the reactions table via /api/prompts/[id]/likes.
   const [likes, setLikes] = useState<{ count: number; mine: boolean }>({ count: 0, mine: false });
   const [liking, setLiking] = useState(false);
@@ -54,11 +57,17 @@ export default function PromptEngagement({ promptId }: { promptId: string }) {
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => { if (d) setLikes({ count: d.count ?? 0, mine: !!d.mine }); })
         .catch(() => {});
-      if (!res.ok) return;
+      if (!res.ok) {
+        setFailed(await failureSentence(res, "The feedback could not load"));
+        return;
+      }
       const data = await res.json();
+      setFailed(null);
       setComments(data.comments ?? []);
       setStats(data.stats ?? { count: 0, avgRating: null });
-    } catch { /* panel simply stays empty */ }
+    } catch {
+      setFailed("The feedback could not load. Check your connection and try again.");
+    }
   }, [promptId]);
 
   useEffect(() => { load(); }, [load]);
@@ -178,10 +187,16 @@ export default function PromptEngagement({ promptId }: { promptId: string }) {
 
           {/* List */}
           <div style={{ overflowY: "auto", padding: "6px 0" }}>
+            {/* A failed read says so, above whatever the last good read showed. */}
+            {failed && (
+              <p style={{ fontSize: 12.5, color: "var(--enki-ink-3, rgba(245,242,236,0.5))", padding: "10px 14px", margin: 0 }}>{failed}</p>
+            )}
             {comments.length === 0 ? (
-              <p style={{ fontSize: 12.5, color: "var(--enki-ink-3, rgba(245,242,236,0.5))", padding: "10px 14px", margin: 0 }}>
-                No feedback yet. Be the first!
-              </p>
+              !failed && (
+                <p style={{ fontSize: 12.5, color: "var(--enki-ink-3, rgba(245,242,236,0.5))", padding: "10px 14px", margin: 0 }}>
+                  No feedback yet. Be the first!
+                </p>
+              )
             ) : (
               comments.map((c) => (
                 <div key={c.id} style={{ padding: "10px 14px", borderBottom: "1px solid var(--enki-rule, rgba(255,255,255,0.06))" }}>

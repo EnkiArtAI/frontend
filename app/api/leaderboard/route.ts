@@ -14,6 +14,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { isListed } from "@/lib/prompt-visibility";
+import { hiddenOwners } from "@/lib/hidden-owners";
+import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TREND_DAYS = 14;
@@ -42,7 +44,17 @@ const firstShowcase = (v: unknown): string | null => {
   return null;
 };
 
+/** A database that cannot be reached is an outage (503), never an empty board. */
 export async function GET(req: NextRequest) {
+  try {
+    return await board(req);
+  } catch (e) {
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
+    throw e;
+  }
+}
+
+async function board(req: NextRequest) {
   const metric = req.nextUrl.searchParams.get("metric") === "earnings" ? "earnings" : "generations";
   const period = req.nextUrl.searchParams.get("period") ?? "week";
   const since =
@@ -56,9 +68,14 @@ export async function GET(req: NextRequest) {
     isEarn ? "leaderboard_earnings" : "leaderboard_generations",
     { p_since: since, p_limit: 20 },
   );
+  if (isDbUnreachable(error)) return dbUnavailableResponse();
   if (error) return NextResponse.json({ rows: [] }); // pre-migration → empty
 
-  const raw = (data ?? []) as (GenRow & EarnRow)[];
+  // A banned or deleted account leaves the board; a lookup that fails shows none.
+  const all = (data ?? []) as (GenRow & EarnRow)[];
+  const offBoard = await hiddenOwners(supabase, all.map((r) => String(r.creator_id)));
+  if (!offBoard) return NextResponse.json({ rows: [] });
+  const raw = all.filter((r) => !offBoard.has(String(r.creator_id)));
   const ids = raw.map((r) => r.creator_id);
 
   // ── best-effort extras, fetched in parallel ──
@@ -73,7 +90,7 @@ export async function GET(req: NextRequest) {
       ? supabase.from("prompts").select("id, showcase_images, is_adult, is_listed, listing_status, deleted_at").in("id", bestIds)
       : Promise.resolve({ data: [], error: null }),
     podiumIds.length
-      ? supabase.from("generated_images").select("prompt_id, thumbnail_url, storage_url, created_at")
+      ? supabase.from("generated_images").select("prompt_id, user_id, thumbnail_url, storage_url, created_at")
           .in("prompt_id", podiumIds).is("deleted_at", null).eq("is_adult", false).eq("visibility", "public")
           .order("created_at", { ascending: false }).limit(30)
       : Promise.resolve({ data: [], error: null }),
@@ -115,7 +132,12 @@ export async function GET(req: NextRequest) {
     const u = firstShowcase(p.showcase_images);
     if (u && podiumIds.includes(p.id)) images.set(p.id, u);
   }
-  for (const g of (genImgRes.data ?? []) as { prompt_id: string; thumbnail_url: string | null; storage_url: string | null }[]) {
+  // Not an image of a banned or deleted account; none when that cannot be
+  // read. A best-effort extra like the others: even an outage here drops only
+  // these fallback images, never the board.
+  const renders = (genImgRes.data ?? []) as { prompt_id: string; user_id: string; thumbnail_url: string | null; storage_url: string | null }[];
+  const renderOwners = await hiddenOwners(supabase, renders.map((g) => String(g.user_id ?? ""))).catch(() => null);
+  for (const g of renderOwners ? renders.filter((g) => !renderOwners.has(String(g.user_id))) : []) {
     const u = g.thumbnail_url || g.storage_url;
     if (u && !images.has(g.prompt_id)) images.set(g.prompt_id, u);
   }

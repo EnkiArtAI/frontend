@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+// Banned or deleted owners are hidden-owners.test.ts's subject; here nobody is.
+vi.mock("@/lib/hidden-owners", () => ({ hiddenOwners: async () => new Set<string>() }));
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
@@ -59,7 +61,6 @@ const row = {
   created_at: "2026-09-24T10:00:00.000Z",
   creator_id: "a1b2c3d4-0000-4000-8000-000000000001",
   showcase_images: ["https://img/1.png", "https://img/2.png"],
-  showcase_before_images: ["https://img/0.png"],
   aspect_ratio: "16:9",
   resolution: "4k",
   is_free_showcase: false,
@@ -84,7 +85,6 @@ describe("lib/marketplace/card", () => {
       userId: "a1b2c3d4-0000-4000-8000-000000000001",
       previewImages: [{ url: "https://img/1.png" }, { url: "https://img/2.png" }],
       showcaseImages: [{ url: "https://img/1.png" }, { url: "https://img/2.png" }],
-      beforeImages: [{ url: "https://img/0.png" }],
       aiModel: "nano-banana-pro",
       model: "nano-banana-pro",
       aspectRatio: "16:9",
@@ -93,8 +93,8 @@ describe("lib/marketplace/card", () => {
       promptType: "paid",
       isVideo: false,
     });
-    expect(mapPromptRow({ ...row, price_usd_cents: null, tags: null, showcase_images: null, showcase_before_images: null, public_prompt_text: null, description: null })).toMatchObject({
-      priceUsdCents: 0, tags: [], previewImages: [], beforeImages: [], description: "", promptTemplate: "",
+    expect(mapPromptRow({ ...row, price_usd_cents: null, tags: null, showcase_images: null, public_prompt_text: null, description: null })).toMatchObject({
+      priceUsdCents: 0, tags: [], previewImages: [], description: "", promptTemplate: "",
     });
   });
 

@@ -22,6 +22,7 @@ function orFilter(expr: string): (r: Row) => boolean {
       if (v === null) return false;
       if (op === "eq") return String(v) === val;
       if (op === "lt") return cmp(v, val) < 0;
+      if (op === "gt") return cmp(v, val) > 0;
       if (op === "lte") return cmp(v, val) <= 0;
       throw new Error(`fake or(): ${op}`);
     };
@@ -32,6 +33,7 @@ function orFilter(expr: string): (r: Row) => boolean {
 // Column defaults the fake applies on insert, as the migrations declare them.
 const DEFAULTS: Record<string, Row> = {
   mfa_factors: { lockouts: 0, sends_count: 0, failed_attempts: 0, last_step: null, code_sent_at: null, sends_day: null },
+  reports: { status: "pending" },
 };
 // Unique keys the fake enforces on insert (23505), as the migrations declare them.
 const UNIQUE: Record<string, string[]> = { mfa_factors: ["user_id", "kind"], access_allowlist: ["kind", "value"] };
@@ -64,9 +66,11 @@ export function fakePostgrest() {
       not: (c: string, _op: string, v: unknown) => { filters.push((r) => (r[c] ?? null) !== v); return q; },
       gt: (c: string, v: string) => { filters.push((r) => r[c] != null && String(r[c]) > v); return q; },
       in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return q; },
+      ilike: (c: string, v: string) => { filters.push((r) => String(r[c] ?? "").toLowerCase() === v.toLowerCase()); return q; },
       or: (expr: string) => { filters.push(orFilter(expr)); return q; },
       order: () => q, // rows come back in insertion order
       limit: () => q, // every test seeds fewer rows than any limit
+      range: () => q, // likewise: a test seeds one page at most
       maybeSingle: () => { one = true; return q; },
       single: () => { one = true; return q; },
       then: (ok: (v: unknown) => unknown): unknown => {

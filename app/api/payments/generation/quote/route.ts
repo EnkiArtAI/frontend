@@ -27,11 +27,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
-import { requireAuth, checkRateLimit } from "@/lib/auth";
+import { authRefusal, requireAuth, checkRateLimit } from "@/lib/auth";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { PRICING_POLICY, splitToBreakdown } from "@/lib/payments/generation-pricing";
 import { computeQuote } from "@/lib/payments/generation-quote";
 import { settingsSchema, resolvePaidSettings, type SettingsInput } from "@/lib/payments/generation-settings";
+import { refusalBody } from "@/lib/db-error";
 
 /* Every price a picker shows is a server quote (Kev, 2026-10-02: "ich brauche
    safe überall den server-quote"). A picker prices all its options at once,
@@ -45,7 +46,7 @@ async function quoteOne(
   user: { userId: string; walletAddress: string; sessionToken: string | null },
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const resolved = await resolvePaidSettings(supabase, input);
-  if (!resolved.ok) return { status: resolved.status, body: { error: resolved.error } };
+  if (!resolved.ok) return { status: resolved.status, body: refusalBody(resolved) };
   const { settings } = resolved;
   const promptId = input.promptId;
 
@@ -60,7 +61,7 @@ async function quoteOne(
     buyer: user.userId,
     sessionToken: user.sessionToken,
   });
-  if (!quote.ok) return { status: quote.status, body: { error: quote.error } };
+  if (!quote.ok) return { status: quote.status, body: refusalBody(quote) };
   const { artistWallet, split, appliedRule } = quote;
 
   const expiresAt = new Date(
@@ -92,8 +93,8 @@ export async function POST(req: NextRequest) {
   let authUser;
   try {
     authUser = { ...(await requireAuth(req)), sessionToken: req.headers.get("X-Session-Token") };
-  } catch {
-    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  } catch (e) {
+    return authRefusal(e);
   }
 
   if (!checkRateLimit(authUser.userId, "payments:quote", 60, 60_000)) {

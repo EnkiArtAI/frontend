@@ -309,7 +309,8 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
           setPrompt((prev) => `${prev}${prev && !prev.endsWith(" ") ? " " : ""}[var_${n}]`);
         }}
         onRemoveVariable={(name) => setPrompt((prev) => prev.split(`[${name}]`).join("").replace(/\s{2,}/g, " ").trim())}
-        models={{ available: core.catalogue.map((m) => ({ id: m.id, name: m.name, price: m.price })), selected: core.entry ? [core.entry.id] : [] }}
+        // A paid prompt never renders on the free model (Kev, 2026-10-08).
+        models={{ available: core.catalogue.filter((m) => !(locked && m.free)).map((m) => ({ id: m.id, name: m.name, price: m.price })), selected: core.entry ? [core.entry.id] : [] }}
         setModel={setModel}
         ratios={{ available: core.ratios, selected: ratio }}
         setRatio={setRatio}

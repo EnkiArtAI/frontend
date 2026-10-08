@@ -15,6 +15,7 @@
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveModel, hasBoost } from "@/lib/generation/models";
+import { dbOutage, isDbUnreachable, type DbOutage } from "@/lib/db-error";
 import { toModelFamily } from "@/lib/generation/model-family";
 import { RESOLUTION_TIERS, type ResolutionTier } from "@/lib/generation/resolution";
 import { effectiveQuality, type GptQuality } from "@/lib/pricing";
@@ -43,7 +44,8 @@ export interface PaidSettings {
 
 export type SettingsResult =
   | { ok: true; settings: PaidSettings }
-  | { ok: false; status: 422; error: string };
+  | { ok: false; status: 422; error: string }
+  | DbOutage;
 
 const refuse = (error: string): SettingsResult => ({ ok: false, status: 422, error });
 
@@ -52,7 +54,13 @@ export async function resolvePaidSettings(
   supabase: SupabaseClient,
   input: SettingsInput,
 ): Promise<SettingsResult> {
-  const model = await resolveModel(supabase, [input.modelId]);
+  let model: Awaited<ReturnType<typeof resolveModel>>;
+  try {
+    model = await resolveModel(supabase, [input.modelId]);
+  } catch (e) {
+    if (isDbUnreachable(e)) return dbOutage();
+    throw e;
+  }
   if (!model?.id) return refuse("The chosen model is unknown or not available right now.");
   if (model.normal.provider === "pollinations") return refuse(`${model.name} is free and takes no payment.`);
 

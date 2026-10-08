@@ -18,10 +18,11 @@ import "@/components/enki-shell/enki-shell.css";
 import { useBetaAccess } from "@/components/BetaGate";
 import { useTheme } from "../../providers/ThemeProvider";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { REPORT_REASONS } from "@/lib/report-reasons";
 
 /* ── data shapes (from /api/admin) ── */
 type Imp = { id: string; name: string; url: string | null; hunter: string; tags: string[]; at: string };
-type Rep = { id: string; target: string; type: "prompt" | "profile"; reason: string; details: string | null; reporter: string; severity: number | string | null; at: string };
+type Rep = { id: string; target: string; type: "prompt" | "image" | "profile"; href: string | null; reason: string; details: string | null; reporter: string; severity: string | null; at: string };
 type Fb = { id: string; name: string; email: string | null; desc: string; images: number; paid: boolean; payoutCents: number | null; at: string };
 type Hunter = { handle: string; total: number; approved: number; denied: number; earningsCents: number };
 type StrikeRow = { userId: string; handle: string; strikes: { id: string; reason: string | null }[]; banned: boolean; permanent: boolean; note: string | null; appeal: { id: string; note: string | null; against: { reason: string | null; until: string | null } | null } | null };
@@ -583,10 +584,13 @@ export default function AdminPage() {
                   {d.reports.length === 0 && <div style={{ padding: 30, textAlign: "center", fontSize: 12, color: "var(--enki-ink-3)" }}>No open reports ✓</div>}
                   {d.reports.map((r) => (
                     <div key={r.id} style={rowStyle}>
-                      <span style={{ width: 30, textAlign: "center", fontFamily: MONO, fontSize: 15, fontWeight: 700, color: typeof r.severity === "number" && r.severity >= 3 ? "var(--enki-danger)" : "var(--enki-ink)" }}>!</span>
-                      <span style={{ flex: 1, minWidth: 0, fontFamily: SERIF, fontSize: 14, color: "var(--enki-ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={r.details ?? undefined}>{r.target}</span>
-                      <Badge pal={r.type === "prompt" ? PILL.blue : PILL.amber} label={r.type} />
-                      <span style={{ width: 90, fontSize: 11, color: "var(--enki-ink-2)", overflow: "hidden", textOverflow: "ellipsis" }}>{r.reason}</span>
+                      <span style={{ width: 30, textAlign: "center", fontFamily: MONO, fontSize: 15, fontWeight: 700, color: r.severity === "critical" || r.severity === "high" ? "var(--enki-danger)" : "var(--enki-ink)" }} title={r.severity ?? undefined}>!</span>
+                      <span style={{ flex: 1, minWidth: 0, fontFamily: SERIF, fontSize: 14, color: "var(--enki-ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={r.details ?? undefined}>
+                        {r.href ? <a href={r.href} target="_blank" rel="noopener noreferrer" style={{ color: "inherit" }}>{r.target}</a> : r.target}
+                        {r.details && <span style={{ fontSize: 11, color: "var(--enki-ink-3)" }}> · {r.details}</span>}
+                      </span>
+                      <Badge pal={r.type === "prompt" ? PILL.blue : r.type === "image" ? PILL.purple : PILL.amber} label={r.type} />
+                      <span style={{ width: 90, fontSize: 11, color: "var(--enki-ink-2)", overflow: "hidden", textOverflow: "ellipsis" }}>{REPORT_REASONS.find((x) => x.value === r.reason)?.label ?? r.reason}</span>
                       <span style={{ width: 76, fontFamily: MONO, fontSize: 9.5, color: "var(--enki-ink-3)", overflow: "hidden", textOverflow: "ellipsis" }}>@{r.reporter}</span>
                       <span style={{ width: 40, textAlign: "right", fontFamily: MONO, fontSize: 9, color: "var(--enki-ink-3)" }}>{timeAgo(r.at)}</span>
                       {repStrikeId === r.id ? (
@@ -603,6 +607,7 @@ export default function AdminPage() {
                       ) : (
                         <span style={{ display: "flex", gap: 5 }}>
                           {r.type === "prompt" && <Pill kind="amber" label="Delist" onClick={() => void post({ resource: "reports", action: "delist", id: r.id }, "Prompt delisted — report closed.", (cur) => ({ ...cur, reports: cur.reports.filter((x) => x.id !== r.id) }))} />}
+                          {r.type === "image" && <Pill kind="amber" label="Hide" title="Make the image private: only its owner sees it" onClick={() => void post({ resource: "reports", action: "hide", id: r.id }, "Image hidden — report closed.", (cur) => ({ ...cur, reports: cur.reports.filter((x) => x.id !== r.id) }))} />}
                           <Pill kind="red" label="Strike" title="Strike the reported user and close the report" onClick={() => { setRepSev("1"); setRepStrikeId(r.id); }} />
                           <Pill kind="green" label="Resolve" onClick={() => void post({ resource: "reports", action: "resolve", id: r.id }, "Report resolved.", (cur) => ({ ...cur, reports: cur.reports.filter((x) => x.id !== r.id) }))} />
                           <Pill kind="plain" label="Dismiss" onClick={() => void post({ resource: "reports", action: "dismiss", id: r.id }, "Report dismissed.", (cur) => ({ ...cur, reports: cur.reports.filter((x) => x.id !== r.id) }))} />

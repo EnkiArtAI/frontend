@@ -5,9 +5,12 @@ import { moderate, screenFirst, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
 import { checkPrompt, NOT_CHECKED } from "@/lib/moderation/prompt-check";
 import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
-import { ADULT_REFUSAL, adultConfirmed, promptMarkedAdult } from "@/lib/adult-content";
+import { ADULT_REFUSAL, adultConfirmed } from "@/lib/adult-content";
+import { freeRenderPrompt } from "@/lib/generation/free-render-prompt";
+import { resolveOwnerIds } from "@/lib/session-user";
 import { SILENT_FAILURE, silentFailure } from "@/lib/moderation/extraction-hits";
 import { getSupabaseServerClientSafe } from "@/lib/supabaseServer";
+import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
 import { resolveModel } from "@/lib/generation/models";
 import { normalizeTier, RESOLUTION_TIERS } from "@/lib/generation/resolution";
@@ -151,11 +154,21 @@ export async function POST(request: NextRequest) {
     const silent = check.verdict !== "clear";
     // 18+ (a suggestive prompt, or a prompt marked 18+) is for confirmed adults
     // only; an anonymous visitor cannot confirm.
-    const marked = await promptMarkedAdult(supabaseForChecks, UUID_RE.test(String(body?.promptId ?? "")) ? String(body.promptId) : null);
-    if (marked === null) {
+    // The prompt the client names: someone else's paid prompt never renders
+    // here, and a render is credited only to a prompt it may carry
+    // (lib/generation/free-render-prompt). Asked before the allowance is claimed.
+    const named = await freeRenderPrompt(
+      supabaseForChecks,
+      UUID_RE.test(String(body?.promptId ?? "")) ? String(body.promptId) : null,
+      (await resolveOwnerIds(supabaseForChecks, request.headers.get("X-Session-Token"))) ?? [],
+    );
+    if (named === null) {
       return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was generated." }, { status: 503 });
     }
-    const adult = (check.verdict === "clear" && check.adult === true) || marked;
+    if (named.paid) {
+      return NextResponse.json({ error: "This prompt renders only on a paid model. Nothing was generated." }, { status: 402 });
+    }
+    const adult = (check.verdict === "clear" && check.adult === true) || named.adult;
     if (adult && !(await adultConfirmed(supabaseForChecks, await resolveRecordingUserId(supabaseForChecks, request)))) {
       return NextResponse.json(ADULT_REFUSAL, { status: 403 });
     }
@@ -291,10 +304,10 @@ export async function POST(request: NextRequest) {
              * got no credit for it, and a reader could not later ask "which
              * prompt made this?". The buyer surface now sends the id, and a
              * reader who EDITS the text keeps it: it is still that prompt's
-             * descendant, and the edited wording is stored beside it. Shape
-             * is checked because this arrives from the client and a bad value
-             * would fail the row's foreign key and lose the whole record. */
-            promptId: UUID_RE.test(String(body?.promptId ?? "")) ? String(body.promptId) : null,
+             * descendant, and the edited wording is stored beside it. Only a
+             * prompt the render may carry is named (freeRenderPrompt): one on
+             * sale with public text, or the caller's own. */
+            promptId: named.creditId,
             finalPrompt: prompt,
             // Pollinations rewrites the prompt itself (`enhance=true`) and
             // never returns the result, so the best we can honestly record is
@@ -355,6 +368,8 @@ export async function POST(request: NextRequest) {
     console.error("Generate free image error:", message);
     if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: message }));
     await releaseFreeClaim(getSupabaseServerClientSafe(), claimId);
+    // An outage is said as one, not as "sign in" or a failed generation.
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
     return NextResponse.json(SILENT_FAILURE, { status: 500 });
   }
 }

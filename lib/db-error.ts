@@ -39,6 +39,17 @@ export function isDbUnreachable(err: unknown): boolean {
   return NETWORK_FAILURE.test(text);
 }
 
+/** The same 503 for helpers that return { ok: false, status, error } rather than a response. */
+export function dbOutage() {
+  return { ok: false as const, status: 503 as const, error: DB_UNAVAILABLE_MESSAGE, code: DB_UNAVAILABLE_CODE };
+}
+export type DbOutage = ReturnType<typeof dbOutage>;
+
+/** A helper's refusal as a response body: its sentence, and the outage code when it is one. */
+export function refusalBody(r: { error: string; code?: string }) {
+  return r.code ? { error: r.error, code: r.code } : { error: r.error };
+}
+
 /** The one 503 every route returns when the database is down. */
 export function dbUnavailableResponse() {
   return NextResponse.json(

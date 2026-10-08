@@ -1,6 +1,8 @@
 // app/api/generations/route.ts
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { hideAdult, viewer } from "@/lib/adult-content";
+import { hiddenOwners } from "@/lib/hidden-owners";
+import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
 import {
   getGenerationsQuerySchema,
   validateQuery,
@@ -33,9 +35,16 @@ export async function GET(req: Request) {
     // to give up and return an empty list for every wallet caller — which is
     // why the gallery looked empty even when images existed. Resolve it.
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
-    let ownerId = isUuid ? userId : null;
-    if (!ownerId) {
-      const { data: walletRow } = await supabase
+    // Only letters and digits are looked up, so no pattern such as % or * ever
+    // reaches the ilike below (it would match many wallets and read as a
+    // failure). Not stricter base58: a legacy row lowercased a Solana address,
+    // turning L into l, and a foreign profile's gallery asks with that row.
+    const isWallet = /^(0x[0-9a-fA-F]{40}|[0-9A-Za-z]{32,44})$/.test(userId);
+    // Lower case, as the database answers ids: an upper-case id must not
+    // slip past the hidden-owner check below while .eq() still matches it.
+    let ownerId = isUuid ? userId.toLowerCase() : null;
+    if (!ownerId && isWallet) {
+      const { data: walletRow, error: walletError } = await supabase
         .from("user_wallets")
         .select("user_id")
         // addresses are stored lowercased; base58 is case-sensitive, so compare
@@ -43,6 +52,8 @@ export async function GET(req: Request) {
         .ilike("address", userId)
         .is("removed_at", null)
         .maybeSingle();
+      // A failed lookup is no empty gallery: the catch answers it (503 for an outage).
+      if (walletError) throw walletError;
       ownerId = (walletRow?.user_id as string) ?? null;
     }
     if (!ownerId) {
@@ -53,6 +64,12 @@ export async function GET(req: Request) {
     // generation record (encrypted prompt, prompt_id NOT NULL) and has no image
     // column at all. Reading `generations` here is what made uploads invisible.
     const v = await viewer(supabase, req);
+    // A banned or deleted account's gallery is empty to everyone but itself.
+    if (v.userId !== ownerId) {
+      const hidden = await hiddenOwners(supabase, [ownerId]);
+      if (!hidden) return createErrorResponse("Gallery unavailable", 500);
+      if (hidden.has(ownerId)) return createSuccessResponse({ generations: [], total: 0, limit, offset });
+    }
     let gallery = supabase
       .from("generated_images")
       .select("id, prompt_id, storage_url, preview_url, thumbnail_url, description, is_uploaded, visibility, created_at", { count: 'exact' })
@@ -97,7 +114,8 @@ export async function GET(req: Request) {
       offset
     });
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : String(e);
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
+    const message = e instanceof Error ? e.message : (e as { message?: string })?.message ?? String(e);
     console.error('Error fetching generations:', message);
     return createErrorResponse('Internal server error', 500);
   }

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { DbUnreachableError } from "@/lib/db-error";
 import type { NextRequest } from "next/server";
 
 /**
@@ -58,9 +59,9 @@ describe("requireAuth", () => {
     await expect(requireAuth(request("tok"))).resolves.toEqual({ walletAddress: WALLET, userId: WALLET });
   });
 
-  it("refuses when the database cannot be reached", async () => {
+  it("refuses when the database cannot be reached, as an outage the caller answers 503, not as a missing session", async () => {
     tables = { auth_sessions: { data: null, error: DEAD_HOST } };
-    await expect(requireAuth(request("tok"))).rejects.toThrow(/session token is required/);
+    await expect(requireAuth(request("tok"))).rejects.toBeInstanceOf(DbUnreachableError);
   });
 
   it("refuses without a token and never queries", async () => {

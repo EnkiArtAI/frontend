@@ -287,8 +287,9 @@ export async function GET(request: NextRequest) {
     // Enrich with creator data and variables (lib/marketplace/card.ts).
     const enrichedPrompts = await enrichPromptCards(getSupabaseServerClient(), prompts);
 
-    // Calculate pagination
-    const hasMore = enrichedPrompts.length === limit;
+    // Pages on the rows read: a hidden creator's card dropped from a full
+    // page must not end the feed.
+    const hasMore = prompts.length === limit;
     const nextCursor = hasMore ? String(offset + limit) : undefined;
 
     // Build response

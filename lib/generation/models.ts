@@ -18,6 +18,7 @@ import { loadHealth, breakerVerdict, runProbe } from "@/lib/generation/provider-
 import { canCarryReferenceImages } from "@/lib/generation/provider-capabilities";
 import { maxTier, tiersUpTo, type ResolutionTier } from "@/lib/generation/resolution";
 import { toModelFamily } from "@/lib/generation/model-family";
+import { DbUnreachableError, isDbUnreachable } from "@/lib/db-error";
 
 /** "none" = no route at all: a model with no provider rows and no bridge entry. */
 export type Provider = "gemini" | "openai" | "wavespeed" | "pollinations" | "acedata" | "none";
@@ -346,6 +347,7 @@ export async function resolveModelByFamily(
         "model_providers(id, role, provider_model, active, priority, applies_when, provider_id, providers(id, key, audience, active))",
       )
       .eq("active", true);
+    if (isDbUnreachable(error)) throw new DbUnreachableError();
     if (error || !data?.length) return null;
     /* Matched on the slug, not the display name: "GPT-Image-2 (coming soon)"
        and "GPT-Image-2" are the same purchase, and the quote stored the slug
@@ -356,7 +358,9 @@ export async function resolveModelByFamily(
     // Two active rows answering to one family is a choice we may not make for
     // the caller: whichever came first would run with its own routes.
     return rows.length === 1 ? fromRow(rows[0], audience) : null;
-  } catch {
+  } catch (e) {
+    // An outage is the caller's 503, never "no such model".
+    if (e instanceof DbUnreachableError) throw e;
     return null;
   }
 }
@@ -389,15 +393,18 @@ export async function resolveModel(
       "id, name, allowed_ratios, max_reference_images, " +
       "model_providers(id, role, provider_model, active, priority, applies_when, provider_id, providers(id, key, audience, active))",
     );
+    if (isDbUnreachable(joined.error)) throw new DbUnreachableError();
     if (joined.error) {
       const flat = await pick("id, name, allowed_ratios, max_reference_images");
+      if (isDbUnreachable(flat.error)) throw new DbUnreachableError();
       rows = (flat.data ?? []) as unknown as ModelRow[];
     } else {
       rows = (joined.data ?? []) as unknown as ModelRow[];
     }
     const row = rows.find((r) => r.id === first);
     return row ? fromRow(row, audience) : null;
-  } catch {
+  } catch (e) {
+    if (e instanceof DbUnreachableError) throw e;
     return null;
   }
 }

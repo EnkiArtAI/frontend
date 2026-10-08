@@ -63,10 +63,23 @@ async function detailOf(row: Row, token?: string) {
 }
 
 describe("a prompt's before images (CUR-2)", () => {
-  it("are served beside the showcase on the card and on the prompt's page", async () => {
+  it("go only to its creator until an image check runs (Kev, 2026-10-08): never on the card, never to a visitor", async () => {
     const row = { ...showcase, showcase_images: ["https://img/after.png"], showcase_before_images: ["https://img/before.png"] };
-    expect((await card(row)).beforeImages).toEqual([{ url: "https://img/before.png" }]);
-    expect((await detailOf(row)).beforeImages).toEqual([{ url: "https://img/before.png" }]);
+    expect((await card(row)).beforeImages).toBeUndefined();
+    expect((await detailOf(row)).beforeImages).toEqual([]);
+    expect((await detailOf(row, "owner-token")).beforeImages).toEqual([{ url: "https://img/before.png" }]);
+  });
+});
+
+describe("a prompt that is not on sale", () => {
+  it("answers like a missing one to anyone but its creator: a draft, a takedown, a deleted one", async () => {
+    for (const off of [{ is_listed: false, listing_status: "draft" }, { listing_status: "delisted" }, { deleted_at: "2026-10-08T00:00:00Z" }]) {
+      const row: Row = { ...showcase, ...off };
+      tables.prompts = [row];
+      const res = await detail(new Request(`http://localhost/api/prompts/${row.id}`), { params: Promise.resolve({ id: String(row.id) }) });
+      expect(res.status).toBe(404);
+      expect((await detailOf(row, "owner-token")).id).toBe(row.id);
+    }
   });
 });
 
@@ -113,9 +126,9 @@ describe("the prompt detail route", () => {
     expect(await detailOf(adult, "owner-token")).toBeUndefined();
   });
 
-  it("never sends the text of an unlisted free prompt", async () => {
+  it("never sends the text of an unlisted free prompt: a visitor gets no prompt at all", async () => {
     const draft = { ...showcase, is_listed: false, listing_status: "draft" };
-    expect((await detailOf(draft)).publicPromptText).toBeUndefined();
+    expect(await detailOf(draft)).toBeUndefined();
   });
 });
 
@@ -128,7 +141,7 @@ describe("a prompt's search tags", () => {
 
   it("stay with the creator while the prompt is a draft", async () => {
     const draft = { ...tagged, is_listed: false, listing_status: "draft" };
-    expect((await detailOf(draft)).tags).toEqual([]);
+    expect(await detailOf(draft)).toBeUndefined();
     expect((await detailOf(draft, "owner-token")).tags).toEqual(["dragon", "ruins"]);
   });
 });

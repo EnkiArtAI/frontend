@@ -18,7 +18,8 @@ import { useBetaAccess } from "@/components/BetaGate";
 import { openLogin } from "@/lib/openLogin";
 import { listCreations, subscribeCreations, type StoredCreation } from "@/lib/creations";
 import { useSearchParams, useRouter } from "next/navigation";
-import { ArrowLeft, ChevronDown, Sparkles, ImageOff, User, Pencil, Loader2, ZoomIn, Heart } from "lucide-react";
+import { ArrowLeft, ChevronDown, Sparkles, ImageOff, User, Pencil, Loader2, ZoomIn, Heart, Flag } from "lucide-react";
+import { ReportButton } from "@/components/ReportButton";
 import "@/components/enki/enki.css";
 
 const PROFILE_STAT_LABELS = ["Prompts", "Uses", "Followers", "This month"] as const;
@@ -514,6 +515,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
   /* Foreign profile: the creator's PUBLIC data, plus their payout wallet —
      which keys the gallery below (generations are stored by wallet). */
   const [creatorWallet, setCreatorWallet] = useState<string | null>(null);
+  const [creatorId, setCreatorId] = useState<string | null>(null);
   useEffect(() => {
     if (!handle) return;
     let dead = false;
@@ -531,6 +533,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
           promptCount: d.stats?.totalPrompts ?? 0,
         });
         setCreatorWallet(d.creator?.wallet ?? null);
+        setCreatorId(d.creator?.id ? String(d.creator.id) : null);
       } catch { /* the empty hero stays until a retry */ }
     })();
     return () => { dead = true; };
@@ -795,14 +798,19 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
                 <h1 className="serif" style={{ fontSize: "clamp(48px, 5vw, 72px)", fontWeight: 400, margin: 0, lineHeight: 1 }}>
                   <em>{displayName}</em>
                 </h1>
-                {/* Edit is the owner's — a foreign profile shows no actions
-                    yet (Message/Follow land as their own step). */}
+                {/* Edit is the owner's; a foreign profile can be reported
+                    (Message/Follow land as their own step). */}
                 {own && (
                   <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                     <button style={{ ...heroBtn, borderColor: "var(--enki-ink)" }} onClick={startEdit} disabled={!me}>
                       <Pencil size={15} /> Edit profile
                     </button>
                   </div>
+                )}
+                {!own && creatorId && (
+                  <ReportButton targetType="user" targetId={creatorId} style={{ ...heroBtn, height: 40, padding: "0 16px", fontSize: 13 }}>
+                    <Flag size={14} /> Report
+                  </ReportButton>
                 )}
               </div>
             </div>

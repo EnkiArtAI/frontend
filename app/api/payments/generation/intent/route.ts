@@ -23,11 +23,12 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
-import { requireAuth, checkRateLimit } from "@/lib/auth";
+import { authRefusal, requireAuth, checkRateLimit } from "@/lib/auth";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { PRICING_POLICY, splitToBreakdown } from "@/lib/payments/generation-pricing";
 import { computeQuote } from "@/lib/payments/generation-quote";
 import { settingsSchema, resolvePaidSettings } from "@/lib/payments/generation-settings";
+import { dbUnavailableResponse, isDbUnreachable, refusalBody } from "@/lib/db-error";
 
 export async function POST(req: NextRequest) {
   // 60 payments/min per user (Kev, 2026-07-08 — dApp-friendly). The IP cap
@@ -39,8 +40,8 @@ export async function POST(req: NextRequest) {
   let authUser;
   try {
     authUser = await requireAuth(req);
-  } catch {
-    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  } catch (e) {
+    return authRefusal(e);
   }
 
   if (!checkRateLimit(authUser.userId, "payments:intent", 60, 60_000)) {
@@ -62,7 +63,7 @@ export async function POST(req: NextRequest) {
   }
   const supabase = getSupabaseServerClient();
   const resolved = await resolvePaidSettings(supabase, parsed.data);
-  if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status });
+  if (!resolved.ok) return NextResponse.json(refusalBody(resolved), { status: resolved.status });
   const { settings } = resolved;
   const promptId = parsed.data.promptId;
 
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
     sessionToken: req.headers.get("X-Session-Token"),
   });
   if (!quote.ok) {
-    return NextResponse.json({ error: quote.error }, { status: quote.status });
+    return NextResponse.json(refusalBody(quote), { status: quote.status });
   }
   const { artistWallet, split, appliedRule } = quote;
 
@@ -113,6 +114,7 @@ export async function POST(req: NextRequest) {
     })
     .select("id")
     .single();
+  if (isDbUnreachable(insertError)) return dbUnavailableResponse();
   if (insertError || !intent) {
     console.error("[payments/intent] insert failed:", insertError?.message);
     return NextResponse.json({ error: "Failed to create payment intent" }, { status: 500 });
