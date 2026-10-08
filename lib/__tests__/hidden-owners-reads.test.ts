@@ -59,6 +59,11 @@ describe("a gallery asked for by an upper-case id", () => {
     expect(await status()).toBe(500);
     db.current!.tables.user_wallets = [{ address: WALLET.toLowerCase(), user_id: BANNED, removed_at: null }];
     expect(await status()).toBe(200);
+    // A legacy row lowercased a Solana address (L became l); a foreign profile asks with that row.
+    const LEGACY = "9wzdxwbbmkg8ztbnmquxvqrayrzzdsgydlvl9zytawwm";
+    db.current!.tables.user_wallets = [{ address: LEGACY, user_id: BANNED, removed_at: null }];
+    const legacy = await (await gallery(new Request(`http://enki.test/api/generations?userId=${LEGACY}`))).json();
+    expect(((legacy.data?.generations ?? legacy.generations) as { id: string }[]).map((g) => g.id)).toEqual(["g1"]);
     // Something that is no wallet address is not looked up at all: no pattern reaches the ilike.
     db.current!.state.failNext = { table: "user_wallets", op: "select", code: "PGRST116" };
     expect(await status("%25")).toBe(200);
