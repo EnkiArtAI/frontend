@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { join } from "node:path";
 import { readSource } from "@/lib/__tests__/_read-source";
@@ -242,6 +242,20 @@ describe("the agent route's request", () => {
     }));
     return { status: res.status, error: ((await res.json()) as { error?: string }).error };
   };
+
+  it("asks an agent for the checks its render runs, as every paid rail does", async () => {
+    vi.stubEnv("SOLANA_PLATFORM_WALLET", "P1atformWa11et111111111111111111111111111111");
+    const { NextRequest } = await import("next/server");
+    const { GET } = await import("../../app/api/x402/generate/route");
+    const { computeGenerationSplit, modelLegMicro, getModelCostMicro, PRICING_POLICY } = await import("@/lib/payments/generation-pricing");
+    const res = await GET(new NextRequest("http://enki.test/api/x402/generate?modelFamily=nano-banana-pro&resolution=2K"));
+    const body = (await res.json()) as { accepts?: { maxAmountRequired: string }[] };
+    const leg = modelLegMicro("nano-banana-pro", "2K");
+    expect(leg).toBe(getModelCostMicro("nano-banana-pro", "2K") + PRICING_POLICY.extractionCheckMicro + PRICING_POLICY.imageCheckMicro);
+    expect(res.status).toBe(402);
+    expect(body.accepts?.[0]?.maxAmountRequired).toBe(String(computeGenerationSplit(0, leg).totalMicro));
+    vi.unstubAllEnvs();
+  });
 
   it("refuses values for a plain prompt, which nothing would read", async () => {
     expect(await send({ prompt: "a [subject] at dusk", variableValues: { subject: "fox" }, modelFamily: "nano-banana-pro" }))

@@ -37,7 +37,7 @@ import { computeQuote } from "@/lib/payments/generation-quote";
 import { dbUnavailableResponse, isDbUnreachable, refusalBody, type DbOutage } from "@/lib/db-error";
 import { checkAgentPromptInputs } from "@/lib/generation/agent-prompt-inputs";
 import {
-  getModelCostMicro, computeGenerationSplit, UnknownModelError,
+  modelLegMicro, computeGenerationSplit, UnknownModelError,
 } from "@/lib/payments/generation-pricing";
 import { usdcMint, feePayerKeypair, solanaConnection, solanaChainKey, broadcastAndConfirm } from "@/lib/payments/solana";
 import bs58 from "bs58";
@@ -178,7 +178,8 @@ async function requirementsFor(input: Input): Promise<Requirements> {
     description = `Generate 1 image from prompt ${input.promptId} (${input.modelFamily}, ${input.resolution}) — artist share included`;
   } else {
     try {
-      const modelCostMicro = getModelCostMicro(input.modelFamily, input.resolution, { quality: input.quality });
+      // The checks the agent's render runs, as on every paid rail.
+      const modelCostMicro = modelLegMicro(input.modelFamily, input.resolution, { quality: input.quality });
       amountMicro = computeGenerationSplit(0, modelCostMicro).totalMicro;
       legs = [{ recipient: payTo, amountMicro }];
       description = `Generate 1 image (${input.modelFamily}, ${input.resolution})`;
