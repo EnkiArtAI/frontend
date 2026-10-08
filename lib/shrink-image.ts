@@ -43,13 +43,27 @@ export async function encodeCanvas(canvas: HTMLCanvasElement, quality: number): 
 }
 
 /**
+ * One image at a time, each freed as soon as it is encoded: an iPhone gives a
+ * page about 384 MB of canvas, and a 12 MP photo decodes to 48 MB, so ten
+ * picked at once would run out and go unshrunk.
+ */
+let turn: Promise<unknown> = Promise.resolve();
+
+/**
  * An image as it is sent: upright as the camera meant it, at most `edge` px
  * on its long side. One the browser cannot decode (HEIC outside Safari, an
  * SVG) goes as it came, for the server to judge.
  */
-export async function shrinkImage(src: Blob, edge = REFERENCE_EDGE, quality = REFERENCE_QUALITY): Promise<Blob> {
+export function shrinkImage(src: Blob, edge = REFERENCE_EDGE, quality = REFERENCE_QUALITY): Promise<Blob> {
+  const drawn = turn.then(() => draw(src, edge, quality));
+  turn = drawn;
+  return drawn;
+}
+
+async function draw(src: Blob, edge: number, quality: number): Promise<Blob> {
+  let bitmap: ImageBitmap | undefined;
   try {
-    const bitmap = await createImageBitmap(src, { imageOrientation: "from-image" });
+    bitmap = await createImageBitmap(src, { imageOrientation: "from-image" });
     const { width, height } = fitWithin(bitmap.width, bitmap.height, edge);
     const canvas = document.createElement("canvas");
     canvas.width = width;
@@ -59,10 +73,13 @@ export async function shrinkImage(src: Blob, edge = REFERENCE_EDGE, quality = RE
     // The default ("low") aliases a photo shrunk several times over.
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(bitmap, 0, 0, width, height);
-    bitmap.close();
-    return (await encodeCanvas(canvas, quality)) ?? src;
+    const out = await encodeCanvas(canvas, quality);
+    canvas.width = 0;
+    return out ?? src;
   } catch {
     return src;
+  } finally {
+    bitmap?.close();
   }
 }
 

@@ -15,6 +15,8 @@ afterEach(() => vi.unstubAllGlobals());
 type Canvas = {
   width: number;
   height: number;
+  /** The size it had when it was encoded: it is emptied after. */
+  drawn?: [number, number];
   asked: [string, number][];
   ctx: { imageSmoothingQuality: string; drawImage: ReturnType<typeof vi.fn> };
 };
@@ -42,9 +44,10 @@ function fakeBrowser({
     createElement: () => {
       const ctx = { imageSmoothingQuality: "low", drawImage: vi.fn(), getImageData: () => ({ data: new Uint8ClampedArray([0, 0, 0, alpha]) }) };
       const c = {
-        width: 0, height: 0, asked: [] as [string, number][], ctx,
+        width: 0, height: 0, drawn: undefined as [number, number] | undefined, asked: [] as [string, number][], ctx,
         getContext: () => ctx,
         toBlob(done: (b: Blob | null) => void, type: string, q: number) {
+          c.drawn ??= [c.width, c.height];
           c.asked.push([type, q]);
           done(new Blob([new Uint8Array(bytes(c, q))], { type: type === "image/webp" ? webpAs : type }));
         },
@@ -78,9 +81,32 @@ describe("a reference", () => {
     const out = await shrinkImage(src);
     expect(out.type).toBe("image/webp");
     expect(decode).toHaveBeenCalledWith(src, { imageOrientation: "from-image" });
-    expect(canvases[0]).toMatchObject({ width: 1024, height: 768, asked: [["image/webp", 0.85]] });
+    expect(canvases[0]).toMatchObject({ drawn: [1024, 768], asked: [["image/webp", 0.85]] });
     expect(canvases[0].ctx.imageSmoothingQuality).toBe("high");
     expect(canvases[0].ctx.drawImage).toHaveBeenCalledWith(bitmap, 0, 0, 1024, 768);
+  });
+
+  it("is drawn one at a time, and each is freed as soon as it is encoded", async () => {
+    const { canvases, bitmap, decode } = fakeBrowser();
+    let release!: () => void;
+    decode.mockImplementationOnce(() => new Promise((r) => { release = () => r(bitmap); }));
+    const both = Promise.all([shrinkImage(new Blob(["a"])), shrinkImage(new Blob(["b"]))]);
+    await new Promise((r) => setTimeout(r, 0));
+    // The second waits for the first, however long that takes.
+    expect(decode).toHaveBeenCalledTimes(1);
+    release();
+    await both;
+    expect(decode).toHaveBeenCalledTimes(2);
+    expect(bitmap.close).toHaveBeenCalledTimes(2);
+    expect(canvases.map((c) => c.width)).toEqual([0, 0]);
+  });
+
+  it("frees the decoded image even when no canvas can be drawn on, and sends the original", async () => {
+    const { bitmap } = fakeBrowser();
+    vi.stubGlobal("document", { createElement: () => ({ width: 0, height: 0, getContext: () => null }) });
+    const src = new Blob(["x"]);
+    await expect(shrinkImage(src)).resolves.toBe(src);
+    expect(bitmap.close).toHaveBeenCalledTimes(1);
   });
 
   it("the browser cannot decode goes as it came, for the server to judge", async () => {
@@ -125,27 +151,27 @@ describe("a gallery or message image", () => {
     const out = await fitUpload(f);
     expect(out).not.toBe(f);
     expect([out?.name, out?.type]).toEqual(["photo.webp", "image/webp"]);
-    expect(canvases.map((c) => [c.width, ...c.asked[0]])).toEqual([[1200, "image/webp", 0.9]]);
+    expect(canvases.map((c) => [c.drawn?.[0], ...c.asked[0]])).toEqual([[1200, "image/webp", 0.9]]);
   });
 
   it("too large is stepped down at 2560 px, quality first, until it fits", async () => {
     const { canvases } = fakeBrowser({ bytes: (_c, q) => (q > 0.7 ? REQUEST_MAX_BYTES + 1 : REQUEST_MAX_BYTES) });
     const out = await fitUpload(file(REQUEST_MAX_BYTES + 1, "render.png"));
-    expect(canvases.map((c) => [c.width, ...c.asked[0]])).toEqual([[2560, "image/webp", 0.9], [2560, "image/webp", 0.8], [2560, "image/webp", 0.7]]);
+    expect(canvases.map((c) => [c.drawn?.[0], ...c.asked[0]])).toEqual([[2560, "image/webp", 0.9], [2560, "image/webp", 0.8], [2560, "image/webp", 0.7]]);
     expect([out?.name, out?.type, out?.size]).toEqual(["render.webp", "image/webp", REQUEST_MAX_BYTES]);
   });
 
   it("with no quality to give (Safari's transparent PNG) is made smaller instead", async () => {
     const { canvases } = fakeBrowser({ webpAs: "image/png", alpha: 0, bytes: (c) => (c.width > 2048 ? REQUEST_MAX_BYTES + 1 : REQUEST_MAX_BYTES) });
     const out = await fitUpload(file(REQUEST_MAX_BYTES + 1));
-    expect(canvases.map((c) => c.width)).toEqual([2560, 2560, 2560, 2048]);
+    expect(canvases.map((c) => c.drawn?.[0])).toEqual([2560, 2560, 2560, 2048]);
     expect([out?.name, out?.type]).toEqual(["a.png", "image/png"]);
   });
 
   it("is refused (null) when no step fits", async () => {
     const { canvases } = fakeBrowser({ bytes: () => REQUEST_MAX_BYTES + 1 });
     await expect(fitUpload(file(REQUEST_MAX_BYTES + 1))).resolves.toBeNull();
-    expect(canvases.map((c) => c.width)).toEqual([2560, 2560, 2560, 2048, 1600]);
+    expect(canvases.map((c) => c.drawn?.[0])).toEqual([2560, 2560, 2560, 2048, 1600]);
   });
 
   it("is refused at once, small or large, when the browser cannot read it: no step would", async () => {
