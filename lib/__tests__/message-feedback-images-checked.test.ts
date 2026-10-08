@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { NextRequest } from "next/server";
+import { createHash } from "node:crypto";
 
 /**
  * Images in direct messages and feedback reports and the image check (Kev,
@@ -9,7 +10,7 @@ import type { NextRequest } from "next/server";
  * report stands. A child-safety verdict becomes a case on either.
  */
 
-const s = vi.hoisted(() => ({ verdicts: [] as string[], calls: 0, cases: [] as unknown[], uploads: [] as string[], rows: [] as { table: string; row: unknown }[], failRows: "", removed: [] as string[] }));
+const s = vi.hoisted(() => ({ verdicts: [] as string[], calls: 0, cases: [] as unknown[], uploads: [] as string[], rows: [] as { table: string; row: unknown }[], failRows: "", removed: [] as string[], sealed: [] as string[], cred: null as { email: string } | null }));
 // As the real check: bytes no decoder reads never reach the judges (here,
 // anything but a PNG or an AVIF, which opens like an MP4, and a JPEG cut
 // short reads as one that does not decode whole); `calls` counts what the
@@ -32,7 +33,7 @@ vi.mock("@/lib/rate-limit", async (orig) => ({
   checkRequestRateLimit: () => ({ allowed: true, retryAfterSeconds: 0 }),
 }));
 vi.mock("next/server", async (orig) => ({ ...(await orig<typeof import("next/server")>()), after: (p: unknown) => p }));
-vi.mock("@/lib/crypto", () => ({ encryptString: () => ({ encrypted: "ct", iv: "iv", authTag: "tag", kid: "k" }), decryptString: () => "" }));
+vi.mock("@/lib/crypto", () => ({ encryptString: (p: string) => { s.sealed.push(p); return { encrypted: "ct", iv: "iv", authTag: "tag", kid: "k" }; }, decryptString: () => "" }));
 vi.mock("@/lib/dm", async (orig) => ({
   ...(await orig<typeof import("@/lib/dm")>()),
   loadThreadFor: async () => ({ id: "t", a_id: "user-1", b_id: "user-2" }),
@@ -46,7 +47,7 @@ vi.mock("@/lib/supabaseServer", () => ({
       let failed = false;
       q.insert = (row: unknown) => { s.rows.push({ table, row }); failed = table === s.failRows; return q; };
       q.single = async () => ({ data: { id: "row-1", created_at: "now" }, error: null });
-      q.maybeSingle = async () => ({ data: { handle: "h" }, error: null });
+      q.maybeSingle = async () => ({ data: table === "password_credentials" ? s.cred : { handle: "h" }, error: null });
       q.then = (ok: (v: unknown) => unknown) => Promise.resolve({ data: null, error: failed ? { message: "db down" } : null }).then(ok);
       return q;
     };
@@ -72,7 +73,7 @@ const post = async (handler: (r: NextRequest) => Promise<Response>, fields: Reco
   return { status: res.status, body: (await res.json()) as { error?: string; dropped?: number } };
 };
 
-beforeEach(() => Object.assign(s, { verdicts: [], calls: 0, cases: [], uploads: [], rows: [], failRows: "", removed: [] }));
+beforeEach(() => Object.assign(s, { verdicts: [], calls: 0, cases: [], uploads: [], rows: [], failRows: "", removed: [], sealed: [], cred: null }));
 
 describe("an image in a direct message", () => {
   it("clear: stored and sent", async () => {
@@ -176,6 +177,24 @@ describe("an image attached to a feedback report", () => {
   it("drops what is neither an image the check reads nor a declared video", async () => {
     expect((await report([bytes("video/mp4", [1, 2, 3, 4, 5, 6, 7, 8]), bytes("image/gif", MP4)])).status).toBe(201);
     expect(s.uploads).toEqual([]);
+  });
+});
+
+describe("a feedback report", () => {
+  const report = () => post(sendFeedback, { description: "The button does nothing at all.", severity: "minor" });
+
+  it("carries the account's email from its password sign-in, sealed", async () => {
+    s.cred = { email: "kev@enki.test" };
+    expect((await report()).status).toBe(201);
+    expect(s.sealed).toEqual(["kev@enki.test"]);
+    expect(s.rows.find((r) => r.table === "feedback_submissions")?.row).toMatchObject({
+      submitter_email_lookup_hash: createHash("sha256").update("kev@enki.test").digest("hex"),
+    });
+  });
+
+  it("a wallet-only account has no email to carry", async () => {
+    expect((await report()).status).toBe(201);
+    expect(s.sealed).toEqual([""]);
   });
 });
 

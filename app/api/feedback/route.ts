@@ -12,7 +12,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { createHash } from "crypto";
-import { decryptString, encryptString, type EncryptedPayload } from "@/lib/crypto";
+import { encryptString } from "@/lib/crypto";
 import { checkImageBytes, NOT_AN_IMAGE } from "@/lib/moderation/image-check-bytes";
 import { recordImageCase } from "@/lib/moderation/image-case";
 import { FEEDBACK_BUCKET, FEEDBACK_FILE_EXT, FEEDBACK_MAX_BYTES, FEEDBACK_MAX_FILES } from "@/lib/feedback";
@@ -59,21 +59,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Attachments can be up to 4 MB in total" }, { status: 413 });
   }
 
-  // submitter_email_ct is NOT NULL (verified live 2026-07-21): carry the
-  // account's email over — decrypt tolerant, re-encrypt for this row; users
-  // without an email get an encrypted empty string.
-  const { data: me } = await supabase
-    .from("users")
-    .select("handle, email_ct, email_iv, email_tag, email_kid, email_lookup_hash")
-    .eq("id", userId)
-    .maybeSingle();
-  let email = "";
-  if (me?.email_ct && me?.email_iv && me?.email_tag) {
-    const payload: EncryptedPayload = { encrypted: me.email_ct as string, iv: me.email_iv as string, authTag: me.email_tag as string, kid: (me.email_kid as string) ?? undefined };
-    for (const aad of [undefined, userId]) {
-      try { email = decryptString(payload, aad); break; } catch { /* try next */ }
-    }
-  }
+  // submitter_email_ct is NOT NULL (verified live 2026-07-21). An account's
+  // email lives in its password sign-in (password_credentials.email, stored
+  // lowercased); users.email_ct is written by no code. A wallet-only account
+  // has none and gets an encrypted empty string, which the panel shows as none.
+  const [{ data: me }, { data: cred }] = await Promise.all([
+    supabase.from("users").select("handle").eq("id", userId).maybeSingle(),
+    supabase.from("password_credentials").select("email").eq("user_id", userId).maybeSingle(),
+  ]);
+  const email = typeof cred?.email === "string" ? cred.email : "";
   const enc = encryptString(email);
 
   const { data: row, error } = await supabase
@@ -85,9 +79,8 @@ export async function POST(req: NextRequest) {
       submitter_email_iv: enc.iv,
       submitter_email_tag: enc.authTag,
       submitter_email_kid: enc.kid ?? null,
-      // NOT NULL live — reuse the account's hash, else sha256(lowercased email)
-      submitter_email_lookup_hash:
-        (me?.email_lookup_hash as string) ?? createHash("sha256").update(email.toLowerCase()).digest("hex"),
+      // NOT NULL live: sha256 of the lowercased email.
+      submitter_email_lookup_hash: createHash("sha256").update(email.toLowerCase()).digest("hex"),
       description,
       severity: mapped.severity,
       category: mapped.category,
