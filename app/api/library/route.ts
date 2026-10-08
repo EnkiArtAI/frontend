@@ -3,8 +3,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { checkRequestRateLimit, rateLimitResponse } from "@/lib/rate-limit";
-import { stripWorkflowImages } from "@/lib/generation/workflow";
-import { checkImageBytes, dataUrlBytes } from "@/lib/moderation/image-check-bytes";
+import { checkImageBytes, dataUrlBytes, NOT_AN_IMAGE } from "@/lib/moderation/image-check-bytes";
 import { recordImageCase } from "@/lib/moderation/image-case";
 
 /**
@@ -22,6 +21,26 @@ const MAX_TEXT = 20_000;
 const MAX_GRAPH_BYTES = 400_000;
 /** The images a saved workflow may carry itself; ones already on Enki are links and do not count. */
 const MAX_IMAGES = 14;
+
+/**
+ * Every data: URL a graph holds, at any depth and in any spelling: whatever
+ * a browser could show as an image when the workflow is opened again. Plain
+ * text, however long, is not one.
+ */
+function dataUrls(graph: unknown): string[] {
+  const found = new Set<string>();
+  // Breadth first, without recursion: in the graph's own order, however deep.
+  const queue = [graph];
+  for (let i = 0; i < queue.length; i++) {
+    const node = queue[i];
+    if (typeof node === "string") {
+      if (/^\s*data:/i.test(node)) found.add(node);
+    } else if (node && typeof node === "object") {
+      for (const v of Object.values(node)) queue.push(v);
+    }
+  }
+  return [...found];
+}
 
 async function owner(request: NextRequest) {
   const supabase = getSupabaseServerClient();
@@ -67,18 +86,19 @@ export async function POST(request: NextRequest) {
   // 2026-10-08: every image). The library is private, so 18+ stays; one
   // refused, or no image at all, saves nothing, and a child-safety one
   // becomes a case. Each save pays for its checks, hence the limit.
-  const images = graph ? stripWorkflowImages(graph).images : [];
+  const images = graph ? dataUrls(graph) : [];
   if (images.length > MAX_IMAGES) {
     return NextResponse.json({ error: `A workflow can carry at most ${MAX_IMAGES} attached images to save. Nothing was saved.` }, { status: 422 });
   }
   if (images.length) {
     const limit = checkRequestRateLimit(`library-save:${userId}`, 20, 60_000);
     if (!limit.allowed) return rateLimitResponse(limit.retryAfterSeconds);
-    const bytes = images.map((img) => dataUrlBytes(img) ?? Buffer.from(img, "base64"));
-    const seen = await Promise.all(bytes.map((b) => checkImageBytes(b, { signal: request.signal })));
+    const bytes = images.map(dataUrlBytes);
+    // A data: URL that carries no base64 (percent-encoded) cannot be judged: refused.
+    const seen = await Promise.all(bytes.map((b) => (b ? checkImageBytes(b, { signal: request.signal }) : { verdict: "blocked" as const, reason: NOT_AN_IMAGE })));
     seen.forEach((v, i) => {
       if (v.verdict === "child_safety") {
-        after(recordImageCase(supabase, { surface: "library", request, bytes: bytes[i], scores: v.scores, about: "An image in a workflow saved to the private library." }));
+        after(recordImageCase(supabase, { surface: "library", request, bytes: bytes[i] as Buffer, scores: v.scores, about: "An image in a workflow saved to the private library." }));
       }
     });
     if (seen.some((v) => v.verdict === "blocked" || v.verdict === "child_safety")) {

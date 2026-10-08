@@ -92,6 +92,29 @@ describe("a workflow saved to the library", () => {
     expect(s.cases).toEqual([expect.objectContaining({ surface: "library", scores: { minor: 0.9 }, bytes: Buffer.from(payload(2), "base64") })]);
   });
 
+  it("judges an image in any spelling a browser shows, at any depth", async () => {
+    let deep: unknown = { image: `DATA:Image/PNG;BASE64,${payload(3)}` };
+    for (let i = 0; i < 100; i++) deep = { child: deep };
+    const res = await save({ nodes: [{ image: `data:application/octet-stream;base64,${payload(1)}` }, { image: ` data:image/png;base64,${payload(2)}` }], deep });
+    expect(res.status).toBe(201);
+    expect(s.judged).toHaveLength(3);
+    expect(s.judged).toEqual(expect.arrayContaining([1, 2, 3].map((n) => Buffer.from(payload(n), "base64").toString("base64"))));
+  });
+
+  it("refuses a data URL that carries no base64 image, judging nothing", async () => {
+    const res = await save(graphOf("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E"));
+    expect(res.status).toBe(422);
+    expect(s.judged).toEqual([]);
+    expect(s.rows).toEqual([]);
+  });
+
+  it("takes long plain text for text, however much it looks like base64", async () => {
+    const prompt = "cinematic portrait of an old fisherman at dawn 85mm lens shallow depth of field ".repeat(5);
+    expect(prompt.length).toBeGreaterThan(256);
+    expect((await save({ prompt, nodes: [{ value: prompt }] })).status).toBe(201);
+    expect(s.judged).toEqual([]);
+  });
+
   it("more than 14 images: refused before any check", async () => {
     const res = await save(graphOf(...Array.from({ length: 15 }, (_, i) => img(i))));
     expect(res.status).toBe(422);
