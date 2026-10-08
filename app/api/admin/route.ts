@@ -27,12 +27,14 @@ import { banUntil } from "@/lib/moderation/bans";
 import { AccessError, accessFor, approveRequest, inviteEmail, inviteWallet, rejectRequest } from "@/lib/access-invite";
 import { inChunks } from "@/lib/in-chunks";
 import { readImageEvidence } from "@/lib/moderation/image-case";
+import { FEEDBACK_BUCKET } from "@/lib/feedback";
 
 /** A ban counts while it is not lifted and has not run out, as activeBanFor reads it. */
 const unexpired = () => `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`;
 
 type Supabase = ReturnType<typeof getSupabaseServerClient>;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const FEEDBACK_SIGN_TTL = 600; // seconds
 
 // The role comes back too: mods and admins share this panel, but not every
 // control in it. Throttling generation is an admin decision — a mod moderates
@@ -228,6 +230,21 @@ export async function GET(req: NextRequest) {
     const who = parsePersonKey(person);
     if (!who) return NextResponse.json({ error: "Bad person id" }, { status: 400 });
     return NextResponse.json(await personDetail(supabase, who, (ct, iv, tag, kid) => tryDecrypt(ct, iv, tag, kid, [undefined])));
+  }
+
+  // One report's attachments, signed as its row opens (Kev, 2026-10-08). The
+  // bucket is private: a link that lives for minutes cannot outlive the look.
+  const feedbackId = req.nextUrl.searchParams.get("feedback");
+  if (feedbackId !== null) {
+    if (!UUID_RE.test(feedbackId)) return NextResponse.json({ error: "Bad feedback id" }, { status: 400 });
+    const { data: att } = await supabase.from("feedback_attachments")
+      .select("storage_key, mime_type").eq("feedback_id", feedbackId).order("sort_order", { ascending: true });
+    const rows = (att ?? []).filter((a) => a.storage_key);
+    const signed = rows.length
+      ? (await supabase.storage.from(FEEDBACK_BUCKET).createSignedUrls(rows.map((a) => String(a.storage_key)), FEEDBACK_SIGN_TTL)).data ?? []
+      : [];
+    const url = new Map(signed.map((f) => [f.path, f.signedUrl]));
+    return NextResponse.json({ files: rows.map((a) => ({ url: url.get(String(a.storage_key)) ?? null, mime: String(a.mime_type ?? "") })) });
   }
 
   const [imp, rep, fb, hu, st, ba, ap, rec, council, genPolicy, automod, people, access] = await Promise.all([
