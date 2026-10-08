@@ -36,7 +36,7 @@ const DEFAULTS: Record<string, Row> = {
   reports: { status: "pending" },
 };
 // Unique keys the fake enforces on insert (23505), as the migrations declare them.
-const UNIQUE: Record<string, string[]> = { mfa_factors: ["user_id", "kind"], access_allowlist: ["kind", "value"] };
+const UNIQUE: Record<string, string[]> = { mfa_factors: ["user_id", "kind"], access_allowlist: ["kind", "value"], linked_wallets: ["user_id", "address"] };
 
 export function fakePostgrest() {
   const tables: Record<string, Row[]> = {};
@@ -129,5 +129,14 @@ export function fakePostgrest() {
     };
     return q;
   }
-  return { tables, state, client: { from } as never };
+  // consume_auth_nonce as migrations/combined-supabase-migrations.sql has it: an
+  // unused, unexpired nonce issued for this (lowercased) address, used once.
+  async function rpc(fn: string, a: { p_wallet_address: string; p_nonce: string }) {
+    if (fn !== "consume_auth_nonce") throw new Error(`fake rpc: ${fn}`);
+    const n = (tables.auth_nonces ??= []).find((r) => r.nonce === a.p_nonce && r.wallet_address === a.p_wallet_address.toLowerCase()
+      && r.consumed === false && String(r.expires_at) > new Date().toISOString());
+    if (n) n.consumed = true;
+    return { data: Boolean(n), error: null };
+  }
+  return { tables, state, client: { from, rpc } as never };
 }
