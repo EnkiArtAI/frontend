@@ -195,7 +195,7 @@ describe("saving a prompt", () => {
   });
 
   it("marks a prompt 18+ when a showcase image is an 18+ render", async () => {
-    tables.generated_images.push({ id: "g1", storage_url: "https://blob/x.png", is_adult: true });
+    tables.generated_images.push({ id: "g1", user_id: "u1", is_uploaded: false, storage_url: "https://blob/x.png", is_adult: true });
     await save({ ...BASE, uploadedPhotos: ["https://blob/x.png"] });
     expect(tables.prompts[0].is_adult).toBe(true);
   });
@@ -215,7 +215,7 @@ describe("saving a prompt", () => {
   });
 
   it("leaves an ordinary prompt below 18", async () => {
-    tables.generated_images.push({ id: "g1", storage_url: "https://blob/y.png", is_adult: false });
+    tables.generated_images.push({ id: "g1", user_id: "u1", is_uploaded: false, storage_url: "https://blob/y.png", is_adult: false });
     await save({ ...BASE, uploadedPhotos: ["https://blob/y.png"] });
     expect(tables.prompts[0].is_adult).toBe(false);
   });
@@ -346,6 +346,40 @@ describe("variables sharing a name", () => {
   it("are saved when nothing of their names survives as a stored name: those are stored by position", async () => {
     expect((await two("猫", "犬")).status).toBe(200);
     expect(tables.prompt_variables.map((v) => v.name)).toEqual(["var_0", "var_1"]);
+  });
+});
+
+describe("a showcase (Kev, 2026-10-08: the creator's own renders until an image check runs)", () => {
+  const MINE = "https://abc.public.blob.vercel-storage.com/generations/u1/1.png";
+  const PREVIEW = "https://abc.public.blob.vercel-storage.com/generations/u1/1.preview.webp";
+
+  it("may be one of the creator's own renders, by its original or its preview", async () => {
+    tables.generated_images.push({ id: "g1", user_id: "u1", is_uploaded: false, storage_url: MINE, preview_url: PREVIEW });
+    expect((await save({ ...BASE, uploadedPhotos: [MINE] })).status).toBe(200);
+    expect((await save({ ...BASE, uploadedPhotos: [PREVIEW] })).status).toBe(200);
+  });
+
+  it("refuses an upload, someone else's render, a deleted one or a data URL by its number, before any check", async () => {
+    tables.generated_images.push(
+      { id: "g1", user_id: "u1", is_uploaded: false, storage_url: MINE },
+      { id: "g2", user_id: "u1", is_uploaded: true, storage_url: "https://blob/upload.png" },
+      { id: "g3", user_id: "u2", is_uploaded: false, storage_url: "https://blob/theirs.png" },
+      { id: "g4", user_id: "u1", is_uploaded: false, storage_url: "https://blob/gone.png", deleted_at: "2026-10-08T00:00:00Z" },
+    );
+    for (const other of ["https://blob/upload.png", "https://blob/theirs.png", "https://blob/gone.png", "data:image/png;base64,iVBORw0KGgo="]) {
+      check.mockClear();
+      const res = await save({ ...BASE, uploadedPhotos: [MINE, other] });
+      expect(res.status).toBe(422);
+      expect((await res.json()).error).toBe("Showcase image 2 must be one of your own renders on Enki. Nothing was saved.");
+      expect(check).not.toHaveBeenCalled();
+    }
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("keeps what the prompt already shows, render or not", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    tables.prompts.push({ id, creator_id: "u1", is_adult: false, showcase_images: ["https://blob/older.png"] });
+    expect((await save({ ...BASE, id, uploadedPhotos: ["https://blob/older.png"] })).status).toBe(200);
   });
 });
 

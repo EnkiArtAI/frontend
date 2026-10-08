@@ -9,6 +9,7 @@ import { showsAdultRender } from "@/lib/adult-content";
 import { resolveOwnerIds, resolveSessionUserId, resolveSessionUserWithBan } from "@/lib/session-user";
 import { isPublicText } from "@/lib/prompt-visibility";
 import { keepableImage, ownShowcaseImages } from "@/lib/generation/derivative-store";
+import { ownRenders } from "@/lib/generation/own-renders";
 import { extractTags, storedTags } from "@/lib/search/tags";
 import { artistPayoutWallet } from "@/lib/payments/generation-quote";
 import { DEFAULT_PROMPT_PRICE_USD } from "@/shared/revenue-config";
@@ -463,6 +464,22 @@ export async function POST(req: Request) {
             ? NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 })
             : NextResponse.json({ error: "A paid prompt for sale needs a Solana wallet on your account to be paid to: connect one, or link yours again. Nothing was saved." }, { status: 422 });
         }
+      }
+    }
+
+    // A showcase is the creator's own work on Enki, one of their recorded
+    // renders, until an image check runs on uploads (Kev, 2026-10-08). One the
+    // prompt already shows stays; anything else is refused by its number,
+    // before the check, so a refused save costs no call.
+    const newShowcase = uploadedPhotos.filter((url) => !savedShowcase.includes(url));
+    if (newShowcase.length > 0) {
+      const renders = await ownRenders(supabase, creatorId ? [creatorId] : ownerIds, newShowcase);
+      if (!renders) {
+        return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 });
+      }
+      const foreign = uploadedPhotos.findIndex((url) => !savedShowcase.includes(url) && !renders.has(url));
+      if (foreign >= 0) {
+        return NextResponse.json({ error: `Showcase image ${foreign + 1} must be one of your own renders on Enki. Nothing was saved.` }, { status: 422 });
       }
     }
 
