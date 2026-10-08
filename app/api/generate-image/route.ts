@@ -7,7 +7,7 @@ import type { ImageGenerationRequest } from "@/backend/services/types";
 import { referenceImageCount } from "@/lib/generation/provider-capabilities";
 import { getSupabaseServerClient, getSupabaseServerClientSafe } from "@/lib/supabaseServer";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { requireAuth, checkRateLimit } from "@/lib/auth";
+import { authRefusal, requireAuth, checkRateLimit } from "@/lib/auth";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { moderate, screenFirst, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { resolveModel, chooseRoute } from "@/lib/generation/models";
@@ -228,11 +228,12 @@ export async function POST(request: NextRequest) {
        model row, the resolution, the quality that runs, boost and how many
        reference images. Everything below runs those and nothing the request
        body says instead. */
-    const { data: intentRow } = await (getSupabaseServerClientSafe()
+    const { data: intentRow, error: intentError } = await (getSupabaseServerClientSafe()
       ?.from("generation_payment_intents")
       .select("model_id, model_family, resolution, quality, boost, reference_image_count, prompt_id, artist_amount_micro")
       .eq("id", intentId)
-      .maybeSingle() ?? Promise.resolve({ data: null }));
+      .maybeSingle() ?? Promise.resolve({ data: null, error: null }));
+    if (isDbUnreachable(intentError)) return dbUnavailableResponse();
     const paid = intentRow as
       | (StoredSettings & { model_family: string; prompt_id: string | null; artist_amount_micro: number })
       | null;
@@ -536,8 +537,8 @@ export async function POST(request: NextRequest) {
     let authUser;
     try {
       authUser = await requireAuth(request);
-    } catch {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    } catch (e) {
+      return authRefusal(e);
     }
     if (!checkRateLimit(authUser.userId, "generate:intent", 60, 60_000)) {
       return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });

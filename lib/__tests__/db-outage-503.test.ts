@@ -79,3 +79,15 @@ describe("a database outage", () => {
     expect(paid).toMatch(/const recUserId = await resolveRecordingUserId\(recSupabase, request\)\.catch\(\(e\) => \{\n\s+console\.error\("\[generate\] delivered image not recorded:"/);
   });
 });
+
+describe("generate-image, the paid render", () => {
+  const route = readSource(join(__dirname, "..", "..", "app", "api", "generate-image", "route.ts"));
+
+  it("answers an outage while reading the intent with 503, not 'intent not found'", () => {
+    expect(route).toContain("if (isDbUnreachable(intentError)) return dbUnavailableResponse();");
+  });
+
+  it("answers an outage while reading the session with 503, not 'sign in'", () => {
+    expect(route).toMatch(/authUser = await requireAuth\(request\);\n\s+\} catch \(e\) \{\n\s+return authRefusal\(e\);/);
+  });
+});
