@@ -190,4 +190,21 @@ describe("recording a payout", () => {
   it("says so for a report that does not exist", async () => {
     expect((await pay("admin-tok", SIG, "aaaaaaaa-0000-4000-8000-0000000000ff")).status).toBe(404);
   });
+
+  it("the tab names where the money goes and links the transfer once sent", async () => {
+    db.current!.tables.user_wallets = [
+      { user_id: "u1", address: "LiveSol", chain_family: "solana", removed_at: null },
+      { user_id: "u1", address: "0xEvm", chain_family: "evm", removed_at: null },
+      { user_id: "u1", address: "OldSol", chain_family: "solana", removed_at: "2026-09-01T00:00:00Z" },
+      // A legacy lowercased row decodes to a key nobody holds: never named.
+      { user_id: "u1", address: "7xkxtg2cw87d97txjsdpbd5jbkheTqa83tzrujosgasu".toLowerCase(), chain_family: "solana", removed_at: null },
+    ];
+    await pay("admin-tok", SIG);
+    const { feedback } = (await get("admin-tok")).body;
+    expect(feedback[0]).toMatchObject({ wallet: "LiveSol", paid: true, txUrl: `https://explorer.solana.com/tx/${SIG}` });
+    expect(feedback[1]).toMatchObject({ wallet: null, paid: false, txUrl: null });
+    // The fake answers every column; the live reads only those they name.
+    expect(ADMIN_ROUTE).toMatch(/\.from\("feedback_submissions"\)\n\s+\.select\("[^"]*\bpayout_tx_hash, payout_chain_key\b[^"]*"\)/);
+    expect(ADMIN_ROUTE).toContain('supabase.from("user_wallets").select("user_id, address").in("user_id", chunk).eq("chain_family", "solana").is("removed_at", null)');
+  });
 });

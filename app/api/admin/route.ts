@@ -28,6 +28,7 @@ import { loadPromptText } from "@/lib/generation/prompt-text";
 import { banUntil } from "@/lib/moderation/bans";
 import { AccessError, accessFor, approveRequest, inviteEmail, inviteWallet, rejectRequest } from "@/lib/access-invite";
 import { inChunks } from "@/lib/in-chunks";
+import { explorerTxUrl } from "@/lib/send-usdc";
 import { readImageEvidence } from "@/lib/moderation/image-case";
 import { FEEDBACK_BUCKET, FEEDBACK_STATUS, feedbackDecision, type FeedbackDecision } from "@/lib/feedback";
 
@@ -263,7 +264,7 @@ export async function GET(req: NextRequest) {
       .eq("status", "pending").order("submitted_at", { ascending: false }).limit(100),
     pendingReports(supabase),
     supabase.from("feedback_submissions")
-      .select("id, user_id, submitter_name, submitter_email_ct, submitter_email_iv, submitter_email_tag, submitter_email_kid, description, category, severity, status, payout_cents, paid_at, created_at")
+      .select("id, user_id, submitter_name, submitter_email_ct, submitter_email_iv, submitter_email_tag, submitter_email_kid, description, category, severity, status, payout_cents, payout_tx_hash, payout_chain_key, paid_at, created_at")
       .order("created_at", { ascending: false }).limit(100),
     supabase.from("hunter_stats")
       .select("user_id, total_submissions, approved_count, rejected_count, duplicate_count, earnings_cents")
@@ -299,10 +300,20 @@ export async function GET(req: NextRequest) {
   // attachments per feedback + evidence per recovery request
   const fbIds = (fb.data ?? []).map((r) => String(r.id));
   const recIds = (rec.data ?? []).map((r) => String(r.id));
-  const [att, evi] = await Promise.all([
+  // Where a report's $100 goes: the account's live Solana wallet, as artist payouts read it.
+  const fbUsers = (fb.data ?? []).filter((r) => r.user_id).map((r) => String(r.user_id));
+  const [att, evi, wallets] = await Promise.all([
     fbIds.length ? supabase.from("feedback_attachments").select("feedback_id").in("feedback_id", fbIds) : Promise.resolve({ data: [] }),
     recIds.length ? supabase.from("recovery_request_evidence").select("request_id, kind, matched, value_url").in("request_id", recIds) : Promise.resolve({ data: [] }),
+    inChunks(fbUsers, (chunk) => supabase.from("user_wallets").select("user_id, address").in("user_id", chunk).eq("chain_family", "solana").is("removed_at", null)),
   ]);
+  const payTo = new Map<string, string>();
+  for (const w of wallets) {
+    const address = String(w.address);
+    // All lowercase is a legacy row that decodes to a key nobody holds: it must
+    // be re-linked before anything is sent to it (artistPayoutWallet).
+    if (address !== address.toLowerCase()) payTo.set(String(w.user_id), address);
+  }
   const attCount = new Map<string, number>();
   for (const a of (att.data ?? []) as { feedback_id: string }[]) {
     attCount.set(String(a.feedback_id), (attCount.get(String(a.feedback_id)) ?? 0) + 1);
@@ -416,6 +427,8 @@ export async function GET(req: NextRequest) {
       images: attCount.get(String(r.id)) ?? 0,
       paid: r.paid_at !== null,
       state: feedbackDecision(r.status),
+      wallet: r.user_id ? (payTo.get(String(r.user_id)) ?? null) : null,
+      txUrl: r.payout_tx_hash ? explorerTxUrl(r.payout_chain_key, String(r.payout_tx_hash)) : null,
       payoutCents: (r.payout_cents as number | null) ?? null,
       at: r.created_at,
     })),
