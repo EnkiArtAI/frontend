@@ -29,7 +29,6 @@ interface SidebarProps {
   onCreate: () => void;
   onCreate2: () => void;
   nodeActive?: boolean;
-  onRefer: () => void;
   onFeedback?: () => void;
   /** Team-cookie browsing: earn buttons deactivate and say so. */
   guest?: boolean;
@@ -47,7 +46,7 @@ interface SidebarProps {
 }
 
 export default function EnkiSidebar({
-  nav, active, onNav, rail, onCreate, onCreate2, nodeActive, onRefer, onFeedback, guest = false,
+  nav, active, onNav, rail, onCreate, onCreate2, nodeActive, onFeedback, guest = false,
   account, onToggleCollapse, collapsed, balance, onProfile, onTopUp, onLogoff, theme, setTheme,
   mobileOpen = false, onCloseMobile,
 }: SidebarProps) {
@@ -148,11 +147,6 @@ export default function EnkiSidebar({
               </button>
             ))}
             <div className="ek-burger-sep" />
-            <button type="button" role="menuitem" className="ek-burger-item" onClick={() => { onRefer(); setBurgerOpen(false); }}>
-              <Icon name="link" size={16} stroke={1.9} />
-              <span className="ek-burger-label">Refer a prompt</span>
-              <span className="ek-earn-chip">$</span>
-            </button>
             {onFeedback && (
               <button type="button" role="menuitem" className="ek-burger-item" onClick={() => { onFeedback(); setBurgerOpen(false); }}>
                 <Icon name="message" size={16} stroke={1.9} />
@@ -177,7 +171,7 @@ export default function EnkiSidebar({
         })}
       </nav>
 
-      {/* ── Earn money: refer + feedback, both pay out ── */}
+      {/* ── Earn money: feedback pays out ── */}
       {!rail && (
         <div className="ek-earn-lab">
           <span>Earn money</span>
@@ -186,12 +180,6 @@ export default function EnkiSidebar({
       )}
       {/* Open for everyone — guests get the popup and a greyed submit
           inside it, so they SEE what there is to earn (Kev, 2026-08-23). */}
-      <button className="ek-earn-row" onClick={onRefer} type="button" title="Refer a prompt — earn when it goes live">
-        <Icon name="link" size={18} stroke={1.9} />
-        {!rail && <span className="ek-earn-label">Refer a prompt</span>}
-        {!rail && <span className="ek-earn-chip">$</span>}
-        {rail && <span className="ek-nav-tip">Refer a prompt · earn</span>}
-      </button>
       {onFeedback && (
         <button className="ek-earn-row" onClick={onFeedback} type="button" title="Feedback — win $100 if we build your change">
           <Icon name="message" size={18} stroke={1.9} />

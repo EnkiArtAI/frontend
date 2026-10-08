@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useActiveAccount } from "thirdweb/react";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Instagram, AlertCircle, ArrowUpRight, CheckCircle2, X } from "lucide-react";
 
@@ -14,27 +13,13 @@ import RecoveryPanel from "@/components/settings/RecoveryPanel";
 import LinkedWallets from "@/components/settings/LinkedWallets";
 import { useEmailAuth } from "@/hooks/useEmailAuth";
 import { sessionAuthHeaders } from "@/lib/session-headers";
-import { REFERRAL_PLATFORM_NAME, type ReferralPlatform } from "@/lib/referral-link";
 import { useBetaAccess } from "@/components/BetaGate";
 import { useRecoveryStatus } from "@/hooks/useRecoveryStatus";
-import { REFERRAL_SHARE_PCT, PLATFORM_FEE_PCT } from "@/shared/revenue-config";
 import "@/components/settings/settings.css";
-
-/** One link this account sent in, as GET /api/referrals returns it. */
-type Referred = { id: string; url: string; platform: string; status: string; promptId: string | null; submittedAt: string };
-const GREY = { bg: "rgba(130,130,130,.16)", color: "var(--enki-ink-3)" };
-const REFERRAL_STATE: Record<string, { label: string; bg: string; color: string }> = {
-  pending: { label: "In review", ...GREY },
-  approved: { label: "Accepted", bg: "rgba(201,104,56,.16)", color: "var(--enki-ember)" },
-  released: { label: "Released", bg: "rgba(31,138,91,.16)", color: "#1f8a5b" },
-  rejected: { label: "Not used", ...GREY },
-  duplicate: { label: "Already known", ...GREY },
-};
 
 const TABS: TabItem[] = [
   { id: "profile", label: "Profile" },
   { id: "payment", label: "Payment" },
-  { id: "referrals", label: "Referrals" },
   { id: "recovery", label: "Recovery & 2FA" },
 ];
 
@@ -48,7 +33,6 @@ function XLogo({ size = 12 }: { size?: number }) {
 }
 
 export default function SettingsPage({ initialTab, focusRamp = false, globalBannerVisible = false, focusGuardians: focusGuardiansProp = false }: { initialTab?: string; focusRamp?: boolean; globalBannerVisible?: boolean; focusGuardians?: boolean } = {}) {
-  const account = useActiveAccount();
   const { toast } = useToast();
 
   // initialTab lets embedders (sidebar balance chip → Payment) open a tab
@@ -133,24 +117,6 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
       toast({ title: "Couldn't save", variant: "destructive" });
     }
   };
-  /* The links this account sent in, from the moderators' queue. They used to
-     be read from the browser, where the old dialog kept them. null = not
-     loaded yet; a failed load is said, never shown as "none". */
-  const [referrals, setReferrals] = useState<Referred[] | null>(null);
-  const [referralsFailed, setReferralsFailed] = useState(false);
-  useEffect(() => {
-    if (activeTab !== "referrals") return;
-    let live = true;
-    fetch("/api/referrals", { headers: sessionAuthHeaders(), credentials: "include" })
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
-      .then((body: { referrals?: Referred[] }) => {
-        if (!live) return;
-        setReferrals(Array.isArray(body.referrals) ? body.referrals : []);
-        setReferralsFailed(false);
-      })
-      .catch(() => { if (live) setReferralsFailed(true); });
-    return () => { live = false; };
-  }, [activeTab, account?.address]);
   const [saving, setSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
 
@@ -252,14 +218,12 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
   const titleMap: Record<string, React.ReactNode> = {
     profile: "Profile.",
     payment: "Payment.",
-    referrals: "Referrals.",
     recovery: <>Recovery <span>&</span> 2FA.</>,
   };
 
   const descMap: Record<string, string> = {
     profile: "Manage your connected social accounts, linked wallets and visibility settings.",
     payment: "Your balance, your earnings, and the ways money moves in and out — always into your own wallet.",
-    referrals: "Found great art on social media? Send the post in. A moderator may rebuild it as a prompt.",
     recovery: "Keep more than one way back in — a passkey on another device, plus guardians you trust.",
   };
 
@@ -432,58 +396,6 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
 
           {/* === PAYMENT TAB === */}
           {activeTab === "payment" && <PaymentPanel focusRamp={rampFocus} />}
-
-          {/* === REFERRALS TAB === */}
-          {activeTab === "referrals" && (
-            <SettingsSection num="01" title="Referrals">
-              <div className="set-section-desc" style={{ paddingBottom: 16 }}>
-                Found great art on social media? Send the post in with <strong>Refer Prompt</strong>.
-                A moderator reviews every link and may rebuild it as a prompt. When it is released as a
-                free prompt, you and its creator each earn{" "}
-                <strong>{REFERRAL_SHARE_PCT / 2}% of Enki&apos;s {PLATFORM_FEE_PCT}% fee</strong> on every image made with it.
-              </div>
-              {referralsFailed ? (
-                <div className="set-section-desc">Your referrals could not be loaded. Open this tab again in a moment.</div>
-              ) : referrals === null ? (
-                <div className="set-section-desc">Loading…</div>
-              ) : referrals.length === 0 ? (
-                <div className="set-section-desc">No referrals yet — use <strong>Refer Prompt</strong> to send in a social link.</div>
-              ) : (
-                <>
-                  <div className="set-earn-grid" style={{ marginBottom: 14 }}>
-                    <div className="set-earn-cell">
-                      <div className="set-earn-num">{referrals.length}</div>
-                      <div className="set-earn-label">Links sent in</div>
-                    </div>
-                    <div className="set-earn-cell">
-                      <div className="set-earn-num">{referrals.filter((r) => r.promptId).length}</div>
-                      <div className="set-earn-label">Released as prompts</div>
-                    </div>
-                  </div>
-                  <div className="set-table-wrapper">
-                    <table className="set-table">
-                      <thead>
-                        <tr><th>Link</th><th>Platform</th><th>Status</th><th>Prompt</th></tr>
-                      </thead>
-                      <tbody>
-                        {referrals.map((r) => {
-                          const state = r.promptId ? REFERRAL_STATE.released : REFERRAL_STATE[r.status] ?? REFERRAL_STATE.pending;
-                          return (
-                            <tr key={r.id}>
-                              <td><a href={r.url} target="_blank" rel="noreferrer" style={{ color: "var(--enki-ember)" }}>{r.url.replace("https://", "").replace("http://", "").slice(0, 34)}</a></td>
-                              <td>{REFERRAL_PLATFORM_NAME[r.platform as ReferralPlatform] ?? REFERRAL_PLATFORM_NAME.other}</td>
-                              <td><span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 600, background: state.bg, color: state.color }}>{state.label}</span></td>
-                              <td>{r.promptId ? <a href={"/generator/" + r.promptId} style={{ color: "var(--enki-ember)" }}>View prompt</a> : "—"}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              )}
-            </SettingsSection>
-          )}
 
           {/* === RECOVERY & 2FA TAB === */}
           {activeTab === "recovery" && <RecoveryPanel focus={focusGuardians} />}
