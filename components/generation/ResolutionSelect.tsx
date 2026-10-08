@@ -2,7 +2,7 @@
 
 import { createPortal } from "react-dom";
 import { Maximize2, ChevronDown } from "lucide-react";
-import { usePanelPos, panelStyle } from "./RatioSelect";
+import { usePanelPos, panelStyle } from "@/components/kit/panel-pos";
 import "./ratio-select.css";
 
 /**

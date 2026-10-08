@@ -2,7 +2,7 @@
 
 import { createPortal } from "react-dom";
 import { Gem, ChevronDown } from "lucide-react";
-import { usePanelPos, panelStyle } from "./RatioSelect";
+import { usePanelPos, panelStyle } from "@/components/kit/panel-pos";
 // Same classes as RatioSelect on purpose: the quality field sits directly
 // under ratio + resolution and read as a foreign control with its own bare
 // styling (Kev, 2026-08-24: "i want the format of e.g. ratio").
