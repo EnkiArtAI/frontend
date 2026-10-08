@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./icons";
 import { sessionAuthHeaders } from "@/lib/session-headers";
-import { FEEDBACK_FILE_EXT, FEEDBACK_MAX_BYTES, addFeedbackFiles } from "@/lib/feedback";
+import { FEEDBACK_FILE_EXT, FEEDBACK_MAX_BYTES, addFeedbackFiles, type FeedbackDecision } from "@/lib/feedback";
 import { fitUpload } from "@/lib/shrink-image";
 
 const SEVS = [
@@ -17,6 +17,10 @@ const SEVS = [
   { id: "annoying", label: "Annoying", bg: "#FDF6E8", ink: "#6E4A1E", border: "#E8C89A" },
   { id: "minor", label: "Somewhat annoying", bg: "var(--enki-paper-2)", ink: "var(--enki-ink-3)", border: "var(--enki-rule)" },
 ];
+
+/** One of the sender's own reports, as GET /api/feedback answers it. */
+type Mine = { id: string; at: string; preview: string; state: FeedbackDecision; paid: boolean; payoutCents: number; txUrl: string | null };
+const STATE_LABEL: Record<FeedbackDecision, string> = { open: "In review", done: "Done", rejected: "Declined" };
 
 /** Still images are drawn anew before they count; a GIF would lose its motion and a video cannot be. */
 const STILLS = ["image/png", "image/jpeg", "image/webp"];
@@ -36,6 +40,7 @@ export default function FeedbackModal({ onClose, onToast, guest = false }: { onC
   // While picked images are redrawn the list holds still, so nothing is added to a stale one.
   const [attaching, setAttaching] = useState(false);
   const [done, setDone] = useState(false);
+  const [mine, setMine] = useState<Mine[]>([]);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const doneT = useRef<number | null>(null);
 
@@ -50,6 +55,20 @@ export default function FeedbackModal({ onClose, onToast, guest = false }: { onC
     window.addEventListener("keydown", onKey, true);
     return () => { window.removeEventListener("keydown", onKey, true); if (doneT.current) window.clearTimeout(doneT.current); };
   }, [onClose]);
+
+  // The sender's own reports and what became of each (Kev, 2026-10-08).
+  useEffect(() => {
+    if (guest) return;
+    let dead = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/feedback", { headers: sessionAuthHeaders() });
+        const d = res.ok ? ((await res.json()) as { items: Mine[] }) : null;
+        if (d && !dead) setMine(d.items);
+      } catch { /* the list is extra; the form works without it */ }
+    })();
+    return () => { dead = true; };
+  }, [guest]);
 
   const canSend = !!sev && text.trim().length >= 10 && !busy && !attaching; // server wants ≥10 chars
 
@@ -172,6 +191,23 @@ export default function FeedbackModal({ onClose, onToast, guest = false }: { onC
             <button className="ek-btn" style={{ minHeight: 40, opacity: canSend && !guest ? 1 : 0.55 }} disabled={!canSend || guest} title={guest ? "Sign in to submit" : undefined} onClick={() => void send()}>
               {busy ? "Sending…" : "Send feedback"}
             </button>
+
+            {mine.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <span style={{ ...microLabel, marginBottom: 4 }}>Your feedback</span>
+                <div style={{ maxHeight: 150, overflowY: "auto" }}>
+                  {mine.map((m) => (
+                    <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", borderTop: "1px dashed var(--enki-rule)" }}>
+                      <span style={{ fontFamily: MONO, fontSize: 8.5, color: "var(--enki-ink-3)", flexShrink: 0 }}>{new Date(m.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: "var(--enki-ink-2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.preview}</span>
+                      {m.paid && m.txUrl
+                        ? <a href={m.txUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, fontWeight: 700, color: "#1f8a5b", flexShrink: 0 }}>Paid ${m.payoutCents / 100} ↗</a>
+                        : <span style={{ fontSize: 10, color: "var(--enki-ink-3)", flexShrink: 0 }}>{m.paid ? "Paid" : STATE_LABEL[m.state]}</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
