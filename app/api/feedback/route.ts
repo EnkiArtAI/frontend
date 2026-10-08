@@ -100,7 +100,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Could not save your feedback${error?.message ? ": " + error.message : ""}` }, { status: 500 });
   }
 
-  // attachments are best-effort — the submission stands even if one fails
+  // attachments are best-effort — the submission stands even if one fails,
+  // and the sender is told how many were not kept
+  let kept = 0;
   if (files.length) {
     await supabase.storage.createBucket(BUCKET, { public: false }).catch(() => {});
     for (let i = 0; i < files.length; i++) {
@@ -125,8 +127,9 @@ export async function POST(req: NextRequest) {
         feedback_id: row.id, image_url: path, storage_key: path,
         file_size_bytes: f.size, mime_type: f.type, sort_order: i,
       });
+      kept++;
     }
   }
 
-  return NextResponse.json({ ok: true }, { status: 201 });
+  return NextResponse.json({ ok: true, dropped: files.length - kept }, { status: 201 });
 }

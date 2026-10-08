@@ -70,8 +70,11 @@ export default function FeedbackModal({ onClose, onToast, guest = false }: { onC
       fd.append("description", text.trim());
       files.forEach((f) => fd.append("files", f));
       const res = await fetch("/api/feedback", { method: "POST", headers: sessionAuthHeaders(), body: fd });
-      const data = await res.json().catch(() => ({} as { error?: string }));
+      const data = await res.json().catch(() => ({} as { error?: string; dropped?: number }));
       if (!res.ok) { onToast(data.error || "Could not send your feedback."); return; }
+      if (data.dropped) {
+        onToast(`Feedback sent, but ${data.dropped === 1 ? "1 attachment was" : `${data.dropped} attachments were`} not kept: only still images that pass our check, and MP4, WebM or MOV videos, are.`);
+      }
       setDone(true);
       doneT.current = window.setTimeout(onClose, 2200);
     } catch {

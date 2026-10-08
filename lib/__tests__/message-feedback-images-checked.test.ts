@@ -68,7 +68,7 @@ const post = async (handler: (r: NextRequest) => Promise<Response>, fields: Reco
   const form = new FormData();
   for (const [k, v] of Object.entries(fields)) for (const one of Array.isArray(v) ? v : [v]) form.append(k, one);
   const res = await handler(new Request("http://x/api", { method: "POST", headers: { "X-Session-Token": "t", "x-forwarded-for": `10.1.0.${s.calls}` }, body: form }) as unknown as NextRequest);
-  return { status: res.status, body: (await res.json()) as { error?: string } };
+  return { status: res.status, body: (await res.json()) as { error?: string; dropped?: number } };
 };
 
 beforeEach(() => Object.assign(s, { verdicts: [], calls: 0, cases: [], uploads: [], rows: [] }));
@@ -104,7 +104,8 @@ describe("an image attached to a feedback report", () => {
 
   it("keeps clear and 18+ ones, drops refused and unjudged ones, and the report stands", async () => {
     s.verdicts = ["clear", "adult", "blocked", "unavailable"];
-    expect((await report([file(), file(), file(), file()])).status).toBe(201);
+    // The sender is told how many were not kept.
+    expect(await report([file(), file(), file(), file()])).toEqual({ status: 201, body: { ok: true, dropped: 2 } });
     expect(s.uploads.map((p) => p.split("/")[1].split("-")[0])).toEqual(["0", "1"]);
     expect(s.rows.filter((r) => r.table === "feedback_attachments")).toHaveLength(2);
   });
@@ -148,5 +149,17 @@ describe("an image attached to a feedback report", () => {
   it("drops what is neither an image the check reads nor a declared video", async () => {
     expect((await report([bytes("video/mp4", [1, 2, 3, 4, 5, 6, 7, 8]), bytes("image/gif", MP4)])).status).toBe(201);
     expect(s.uploads).toEqual([]);
+  });
+});
+
+describe("the feedback modal", () => {
+  it("tells the sender when attachments were not kept, and still thanks them", async () => {
+    const { readSource } = await import("./_read-source");
+    const { join } = await import("node:path");
+    const modal = readSource(join(__dirname, "..", "..", "components", "enki-shell", "FeedbackModal.tsx"));
+    const shown = modal.indexOf("if (data.dropped) {");
+    expect(shown).toBeGreaterThan(modal.indexOf("if (!res.ok)"));
+    expect(shown).toBeLessThan(modal.indexOf("setDone(true);"));
+    expect(modal).toContain("onToast(`Feedback sent, but ${data.dropped === 1 ? \"1 attachment was\" : `${data.dropped} attachments were`} not kept");
   });
 });
