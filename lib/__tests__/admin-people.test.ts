@@ -195,11 +195,11 @@ describe("revealing an artist's withheld text", () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const page = readFileSync(join(__dirname, "..", "..", "app", "admin", "page.tsx"), "utf8");
-    expect(page).toContain("{revealable && data?.council.isOwner && !revealed[id] && (");
+    expect(page).toContain("{revealable && data?.council.isOwner && revealed[id]?.text == null && (");
     // Only from the warning and ban list, never from the auto-filter log.
     expect(page).toContain("withheldBlock(e.id, e.draft, e.revealable)");
     expect(page).toContain("withheldBlock(r.id, r.draft, false)");
-    expect(page).toContain('body: JSON.stringify({ resource: "automod", action: "reveal", id, reason }),');
+    expect(page).toContain('body: JSON.stringify({ resource: "automod", action: "reveal", id, reason, what }),');
     expect(page.match(/withheldBlock\((e|r)\.id, (e|r)\.draft, /g)).toHaveLength(2);
     // A draft is called the requester's own, never an artist's.
     expect(page).toContain("{draft ? DRAFT_NOTE : WITHHELD_NOTE}");
@@ -261,20 +261,51 @@ describe("revealing an artist's withheld text", () => {
     Object.assign(row, { category: "csam", severity: "review", matched_rules: ["image-check"], review_state: "pending" });
     evidence.images["e-1"] = "data:image/png;base64,AAAA";
     evidence.reads.length = 0;
-    expect((await post("admin-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).status).toBe(403);
+    expect((await post("admin-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY, what: "image" })).status).toBe(403);
     expect(evidence.reads).toEqual([]);
-    expect(await (await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).json())
+    expect(await (await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY, what: "image" })).json())
       .toEqual({ text: null, source: "record", image: "data:image/png;base64,AAAA" });
     expect(tables.artist_text_reveals).toEqual([expect.objectContaining({ event_id: "e-1", revealed_by: "owner-1", reason: WHY })]);
+    expect(notified.mock.calls.at(-1)?.[1]).toMatchObject({ subject: "[Enki Admin] Withheld moderation image was revealed" });
     expect(JSON.stringify(notified.mock.calls.at(-1)?.[1])).toContain("revealed the withheld image of moderation record e-1");
     expect(JSON.stringify(notified.mock.calls.at(-1)?.[1])).not.toContain("AAAA");
   });
 
-  it("reads no image for a record that is no image case", async () => {
+  it("opens only what is asked for on an image case from a marketplace prompt, and tells the admins which", async () => {
+    const row = record({ shown: '{"subject":"fox"}', promptId: "p1" }, "generate-image");
+    Object.assign(row, { category: "csam", severity: "review", matched_rules: ["image-check"], review_state: "pending" });
+    tables.prompts = [{ id: "p1", public_prompt_text: "a free [subject]", price_usd_cents: 0, prompt_type: "free", is_adult: false }];
+    tables.prompt_variables = [];
+    evidence.images["e-1"] = "data:image/png;base64,AAAA";
+    evidence.reads.length = 0;
+    expect(await (await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).json())
+      .toEqual({ text: "a free [subject]", source: "prompt", image: null });
+    expect(evidence.reads).toEqual([]);
+    expect(notified.mock.calls.at(-1)?.[1]).toMatchObject({ subject: "[Enki Admin] Withheld moderation text was revealed" });
+    expect(JSON.stringify(notified.mock.calls.at(-1)?.[1])).toContain("revealed the withheld text of moderation record e-1");
+    tables.prompts = [];
+    expect(await (await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY, what: "image" })).json())
+      .toEqual({ text: null, source: "record", image: "data:image/png;base64,AAAA" });
+    expect(JSON.stringify(notified.mock.calls.at(-1)?.[1])).toContain("revealed the withheld image of moderation record e-1");
+    expect(tables.artist_text_reveals).toHaveLength(2);
+  });
+
+  it("reads no image for a record that is no image case, and logs no reveal of one", async () => {
     record({ shown: "{}", withheld: SECRET });
     evidence.reads.length = 0;
-    await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY });
+    const res = await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY, what: "image" });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "This record holds no image that can be read." });
     expect(evidence.reads).toEqual([]);
+    expect(tables.artist_text_reveals ?? []).toEqual([]);
+  });
+
+  it("an image reveal never carries the record's own text along", async () => {
+    const row = record({ shown: "{}", withheld: SECRET });
+    Object.assign(row, { category: "csam", severity: "review", matched_rules: ["image-check"], review_state: "pending" });
+    evidence.images["e-1"] = "data:image/png;base64,AAAA";
+    expect(await (await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY, what: "image" })).json())
+      .toEqual({ text: null, source: "record", image: "data:image/png;base64,AAAA" });
   });
 
   it("opens an extraction hit", async () => {

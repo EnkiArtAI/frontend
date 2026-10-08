@@ -304,13 +304,13 @@ export default function AdminPage() {
       const res = await fetch("/api/admin", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
-        body: JSON.stringify({ resource: "automod", action: "reveal", id, reason }),
+        body: JSON.stringify({ resource: "automod", action: "reveal", id, reason, what }),
       });
       const d = await res.json().catch(() => ({} as { error?: string; text?: string | null; source?: string; image?: string | null }));
       const text = typeof d.text === "string" ? d.text : null;
       const image = typeof d.image === "string" && d.image.startsWith("data:image/") ? d.image : null;
-      if (!res.ok || (text === null && image === null)) { say(d.error || "That didn't work."); return; }
-      setRevealed((cur) => ({ ...cur, [id]: { text, source: String(d.source), image } }));
+      if (!res.ok || (what === "image" ? image : text) === null) { say(d.error || "That didn't work."); return; }
+      setRevealed((cur) => ({ ...cur, [id]: { ...(cur[id] ?? { text: null, source: "record", image: null }), ...(what === "image" ? { image } : { text, source: String(d.source) }) } }));
     } catch {
       say("Network hiccup — nothing was revealed.");
     }
@@ -319,7 +319,7 @@ export default function AdminPage() {
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <span style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11, fontStyle: "italic", color: "var(--enki-ink-3)" }}>
         {draft ? DRAFT_NOTE : WITHHELD_NOTE}
-        {revealable && data?.council.isOwner && !revealed[id] && (
+        {revealable && data?.council.isOwner && revealed[id]?.text == null && (
           <Pill kind="plain" label="Reveal (logged)" title="Only for a hard case: your reason is logged and every admin is told" onClick={() => void reveal(id)} />
         )}
       </span>

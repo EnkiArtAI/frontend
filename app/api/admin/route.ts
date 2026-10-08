@@ -470,6 +470,7 @@ export async function POST(req: NextRequest) {
     maxConcurrentPerUser?: number | null;
     handle?: string; kind?: string; violation?: string; vote?: string;
     email?: string; enabled?: boolean; quorum?: number; ttlDays?: number;
+    what?: string;
   };
   try {
     body = await req.json();
@@ -610,24 +611,26 @@ export async function POST(req: NextRequest) {
     if (!inWarningOrBanList(ev)) {
       return NextResponse.json({ error: "Only a warning, an extraction hit, a child-safety case or a record behind a ban can be opened." }, { status: 403 });
     }
-    // The record's own copy, or else the named prompt's text as it stands now.
+    // One thing per reveal, the one asked for: the text (the record's own
+    // copy, or else the named prompt's text as it stands now), or the image a
+    // child-safety image case keeps, encrypted (lib/moderation/image-case).
+    const what = body.what === "image" ? "image" : "text";
     const part = withheldEvidence(ev);
-    const fromPrompt = part.text === null && part.promptId !== null;
+    const fromPrompt = what === "text" && part.text === null && part.promptId !== null;
     const loaded = fromPrompt ? await loadPromptText(supabase, String(part.promptId)) : null;
-    const text = fromPrompt ? (loaded?.ok ? loaded.text : null) : part.text;
-    // A child-safety image case keeps the image itself, encrypted (lib/moderation/image-case).
-    const image = Array.isArray(ev.matched_rules) && ev.matched_rules.includes("image-check")
+    const text = what === "image" ? null : fromPrompt ? (loaded?.ok ? loaded.text : null) : part.text;
+    const image = what === "image" && Array.isArray(ev.matched_rules) && ev.matched_rules.includes("image-check")
       ? await readImageEvidence(supabase, String(ev.id))
       : null;
-    if (text === null && image === null) return NextResponse.json({ error: "This record holds no artist text or image that can be read." }, { status: 404 });
+    if (text === null && image === null) return NextResponse.json({ error: `This record holds no ${what === "image" ? "image" : "artist text"} that can be read.` }, { status: 404 });
     const { error } = await supabase.from("artist_text_reveals").insert({ event_id: ev.id, prompt_id: part.promptId, revealed_by: userId, reason });
     if (error) return NextResponse.json({ error: "The reveal could not be logged, so nothing is shown." }, { status: 503 });
     const { data: me } = await supabase.from("users").select("handle").eq("id", userId).maybeSingle();
     await notifyAdmins(supabase, {
       exceptUserId: userId,
-      subject: "[Enki Admin] Withheld moderation text was revealed",
+      subject: `[Enki Admin] Withheld moderation ${what} was revealed`,
       text: [
-        `@${(me?.handle as string) ?? "the moderation owner"} revealed the withheld ${image ? "image" : "text"} of moderation record ${ev.id}${part.promptId ? ` (prompt ${part.promptId})` : ""}.`,
+        `@${(me?.handle as string) ?? "the moderation owner"} revealed the withheld ${what} of moderation record ${ev.id}${part.promptId ? ` (prompt ${part.promptId})` : ""}.`,
         "",
         `Reason: ${reason}`,
       ].join("\n"),
