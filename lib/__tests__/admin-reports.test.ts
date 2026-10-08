@@ -83,9 +83,15 @@ describe("the Reports tab", () => {
   const ROUTE = readSource(join(__dirname, "..", "..", "app", "api", "admin", "route.ts"));
   const PAGE = readSource(join(__dirname, "..", "..", "app", "admin", "page.tsx"));
 
-  it("reads every urgent report besides the newest, so none drowns below the hundred newest", () => {
-    expect(ROUTE).toContain('return (urgent ? q.in("severity", ["critical", "high"]) : q).order("created_at", { ascending: false }).limit(urgent ? 1000 : 100);');
+  it("reads every urgent report besides the newest, critical first, so none drowns below the hundred newest", () => {
+    expect(ROUTE).toContain('return (urgent ? q.in("severity", ["critical", "high"]).order("severity", { ascending: true }) : q).order("created_at", { ascending: false }).limit(urgent ? 1000 : 100);');
     expect(ROUTE).toContain('.eq("status", "pending");');
+  });
+
+  it("looks targets and handles up a slice at a time, so hundreds of reports never make a URL the gateway refuses", () => {
+    expect(ROUTE).toContain('const data = await inChunks(uniq, (chunk) => supabase.from("users").select("id, handle").in("id", chunk));');
+    expect(ROUTE).toContain('const data = await inChunks(imageTargets, (chunk) => supabase.from("generated_images").select("id, user_id, preview_url, storage_url").in("id", chunk));');
+    expect(ROUTE).toContain('const data = await inChunks(promptTargets, (chunk) => supabase.from("prompts").select("id, title").in("id", chunk));');
   });
 
   it("links what was reported", () => {

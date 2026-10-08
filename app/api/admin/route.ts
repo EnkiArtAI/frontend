@@ -25,6 +25,7 @@ import { readEvidence, withheldEvidence } from "@/lib/moderation/evidence";
 import { loadPromptText } from "@/lib/generation/prompt-text";
 import { banUntil } from "@/lib/moderation/bans";
 import { AccessError, accessFor, approveRequest, inviteEmail, inviteWallet, rejectRequest } from "@/lib/access-invite";
+import { inChunks } from "@/lib/in-chunks";
 
 /** A ban counts while it is not lifted and has not run out, as activeBanFor reads it. */
 const unexpired = () => `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`;
@@ -63,13 +64,14 @@ function tryDecrypt(ct: unknown, iv: unknown, tag: unknown, kid: unknown, aads: 
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 const severityRank = (s: unknown) => SEVERITY_RANK[String(s)] ?? 4;
 
-/** Open reports: every urgent one (critical, high; up to PostgREST's 1000-row page) and the 100 newest, each once. */
+/** Open reports: the urgent ones, critical before high (up to PostgREST's 1000-row page), and the 100 newest, each once. */
 async function pendingReports(supabase: Supabase) {
   const read = (urgent: boolean) => {
     const q = supabase.from("reports")
       .select("id, reporter_user_id, target_type, target_uuid, reason, details, severity, status, created_at")
       .eq("status", "pending");
-    return (urgent ? q.in("severity", ["critical", "high"]) : q).order("created_at", { ascending: false }).limit(urgent ? 1000 : 100);
+    // "critical" sorts before "high", so no pile of high reports pushes a critical one out.
+    return (urgent ? q.in("severity", ["critical", "high"]).order("severity", { ascending: true }) : q).order("created_at", { ascending: false }).limit(urgent ? 1000 : 100);
   };
   const [urgent, newest] = await Promise.all([read(true), read(false)]);
   const seen = new Set<string>();
@@ -81,8 +83,8 @@ async function pendingReports(supabase: Supabase) {
 const handleMap = async (supabase: Supabase, ids: string[]): Promise<Map<string, string>> => {
   const uniq = [...new Set(ids.filter(Boolean))];
   if (!uniq.length) return new Map();
-  const { data } = await supabase.from("users").select("id, handle").in("id", uniq);
-  return new Map((data ?? []).map((u) => [String(u.id), (u.handle as string) ?? "unnamed"]));
+  const data = await inChunks(uniq, (chunk) => supabase.from("users").select("id, handle").in("id", chunk));
+  return new Map(data.map((u) => [String(u.id), (u.handle as string) ?? "unnamed"]));
 };
 
 /* ── moderation council (tables from migrations/2026-07-21-moderation-council.sql;
@@ -291,8 +293,8 @@ export async function GET(req: NextRequest) {
   const images = new Map<string, { owner: string; url: string | null }>();
   const imageTargets = (rep.data ?? []).filter((r) => r.target_type === "generation").map((r) => String(r.target_uuid));
   if (imageTargets.length) {
-    const { data } = await supabase.from("generated_images").select("id, user_id, preview_url, storage_url").in("id", imageTargets);
-    for (const g of data ?? []) {
+    const data = await inChunks(imageTargets, (chunk) => supabase.from("generated_images").select("id, user_id, preview_url, storage_url").in("id", chunk));
+    for (const g of data) {
       images.set(String(g.id), { owner: String(g.user_id), url: (g.preview_url as string) ?? (g.storage_url as string) ?? null });
     }
   }
@@ -310,8 +312,8 @@ export async function GET(req: NextRequest) {
   const promptTargets = (rep.data ?? []).filter((r) => r.target_type === "prompt").map((r) => String(r.target_uuid));
   const promptTitles = new Map<string, string>();
   if (promptTargets.length) {
-    const { data } = await supabase.from("prompts").select("id, title").in("id", promptTargets);
-    for (const p of data ?? []) promptTitles.set(String(p.id), (p.title as string) ?? "Untitled");
+    const data = await inChunks(promptTargets, (chunk) => supabase.from("prompts").select("id, title").in("id", chunk));
+    for (const p of data) promptTitles.set(String(p.id), (p.title as string) ?? "Untitled");
   }
 
   // strikes tab: one row per user with active strikes, ban state and appeal
