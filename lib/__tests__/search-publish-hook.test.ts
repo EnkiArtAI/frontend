@@ -45,7 +45,9 @@ describe("/api/prompt computes search tags at publish", () => {
 
   it("the publish hook and the viewer route hide by the same predicate", () => {
     for (const s of [src, viewRoute]) expect(s).toMatch(/import \{[^}]*\bisPublicText\b[^}]*\} from "@\/lib\/prompt-visibility"/);
-    expect(viewRoute).toMatch(/if \(isPublicText\(prompt\) && \(isListed\(prompt\) \|\| isOwner\)\) \{/);
+    // An unlisted prompt reaches the text only for its creator: the route answers 404 to anyone else first.
+    expect(viewRoute).toContain("(!isListed(prompt) && !isOwner) ||");
+    expect(viewRoute).toMatch(/if \(isPublicText\(prompt\)\) \{/);
     expect(viewRoute).not.toMatch(/dbPromptType === "showcase"/);
   });
 
