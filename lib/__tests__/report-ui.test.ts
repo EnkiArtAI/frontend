@@ -52,7 +52,9 @@ describe("where it opens", () => {
   });
 
   it("on someone else's profile, never on your own", () => {
-    expect(PROFILE).toContain("setCreatorId(d.creator?.id ?? null);");
+    // Keyed by handle: the reused view never reports the creator shown before.
+    expect(PROFILE).toContain("setCreator(d.creator?.id ? { handle, id: String(d.creator.id) } : null);");
+    expect(PROFILE).toContain("const creatorId = creator && creator.handle === handle ? creator.id : null;");
     expect(PROFILE).toMatch(/\{!own && creatorId && \(\n\s+<ReportButton targetType="user" targetId=\{creatorId\}/);
   });
 });

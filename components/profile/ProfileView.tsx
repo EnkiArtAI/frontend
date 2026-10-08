@@ -515,7 +515,10 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
   /* Foreign profile: the creator's PUBLIC data, plus their payout wallet —
      which keys the gallery below (generations are stored by wallet). */
   const [creatorWallet, setCreatorWallet] = useState<string | null>(null);
-  const [creatorId, setCreatorId] = useState<string | null>(null);
+  // Keyed by handle: the view is reused from one creator to the next, and a
+  // Report must never name the creator shown before.
+  const [creator, setCreator] = useState<{ handle: string | undefined; id: string } | null>(null);
+  const creatorId = creator && creator.handle === handle ? creator.id : null;
   useEffect(() => {
     if (!handle) return;
     let dead = false;
@@ -533,7 +536,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
           promptCount: d.stats?.totalPrompts ?? 0,
         });
         setCreatorWallet(d.creator?.wallet ?? null);
-        setCreatorId(d.creator?.id ?? null);
+        setCreator(d.creator?.id ? { handle, id: String(d.creator.id) } : null);
       } catch { /* the empty hero stays until a retry */ }
     })();
     return () => { dead = true; };
