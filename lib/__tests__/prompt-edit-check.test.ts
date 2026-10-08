@@ -45,6 +45,13 @@ vi.mock("@/lib/moderation-enforcement", () => ({ recordModerationEvent: async ()
 vi.mock("@/lib/moderation/warnings", () => ({ recordWarning: (...a: unknown[]) => warn(...(a as [])), warningMessage: () => "warned" }));
 vi.mock("@/lib/moderation/prompt-check", () => ({ checkPrompt: (inputs: Record<string, string>) => check(inputs) }));
 
+// The limiter as a test sets it; the real one has its own tests.
+const limited = vi.hoisted(() => ({ refuse: false, keys: [] as unknown[][] }));
+vi.mock("@/lib/rate-limit", async (original) => ({
+  ...(await original<typeof import("@/lib/rate-limit")>()),
+  checkRequestRateLimit: (...a: unknown[]) => { limited.keys.push(a); return limited.refuse ? { allowed: false, retryAfterSeconds: 5 } : { allowed: true }; },
+}));
+
 import { PATCH } from "../../app/api/prompts/[id]/route";
 
 const edit = (id: string, body: Row, token = "tok") => PATCH(new NextRequest(`http://enki.test/api/prompts/${id}`, {
@@ -61,6 +68,23 @@ beforeEach(() => {
 });
 
 describe("editing a prompt", () => {
+  it("an account's judged edits are limited to 20 a minute, refused before the check is paid for", async () => {
+    limited.keys = [];
+    limited.refuse = true;
+    try {
+      expect((await edit("p1", { title: "New" })).status).toBe(429);
+    } finally {
+      limited.refuse = false;
+    }
+    expect(limited.keys).toEqual([["prompt-edit:u1", 20, 60_000]]);
+    expect(check).not.toHaveBeenCalled();
+    expect(prompts[0].title).toBe("Portrait");
+    // Someone else's prompt costs no check and spends no limit.
+    limited.keys = [];
+    expect((await edit("p2", { title: "Mine now" })).status).toBe(404);
+    expect(limited.keys).toEqual([]);
+  });
+
   it("judges the edited title, description and category, and neither judges nor writes tags a client sends", async () => {
     await edit("p1", { title: "New", description: "A scene", tags: ["a", "b"], category: "Poster", aiSettings: { aspectRatio: "16:9" } });
     expect(check).toHaveBeenCalledWith({ title: "New", description: "A scene", category: "Poster" });
