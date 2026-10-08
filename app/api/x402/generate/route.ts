@@ -577,7 +577,12 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
         transaction: signature,
         note: "Keep this transaction signature — support will make it right.",
       },
-      { status: seen.verdict === "unavailable" ? 503 : 422 },
+      // Paid, so it says so as x402 does, and never 503: a client retrying
+      // that would pay again for each render withheld the same way.
+      {
+        status: seen.verdict === "unavailable" ? 502 : 422,
+        headers: { "X-PAYMENT-RESPONSE": paymentResponseHeader(signature, "solana", feePayer.publicKey) },
+      },
     );
   }
 

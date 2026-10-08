@@ -49,7 +49,10 @@ describe("the agent rail", () => {
     expect(block).toContain('? "Your image could not be checked right now, so it was not delivered after your payment settled."');
     expect(block).toContain(': "This image can\'t be delivered on Enki. Your payment settled.",');
     expect(block).toContain('note: "Keep this transaction signature — support will make it right.",');
-    expect(block).toContain('{ status: seen.verdict === "unavailable" ? 503 : 422 },');
+    expect(block).toContain('status: seen.verdict === "unavailable" ? 502 : 422,');
+    // Paid: the settlement header goes with it, as on a delivery.
+    expect(block).toContain('headers: { "X-PAYMENT-RESPONSE": paymentResponseHeader(signature, "solana", feePayer.publicKey) },');
+    expect(block).not.toMatch(/\b503\b/);
     expect(block).not.toMatch(/Nothing was charged|child[^_]|minor|sexual|explicit|abuse/i);
   });
 });
