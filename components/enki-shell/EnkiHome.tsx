@@ -20,6 +20,7 @@ import { useNotifications } from "@/hooks/useNotifications";
 import { useMessages } from "@/hooks/useMessages";
 import EnkiFeedPage from "@/components/enki/EnkiFeedPage";
 import { openLogin } from "@/lib/openLogin";
+import { notify } from "@/components/kit/notify";
 import EnkiSidebar, { type NavItem } from "./EnkiSidebar";
 import BookmarksPanel from "./BookmarksPanel";
 import FeedbackModal from "./FeedbackModal";
@@ -259,7 +260,6 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
     window.addEventListener("enki:open-2fa", onOpen2fa);
     return () => window.removeEventListener("enki:open-2fa", onOpen2fa);
   }, []);
-  const [toast, setToast] = useState<string | null>(null);
   // "Add funds" from any surface opens Payment here. Consumed, so a page
   // outside the shell knows to open the settings page itself.
   const openBilling = useEffectEvent(() => { setPayFocus(true); openPanel("billing"); });
@@ -306,7 +306,7 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
   /* Ctrl/Cmd+K and the query itself live with the field, in SearchChip: it
      writes ?q=, EnkiFeedPage reads it and asks the server. */
 
-  const showToast = (msg: string) => { setToast(msg); window.setTimeout(() => setToast(null), 2400); };
+  const showToast = (msg: string) => notify(msg);
 
   // Manual menu toggle → remember the preference (also mid-node-session).
   const toggleMenu = () => setCollapsed((c) => {
@@ -696,10 +696,6 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
             </div>
           </div>
         </div>
-      )}
-
-      {toast && (
-        <div className="ek-toast"><Icon name="sparkles" size={16} stroke={2} fill="currentColor" /> {toast}</div>
       )}
 
       {/* First login with no username yet → the big name picker (no skip —
