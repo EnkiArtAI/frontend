@@ -20,6 +20,10 @@ describe("the prompt editor's save", () => {
   it("reads an answer that is not JSON as a failed save, not a parse error", () => {
     expect(EDITOR).toContain("const savedPrompt: unknown = await response.json().catch(() => null);");
   });
+
+  it("is no save without the prompt it answers with, whatever the status", () => {
+    expect(EDITOR).toMatch(/await response\.json\(\)\.catch\(\(\) => null\);\n\s+if \(!response\.ok \|\| !savedPrompt\) \{/);
+  });
 });
 
 describe("an upload", () => {

@@ -2932,7 +2932,8 @@ export default function EnkiPromptEditor() {
       });
       // An answer that is not ours (a 413, a gateway page) is not JSON: it reads as a failed save.
       const savedPrompt: unknown = await response.json().catch(() => null);
-      if (!response.ok) {
+      // A save is confirmed by the prompt it answers with, never by a status alone.
+      if (!response.ok || !savedPrompt) {
         // The server's own sentence: a refusal with its warning, or "could not
         // be checked". A generic one hid both from the creator.
         const reason = (savedPrompt as { error?: unknown } | null)?.error;
