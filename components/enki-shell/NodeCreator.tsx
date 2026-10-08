@@ -621,10 +621,11 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     const name = (stRef.current.title || "").trim() || "Untitled workflow";
     setLibSaving(true);
     try {
-      // Mock-up art is the editor's own placeholder, made again at will: left
-      // out, its output empty, as the library's image check refuses an SVG.
+      // Mock-up art is the editor's own placeholder on an output, made again
+      // at will: left out, the output empty, as the library's image check
+      // refuses an SVG. A reference the user added is theirs: never dropped.
       const graph = buildExportJSON();
-      graph.nodes = graph.nodes.map((n) => (typeof n.image === "string" && n.image.startsWith("data:image/svg+xml") ? { ...n, image: undefined, status: "empty" } : n));
+      graph.nodes = graph.nodes.map((n) => (n.type === "EnkiOutputImage" && typeof n.image === "string" && n.image.startsWith("data:image/svg+xml") ? { ...n, image: undefined, status: "empty" } : n));
       const res = await fetch("/api/library", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },

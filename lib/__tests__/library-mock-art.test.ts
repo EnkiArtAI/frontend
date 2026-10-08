@@ -15,7 +15,9 @@ describe("saving a mock-up workflow to the library", () => {
   it("leaves the placeholder art out, by the prefix the art is made with", () => {
     expect(placeholderArt("seed", "1:1").startsWith("data:image/svg+xml")).toBe(true);
     const save = EDITOR.slice(EDITOR.indexOf("const saveToLibrary = async () => {"), EDITOR.indexOf("onToast(res.ok ? `Saved"));
-    expect(save).toContain('graph.nodes = graph.nodes.map((n) => (typeof n.image === "string" && n.image.startsWith("data:image/svg+xml") ? { ...n, image: undefined, status: "empty" } : n));');
+    // Outputs only: an SVG reference the user added is refused by the check, visibly, never dropped.
+    expect(save).toContain('graph.nodes = graph.nodes.map((n) => (n.type === "EnkiOutputImage" && typeof n.image === "string" && n.image.startsWith("data:image/svg+xml") ? { ...n, image: undefined, status: "empty" } : n));');
+    expect(EDITOR).toContain('output: "EnkiOutputImage"');
     expect(save).toContain('body: JSON.stringify({ name, kind: "workflow", graph, promptText: stRef.current.body }),');
   });
 });
