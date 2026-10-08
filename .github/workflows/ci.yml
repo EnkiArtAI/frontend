@@ -49,6 +49,8 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - name: Verify the generated Escrow client
+        run: npm run escrow:check
       - name: TypeScript check
         run: npm run check
 
