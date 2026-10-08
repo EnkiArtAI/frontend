@@ -70,6 +70,8 @@ describe("the empty NFT picker", () => {
 describe("the buyer page's price", () => {
   it("counts the reference images it will charge for, and asks again when they change", () => {
     expect(BUYER).toContain("quality, referenceImageCount: refs.length }),");
+    // The price next to each resolution counts them too.
+    expect(BUYER).toContain("resolution: t, boost: core.boostAt(t) && boost, quality, referenceImageCount: refs.length }))");
     expect(BUYER).toContain('queryKey: ["generation-quote", promptId, core.entry?.id, quoteResolution, core.boostAt(quoteResolution) && boost, quality, refs.length],');
   });
 });

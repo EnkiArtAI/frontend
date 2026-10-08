@@ -462,7 +462,7 @@ export default function PromptGeneratorView({
      without the fee. */
   const tierQuotes = useServerQuotes(
     !noCharge && promptId && core.entry && !loading
-      ? resolutions.map((t) => ({ promptId, modelId: core.entry!.id, resolution: t, boost: core.boostAt(t) && boost, quality }))
+      ? resolutions.map((t) => ({ promptId, modelId: core.entry!.id, resolution: t, boost: core.boostAt(t) && boost, quality, referenceImageCount: refs.length }))
       : [],
   );
   const showcaseImages = prompt?.showcaseImages?.length ? prompt.showcaseImages : propShowcaseImages;
