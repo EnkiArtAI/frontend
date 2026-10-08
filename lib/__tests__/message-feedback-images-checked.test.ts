@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
  * report stands. A child-safety verdict becomes a case on either.
  */
 
-const s = vi.hoisted(() => ({ verdicts: [] as string[], calls: 0, cases: [] as unknown[], uploads: [] as string[], rows: [] as { table: string; row: unknown }[], failRows: "", removed: [] as string[], sealed: [] as string[], cred: null as { email: string } | null }));
+const s = vi.hoisted(() => ({ verdicts: [] as string[], calls: 0, cases: [] as unknown[], uploads: [] as string[], rows: [] as { table: string; row: unknown }[], failRows: "", removed: [] as string[], sealed: [] as string[], cred: null as { email: string } | null, mails: [] as { subject: string; text: string; exceptUserId?: string }[] }));
 // As the real check: bytes no decoder reads never reach the judges (here,
 // anything but a PNG or an AVIF, which opens like an MP4, and a JPEG cut
 // short reads as one that does not decode whole); `calls` counts what the
@@ -26,6 +26,7 @@ vi.mock("@/lib/moderation/image-check-bytes", async (orig) => {
   };
 });
 vi.mock("@/lib/moderation/image-case", () => ({ recordImageCase: async (_c: unknown, c: unknown) => { s.cases.push(c); } }));
+vi.mock("@/lib/admin-notify", () => ({ notifyAdmins: async (_c: unknown, m: { subject: string; text: string }) => { s.mails.push(m); } }));
 vi.mock("@/lib/session-user", () => ({ resolveSessionUserId: async () => "user-1" }));
 // The limits have their own tests; here one account sends more reports than they allow.
 vi.mock("@/lib/rate-limit", async (orig) => ({
@@ -73,7 +74,7 @@ const post = async (handler: (r: NextRequest) => Promise<Response>, fields: Reco
   return { status: res.status, body: (await res.json()) as { error?: string; dropped?: number } };
 };
 
-beforeEach(() => Object.assign(s, { verdicts: [], calls: 0, cases: [], uploads: [], rows: [], failRows: "", removed: [], sealed: [], cred: null }));
+beforeEach(() => Object.assign(s, { verdicts: [], calls: 0, cases: [], uploads: [], rows: [], failRows: "", removed: [], sealed: [], cred: null, mails: [] }));
 
 describe("an image in a direct message", () => {
   it("clear: stored and sent", async () => {
@@ -195,6 +196,24 @@ describe("a feedback report", () => {
   it("a wallet-only account has no email to carry", async () => {
     expect((await report()).status).toBe(201);
     expect(s.sealed).toEqual([""]);
+  });
+
+  it("tells every other admin by mail: who, how bad and how it starts, never the attachments", async () => {
+    const long = "The save button does nothing. " + "x".repeat(600);
+    expect((await post(sendFeedback, { description: long, severity: "bug", files: [file()] })).status).toBe(201);
+    expect(s.mails).toHaveLength(1);
+    expect(s.mails[0].subject).toBe("[Enki Admin] New feedback (bug) from @h");
+    expect(s.mails[0].text).toContain(long.slice(0, 280) + "…");
+    expect(s.mails[0].text).not.toContain(long.slice(0, 281));
+    expect(s.mails[0].text).toContain("1 attachment");
+    expect(s.mails[0].text).not.toContain(s.uploads[0]);
+    // An admin who sends feedback is not mailed about their own.
+    expect(s.mails[0].exceptUserId).toBe("user-1");
+  });
+
+  it("mails nothing for a report that was refused", async () => {
+    expect((await post(sendFeedback, { description: "The button does nothing.", severity: "nope" })).status).toBe(400);
+    expect(s.mails).toEqual([]);
   });
 });
 

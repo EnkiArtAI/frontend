@@ -15,6 +15,7 @@ import { createHash } from "crypto";
 import { encryptString } from "@/lib/crypto";
 import { checkImageBytes, NOT_AN_IMAGE } from "@/lib/moderation/image-check-bytes";
 import { recordImageCase } from "@/lib/moderation/image-case";
+import { notifyAdmins } from "@/lib/admin-notify";
 import { FEEDBACK_BUCKET, FEEDBACK_FILE_EXT, FEEDBACK_MAX_BYTES, FEEDBACK_MAX_FILES } from "@/lib/feedback";
 
 /** A video container by its own first bytes: MP4 and MOV (ftyp), WebM (EBML). */
@@ -68,13 +69,14 @@ export async function POST(req: NextRequest) {
     supabase.from("password_credentials").select("email").eq("user_id", userId).maybeSingle(),
   ]);
   const email = typeof cred?.email === "string" ? cred.email : "";
+  const name = (me?.handle as string | null) ?? "unnamed";
   const enc = encryptString(email);
 
   const { data: row, error } = await supabase
     .from("feedback_submissions")
     .insert({
       user_id: userId,
-      submitter_name: (me?.handle as string) ?? "unnamed",
+      submitter_name: name,
       submitter_email_ct: enc.encrypted,
       submitter_email_iv: enc.iv,
       submitter_email_tag: enc.authTag,
@@ -126,6 +128,21 @@ export async function POST(req: NextRequest) {
       kept++;
     }
   }
+
+  // Every admin hears of a new report (Kev, 2026-10-08): who, how bad and how
+  // it starts. Never its attachments: those stay behind the panel's signed links.
+  const origin = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_ORIGIN || "";
+  after(notifyAdmins(supabase, {
+    subject: `[Enki Admin] New feedback (${sevId}) from @${name}`,
+    text: [
+      `@${name} sent feedback (${sevId}${kept ? `, ${kept} attachment${kept === 1 ? "" : "s"}` : ""}):`,
+      "",
+      description.length > 280 ? `${description.slice(0, 280)}…` : description,
+      "",
+      `Read it in the admin panel (Feedback tab)${origin ? `: ${origin}/admin` : "."}`,
+    ].join("\n"),
+    exceptUserId: userId,
+  }));
 
   return NextResponse.json({ ok: true, dropped: files.length - kept }, { status: 201 });
 }
