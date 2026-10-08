@@ -607,9 +607,10 @@ export default function PromptGeneratorView({
   /* Fetch user's generations — API returns { data: { generations, total } } via createSuccessResponse */
   const genQueryKey = ["user-generations", userKey, promptId];
   /* A render is recorded after its answer, so the history checks back every
-     3 s while one of this page's renders is not in it yet, for 60 s at most. */
-  const lastRunAt = useRef(0);
-  const localHistoryRef = useRef<string[]>([]);
+     3 s while one of this page's renders is not in it yet, for 60 s at most.
+     useQuery evaluates refetchInterval while rendering: it reads only state
+     and the query's own fetch time, no refs and no clock. */
+  const [lastRunAt, setLastRunAt] = useState(0);
   const { data: genData } = useQuery<{
     data?: { generations?: Array<{ id: string; image_url?: string; image_urls?: string[]; visibility?: string; isUploaded?: boolean; created_at: string; prompt_id?: string | null }> };
     generations?: Array<{ id: string; image_url?: string; image_urls?: string[]; visibility?: string; isUploaded?: boolean; created_at: string; prompt_id?: string | null }>;
@@ -624,8 +625,8 @@ export default function PromptGeneratorView({
     staleTime: 30_000,
     refetchInterval: (query) => {
       const known = serverUrls(query.state.data?.data?.generations ?? query.state.data?.generations ?? []);
-      const waiting = localHistoryRef.current.some((url) => !known.has(url));
-      return waiting && Date.now() - lastRunAt.current < 60_000 ? 3000 : false;
+      const waiting = localHistory.some((url) => !known.has(url));
+      return waiting && query.state.dataUpdatedAt - lastRunAt < 60_000 ? 3000 : false;
     },
   });
 
@@ -675,8 +676,9 @@ export default function PromptGeneratorView({
       toast({ title: "Couldn't change who sees this image", description: d?.error, variant: "destructive" });
       return;
     }
-    queryClient.invalidateQueries({ queryKey: genQueryKey });
-    queryClient.invalidateQueries({ queryKey: publicQueryKey });
+    // Prefix keys: every history and every row this switch can change.
+    queryClient.invalidateQueries({ queryKey: ["user-generations"] });
+    queryClient.invalidateQueries({ queryKey: ["prompt-public-images"] });
   };
 
   /* Merge local (immediate) + DB history, deduplicate, cap at 20. A local
@@ -691,7 +693,6 @@ export default function PromptGeneratorView({
       return true;
     }).slice(0, 20);
   }, [localHistory, dbHistory, genData]);
-  localHistoryRef.current = localHistory;
 
   /* Init */
   useEffect(() => { setFav(getFavs().includes(promptId)); }, [promptId]);
@@ -1016,7 +1017,7 @@ export default function PromptGeneratorView({
       }
 
       /* 4. The generate route records the image itself; refetch the history panel. */
-      lastRunAt.current = Date.now();
+      setLastRunAt(Date.now());
       if (userKey) queryClient.invalidateQueries({ queryKey: genQueryKey });
 
       toast({ title: "Image Generated!", description: `Generated using ${data.provider || "AI"}` });
