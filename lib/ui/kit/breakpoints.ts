@@ -15,7 +15,7 @@ export const COARSE = "(pointer: coarse)";
 /** Card hover reveal. */
 export const HOVER = "(hover: hover) and (pointer: fine)";
 
-/** Masonry columns for a container `width` px wide. */
+/** Masonry columns for a viewport `width` px wide (the feed reads innerWidth). */
 export function columnsFor(width: number): 2 | 3 | 4 {
   return width >= 1400 ? 4 : width >= 1024 ? 3 : 2;
 }
