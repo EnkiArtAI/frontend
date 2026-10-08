@@ -32,6 +32,9 @@
 /shared/                            @TODO-backend
 /proxy.ts                           @TODO-backend @KiriKev
 
+# Frontend code under /lib/: after /lib/, so it wins
+/lib/ui/                            @KiriKev @TODO-frontend
+
 # Money and security: backend owner AND Kev
 /lib/payments/                      @TODO-backend @KiriKev
 /app/api/payments/                  @TODO-backend @KiriKev
