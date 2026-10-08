@@ -36,7 +36,8 @@ export default function LinkedWallets({ num }: { num: string }) {
       headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
       body: JSON.stringify({ address }),
     }).catch(() => null);
-    if (res?.ok) setWallets((w) => (w ?? []).filter((a) => a !== address));
+    // 404: no such link on this account (a double click, another tab): it is unlinked either way.
+    if (res?.ok || res?.status === 404) setWallets((w) => (w ?? []).filter((a) => a !== address));
     else toast({ title: "Couldn't unlink", variant: "destructive" });
   };
 

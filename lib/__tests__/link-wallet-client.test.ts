@@ -121,4 +121,9 @@ describe("where a wallet is linked", () => {
       expect(settings).toContain(`<SettingsSection num={no(${n})} title="${title}">`);
     }
   });
+
+  it("an unlink that finds the wallet gone already reads as unlinked, not as a failure", () => {
+    const linked = src("components", "settings", "LinkedWallets.tsx");
+    expect(linked).toContain("if (res?.ok || res?.status === 404) setWallets((w) => (w ?? []).filter((a) => a !== address));");
+  });
 });
