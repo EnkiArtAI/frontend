@@ -16,6 +16,7 @@ import { extractTags, storedTags } from "@/lib/search/tags";
 import { artistPayoutWallet } from "@/lib/payments/generation-quote";
 import { DEFAULT_PROMPT_PRICE_USD } from "@/shared/revenue-config";
 import { storedName } from "@/lib/generation/prompt-text";
+import { checkRequestRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 type VariableType =
   | "text"
@@ -445,6 +446,11 @@ export async function POST(req: Request) {
       }
       payee = creatorId;
     }
+
+    // Every save below pays for checks, the prompt's and up to one per new
+    // reference image, so an account saves at most 20 a minute.
+    const limit = checkRequestRateLimit(`prompt-save:${payee}`, 20, 60_000);
+    if (!limit.allowed) return rateLimitResponse(limit.retryAfterSeconds);
 
     // What is for sale must be sellable: it has a text, it is free or paid,
     // and a paid one has a price. Asked before any check is paid for.

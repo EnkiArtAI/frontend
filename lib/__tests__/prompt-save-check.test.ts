@@ -125,6 +125,13 @@ vi.mock("@/lib/moderation/prompt-check", async (original) => ({
   checkPrompt: (inputs: Record<string, string>) => check(inputs),
 }));
 
+// The limiter as a test sets it; the real one has its own tests, and this file saves more than it allows.
+const limited = vi.hoisted(() => ({ refuse: false, keys: [] as unknown[][] }));
+vi.mock("@/lib/rate-limit", async (original) => ({
+  ...(await original<typeof import("@/lib/rate-limit")>()),
+  checkRequestRateLimit: (...a: unknown[]) => { limited.keys.push(a); return limited.refuse ? { allowed: false, retryAfterSeconds: 7 } : { allowed: true }; },
+}));
+
 import { POST } from "../../app/api/prompt/route";
 
 const save = (body: Row, token: string | null = "tok") => POST(new Request("http://enki.test/api/prompt", {
@@ -542,6 +549,22 @@ describe("a prompt's new reference images and the image check (2026-10-08)", () 
     imageCheck.verdicts = ["adult"];
     expect((await save({ ...BASE, referenceImages: [REF] })).status).toBe(200);
     expect(tables.prompts[0].is_adult).toBe(true);
+  });
+
+  it("an account saves at most 20 a minute, refused before any check is paid for", async () => {
+    limited.keys = [];
+    limited.refuse = true;
+    try {
+      const res = await save({ ...BASE, referenceImages: [REF] });
+      expect(res.status).toBe(429);
+      expect(res.headers.get("Retry-After")).toBe("7");
+    } finally {
+      limited.refuse = false;
+    }
+    expect(limited.keys).toEqual([["prompt-save:u1", 20, 60_000]]);
+    expect(imageCheck.calls).toBe(0);
+    expect(check).not.toHaveBeenCalled();
+    expect(tables.prompts).toEqual([]);
   });
 
   it("judges only what is new: a saved one or our own copy costs no check", async () => {
