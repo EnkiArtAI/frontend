@@ -25,6 +25,7 @@ vi.mock("@/lib/session-user", async (original) => ({
   ...(await original<typeof import("@/lib/session-user")>()),
   resolveSessionUserId: async (_s: unknown, t: string | null) => ({ "admin-tok": "admin-1", "mod-tok": "mod-1", "anna-tok": "u1" } as Record<string, string>)[t ?? ""] ?? null,
 }));
+vi.mock("@/lib/crypto", async (original) => ({ ...(await original<typeof import("@/lib/crypto")>()), decryptString: () => "anna@enki.test" }));
 
 import { GET as adminGet } from "../../app/api/admin/route";
 
@@ -39,6 +40,8 @@ const row = (id: string, extra: Record<string, unknown> = {}) => ({
   payout_cents: 10000, payout_tx_hash: null, payout_chain_key: null, paid_at: null, reviewer_id: null, reviewed_at: null,
   created_at: "2026-10-08T10:00:00Z", ...extra,
 });
+
+const fb1 = () => db.current!.tables.feedback_submissions[0];
 
 beforeEach(() => {
   db.current = fakePostgrest();
@@ -79,5 +82,13 @@ describe("a feedback report's attachments", () => {
     db.current!.tables.feedback_attachments = [];
     expect((await get("admin-tok", `?feedback=${FB1}`)).body).toEqual({ files: [] });
     expect(db.signed).toEqual([]);
+  });
+});
+
+describe("a feedback sender's email", () => {
+  it("is shown to admins alone", async () => {
+    Object.assign(fb1(), { submitter_email_ct: "ct", submitter_email_iv: "iv", submitter_email_tag: "tag", submitter_email_kid: "k" });
+    expect((await get("admin-tok")).body.feedback[0].email).toBe("anna@enki.test");
+    expect((await get("mod-tok")).body.feedback[0].email).toBeNull();
   });
 });

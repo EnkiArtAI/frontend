@@ -397,8 +397,11 @@ export async function GET(req: NextRequest) {
     feedback: (fb.data ?? []).map((r) => ({
       id: String(r.id),
       name: (r.submitter_name as string) || "Anonymous",
-      email: tryDecrypt(r.submitter_email_ct, r.submitter_email_iv, r.submitter_email_tag, r.submitter_email_kid,
-        [undefined, String(r.id), r.user_id ? String(r.user_id) : undefined]),
+      // The sender's email is an admin's to see, not a mod's (Kev, 2026-10-08).
+      email: role === "admin"
+        ? tryDecrypt(r.submitter_email_ct, r.submitter_email_iv, r.submitter_email_tag, r.submitter_email_kid,
+          [undefined, String(r.id), r.user_id ? String(r.user_id) : undefined])
+        : null,
       desc: (r.description as string) ?? "",
       images: attCount.get(String(r.id)) ?? 0,
       paid: r.paid_at !== null,
