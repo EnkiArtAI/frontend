@@ -92,8 +92,8 @@ export const heldBack = (v: { verdict: string }) => v.verdict === "blocked" || v
 /** A reference that names an address (https:, blob:, ipfs: …) rather than carrying the image. */
 export const isLink = (ref: string) => /^(?!data:)[a-z][a-z0-9+.-]*:/i.test(ref.trim());
 
-/** The bytes of a base64 data: URL, or null for anything else. */
+/** The bytes of a base64 data: URL, spelled any way a browser reads one, or null for anything else. */
 export function dataUrlBytes(url: string): Buffer | null {
-  const m = /^data:[^;,]+;base64,([\s\S]*)$/.exec(url);
+  const m = /^data:[^,]*;base64,([\s\S]*)$/i.exec(url.trim());
   return m ? Buffer.from(m[1], "base64") : null;
 }

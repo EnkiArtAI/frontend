@@ -148,6 +148,10 @@ describe("isLink", () => {
 describe("dataUrlBytes", () => {
   it("reads a base64 data: URL and nothing else", () => {
     expect(dataUrlBytes("data:image/png;base64,aGVsbG8=")?.toString()).toBe("hello");
+    // Any spelling a browser reads: case, no media type, parameters, spaces around.
+    for (const url of ["DATA:Image/PNG;BASE64,aGVsbG8=", "data:;base64,aGVsbG8=", "data:image/png;name=a.png;base64,aGVsbG8=", " data:image/png;base64,aGVsbG8= "]) {
+      expect(dataUrlBytes(url)?.toString(), url).toBe("hello");
+    }
     expect(dataUrlBytes("https://x.test/a.png")).toBeNull();
     expect(dataUrlBytes("data:text/plain,hello")).toBeNull();
   });
