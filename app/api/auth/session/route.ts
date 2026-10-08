@@ -197,12 +197,20 @@ export async function POST(req: NextRequest) {
   // Solana wallet that ever logged in carries a mangled address; this heals
   // them on their next login, so no migration has to guess which rows to
   // touch.
-  const { data: walletRow } = await supabase
+  const { data: walletRow, error: walletError } = await supabase
     .from("user_wallets")
     .select("user_id, address")
     .ilike("address", normalizedWallet)
     .is("removed_at", null)
     .maybeSingle();
+  // A lookup that failed (the database down, or two rows for one address)
+  // is not "no account yet": read that way it minted a new empty user on
+  // every login and skipped the ban check (a founder's wallet, 2026-10-07).
+  if (walletError) {
+    return isDbUnreachable(walletError)
+      ? dbUnavailableResponse()
+      : NextResponse.json({ error: "Your account could not be read right now. Try again." }, { status: 503 });
+  }
 
   if (!walletRow?.user_id) {
     const userInsert = await supabase.from("users").insert({}).select("id").single();
