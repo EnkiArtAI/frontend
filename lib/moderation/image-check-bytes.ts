@@ -31,6 +31,9 @@ export const IMAGE_UNCHECKED = "Your image could not be checked right now, so it
 export const REFERENCE_REFUSED = "One of your reference images can't be used on Enki. Nothing was generated and nothing was charged.";
 export const REFERENCE_UNCHECKED = "Your reference images could not be checked right now. Nothing was generated and nothing was charged. Please try again.";
 
+export const UPLOAD_REFUSED = "This image can't be uploaded to Enki.";
+export const UPLOAD_UNCHECKED = "Your image could not be checked right now, so it was not uploaded. Please try again.";
+
 /** Refused or not judged: such an image is neither shown nor used. */
 export const heldBack = (v: { verdict: string }) => v.verdict === "blocked" || v.verdict === "child_safety" || v.verdict === "unavailable";
 

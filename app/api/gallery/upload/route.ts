@@ -7,6 +7,9 @@ import { createErrorResponse, createSuccessResponse } from "../../../middleware/
 import { tryMakeDerivatives } from "@/lib/imageDerivatives";
 import { moderate, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { recordModerationEvent } from "@/lib/moderation-enforcement";
+import { checkImageBytes, heldBack, UPLOAD_REFUSED, UPLOAD_UNCHECKED } from "@/lib/moderation/image-check-bytes";
+import { recordImageCase } from "@/lib/moderation/image-case";
+import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 
 /**
  * The metadata field is client-supplied text. `JSON.parse` on it threw
@@ -118,6 +121,9 @@ export async function POST(req: NextRequest) {
     if (!userId) {
       return createErrorResponse('Sign in to upload images', 401);
     }
+    // Every upload costs two paid image-check calls Enki carries.
+    const limit = checkRequestRateLimit(rateLimitKey(req, "gallery-upload", userId), 20, 60_000);
+    if (!limit.allowed) return rateLimitResponse(limit.retryAfterSeconds);
     /* A data URL used to stand in for the store here, and landed in the row
        as megabytes of text. No store, no upload. */
     if (!process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
@@ -171,6 +177,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // The image check before anything is stored (Kev, 2026-10-08: every
+    // image, uploads included; Enki carries it). Refused or not judged, the
+    // file is never stored; a child-safety verdict becomes a case an admin
+    // decides; 18+ is kept and marked.
+    const original = Buffer.from(await file.arrayBuffer());
+    const seen = await checkImageBytes(original, { signal: req.signal });
+    if (heldBack(seen)) {
+      if (seen.verdict === "child_safety") {
+        after(recordImageCase(supabase, { surface: "upload", request: req, bytes: original, scores: seen.scores, about: moderatedText }));
+      }
+      return seen.verdict === "unavailable" ? createErrorResponse(UPLOAD_UNCHECKED, 503) : createErrorResponse(UPLOAD_REFUSED, 422);
+    }
+
     // Upload image to blob storage
     console.log(`📤 Uploading image for user ${userId}...`);
     const imageUrl = await uploadToBlob(file, userId);
@@ -179,7 +198,6 @@ export async function POST(req: NextRequest) {
     // 2026-08-06 against the real providers, 3.0 MB for a 2K image and up to
     // 21.1 MB at 4K. Best-effort on purpose: a failed derivative must cost us
     // the smaller renditions, never the upload the user is waiting on.
-    const original = Buffer.from(await file.arrayBuffer());
     const derived = await tryMakeDerivatives(original);
     let previewUrl: string | null = null;
     let thumbnailUrl: string | null = null;
@@ -221,6 +239,8 @@ export async function POST(req: NextRequest) {
       height: derived?.height ?? null,
       mime_type: file.type || 'image/png',
       is_uploaded: true,
+      // Judged 18+ by the image check.
+      is_adult: seen.verdict === "adult",
       is_watermarked: false,
       visibility: 'private',
       accepted: true,

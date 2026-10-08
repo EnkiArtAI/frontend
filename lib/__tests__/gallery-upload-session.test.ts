@@ -33,7 +33,14 @@ let derived: unknown = null;
 vi.mock("@/lib/imageDerivatives", () => ({ tryMakeDerivatives: async () => derived }));
 vi.mock("@/lib/moderation", () => ({ moderate: async () => ({ allowed: true }), CLIENT_BLOCK_MESSAGE: "blocked" }));
 vi.mock("@/lib/moderation-enforcement", () => ({ recordModerationEvent: async () => {} }));
-vi.mock("next/server", async (orig) => ({ ...(await orig<typeof import("next/server")>()), after: () => {} }));
+vi.mock("next/server", async (orig) => ({ ...(await orig<typeof import("next/server")>()), after: (p: unknown) => p }));
+// The image check's verdict, as each test sets it (its own tests are image-check*.test.ts).
+const judged = vi.hoisted(() => ({ verdict: "clear" as string, cases: [] as unknown[] }));
+vi.mock("@/lib/moderation/image-check-bytes", async (orig) => ({
+  ...(await orig<typeof import("@/lib/moderation/image-check-bytes")>()),
+  checkImageBytes: async () => ({ verdict: judged.verdict, ...(judged.verdict === "child_safety" ? { scores: { minor: 0.9 } } : {}) }),
+}));
+vi.mock("@/lib/moderation/image-case", () => ({ recordImageCase: async (_s: unknown, c: unknown) => { judged.cases.push(c); } }));
 
 import { POST } from "../../app/api/gallery/upload/route";
 import { DbUnreachableError } from "@/lib/db-error";
@@ -55,10 +62,54 @@ beforeEach(() => {
   put.mockClear();
   del.mockClear();
   session.mockReset();
+  judged.verdict = "clear";
+  judged.cases.length = 0;
   vi.stubEnv("BLOB_READ_WRITE_TOKEN", "test-token");
   vi.stubEnv("VERCEL_BLOB_API_URL", "http://127.0.0.1:9"); // a stray real SDK call reaches nothing
 });
 afterEach(() => vi.unstubAllEnvs());
+
+describe("an upload and the image check", () => {
+  beforeEach(() => session.mockResolvedValue(USER_A));
+
+  it.each([
+    ["refused", "blocked", 422, "This image can't be uploaded to Enki."],
+    ["not judged", "unavailable", 503, "Your image could not be checked right now, so it was not uploaded. Please try again."],
+  ])("%s: nothing is stored and no row is written", async (_name, verdict, status, error) => {
+    judged.verdict = verdict;
+    const res = await upload({ "X-Session-Token": "tok-a" });
+    expect(res.status).toBe(status);
+    expect(((await res.json()) as { error?: string }).error).toBe(error);
+    expect(put).not.toHaveBeenCalled();
+    expect(inserted).toHaveLength(0);
+    expect(judged.cases).toEqual([]);
+  });
+
+  it("child safety: nothing stored, the same refusal, and a case with the bytes", async () => {
+    judged.verdict = "child_safety";
+    const res = await upload({ "X-Session-Token": "tok-a" });
+    expect(res.status).toBe(422);
+    expect(put).not.toHaveBeenCalled();
+    expect(judged.cases).toEqual([expect.objectContaining({ surface: "upload", bytes: Buffer.from([137, 80, 78, 71]), scores: { minor: 0.9 } })]);
+  });
+
+  it("18+: stored and marked", async () => {
+    judged.verdict = "adult";
+    expect((await upload({ "X-Session-Token": "tok-a" })).status).toBe(201);
+    expect(inserted[0].is_adult).toBe(true);
+  });
+
+  it("is limited to 20 a minute per account: every upload costs Enki two paid calls", async () => {
+    session.mockResolvedValue(USER_B);
+    for (let i = 0; i < 20; i++) expect((await upload({ "X-Session-Token": "tok-b" })).status).toBe(201);
+    expect((await upload({ "X-Session-Token": "tok-b" })).status).toBe(429);
+  });
+
+  it("clear: stored and not marked", async () => {
+    expect((await upload({ "X-Session-Token": "tok-a" })).status).toBe(201);
+    expect(inserted[0].is_adult).toBe(false);
+  });
+});
 
 describe("POST /api/gallery/upload", () => {
   it("files the image under the session's account, whatever the form or headers claim", async () => {
