@@ -191,6 +191,46 @@ function inOurBlob(url: string): boolean {
   }
 }
 
+/**
+ * Takes stored copies down again: an image the image check refused must not
+ * stay at its URL. A URL of our Blob store goes through del(), one of our
+ * fallback bucket through the storage API, and a bare pathname is removed
+ * from both, since an aborted Blob turn may still land a copy beside the
+ * bucket's (putDurably). data: URLs and other hosts are nothing of ours.
+ * Failures are logged, never thrown: the refusal must still answer.
+ */
+export async function removeStored(entries: (string | null | undefined)[]): Promise<void> {
+  const bucketPrefix = `/storage/v1/object/public/${FALLBACK_BUCKET}/`;
+  const inBlob: string[] = [];
+  const inBucket: string[] = [];
+  for (const e of entries) {
+    if (!e || e.startsWith("data:")) continue;
+    if (!e.includes("://")) {
+      inBlob.push(e);
+      inBucket.push(e);
+    } else if (inOurBlob(e)) {
+      const { pathname } = new URL(e);
+      if (pathname.startsWith(bucketPrefix)) inBucket.push(decodeURIComponent(pathname.slice(bucketPrefix.length)));
+      else inBlob.push(e);
+    }
+  }
+  const failed = (where: string) => (e: unknown) =>
+    console.error(`[derivative-store] a refused image could not be removed from ${where}:`, e instanceof Error ? e.message : e);
+  await Promise.all([
+    inBlob.length && process.env.BLOB_READ_WRITE_TOKEN?.trim()
+      ? loadBlob().then(({ del }) => del(inBlob)).catch(failed("Blob"))
+      : null,
+    inBucket.length
+      ? loadDb()
+          .then(async ({ getSupabaseServerClientSafe }) => {
+            const { error } = (await getSupabaseServerClientSafe()?.storage.from(FALLBACK_BUCKET).remove(inBucket)) ?? { error: null };
+            if (error) throw error;
+          })
+          .catch(failed("the fallback bucket"))
+      : null,
+  ]);
+}
+
 /** With `deadline`, every put is durable and bounded by it (putDurably); without, one attempt each as before. */
 export async function storeGeneratedImage(providerUrl: string, userId: string, deadline?: number): Promise<StoredImage> {
   const passthrough: StoredImage = { imageUrl: providerUrl, previewUrl: null, thumbnailUrl: null };
