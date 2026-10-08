@@ -126,6 +126,21 @@ describe("every route passes the outage on", () => {
     expect(board).toContain("  if (isDbUnreachable(error)) return dbUnavailableResponse();\n  if (error) return NextResponse.json({ rows: [] });");
   });
 
+  it("a profile's shelf and wallet reads answer an outage with 503, never an empty profile", () => {
+    const profile = src("app", "api", "creators", "[id]", "profile", "route.ts");
+    expect(profile).toContain("    if (isDbUnreachable(promptsError)) return dbUnavailableResponse();");
+    expect(profile).toContain("    if (isDbUnreachable(walletsError)) return dbUnavailableResponse();");
+  });
+
+  it("the clients show why a read failed, never the empty state", () => {
+    const board = src("app", "leaderboard", "page.tsx");
+    expect(board).toContain('const why = await failureSentence(res, "The board could not load");');
+    expect(board).toMatch(/\) : failed \? \(\n\s+<div[^>]*>\{failed\}<\/div>\n\s+\) : rows\.length === 0 \? \(/);
+    const feedback = src("components", "PromptEngagement.tsx");
+    expect(feedback).toContain('setFailed(await failureSentence(res, "The feedback could not load"));');
+    expect(feedback).toContain('{failed ?? "No feedback yet. Be the first!"}');
+  });
+
   it("a profile, the intent and the quote's owner check answer an outage as one", () => {
     expect(src("app", "api", "creators", "[id]", "profile", "route.ts")).toContain("    if (isDbUnreachable(userError)) return dbUnavailableResponse();\n    if (userError || !userData) {");
     expect(src("app", "api", "payments", "generation", "intent", "route.ts")).toContain("  if (isDbUnreachable(insertError)) return dbUnavailableResponse();\n  if (insertError || !intent) {");
