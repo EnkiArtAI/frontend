@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
@@ -260,6 +260,14 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
     return () => window.removeEventListener("enki:open-2fa", onOpen2fa);
   }, []);
   const [toast, setToast] = useState<string | null>(null);
+  // "Add funds" from any surface opens Payment here. Consumed, so a page
+  // outside the shell knows to open the settings page itself.
+  const openBilling = useEffectEvent(() => { setPayFocus(true); openPanel("billing"); });
+  useEffect(() => {
+    const onOpenBilling = (e: Event) => { e.preventDefault(); openBilling(); };
+    window.addEventListener("enki:open-billing", onOpenBilling);
+    return () => window.removeEventListener("enki:open-billing", onOpenBilling);
+  }, []);
   const [panel, setPanel] = useState<string | null>(null); // which menu item shows in the right panel
   const [editPrompt, setEditPrompt] = useState<unknown>(null); // prompt being edited in the node creator
 
