@@ -28,4 +28,8 @@ describe("an upload", () => {
     expect(zone).toMatch(/const file = await fitUpload\(upload\.file\);\n\s+if \(!file\) throw new Error\(`\$\{upload\.file\.name\} is too large to upload, even made smaller\.`\);\n\s+const formData = new FormData\(\);\n\s+formData\.append\('file', file\);/);
     expect(zone).not.toContain("formData.append('file', upload.file)");
   });
+
+  it("to the gallery that fails says why", () => {
+    expect(src("components", "ShowroomUploadZone.tsx")).toContain("description: results.find((r) => !r.success)?.error ??");
+  });
 });

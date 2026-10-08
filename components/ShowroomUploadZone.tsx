@@ -186,7 +186,8 @@ export default function ShowroomUploadZone() {
     if (failCount > 0) {
       toast({
         title: "Some uploads failed",
-        description: `${failCount} image(s) failed to upload. Check console for details.`,
+        // The first reason, in words: "check the console" told a user nothing.
+        description: results.find((r) => !r.success)?.error ?? `${failCount} image(s) failed to upload.`,
         variant: "destructive",
       });
     }
