@@ -300,7 +300,6 @@ export default function PromptGeneratorView({
     if (!m) return "";
     return (catalogue.find((c) => c.name === m) ?? resolveCatalogueEntry(catalogue, m))?.name ?? "";
   }, [prompt?.ai_model, catalogue]);
-  const generator = generatorPick || promptModelName;
   const variables = useMemo(() => prompt?.promptData?.variables || [], [prompt]);
   const title = prompt?.title || propTitle || "Untitled Prompt";
   const artistName = propArtistName || "Unknown Artist";
@@ -310,6 +309,11 @@ export default function PromptGeneratorView({
     prompt?.is_free_showcase === true ||
     propIsFree ||
     false;
+  /* A paid prompt never renders on the free model: that model renders only
+     the text it is sent, never the artist's (Kev, 2026-10-08). */
+  const onFreeHost = (name: string) => catalogue.find((c) => c.name === name)?.free === true;
+  const generator = generatorPick || (!isFree && onFreeHost(promptModelName) ? "" : promptModelName);
+  const generators = isFree ? GENERATORS : GENERATORS.filter((g) => !onFreeHost(g));
   const price = prompt?.price ?? 0;
   const tags = prompt?.tags?.length ? prompt.tags : [];
 
@@ -1695,7 +1699,7 @@ export default function PromptGeneratorView({
             <span className="pgv-section-label">Generator</span>
             <select className="pgv-generator-select" value={generator} onChange={e => setGenerator(e.target.value)}>
               {!generator && <option value="" disabled>Pick a model</option>}
-              {GENERATORS.map(g => <option key={g}>{g}</option>)}
+              {generators.map(g => <option key={g}>{g}</option>)}
             </select>
           </div>
 

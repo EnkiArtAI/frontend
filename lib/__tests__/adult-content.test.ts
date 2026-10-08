@@ -127,7 +127,7 @@ describe("the routes", () => {
   });
 
   it("refuse 18+ on the free generator to anyone unconfirmed", () => {
-    expect(FREE).toMatch(/const adult = \(check\.verdict === "clear" && check\.adult === true\) \|\| marked;/);
+    expect(FREE).toMatch(/const adult = \(check\.verdict === "clear" && check\.adult === true\) \|\| named\.adult;/);
     expect(FREE).toMatch(/if \(adult && !\(await adultConfirmed\(supabaseForChecks, await resolveRecordingUserId\(supabaseForChecks, request\)\)\)\) \{/);
   });
 
@@ -147,10 +147,10 @@ describe("the routes", () => {
 
   it("count a stored prompt's own 18+ mark on every path", () => {
     expect(HUMAN).toMatch(/\} else if \(paid\.prompt_id\) \{\n\s+const marked = await promptMarkedAdult\(getSupabaseServerClient\(\), paid\.prompt_id as string\);/);
-    expect(FREE).toMatch(/const marked = await promptMarkedAdult\(supabaseForChecks, UUID_RE\.test\(String\(body\?\.promptId \?\? ""\)\) \? String\(body\.promptId\) : null\);/);
+    expect(FREE).toMatch(/const named = await freeRenderPrompt\(\n\s+supabaseForChecks,\n\s+UUID_RE\.test\(String\(body\?\.promptId \?\? ""\)\) \? String\(body\.promptId\) : null,/);
     // A mark that cannot be read refuses the request rather than guessing either way.
     expect(HUMAN).toMatch(/if \(marked === null\) \{\n\s+return NextResponse\.json\(\{ error: "This prompt could not be checked right now\. Nothing was generated and nothing was charged\." \}, \{ status: 503 \}\);/);
-    expect(FREE).toMatch(/if \(marked === null\) \{\n\s+return NextResponse\.json\(\{ error: "This prompt could not be checked right now\. Nothing was generated\." \}, \{ status: 503 \}\);/);
+    expect(FREE).toMatch(/if \(named === null\) \{\n\s+return NextResponse\.json\(\{ error: "This prompt could not be checked right now\. Nothing was generated\." \}, \{ status: 503 \}\);/);
   });
 
   it("mark the images they record", () => {

@@ -19,7 +19,8 @@ describe("the marketplace generator runs the selected model", () => {
   });
 
   it("preselects only the prompt's own model, and the buyer's pick wins", () => {
-    expect(PGV).toMatch(/const generator = generatorPick \|\| promptModelName;/);
+    // A paid prompt whose own model is the free one preselects nothing (Kev, 2026-10-08).
+    expect(PGV).toContain('const generator = generatorPick || (!isFree && onFreeHost(promptModelName) ? "" : promptModelName);');
     expect(PGV).toMatch(/const m = prompt\?\.ai_model;/);
   });
 
