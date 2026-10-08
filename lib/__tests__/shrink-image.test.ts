@@ -127,7 +127,7 @@ describe("a reference", () => {
     expect(canvases[0].asked).toEqual([["image/webp", 0.85]]);
   });
 
-  it("is read shrunk on every path, a picked file and a fetched link alike", async () => {
+  it("is read shrunk on every path, a picked file and a picked NFT alike", async () => {
     fakeBrowser();
     // The reader is handed what travels.
     vi.stubGlobal("FileReader", class {
@@ -138,7 +138,7 @@ describe("a reference", () => {
     });
     vi.stubGlobal("fetch", vi.fn(async () => new Response(new Blob(["x"], { type: "image/gif" }))));
     await expect(readReference(new Blob(["x"], { type: "image/png" }))).resolves.toBe("data:image/webp;base64,AA==");
-    await expect(readReference("https://arweave.net/a.gif")).resolves.toBe("data:image/webp;base64,AA==");
+    await expect(readReference({ image: "https://arweave.net/a.gif", thumb: "https://cdn.test/tile" })).resolves.toBe("data:image/webp;base64,AA==");
   });
 });
 

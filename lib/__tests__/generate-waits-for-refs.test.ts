@@ -46,42 +46,44 @@ describe("readImageFile", () => {
     await expect(readImageFile(new Blob(["x"]))).resolves.toBeNull();
   });
 
-  // A picked NFT is a link; the server never fetches one, so the browser sends its bytes.
-  let signals: (AbortSignal | undefined)[] = [];
+  // A picked NFT is read through our own route, never from its host (app/api/wallet/nfts/image).
+  const PICK = { image: "https://arweave.net/a.png", thumb: "https://cdn.helius-rpc.com/cdn-cgi/image/tile/https://arweave.net/a.png" };
+  let inits: (RequestInit | undefined)[] = [];
   const fetching = (answer: () => Promise<Response>) => {
     const asked: string[] = [];
-    signals = [];
-    vi.stubGlobal("fetch", vi.fn(async (u: string, init?: RequestInit) => { asked.push(u); signals.push(init?.signal ?? undefined); return answer(); }));
+    inits = [];
+    vi.stubGlobal("fetch", vi.fn(async (u: string, init?: RequestInit) => { asked.push(u); inits.push(init); return answer(); }));
     return asked;
   };
+  // The session the route asks for, as the browser keeps it.
+  const signedIn = () => {
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "enki_session_token" ? "tok" : null) });
+  };
 
-  it("readReference gives a link 20 s, so a host that never answers holds nothing for good", async () => {
+  it("readReference reads a picked NFT through our own route, with the session, 20 s at most", async () => {
     vi.stubGlobal("FileReader", fakeReader("load"));
-    fetching(async () => new Response(new Blob(["x"])));
-    const { readReference } = await import("@/hooks/useReferenceReads");
-    await readReference("https://x.test/a.png");
-    expect(signals[0]).toBeInstanceOf(AbortSignal);
-    expect(src("hooks", "useReferenceReads.ts")).toContain("fetch(src, { signal: AbortSignal.timeout(20_000) })");
-  });
-
-  it("readReference fetches a link and reads its bytes as the image", async () => {
-    vi.stubGlobal("FileReader", fakeReader("load"));
+    signedIn();
     const asked = fetching(async () => new Response(new Blob(["x"])));
     const { readReference } = await import("@/hooks/useReferenceReads");
-    await expect(readReference("https://arweave.net/a.png")).resolves.toBe("data:image/png;base64,AA==");
-    expect(asked).toEqual(["https://arweave.net/a.png"]);
+    await expect(readReference(PICK)).resolves.toBe("data:image/png;base64,AA==");
+    expect(asked).toEqual([`/api/wallet/nfts/image?src=${encodeURIComponent(PICK.image)}`]);
+    expect(inits[0]?.headers).toEqual({ "X-Session-Token": "tok" });
+    expect(inits[0]?.signal).toBeInstanceOf(AbortSignal);
+    expect(src("hooks", "useReferenceReads.ts")).toContain("signal: AbortSignal.timeout(20_000),");
   });
 
-  it("readReference answers null when a link fails or answers an error, so nothing waits for good", async () => {
+  it("readReference answers null when a pick fails or answers an error, so nothing waits for good", async () => {
     vi.stubGlobal("FileReader", fakeReader("load"));
+    signedIn();
     const { readReference } = await import("@/hooks/useReferenceReads");
-    fetching(async () => { throw new TypeError("blocked by CORS"); });
-    await expect(readReference("https://x.test/a.png")).resolves.toBeNull();
-    fetching(async () => new Response("gone", { status: 404 }));
-    await expect(readReference("https://x.test/a.png")).resolves.toBeNull();
+    fetching(async () => { throw new TypeError("network"); });
+    await expect(readReference(PICK)).resolves.toBeNull();
+    fetching(async () => new Response("gone", { status: 502 }));
+    await expect(readReference(PICK)).resolves.toBeNull();
     // The headers came in time, the body did not: the timeout ends the body read too.
     fetching(async () => ({ ok: true, blob: async () => { throw new DOMException("timed out", "TimeoutError"); } }) as unknown as Response);
-    await expect(readReference("https://x.test/a.png")).resolves.toBeNull();
+    await expect(readReference(PICK)).resolves.toBeNull();
   });
 
   it("readReference reads a file in place and fetches nothing", async () => {
@@ -106,11 +108,11 @@ describe("every generate surface waits for its reference images", () => {
     expect(LAUNCHER).toMatch(/generateBlocked=\{refsLoading\}/);
     // A picked NFT waits the same way, and travels as the image itself.
     expect(LAUNCHER).toContain("onPick={addNfts}");
-    expect(LAUNCHER).toContain("urls.forEach((u) => void readRef(u).then((img) => {");
+    expect(LAUNCHER).toContain("picks.forEach((p) => void readRef(p).then((img) => {");
   });
 
   it("quick create holds a picked NFT to the model's file types and limit, as an upload", () => {
-    const add = LAUNCHER.slice(LAUNCHER.indexOf("const addNfts = (urls: string[]) => {"), LAUNCHER.indexOf("const reorder = "));
+    const add = LAUNCHER.slice(LAUNCHER.indexOf("const addNfts = (picks: NftPick[]) => {"), LAUNCHER.indexOf("const reorder = "));
     expect(add).toContain('const type = /^data:([^;,]*)/i.exec(img)?.[1].toLowerCase() ?? "";');
     expect(add).toMatch(/if \(modelLimits\.filetypes\.length && !modelLimits\.filetypes\.includes\(type\)\) \{\n\s+toast\(\{ title: "File type not supported"[^\n]*\n\s+return;/);
     expect(add).toMatch(/if \(prev\.length \+ referenceImages\.length >= modelLimits\.maxRefs\) \{\n\s+toast\(\{ title: "Reference limit reached"[^\n]*\n\s+return prev;/);
@@ -120,7 +122,7 @@ describe("every generate surface waits for its reference images", () => {
   it("quick create drops a read that ends after another prompt opened", () => {
     const seed = LAUNCHER.slice(LAUNCHER.indexOf("setLocked(isPaid);"), LAUNCHER.indexOf("}, [seedPrompt]);"));
     expect(seed).toContain("refsEpoch.current++;");
-    expect(LAUNCHER).toMatch(/const addNfts = \(urls: string\[\]\) => \{\n\s+const epoch = refsEpoch\.current;\n\s+urls\.forEach\(\(u\) => void readRef\(u\)\.then\(\(img\) => \{\n\s+if \(epoch !== refsEpoch\.current\) return;/);
+    expect(LAUNCHER).toMatch(/const addNfts = \(picks: NftPick\[\]\) => \{\n\s+const epoch = refsEpoch\.current;\n\s+picks\.forEach\(\(p\) => void readRef\(p\)\.then\(\(img\) => \{\n\s+if \(epoch !== refsEpoch\.current\) return;/);
     expect(LAUNCHER).toMatch(/const epoch = refsEpoch\.current;\n\s+void readRef\(file\)\.then\(\(url\) => \{\n\s+if \(url && epoch === refsEpoch\.current\) \{/);
   });
 
@@ -150,11 +152,11 @@ describe("an image still being read shows greyed, and only there", () => {
   const HOOK = src("hooks", "useReferenceReads.ts");
 
   it("gets a preview before the read and loses it after, whatever the read answered", () => {
-    // A link is previewed by its own address, which is never revoked.
-    // A link's preview is its address made unique, so two reads of one address each hold Generate.
-    const added = HOOK.search(/const preview = typeof file === "string" \? `\$\{file\}#read-\$\{\+\+linkReads\}` : URL\.createObjectURL\(file\);\s+setPending\(\(p\) => \[\.\.\.p, preview\]\);/);
+    // An NFT is previewed by its tile made unique, so two reads of one tile each hold Generate;
+    // a tile is no blob: URL and is never revoked.
+    const added = HOOK.search(/const preview = file instanceof Blob \? URL\.createObjectURL\(file\) : `\$\{file\.thumb\}#read-\$\{\+\+nftReads\}`;\s+setPending\(\(p\) => \[\.\.\.p, preview\]\);/);
     const read = HOOK.search(/return await readReference\(file\);/);
-    const gone = HOOK.search(/\} finally \{\s+setPending\(\(p\) => p\.filter\(\(u\) => u !== preview\)\);\s+if \(typeof file !== "string"\) URL\.revokeObjectURL\(preview\);/);
+    const gone = HOOK.search(/\} finally \{\s+setPending\(\(p\) => p\.filter\(\(u\) => u !== preview\)\);\s+if \(file instanceof Blob\) URL\.revokeObjectURL\(preview\);/);
     expect(added).toBeGreaterThan(-1);
     expect(read).toBeGreaterThan(added);
     expect(gone).toBeGreaterThan(read);

@@ -8,15 +8,17 @@
 import { useEffect, useState } from "react";
 import { X, Check, Loader2, ImageOff } from "lucide-react";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import type { NftPick } from "@/hooks/useReferenceReads";
 // Shared popup chrome (spinner, CTA button) + its own styles live here.
 import "@/components/enki/bookmarks.css";
 
-type Nft = { id: string; name: string; image: string | null; collection: string | null };
+type Nft = { id: string; name: string; image: string; thumb: string; collection: string | null };
 
 export default function NftPickerModal({ max, onPick, onClose }: {
   /** How many the caller can still take (free reference slots). */
   max: number;
-  onPick: (images: string[]) => void;
+  /** The marked NFTs, each read through our own route (useReferenceReads). */
+  onPick: (picks: NftPick[]) => void;
   onClose: () => void;
 }) {
   const [nfts, setNfts] = useState<Nft[] | null>(null);
@@ -47,8 +49,8 @@ export default function NftPickerModal({ max, onPick, onClose }: {
   });
 
   const use = () => {
-    const imgs = (nfts ?? []).filter((n) => marked.has(n.id) && n.image).map((n) => n.image as string);
-    if (imgs.length) onPick(imgs);
+    const picks = (nfts ?? []).filter((n) => marked.has(n.id)).map(({ image, thumb }) => ({ image, thumb }));
+    if (picks.length) onPick(picks);
     onClose();
   };
 
@@ -69,7 +71,7 @@ export default function NftPickerModal({ max, onPick, onClose }: {
               <button key={n.id} type="button"
                 className={"enki-nftp-item" + (marked.has(n.id) ? " on" : "")}
                 title={n.name} onClick={() => toggle(n.id)}>
-                {n.image ? <img src={n.image} alt={n.name} draggable={false} loading="lazy" /> : <ImageOff size={16} />}
+                <img src={n.thumb} alt={n.name} draggable={false} loading="lazy" />
                 {marked.has(n.id) && <span className="enki-nftp-check"><Check size={11} /></span>}
               </button>
             ))}

@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { shrinkImage } from "@/lib/shrink-image";
+import { sessionAuthHeaders } from "@/lib/session-headers";
 
 /** A picked image file as a data URL; null when the browser cannot read it, so nothing waits forever. */
 export function readImageFile(file: Blob): Promise<string | null> {
@@ -13,22 +14,29 @@ export function readImageFile(file: Blob): Promise<string | null> {
   });
 }
 
+/** A wallet NFT as the picker hands it over: the picture the list named, and the tile it showed. */
+export type NftPick = { image: string; thumb: string };
+
 /**
- * A reference as a data URL: a file is read in place, a link (a wallet NFT's
- * image) is fetched first. The server judges every reference by its bytes and
- * never fetches an address a user names. Either is made smaller first, so
- * every reference fits a request (lib/shrink-image).
+ * A reference as a data URL: a file is read in place, a picked NFT through
+ * our own route (/api/wallet/nfts/image), which reads it through the Helius
+ * CDN, so no host's CORS or downtime decides whether it loads. Either is made
+ * smaller first, so every reference fits a request (lib/shrink-image), and the
+ * server judges every reference by its bytes.
  */
-export async function readReference(src: Blob | string): Promise<string | null> {
-  // A host that never answers would hold Generate for good: 20 s at most.
-  const blob = typeof src === "string"
-    ? await fetch(src, { signal: AbortSignal.timeout(20_000) }).then((r) => (r.ok ? r.blob() : null)).catch(() => null)
-    : src;
+export async function readReference(src: Blob | NftPick): Promise<string | null> {
+  // A route that never answers would hold Generate for good: 20 s at most.
+  const blob = src instanceof Blob
+    ? src
+    : await fetch(`/api/wallet/nfts/image?src=${encodeURIComponent(src.image)}`, {
+        headers: sessionAuthHeaders(),
+        signal: AbortSignal.timeout(20_000),
+      }).then((r) => (r.ok ? r.blob() : null)).catch(() => null);
   return blob ? readImageFile(await shrinkImage(blob)) : null;
 }
 
-/** Each link read is its own pending entry: two NFTs often share one image address. */
-let linkReads = 0;
+/** Each NFT read is its own pending entry: one NFT can be picked twice, and two often share an image. */
+let nftReads = 0;
 
 /**
  * Reference images are read in the browser before they can travel with a
@@ -39,19 +47,19 @@ let linkReads = 0;
  * greyed while it loads, gone if it fails, kept once it is in). The previews
  * are blob: URLs and live only here, never in a reference list, so none can
  * be saved with a draft or sent with a generation.
- * A link is previewed by its own address while it loads, made unique by a
- * fragment, so one finished read never clears another of the same address.
+ * An NFT is previewed by its tile while it loads, made unique by a fragment,
+ * so one finished read never clears another of the same tile.
  */
 export function useReferenceReads() {
   const [pending, setPending] = useState<string[]>([]);
-  const read = useCallback(async (file: Blob | string) => {
-    const preview = typeof file === "string" ? `${file}#read-${++linkReads}` : URL.createObjectURL(file);
+  const read = useCallback(async (file: Blob | NftPick) => {
+    const preview = file instanceof Blob ? URL.createObjectURL(file) : `${file.thumb}#read-${++nftReads}`;
     setPending((p) => [...p, preview]);
     try {
       return await readReference(file);
     } finally {
       setPending((p) => p.filter((u) => u !== preview));
-      if (typeof file !== "string") URL.revokeObjectURL(preview);
+      if (file instanceof Blob) URL.revokeObjectURL(preview);
     }
   }, []);
   return { loading: pending.length > 0, pending, read };

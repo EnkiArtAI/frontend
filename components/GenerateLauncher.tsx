@@ -17,7 +17,7 @@ import { usePaymentSigner } from "@/hooks/usePaymentSigner";
 import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
 import { useGenerationCore } from "@/hooks/useGenerationCore";
 import NftPickerModal from "@/components/enki/NftPickerModal";
-import { useReferenceReads, REFS_LOADING } from "@/hooks/useReferenceReads";
+import { useReferenceReads, REFS_LOADING, type NftPick } from "@/hooks/useReferenceReads";
 
 /* No literals: models, ratios, tiers, prices, the boost lever and the NFT
    reference limit all come from useGenerationCore — the one global source
@@ -277,9 +277,9 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
 
   // Each picked NFT travels as the image itself, read like an upload and held
   // to the same file types and limit: the server judges bytes, never a link.
-  const addNfts = (urls: string[]) => {
+  const addNfts = (picks: NftPick[]) => {
     const epoch = refsEpoch.current;
-    urls.forEach((u) => void readRef(u).then((img) => {
+    picks.forEach((p) => void readRef(p).then((img) => {
       if (epoch !== refsEpoch.current) return;
       if (!img) {
         toast({ title: "NFT image unavailable", description: "This NFT's image could not be loaded, so it was not added.", variant: "destructive" });
