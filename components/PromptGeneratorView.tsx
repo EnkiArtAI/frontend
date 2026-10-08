@@ -38,6 +38,7 @@ import {
   ArrowLeft,
   Braces,
   Type,
+  Flag,
 } from "lucide-react";
 import "./prompt-generator.css";
 import BoostToggle from "@/components/generation/BoostToggle";
@@ -55,6 +56,7 @@ import { openCreator } from "@/lib/openCreator";
 import { requestPromptEdit } from "@/components/enki-shell/editorBridge";
 import ResolutionSelect from "@/components/generation/ResolutionSelect";
 import GeneratorLogo from "@/components/generation/GeneratorLogo";
+import { ReportButton } from "@/components/ReportButton";
 
 /* ── Types ── */
 type VarType = "text" | "checkbox" | "single-select" | "multi-select" | "slider" | "radio";
@@ -1247,6 +1249,9 @@ export default function PromptGeneratorView({
               >
                 <Download size={13} />
               </button>
+              <ReportButton targetType="prompt" targetId={promptId} className="pgv-icon-btn">
+                <Flag size={12} />
+              </ReportButton>
               <div className="pgv-share">
                 <button
                   ref={shareBtnRef}
@@ -2136,10 +2141,19 @@ export default function PromptGeneratorView({
               ))}
             </div>
           )}
-          {/* Your own render, opened from your history: private until you make it public. */}
+          {/* Your own render, opened from your history: private until you
+              make it public. Someone else's public one: report it. */}
           {(() => {
             const url = lightbox.urls[lightbox.at];
             const own = history.includes(url) ? ownImages.get(url) : undefined;
+            const other = own || ownImages.has(url) ? undefined : publicImages.find((p) => p.url === url);
+            if (other) {
+              return (
+                <ReportButton targetType="generation" targetId={other.id} className="pgv-lb-public pgv-lb-report pgv-lb-chrome">
+                  <Flag size={13} /> Report
+                </ReportButton>
+              );
+            }
             return own ? (
               <label className="pgv-lb-public pgv-lb-chrome" onClick={e => e.stopPropagation()}>
                 <input
