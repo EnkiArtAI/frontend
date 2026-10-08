@@ -56,6 +56,8 @@ export const IMAGE_REFUSED = "This image can't be delivered on Enki. Nothing was
 /** When the judges gave no verdict: the image is held back, never shown unchecked. */
 export const IMAGE_UNCHECKED = "Your image could not be checked right now, so it was not delivered. Nothing was charged. Please try again.";
 export const REFERENCE_REFUSED = "One of your reference images can't be used on Enki. Nothing was generated and nothing was charged.";
+/** A reference sent as a link: nothing here fetches an address a user names, so it comes as the image itself. */
+export const REFERENCE_LINK = "Reference images must be attached as images, not links. Nothing was generated and nothing was charged.";
 export const REFERENCE_UNCHECKED = "Your reference images could not be checked right now. Nothing was generated and nothing was charged. Please try again.";
 
 export const UPLOAD_REFUSED = "This image can't be uploaded to Enki.";
@@ -69,6 +71,9 @@ export const MESSAGE_IMAGE_ADULT = "18+ images can't be sent in messages.";
 
 /** Refused or not judged: such an image is neither shown nor used. */
 export const heldBack = (v: { verdict: string }) => v.verdict === "blocked" || v.verdict === "child_safety" || v.verdict === "unavailable";
+
+/** A reference that names an address (https:, blob:, ipfs: …) rather than carrying the image. */
+export const isLink = (ref: string) => /^(?!data:)[a-z][a-z0-9+.-]*:/i.test(ref.trim());
 
 /** The bytes of a base64 data: URL, or null for anything else. */
 export function dataUrlBytes(url: string): Buffer | null {

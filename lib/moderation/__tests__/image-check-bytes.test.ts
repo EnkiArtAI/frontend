@@ -14,7 +14,7 @@ vi.mock("@/lib/moderation/image-check", () => ({
   checkImage: async (url: string) => { seen.urls.push(url); return seen.answers.shift() ?? { verdict: "clear" }; },
 }));
 
-import { checkImageBytes, dataUrlBytes } from "@/lib/moderation/image-check-bytes";
+import { checkImageBytes, dataUrlBytes, isLink } from "@/lib/moderation/image-check-bytes";
 
 beforeEach(() => { seen.urls = []; seen.answers = []; });
 
@@ -114,6 +114,13 @@ describe("checkImageBytes", () => {
     }
     seen.answers = [{ verdict: "clear" }, { verdict: "child_safety", scores: { minor: 0.9 } }];
     expect(await checkImageBytes(await rgba(0.5))).toEqual({ verdict: "child_safety", scores: { minor: 0.9 } });
+  });
+});
+
+describe("isLink", () => {
+  it("tells an address from an image carried whole", () => {
+    for (const link of ["https://arweave.net/x.png", "http://x.test/a", " HTTPS://X.TEST/a", "blob:https://enki.art/1", "ipfs://bafy/1.png"]) expect(isLink(link), link).toBe(true);
+    for (const image of ["data:image/png;base64,iVBORw0KGgo=", "iVBORw0KGgo=", "/9j/4AAQSkZJRg==", "R0lGODlhAQABAAAAACw="]) expect(isLink(image), image).toBe(false);
   });
 });
 

@@ -41,6 +41,14 @@ describe("the reference images", () => {
     }
   });
 
+  it("are never fetched: a link is refused as one, before any check", async () => {
+    const refused = at("if (refs.some(isLink)) {\n      return NextResponse.json({ error: REFERENCE_LINK }, { status: 422 });");
+    expect(refused).toBeLessThan(at("Promise.all(refBytes.map((b) => checkImageBytes(b, { signal: request.signal }))),"));
+    expect(refused).toBeGreaterThan(at("const refs = (body.referenceImages ?? [])"));
+    const m = await import("@/lib/moderation/image-check-bytes");
+    expect(m.REFERENCE_LINK).toBe("Reference images must be attached as images, not links. Nothing was generated and nothing was charged.");
+  });
+
   it("are read as the providers read them: a data: URL or bare base64", () => {
     at('const refBytes = refs.map((r) => dataUrlBytes(r) ?? Buffer.from(r.trim(), "base64"));');
   });

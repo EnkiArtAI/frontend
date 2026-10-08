@@ -30,7 +30,7 @@ import { childSafetyScore, recordModerationEvent } from "@/lib/moderation-enforc
 import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
 import { storeReferenceImages } from "@/lib/generation/reference-images";
 import { INLINE_MAX_BYTES, putDurably, removeStored, storeDeadline } from "@/lib/generation/derivative-store";
-import { checkImageBytes, dataUrlBytes, heldBack, IMAGE_REFUSED, IMAGE_UNCHECKED, REFERENCE_REFUSED, REFERENCE_UNCHECKED } from "@/lib/moderation/image-check-bytes";
+import { checkImageBytes, dataUrlBytes, heldBack, isLink, IMAGE_REFUSED, IMAGE_UNCHECKED, REFERENCE_LINK, REFERENCE_REFUSED, REFERENCE_UNCHECKED } from "@/lib/moderation/image-check-bytes";
 import { recordImageCase } from "@/lib/moderation/image-case";
 import { acquireSlot, releaseSlot } from "@/lib/generation/concurrency";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
@@ -372,6 +372,11 @@ export async function POST(request: NextRequest) {
     // reach a model or anything is charged (Kev, 2026-10-08: every image).
     // They arrive as data: URLs or bare base64, as the providers read them.
     const refs = (body.referenceImages ?? []).filter((r): r is string => typeof r === "string" && r.trim() !== "");
+    // A link is never fetched here: refused as one, not judged as junk and
+    // answered "try again".
+    if (refs.some(isLink)) {
+      return NextResponse.json({ error: REFERENCE_LINK }, { status: 422 });
+    }
     const refBytes = refs.map((r) => dataUrlBytes(r) ?? Buffer.from(r.trim(), "base64"));
     const [check, refsSeen] = await Promise.all([
       first ? NOT_CHECKED : checkPrompt(checked, { hidden: fromArtist, signal: request.signal }),
