@@ -25,6 +25,7 @@ import {
 } from "@/lib/payments/pricing-rules";
 import { isListed, isPublicText } from "@/lib/prompt-visibility";
 import { resolveOwnerIds } from "@/lib/session-user";
+import { hiddenOwners } from "@/lib/hidden-owners";
 
 export interface QuoteInput {
   /** Absent for the buyer's own prompt: no artist, so no artist leg. */
@@ -121,6 +122,10 @@ export async function computeQuote(
     if (!data || (!isListed(data) && !(await mine()))) {
       return { ok: false, status: 404, error: "Prompt not found" };
     }
+    // A banned or deleted creator's prompt is not sold: nobody pays its share.
+    const hidden = await hiddenOwners(supabase, [String(data.creator_id ?? "")]);
+    if (!hidden) return { ok: false, status: 500, error: "Failed to load prompt" };
+    if (hidden.has(String(data.creator_id))) return { ok: false, status: 404, error: "Prompt not found" };
     prompt = data;
   }
 

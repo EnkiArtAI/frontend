@@ -4,6 +4,7 @@ import { resolveSessionUserId } from "@/lib/session-user";
 import { requireStepUp } from "@/lib/webauthn";
 import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
 import { hideAdult, viewer } from "@/lib/adult-content";
+import { hiddenOwners } from "@/lib/hidden-owners";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VISIBILITY = new Set(["public", "private"]); // the live CHECK's two values (probed 2026-10-07)
@@ -20,7 +21,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
     const supabase = getSupabaseServerClient();
     const published = supabase
       .from("generated_images")
-      .select("id, storage_url, preview_url, thumbnail_url, width, height, prompt_id, created_at")
+      .select("id, user_id, storage_url, preview_url, thumbnail_url, width, height, prompt_id, created_at")
       .eq("id", id)
       .eq("visibility", "public")
       .eq("is_uploaded", false)
@@ -28,6 +29,10 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
     const { data, error } = await hideAdult(published, await viewer(supabase, req)).maybeSingle();
     if (error) throw error;
     if (!data) return NextResponse.json({ error: "Image not found" }, { status: 404 });
+    // A banned or deleted account's image is no longer public.
+    const hidden = await hiddenOwners(supabase, [String(data.user_id ?? "")]);
+    if (!hidden) return dbUnavailableResponse();
+    if (hidden.has(String(data.user_id))) return NextResponse.json({ error: "Image not found" }, { status: 404 });
     return NextResponse.json({
       id: data.id,
       imageUrl: data.storage_url,

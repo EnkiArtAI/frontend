@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isPublicText } from "@/lib/prompt-visibility";
+import { hiddenOwners } from "@/lib/hidden-owners";
 
 /*
  * The marketplace card: one row of the prompts table, mapped and enriched
@@ -165,8 +166,11 @@ export async function enrichPromptCards(
     }
   }
 
+  // A banned or deleted creator's prompts leave the feed and the search.
+  const hidden = await hiddenOwners(supabase, prompts.map((p) => String(p.userId ?? "")));
+  if (!hidden) throw new Error("creators could not be read");
   return Promise.all(
-    prompts.map(async (prompt) => {
+    prompts.filter((p) => !hidden.has(String(p.userId))).map(async (prompt) => {
       const variables = variablesMap[prompt.id] || [];
       try {
         // Live schema: users.handle. `username` never existed, so that select

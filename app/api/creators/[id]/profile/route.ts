@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { hideAdult, viewer } from "@/lib/adult-content";
+import { hiddenOwners } from "@/lib/hidden-owners";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -38,6 +39,12 @@ export async function GET(
         { success: false, error: "Creator not found" },
         { status: 404 }
       );
+    }
+    // A banned or deleted account has no public profile (and no public wallet).
+    const hidden = await hiddenOwners(supabase, [String(userData.id)]);
+    if (!hidden) return NextResponse.json({ success: false, error: "Creator unavailable" }, { status: 503 });
+    if (hidden.has(String(userData.id))) {
+      return NextResponse.json({ success: false, error: "Creator not found" }, { status: 404 });
     }
 
     // Listed prompts only — the portfolio is the public shelf, not drafts.

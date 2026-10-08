@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+// Banned or deleted owners are hidden-owners.test.ts's subject; here nobody is.
+vi.mock("@/lib/hidden-owners", () => ({ hiddenOwners: async () => new Set<string>() }));
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { artistPayoutWallet, computeQuote } from "@/lib/payments/generation-quote";
 

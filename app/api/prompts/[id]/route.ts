@@ -9,6 +9,7 @@ import { recordModerationEvent } from "@/lib/moderation-enforcement";
 import { checkPrompt, NOT_CHECKED } from "@/lib/moderation/prompt-check";
 import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
+import { hiddenOwners } from "@/lib/hidden-owners";
 
 const RATIO_SHAPE = /^[0-9]{1,2}([.][0-9]{1,2})?:[0-9]{1,2}([.][0-9]{1,2})?$/;
 
@@ -82,6 +83,12 @@ export async function GET(
       (prompt.is_adult && !mayShowAdult(await viewer(supabase, req), prompt.creator_id) && !isOwner)
     ) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+    // A banned or deleted creator's prompt answers like a missing one.
+    if (!isOwner) {
+      const hidden = await hiddenOwners(supabase, [String(prompt.creator_id ?? "")]);
+      if (!hidden) return dbUnavailableResponse();
+      if (hidden.has(String(prompt.creator_id))) return NextResponse.json({ error: "not found" }, { status: 404 });
     }
 
     // Fetch variables for this prompt

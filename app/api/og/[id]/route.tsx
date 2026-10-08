@@ -2,6 +2,7 @@ import { ImageResponse } from "next/og";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { aspectOf, gridFor } from "@/lib/og-grid";
 import { isListed } from "@/lib/prompt-visibility";
+import { hiddenOwners } from "@/lib/hidden-owners";
 
 /**
  * Social preview card for a prompt — the image X, Discord, Telegram, Slack
@@ -35,6 +36,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     // words of a prompt nobody else should read, and its images are private.
     const row = (data as Row | null) ?? null;
     p = row && isListed(row) ? row : null;
+    // A banned or deleted creator's prompt gets the brand card, as does a failed lookup.
+    if (p) {
+      const hidden = await hiddenOwners(supabase, [String(p.creator_id ?? "")]);
+      if (!hidden || hidden.has(String(p.creator_id))) p = null;
+    }
     if (p?.creator_id) {
       const { data: u } = await supabase.from("users").select("handle").eq("id", p.creator_id).maybeSingle();
       handle = (u?.handle as string | undefined) ?? null;

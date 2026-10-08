@@ -25,6 +25,7 @@ class Query implements PromiseLike<{ data: unknown; error: unknown }> {
   constructor(private table: string) {}
   select(c: string) { this.cols = c.split(",").map((x) => x.trim()); return this; }
   eq(c: string, v: unknown) { this.filters.push((r) => r[c] === v); return this; }
+  in(c: string, vs: unknown[]) { this.filters.push((r) => vs.includes(r[c])); return this; }
   is(c: string, v: null) { this.filters.push((r) => (r[c] ?? null) === v); return this; }
   gt(c: string, v: string) { this.filters.push((r) => String(r[c]) > v); return this; }
   or(expr: string) {
@@ -87,6 +88,7 @@ beforeEach(() => {
       { address: "MappedWa11et1111111111111111111111111111111", user_id: FIRST_MAPPING, chain_family: "solana", removed_at: null },
     ],
     bans: [],
+    users: [{ id: ARTIST, deleted_at: null, account_status: "active" }],
   };
 });
 
@@ -115,6 +117,31 @@ describe("a live prompt", () => {
     if (!q.ok) throw new Error(q.error);
     expect(q.split.artistAmountMicro).toBe(1_500_000);
     expect(reads).not.toContain("auth_sessions");
+  });
+});
+
+describe("a live prompt of a banned or deleted creator", () => {
+  beforeEach(() => prompt(LIVE));
+
+  it("is not for sale while the ban is active", async () => {
+    db.bans.push({ id: "b1", user_id: ARTIST, lifted_at: null, expires_at: null, reason: "x" });
+    expect(await quote()).toEqual({ ok: false, status: 404, error: "Prompt not found" });
+    expect(await quote("buyer")).toEqual({ ok: false, status: 404, error: "Prompt not found" });
+  });
+
+  it("is for sale again once the ban is lifted", async () => {
+    db.bans.push({ id: "b1", user_id: ARTIST, lifted_at: "2026-10-01T00:00:00Z", expires_at: null, reason: "x" });
+    expect((await quote("buyer")).ok).toBe(true);
+  });
+
+  it("is not for sale once the account is deleted", async () => {
+    db.users = [{ id: ARTIST, deleted_at: "2026-10-01T00:00:00Z", account_status: "deleted" }];
+    expect(await quote("buyer")).toEqual({ ok: false, status: 404, error: "Prompt not found" });
+  });
+
+  it("is not sold blind while the creators cannot be read", async () => {
+    failing = "bans";
+    expect(await quote("buyer")).toEqual({ ok: false, status: 500, error: "Failed to load prompt" });
   });
 });
 

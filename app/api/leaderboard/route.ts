@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { isListed } from "@/lib/prompt-visibility";
+import { hiddenOwners } from "@/lib/hidden-owners";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TREND_DAYS = 14;
@@ -58,7 +59,11 @@ export async function GET(req: NextRequest) {
   );
   if (error) return NextResponse.json({ rows: [] }); // pre-migration → empty
 
-  const raw = (data ?? []) as (GenRow & EarnRow)[];
+  // A banned or deleted account leaves the board; a lookup that fails shows none.
+  const all = (data ?? []) as (GenRow & EarnRow)[];
+  const offBoard = await hiddenOwners(supabase, all.map((r) => String(r.creator_id)));
+  if (!offBoard) return NextResponse.json({ rows: [] });
+  const raw = all.filter((r) => !offBoard.has(String(r.creator_id)));
   const ids = raw.map((r) => r.creator_id);
 
   // ── best-effort extras, fetched in parallel ──

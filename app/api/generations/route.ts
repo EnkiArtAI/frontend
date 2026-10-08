@@ -1,6 +1,7 @@
 // app/api/generations/route.ts
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { hideAdult, viewer } from "@/lib/adult-content";
+import { hiddenOwners } from "@/lib/hidden-owners";
 import {
   getGenerationsQuerySchema,
   validateQuery,
@@ -53,6 +54,12 @@ export async function GET(req: Request) {
     // generation record (encrypted prompt, prompt_id NOT NULL) and has no image
     // column at all. Reading `generations` here is what made uploads invisible.
     const v = await viewer(supabase, req);
+    // A banned or deleted account's gallery is empty to everyone but itself.
+    if (v.userId !== ownerId) {
+      const hidden = await hiddenOwners(supabase, [ownerId]);
+      if (!hidden) return createErrorResponse("Gallery unavailable", 503);
+      if (hidden.has(ownerId)) return createSuccessResponse({ generations: [], total: 0, limit, offset });
+    }
     let gallery = supabase
       .from("generated_images")
       .select("id, prompt_id, storage_url, preview_url, thumbnail_url, description, is_uploaded, visibility, created_at", { count: 'exact' })

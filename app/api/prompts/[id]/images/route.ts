@@ -3,6 +3,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { isListed } from "@/lib/prompt-visibility";
 import { mayShowAdult, viewer } from "@/lib/adult-content";
 import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
+import { hiddenOwners } from "@/lib/hidden-owners";
 
 /**
  * What people made with a prompt and chose to show (Kev, 2026-10-08). Every
@@ -31,7 +32,7 @@ export async function GET(req: Request, context: { params: Promise<{ id: string 
     }
     let images = supabase
       .from("generated_images")
-      .select("id, storage_url, preview_url, thumbnail_url, created_at")
+      .select("id, user_id, storage_url, preview_url, thumbnail_url, created_at")
       .eq("prompt_id", id)
       .eq("visibility", "public")
       .eq("is_uploaded", false)
@@ -39,8 +40,11 @@ export async function GET(req: Request, context: { params: Promise<{ id: string 
     if (!v.showAdult) images = images.eq("is_adult", false);
     const { data, error: readError } = await images.order("created_at", { ascending: false }).limit(LIMIT);
     if (readError) throw readError;
+    // Images of a banned or deleted account leave the row, as from every public read.
+    const hidden = await hiddenOwners(supabase, (data ?? []).map((r) => String(r.user_id ?? "")));
+    if (!hidden) return dbUnavailableResponse();
     return NextResponse.json({
-      images: (data ?? []).map((r) => ({
+      images: (data ?? []).filter((r) => !hidden.has(String(r.user_id))).map((r) => ({
         id: r.id,
         url: r.preview_url ?? r.storage_url,
         thumbnailUrl: r.thumbnail_url ?? r.preview_url ?? r.storage_url,

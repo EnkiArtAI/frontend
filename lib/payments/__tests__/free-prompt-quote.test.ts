@@ -1,4 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+// Banned or deleted owners are hidden-owners.test.ts's subject; here nobody is.
+vi.mock("@/lib/hidden-owners", () => ({ hiddenOwners: async () => new Set<string>() }));
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { SupabaseClient } from "@supabase/supabase-js";

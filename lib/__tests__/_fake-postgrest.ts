@@ -22,6 +22,7 @@ function orFilter(expr: string): (r: Row) => boolean {
       if (v === null) return false;
       if (op === "eq") return String(v) === val;
       if (op === "lt") return cmp(v, val) < 0;
+      if (op === "gt") return cmp(v, val) > 0;
       if (op === "lte") return cmp(v, val) <= 0;
       throw new Error(`fake or(): ${op}`);
     };

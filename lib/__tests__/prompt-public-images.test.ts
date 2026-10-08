@@ -79,6 +79,17 @@ describe("the images people made public with a prompt", () => {
     expect((await read()).body.images).toHaveLength(1);
   });
 
+  it("leave out the images of a banned or deleted account", async () => {
+    db.current!.tables.generated_images = [img("g1", { user_id: "kept" }), img("g2", { user_id: "gone" }), img("g3", { user_id: "barred" })];
+    db.current!.tables.users = [
+      { id: "kept", deleted_at: null, account_status: "active" },
+      { id: "gone", deleted_at: "2026-10-01T00:00:00Z", account_status: "deleted" },
+      { id: "barred", deleted_at: null, account_status: "active" },
+    ];
+    db.current!.tables.bans = [{ user_id: "barred", lifted_at: null, expires_at: null }];
+    expect((await read()).body.images.map((i: { id: string }) => i.id)).toEqual(["g1"]);
+  });
+
   it("refuse an id that is not a prompt id", async () => {
     expect((await read("../x")).status).toBe(400);
   });

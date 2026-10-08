@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+// Banned or deleted owners are hidden-owners.test.ts's subject; here nobody is.
+vi.mock("@/lib/hidden-owners", () => ({ hiddenOwners: async () => new Set<string>() }));
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
