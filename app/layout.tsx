@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
+import "@/components/kit/kit-base.css";
 import { Providers } from "../providers";
 
 /* Self-hosted (app/fonts, OFL-1.1, licenses alongside): next/font/google
