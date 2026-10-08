@@ -10,7 +10,7 @@ import { resolveOwnerIds, resolveSessionUserId, resolveSessionUserWithBan } from
 import { isPublicText } from "@/lib/prompt-visibility";
 import { keepableImage, ownShowcaseImages } from "@/lib/generation/derivative-store";
 import { ownRenders } from "@/lib/generation/own-renders";
-import { checkImageBytes, dataUrlBytes, heldBack } from "@/lib/moderation/image-check-bytes";
+import { checkImageBytes, dataUrlBytes, heldBack, NOT_AN_IMAGE } from "@/lib/moderation/image-check-bytes";
 import { recordImageCase } from "@/lib/moderation/image-case";
 import { extractTags, storedTags } from "@/lib/search/tags";
 import { artistPayoutWallet } from "@/lib/payments/generation-quote";
@@ -542,7 +542,7 @@ export async function POST(req: Request) {
     // prompt 18+. Saved ones and our own renders were judged already.
     const freshBefore = (referenceImages ?? []).filter((url) => url.startsWith("data:") && !savedBefore.includes(url));
     const freshBytes = freshBefore.map((url) => dataUrlBytes(url));
-    const beforeSeen = await Promise.all(freshBytes.map((b) => (b ? checkImageBytes(b, { signal: req.signal }) : Promise.resolve({ verdict: "unavailable" as const, reason: "not base64" }))));
+    const beforeSeen = await Promise.all(freshBytes.map((b) => (b ? checkImageBytes(b, { signal: req.signal }) : Promise.resolve({ verdict: "blocked" as const, reason: NOT_AN_IMAGE }))));
     if (beforeSeen.some(heldBack)) {
       beforeSeen.forEach((v, i) => {
         const bytes = freshBytes[i];

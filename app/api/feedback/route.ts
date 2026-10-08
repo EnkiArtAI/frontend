@@ -117,7 +117,7 @@ export async function POST(req: NextRequest) {
       if (seen.verdict === "child_safety") {
         after(recordImageCase(supabase, { surface: "feedback", request: req, bytes: buf, scores: seen.scores, about: "An attachment to a feedback report." }));
       }
-      const video = seen.verdict === "unavailable" && seen.reason === NOT_AN_IMAGE && f.type.startsWith("video/") && isVideo(buf);
+      const video = seen.verdict === "blocked" && seen.reason === NOT_AN_IMAGE && f.type.startsWith("video/") && isVideo(buf);
       if (!video && seen.verdict !== "clear" && seen.verdict !== "adult") continue;
       const up = await supabase.storage.from(BUCKET).upload(path, buf, { contentType: f.type, upsert: false });
       if (up.error) continue;

@@ -51,8 +51,16 @@ describe("checkImageBytes", () => {
     expect((await sharp(dataUrlBytes(seen.urls[0])!).metadata()).width).toBe(300);
   });
 
-  it("answers bytes that are no image with unavailable, and asks nobody", async () => {
-    expect(await checkImageBytes(Buffer.from("not an image"))).toEqual({ verdict: "unavailable", reason: "not an image" });
+  it("refuses bytes that are no image for good, and asks nobody", async () => {
+    expect(await checkImageBytes(Buffer.from("not an image"))).toEqual({ verdict: "blocked", reason: "not an image" });
+    expect(seen.urls).toEqual([]);
+  });
+
+  it("refuses an image that does not decode whole (a cut file), apart from bytes that are no image", async () => {
+    // Noise, so the scan data is long enough to lose its tail and keep its header.
+    const raw = Buffer.from(Array.from({ length: 256 * 256 * 3 }, (_, i) => (i * 7919) % 251));
+    const jpeg = await sharp(raw, { raw: { width: 256, height: 256, channels: 3 } }).jpeg().toBuffer();
+    expect(await checkImageBytes(jpeg.subarray(0, jpeg.length - 2000))).toEqual({ verdict: "blocked", reason: "unreadable" });
     expect(seen.urls).toEqual([]);
   });
 

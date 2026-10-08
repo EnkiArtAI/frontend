@@ -49,7 +49,7 @@ export type ImageJudgement = { omni: Record<string, number>; luna: LunaJudgement
 export type ImageVerdict =
   | { verdict: "clear" }
   | { verdict: "adult"; reason: "suggestive" | "graphic" }
-  | { verdict: "blocked"; reason: "explicit" | "not a still" }
+  | { verdict: "blocked"; reason: "explicit" | "not a still" | "not an image" | "unreadable" }
   | { verdict: "child_safety" }
   | { verdict: "unavailable"; reason: string };
 

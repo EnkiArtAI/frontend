@@ -11,14 +11,17 @@ import type { NextRequest } from "next/server";
 
 const s = vi.hoisted(() => ({ verdicts: [] as string[], calls: 0, cases: [] as unknown[], uploads: [] as string[], rows: [] as { table: string; row: unknown }[] }));
 // As the real check: bytes no decoder reads never reach the judges (here,
-// anything but a PNG or an AVIF, which opens like an MP4); `calls` counts
-// what the judges see.
+// anything but a PNG or an AVIF, which opens like an MP4, and a JPEG cut
+// short reads as one that does not decode whole); `calls` counts what the
+// judges see.
 vi.mock("@/lib/moderation/image-check-bytes", async (orig) => {
   const real = await orig<typeof import("@/lib/moderation/image-check-bytes")>();
   return {
     ...real,
     checkImageBytes: async (b: Buffer) =>
-      b.subarray(0, 4).toString("hex") === "89504e47" || b.toString("latin1", 4, 12) === "ftypavif" ? { verdict: s.verdicts[s.calls++] ?? "clear" } : { verdict: "unavailable", reason: real.NOT_AN_IMAGE },
+      b.subarray(0, 4).toString("hex") === "89504e47" || b.toString("latin1", 4, 12) === "ftypavif" ? { verdict: s.verdicts[s.calls++] ?? "clear" }
+      : b.subarray(0, 2).toString("hex") === "ffd8" ? { verdict: "blocked", reason: "unreadable" }
+      : { verdict: "blocked", reason: real.NOT_AN_IMAGE },
   };
 });
 vi.mock("@/lib/moderation/image-case", () => ({ recordImageCase: async (_c: unknown, c: unknown) => { s.cases.push(c); } }));
@@ -134,6 +137,11 @@ describe("an image attached to a feedback report", () => {
     s.verdicts = ["blocked"];
     expect((await report([bytes("video/mp4", [0, 0, 0, 0x18, ...Buffer.from("ftypavif")])])).status).toBe(201);
     expect(s.calls).toBe(1);
+    expect(s.uploads).toEqual([]);
+  });
+
+  it("a cut image whose bytes happen to read ftyp, labelled a video, is dropped: a decoder knew it for an image", async () => {
+    expect((await report([bytes("video/mp4", [0xff, 0xd8, 0xff, 0xe1, ...Buffer.from("ftyp"), 0, 0])])).status).toBe(201);
     expect(s.uploads).toEqual([]);
   });
 

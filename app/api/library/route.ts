@@ -4,7 +4,7 @@ import { resolveSessionUserId } from "@/lib/session-user";
 import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { checkRequestRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
-import { checkImageBytes, dataUrlBytes, NOT_AN_IMAGE } from "@/lib/moderation/image-check-bytes";
+import { checkImageBytes, dataUrlBytes } from "@/lib/moderation/image-check-bytes";
 import { recordImageCase } from "@/lib/moderation/image-case";
 
 /**
@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
         after(recordImageCase(supabase, { surface: "library", request, bytes: bytes[i], scores: v.scores, about: "An image in a workflow saved to the private library." }));
       }
     });
-    if (seen.some((v) => v.verdict === "blocked" || v.verdict === "child_safety" || (v.verdict === "unavailable" && v.reason === NOT_AN_IMAGE))) {
+    if (seen.some((v) => v.verdict === "blocked" || v.verdict === "child_safety")) {
       return NextResponse.json({ error: "One of this workflow's images can't be saved on Enki. Nothing was saved." }, { status: 422 });
     }
     if (seen.some((v) => v.verdict === "unavailable")) {

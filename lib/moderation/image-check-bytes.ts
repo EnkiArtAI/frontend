@@ -15,7 +15,7 @@ function isApng(png: Buffer): boolean {
   return false;
 }
 
-/** The reason "unavailable" gives for bytes no image decoder reads. */
+/** Why bytes no image decoder recognises are refused: no retry turns them into an image. */
 export const NOT_AN_IMAGE = "not an image";
 
 /** Of two views of one image, the worse verdict stands, a child-safety one above all. */
@@ -25,8 +25,9 @@ const RANK = { clear: 0, adult: 1, unavailable: 2, blocked: 3, child_safety: 4 }
  * Check image bytes the way the calibration did: the judges see a JPEG of at
  * most 1024 px, whatever the stored original weighs. A 4K PNG inline would
  * cost more tokens than calibrated and may exceed what the APIs accept; a URL
- * would leave the judging to whatever the host serves. Bytes that do not
- * decode as an image are nothing anyone may see: "unavailable".
+ * would leave the judging to whatever the host serves. Bytes no decoder
+ * recognises, or an image that does not decode whole (a cut file), are
+ * nothing anyone may see, and no retry changes that: refused.
  *
  * The judges see one frame, so an animation, or a format a browser may play
  * as one, is refused whatever that frame shows; it is judged all the same, so
@@ -35,16 +36,20 @@ const RANK = { clear: 0, adult: 1, unavailable: 2, blocked: 3, child_safety: 4 }
  * drawn in the alpha channel alone shows on one of them.
  */
 export async function checkImageBytes(bytes: Buffer, opts: { signal?: AbortSignal } = {}): Promise<CheckedImage> {
-  let still: boolean;
+  let meta: sharp.Metadata;
+  try {
+    meta = await sharp(bytes).metadata();
+  } catch {
+    return { verdict: "blocked", reason: NOT_AN_IMAGE };
+  }
+  const still = STILL.has(meta.format) && (meta.pages ?? 1) <= 1 && !(meta.format === "png" && isApng(bytes));
   let views: Buffer[];
   try {
-    const meta = await sharp(bytes).metadata();
-    still = STILL.has(meta.format) && (meta.pages ?? 1) <= 1 && !(meta.format === "png" && isApng(bytes));
     const backgrounds = meta.hasAlpha && !(await sharp(bytes).stats()).isOpaque ? ["#000000", "#ffffff"] : ["#000000"];
     views = await Promise.all(backgrounds.map((background) =>
       sharp(bytes).rotate().resize({ width: EDGE, height: EDGE, fit: "inside", withoutEnlargement: true }).flatten({ background }).jpeg({ quality: 85 }).toBuffer()));
   } catch {
-    return { verdict: "unavailable", reason: NOT_AN_IMAGE };
+    return { verdict: "blocked", reason: "unreadable" };
   }
   const seen = await Promise.all(views.map((v) => checkImage(`data:image/jpeg;base64,${v.toString("base64")}`, opts)));
   const worst = seen.reduce((w, v) => (RANK[v.verdict] > RANK[w.verdict] ? v : w));

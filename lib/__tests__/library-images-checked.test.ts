@@ -67,7 +67,7 @@ describe("a workflow saved to the library", () => {
 
   it.each([
     ["refused", { verdict: "blocked", reason: "explicit" }],
-    ["no image at all", { verdict: "unavailable", reason: "not an image" }],
+    ["no image at all", { verdict: "blocked", reason: "not an image" }],
   ])("%s: nothing saved, and it says so for good", async (_n, verdict) => {
     s.verdicts = [{ verdict: "clear" }, verdict];
     const res = await save(graphOf(img(1), img(2)));
