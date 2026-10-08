@@ -67,6 +67,10 @@ describe("a gallery asked for by an upper-case id", () => {
     // Something that is no wallet address is not looked up at all: no pattern reaches the ilike.
     db.current!.state.failNext = { table: "user_wallets", op: "select", code: "PGRST116" };
     expect(await status("%25")).toBe(200);
+    // Long enough to pass any length rule: only the letters-and-digits class keeps them out.
+    expect(await status("%25".repeat(40))).toBe(200);
+    expect(await status("_".repeat(40))).toBe(200);
+    expect(await status("*".repeat(40))).toBe(200);
     expect(db.current!.state.failNext).not.toBeNull();
   });
 
