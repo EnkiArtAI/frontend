@@ -199,7 +199,7 @@ describe("read routes serve the price unit their consumers print", () => {
   });
 
   it("/api/marketplace/prompts keeps integer cents under the priceUsdCents name", () => {
-    // The feed adapter (enkiPromptAdapter.dollars) divides by 100 itself;
+    // The feed adapter (enkiPromptAdapter) divides by 100 itself;
     // pre-dividing here would shrink every feed price 100x.
     const src = READ_ROUTES["app/api/marketplace/prompts/route.ts"];
     expect(src).toMatch(/priceUsdCents:\s*[\s\S]{0,160}?p\.price_usd_cents/);

@@ -49,7 +49,7 @@ export function mapPromptRow(p: PromptCardRow) {
     description: text || p.description || "",
     promptTemplate: text,
     // Integer cents straight through: the field name carries the unit and
-    // the feed adapter (enkiPromptAdapter.dollars) divides by 100.
+    // the feed adapter (enkiPromptAdapter) divides by 100.
     priceUsdCents: typeof p.price_usd_cents === "number" ? p.price_usd_cents : 0,
     category: p.category || "",
     tags: Array.isArray(p.tags) ? (p.tags as string[]) : [],
