@@ -160,7 +160,7 @@ export default function AdminPage() {
   const [amOpen, setAmOpen] = useState<string | null>(null);
   const [pplOpen, setPplOpen] = useState<string | null>(null);
   const [pplDetail, setPplDetail] = useState<Record<string, PersonDetail>>({});
-  const [revealed, setRevealed] = useState<Record<string, { text: string; source: string }>>({});
+  const [revealed, setRevealed] = useState<Record<string, { text: string | null; source: string; image: string | null }>>({});
   // Empty string IS unlimited here, mirroring the null in the database.
   const [genLimit, setGenLimit] = useState<string>("");
   const [repSev, setRepSev] = useState("1");
@@ -295,8 +295,10 @@ export default function AdminPage() {
 
   /* The moderation owner's reveal of an artist's withheld text: the reason is
      asked here and logged on the server before anything is shown. */
-  const reveal = async (id: string) => {
-    const reason = window.prompt("Why must you read this artist's text? It is logged and every admin is told (10 to 500 characters).")?.trim();
+  const reveal = async (id: string, what: "text" | "image" = "text") => {
+    const reason = window.prompt(what === "image"
+      ? "Why must you see this image? It is logged and every admin is told (10 to 500 characters)."
+      : "Why must you read this artist's text? It is logged and every admin is told (10 to 500 characters).")?.trim();
     if (!reason) return;
     try {
       const res = await fetch("/api/admin", {
@@ -304,10 +306,11 @@ export default function AdminPage() {
         headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
         body: JSON.stringify({ resource: "automod", action: "reveal", id, reason }),
       });
-      const d = await res.json().catch(() => ({} as { error?: string; text?: string; source?: string }));
-      const text = d.text;
-      if (!res.ok || typeof text !== "string") { say(d.error || "That didn't work."); return; }
-      setRevealed((cur) => ({ ...cur, [id]: { text, source: String(d.source) } }));
+      const d = await res.json().catch(() => ({} as { error?: string; text?: string | null; source?: string; image?: string | null }));
+      const text = typeof d.text === "string" ? d.text : null;
+      const image = typeof d.image === "string" && d.image.startsWith("data:image/") ? d.image : null;
+      if (!res.ok || (text === null && image === null)) { say(d.error || "That didn't work."); return; }
+      setRevealed((cur) => ({ ...cur, [id]: { text, source: String(d.source), image } }));
     } catch {
       say("Network hiccup — nothing was revealed.");
     }
@@ -320,11 +323,25 @@ export default function AdminPage() {
           <Pill kind="plain" label="Reveal (logged)" title="Only for a hard case: your reason is logged and every admin is told" onClick={() => void reveal(id)} />
         )}
       </span>
-      {revealed[id] && (
+      {revealed[id]?.text != null && (
         <p style={{ margin: 0, fontFamily: MONO, fontSize: 11, color: "var(--enki-ink-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxWidth: 760 }}>
           {revealed[id].source === "prompt" ? "The prompt's text as it stands now:\n" : ""}{revealed[id].text}
         </p>
       )}
+    </div>
+  );
+  /* A child-safety image case keeps the image, encrypted: the moderation
+     owner alone opens it, by the same logged reveal. */
+  const imageBlock = (id: string) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11, fontStyle: "italic", color: "var(--enki-ink-3)" }}>
+        The image is held as evidence, encrypted, and shown only by a logged reveal.
+        {data?.council.isOwner && !revealed[id]?.image && (
+          <Pill kind="plain" label="Reveal image (logged)" title="Only to decide the case: your reason is logged and every admin is told" onClick={() => void reveal(id, "image")} />
+        )}
+      </span>
+      {/* eslint-disable-next-line @next/next/no-img-element -- the case's own evidence, a data: URL shown once on a logged reveal */}
+      {revealed[id]?.image && <img src={revealed[id].image!} alt="Evidence held with the case" style={{ maxWidth: 320, maxHeight: 320, objectFit: "contain", borderRadius: 6 }} />}
     </div>
   );
 
@@ -854,6 +871,7 @@ export default function AdminPage() {
                                 </div>
                                 {(e.prompt !== null || !e.withheld) && <p style={{ margin: 0, fontFamily: MONO, fontSize: 11, color: "var(--enki-ink-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxWidth: 760 }}>{e.prompt ?? "Not readable."}</p>}
                                 {e.withheld && withheldBlock(e.id, e.draft, e.revealable)}
+                                {e.rules.includes("image-check") && imageBlock(e.id)}
                               </div>
                             ))}
                             {detail?.failures.map((x) => (

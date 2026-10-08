@@ -103,6 +103,11 @@ vi.mock("@/lib/session-user", async (original) => ({
 }));
 const notified = vi.fn(async (_s: unknown, _m: { subject: string; text: string }) => {});
 vi.mock("@/lib/admin-notify", () => ({ notifyAdmins: (s: unknown, m: { subject: string; text: string }) => notified(s, m) }));
+// A child-safety image case's kept copy, by case id (lib/moderation/image-case has its own tests).
+const evidence = vi.hoisted(() => ({ images: {} as Record<string, string>, reads: [] as string[] }));
+vi.mock("@/lib/moderation/image-case", () => ({
+  readImageEvidence: async (_s: unknown, id: string) => { evidence.reads.push(id); return evidence.images[id] ?? null; },
+}));
 
 import { listPeople, personDetail, parsePersonKey, hasChildSafetyCase } from "@/lib/admin/people";
 import { GET, POST } from "../../app/api/admin/route";
@@ -152,7 +157,7 @@ describe("revealing an artist's withheld text", () => {
   it("shows the moderation owner the withheld text and logs who, which and why first", async () => {
     record({ shown: "{}", withheld: SECRET });
     const res = await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY });
-    expect(await res.json()).toEqual({ text: SECRET, source: "record" });
+    expect(await res.json()).toEqual({ text: SECRET, source: "record", image: null });
     expect(tables.artist_text_reveals).toEqual([expect.objectContaining({ event_id: "e-1", revealed_by: "owner-1", reason: WHY, prompt_id: null })]);
     // Every admin is told, without the text.
     expect(notified).toHaveBeenCalledOnce();
@@ -165,7 +170,7 @@ describe("revealing an artist's withheld text", () => {
     tables.prompts = [{ id: "p1", public_prompt_text: "a free [subject]", price_usd_cents: 0, prompt_type: "free", is_adult: false }];
     tables.prompt_variables = [];
     const res = await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY });
-    expect(await res.json()).toEqual({ text: "a free [subject]", source: "prompt" });
+    expect(await res.json()).toEqual({ text: "a free [subject]", source: "prompt", image: null });
     expect(tables.artist_text_reveals[0]).toMatchObject({ prompt_id: "p1" });
   });
 
@@ -246,9 +251,30 @@ describe("revealing an artist's withheld text", () => {
     // A tier-2 child-safety block sent with a made-up session token: no account, no warning, no ban.
     const row = record({ shown: "", withheld: "a stranger's own words", draft: true }, "generate-free");
     Object.assign(row, { user_id: null, category: "sexual/minors", severity: "review", scores: { "sexual/minors": 0.4 }, review_state: "pending" });
-    expect(await (await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).json()).toEqual({ text: "a stranger's own words", source: "record" });
+    expect(await (await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).json()).toEqual({ text: "a stranger's own words", source: "record", image: null });
     // Nobody else reads it.
     expect((await post("admin-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).status).toBe(403);
+  });
+
+  it("shows a child-safety image case's kept image to the owner alone, logged first, never read for other records", async () => {
+    const row = record({ shown: "An image sent in a direct message." }, "dm");
+    Object.assign(row, { category: "csam", severity: "review", matched_rules: ["image-check"], review_state: "pending" });
+    evidence.images["e-1"] = "data:image/png;base64,AAAA";
+    evidence.reads.length = 0;
+    expect((await post("admin-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).status).toBe(403);
+    expect(evidence.reads).toEqual([]);
+    expect(await (await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY })).json())
+      .toEqual({ text: null, source: "record", image: "data:image/png;base64,AAAA" });
+    expect(tables.artist_text_reveals).toEqual([expect.objectContaining({ event_id: "e-1", revealed_by: "owner-1", reason: WHY })]);
+    expect(JSON.stringify(notified.mock.calls.at(-1)?.[1])).toContain("revealed the withheld image of moderation record e-1");
+    expect(JSON.stringify(notified.mock.calls.at(-1)?.[1])).not.toContain("AAAA");
+  });
+
+  it("reads no image for a record that is no image case", async () => {
+    record({ shown: "{}", withheld: SECRET });
+    evidence.reads.length = 0;
+    await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY });
+    expect(evidence.reads).toEqual([]);
   });
 
   it("opens an extraction hit", async () => {
