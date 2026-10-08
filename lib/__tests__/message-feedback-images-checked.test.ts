@@ -154,6 +154,25 @@ describe("an image attached to a feedback report", () => {
     expect(s.uploads).toEqual([]);
   });
 
+  const png = (bytes: number) => { const b = new Uint8Array(bytes); b.set([137, 80, 78, 71]); return new File([b], "big.png", { type: "image/png" }); };
+
+  it("refuses attachments over 4 MB together, before anything is stored", async () => {
+    expect(await report([png(2 * 1048576), png(2 * 1048576 + 1)])).toEqual({ status: 413, body: { error: "Attachments can be up to 4 MB in total" } });
+    expect(s.uploads).toEqual([]);
+    expect(s.rows).toEqual([]);
+  });
+
+  it("takes exactly 4 MB together", async () => {
+    expect((await report([png(2 * 1048576), png(2 * 1048576)])).status).toBe(201);
+    expect(s.uploads).toHaveLength(2);
+  });
+
+  it("refuses a type outside the list, a prototype key included", async () => {
+    expect((await report([file("constructor", "a.png")])).status).toBe(400);
+    expect((await report([file("image/heic", "a.heic")])).status).toBe(400);
+    expect(s.uploads).toEqual([]);
+  });
+
   it("drops what is neither an image the check reads nor a declared video", async () => {
     expect((await report([bytes("video/mp4", [1, 2, 3, 4, 5, 6, 7, 8]), bytes("image/gif", MP4)])).status).toBe(201);
     expect(s.uploads).toEqual([]);

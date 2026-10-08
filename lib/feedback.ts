@@ -13,3 +13,20 @@ export const FEEDBACK_FILE_EXT: Record<string, string> = {
   "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif",
   "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov",
 };
+/** All attachments together. Vercel refuses a request body over 4.5 MB before
+    the route runs, and the description and the form's framing ride in it too. */
+export const FEEDBACK_MAX_BYTES = 4 * 1024 * 1024;
+
+/** What a pick adds to the files already attached, and one sentence for each file left out. */
+export function addFeedbackFiles(current: File[], picked: File[]): { files: File[]; refused: string[] } {
+  const files = [...current];
+  const refused: string[] = [];
+  let total = files.reduce((n, f) => n + f.size, 0);
+  for (const f of picked) {
+    if (!Object.hasOwn(FEEDBACK_FILE_EXT, f.type)) refused.push(`“${f.name}” is not a PNG, JPG, WebP, GIF, MP4, WebM or MOV file.`);
+    else if (files.length >= FEEDBACK_MAX_FILES) refused.push(`“${f.name}” is one too many: ${FEEDBACK_MAX_FILES} attachments at most.`);
+    else if (total + f.size > FEEDBACK_MAX_BYTES) refused.push(`“${f.name}” does not fit: attachments can be ${FEEDBACK_MAX_BYTES / 1048576} MB in total.`);
+    else { files.push(f); total += f.size; }
+  }
+  return { files, refused };
+}

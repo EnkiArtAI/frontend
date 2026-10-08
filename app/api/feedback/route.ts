@@ -2,7 +2,7 @@
  * POST /api/feedback — the "$100 for feedback" program.
  *
  * multipart/form-data: severity (bug|issue|annoying|minor), description,
- * files[] (image/video, ≤5 × ≤20MB). Requires a session — the payout needs
+ * files[] (image/video, at most 5, 4 MB together). Requires a session — the payout needs
  * an account to land in. Rows go to feedback_submissions (+ attachments in
  * the PRIVATE "feedback" bucket) and surface in the admin panel's queue.
  * Columns verified live 2026-07-20.
@@ -15,11 +15,10 @@ import { createHash } from "crypto";
 import { decryptString, encryptString, type EncryptedPayload } from "@/lib/crypto";
 import { checkImageBytes, NOT_AN_IMAGE } from "@/lib/moderation/image-check-bytes";
 import { recordImageCase } from "@/lib/moderation/image-case";
-import { FEEDBACK_BUCKET, FEEDBACK_FILE_EXT, FEEDBACK_MAX_FILES } from "@/lib/feedback";
+import { FEEDBACK_BUCKET, FEEDBACK_FILE_EXT, FEEDBACK_MAX_BYTES, FEEDBACK_MAX_FILES } from "@/lib/feedback";
 
 /** A video container by its own first bytes: MP4 and MOV (ftyp), WebM (EBML). */
 const isVideo = (b: Buffer) => b.toString("latin1", 4, 8) === "ftyp" || b.subarray(0, 4).toString("hex") === "1a45dfa3";
-const MAX_BYTES = 20 * 1024 * 1024;
 // UI ids → live check-constraint values (probed 2026-07-21: severity ∈
 // {critical, high, medium, low}, category ∈ {bug, other, …})
 const SEV_MAP: Record<string, { severity: string; category: string }> = {
@@ -51,9 +50,13 @@ export async function POST(req: NextRequest) {
   if (description.length > 4000) return NextResponse.json({ error: "Keep it under 4000 characters" }, { status: 400 });
 
   const files = fd.getAll("files").filter((f): f is File => f instanceof File).slice(0, FEEDBACK_MAX_FILES);
-  for (const f of files) {
-    if (!FEEDBACK_FILE_EXT[f.type]) return NextResponse.json({ error: "Attachments can be PNG, JPG, WebP, GIF, MP4, WebM or MOV" }, { status: 400 });
-    if (f.size > MAX_BYTES) return NextResponse.json({ error: "Attachments can be up to 20 MB each" }, { status: 400 });
+  // Own keys only: "constructor" is no file type.
+  if (files.some((f) => !Object.hasOwn(FEEDBACK_FILE_EXT, f.type))) {
+    return NextResponse.json({ error: "Attachments can be PNG, JPG, WebP, GIF, MP4, WebM or MOV" }, { status: 400 });
+  }
+  // The modal stays under this before sending; only another client gets here.
+  if (files.reduce((n, f) => n + f.size, 0) > FEEDBACK_MAX_BYTES) {
+    return NextResponse.json({ error: "Attachments can be up to 4 MB in total" }, { status: 413 });
   }
 
   // submitter_email_ct is NOT NULL (verified live 2026-07-21): carry the
