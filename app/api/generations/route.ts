@@ -34,7 +34,9 @@ export async function GET(req: Request) {
     // to give up and return an empty list for every wallet caller — which is
     // why the gallery looked empty even when images existed. Resolve it.
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
-    let ownerId = isUuid ? userId : null;
+    // Lower case, as the database answers ids: an upper-case id must not
+    // slip past the hidden-owner check below while .eq() still matches it.
+    let ownerId = isUuid ? userId.toLowerCase() : null;
     if (!ownerId) {
       const { data: walletRow } = await supabase
         .from("user_wallets")

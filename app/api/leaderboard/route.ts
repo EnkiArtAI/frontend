@@ -78,7 +78,7 @@ export async function GET(req: NextRequest) {
       ? supabase.from("prompts").select("id, showcase_images, is_adult, is_listed, listing_status, deleted_at").in("id", bestIds)
       : Promise.resolve({ data: [], error: null }),
     podiumIds.length
-      ? supabase.from("generated_images").select("prompt_id, thumbnail_url, storage_url, created_at")
+      ? supabase.from("generated_images").select("prompt_id, user_id, thumbnail_url, storage_url, created_at")
           .in("prompt_id", podiumIds).is("deleted_at", null).eq("is_adult", false).eq("visibility", "public")
           .order("created_at", { ascending: false }).limit(30)
       : Promise.resolve({ data: [], error: null }),
@@ -120,7 +120,10 @@ export async function GET(req: NextRequest) {
     const u = firstShowcase(p.showcase_images);
     if (u && podiumIds.includes(p.id)) images.set(p.id, u);
   }
-  for (const g of (genImgRes.data ?? []) as { prompt_id: string; thumbnail_url: string | null; storage_url: string | null }[]) {
+  // Not an image of a banned or deleted account; none when that cannot be read.
+  const renders = (genImgRes.data ?? []) as { prompt_id: string; user_id: string; thumbnail_url: string | null; storage_url: string | null }[];
+  const renderOwners = await hiddenOwners(supabase, renders.map((g) => String(g.user_id)));
+  for (const g of renderOwners ? renders.filter((g) => !renderOwners.has(String(g.user_id))) : []) {
     const u = g.thumbnail_url || g.storage_url;
     if (u && !images.has(g.prompt_id)) images.set(g.prompt_id, u);
   }

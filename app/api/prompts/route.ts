@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { hiddenOwners } from "@/lib/hidden-owners";
 
 type VariableSummary = {
   id: string;
@@ -99,7 +100,11 @@ export async function GET(request: NextRequest) {
       throw error;
     }
 
-    const promptRows = Array.isArray(rows) ? rows : [];
+    const pageRows = Array.isArray(rows) ? rows : [];
+    // A banned or deleted creator's prompts leave this list too.
+    const hidden = await hiddenOwners(supabase, pageRows.map((p) => String(p.creator_id ?? "")));
+    if (!hidden) throw new Error("creators could not be read");
+    const promptRows = pageRows.filter((p) => !hidden.has(String(p.creator_id)));
     const promptIds = promptRows.map((p) => String(p.id));
 
     let variablesByPrompt = new Map<string, VariableSummary[]>();
@@ -201,7 +206,7 @@ export async function GET(request: NextRequest) {
     });
 
     const nextCursor =
-      items.length === limit ? String(offset + limit) : null;
+      pageRows.length === limit ? String(offset + limit) : null;
 
     return NextResponse.json({ items, nextCursor });
   } catch (e: unknown) {

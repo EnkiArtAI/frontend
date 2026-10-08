@@ -84,6 +84,23 @@ describe("every public read and the sell path", () => {
     expect(detail).toMatch(/if \(!isOwner\) \{\n\s+const hidden = await hiddenOwners\(supabase, \[String\(prompt\.creator_id \?\? ""\)\]\);\n\s+if \(!hidden\) return dbUnavailableResponse\(\);\n\s+if \(hidden\.has\(String\(prompt\.creator_id\)\)\) return NextResponse\.json\(\{ error: "not found" \}, \{ status: 404 \}\);/);
   });
 
+  it("the feed pages on the rows it read, so a hidden card never ends it", () => {
+    const feed = src("app", "api", "marketplace", "prompts", "route.ts");
+    expect(feed).toContain("const hasMore = prompts.length === limit;");
+  });
+
+  it("a link preview of a hidden creator's prompt is the brand card, title and words included", () => {
+    const head = src("app", "generator", "[id]", "page.tsx");
+    expect(head).toContain('.select("title, description, is_free_showcase, price_usd_cents, is_listed, listing_status, deleted_at, creator_id")');
+    expect(head).toContain("if (p?.title && isListed(p) && hidden && !hidden.has(String(p.creator_id))) {");
+  });
+
+  it("the board's podium shows no render of a hidden account, and none when that cannot be read", () => {
+    const board = src("app", "api", "leaderboard", "route.ts");
+    expect(board).toContain('supabase.from("generated_images").select("prompt_id, user_id, thumbnail_url, storage_url, created_at")');
+    expect(board).toContain("for (const g of renderOwners ? renders.filter((g) => !renderOwners.has(String(g.user_id))) : []) {");
+  });
+
   it("the board, the link preview and 'Made with this prompt' leave them out", () => {
     const board = src("app", "api", "leaderboard", "route.ts");
     expect(board).toContain("const raw = all.filter((r) => !offBoard.has(String(r.creator_id)));");

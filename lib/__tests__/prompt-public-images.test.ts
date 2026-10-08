@@ -90,6 +90,13 @@ describe("the images people made public with a prompt", () => {
     expect((await read()).body.images.map((i: { id: string }) => i.id)).toEqual(["g1"]);
   });
 
+  it("are none for a banned creator's prompt, whoever made them", async () => {
+    db.current!.tables.generated_images = [img("g1", { user_id: "kept" })];
+    db.current!.tables.users = [{ id: "kept", deleted_at: null, account_status: "active" }];
+    db.current!.tables.bans = [{ user_id: "artist", lifted_at: null, expires_at: null }];
+    expect((await read()).body).toEqual({ images: [] });
+  });
+
   it("refuse an id that is not a prompt id", async () => {
     expect((await read("../x")).status).toBe(400);
   });

@@ -69,6 +69,7 @@ export function fakePostgrest() {
       or: (expr: string) => { filters.push(orFilter(expr)); return q; },
       order: () => q, // rows come back in insertion order
       limit: () => q, // every test seeds fewer rows than any limit
+      range: () => q, // likewise: a test seeds one page at most
       maybeSingle: () => { one = true; return q; },
       single: () => { one = true; return q; },
       then: (ok: (v: unknown) => unknown): unknown => {
