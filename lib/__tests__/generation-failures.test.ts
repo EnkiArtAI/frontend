@@ -93,8 +93,8 @@ describe("every failure point records it", () => {
     expect(count(HUMAN)).toBe(5);
   });
 
-  it("the free generator at the provider failure and the catch-all", () => {
-    expect(count(FREE)).toBe(2);
+  it("the free generator at the provider failure, the image check and the catch-all", () => {
+    expect(count(FREE)).toBe(3);
   });
 
   it("the agent rail when a paid generation fails, when its image cannot be stored, and when its payment's confirmation times out, with the signature", () => {

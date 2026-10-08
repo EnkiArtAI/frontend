@@ -28,12 +28,12 @@ describe("a free render reaches its owner's gallery", () => {
   });
 
   it("records our copy and never a data URL", () => {
-    expect(block).toMatch(/await recordGeneration\(supabase, \{\n\s+adult,\n\s+\.\.\.\(stored\.imageUrl\.startsWith\("data:"\) \? \{\} : stored\),/);
+    expect(block).toMatch(/await recordGeneration\(supabase, \{\n\s+adult: adult \|\| seen\.verdict === "adult",\n\s+\.\.\.\(stored\.imageUrl\.startsWith\("data:"\) \? \{\} : stored\),/);
     expect(block.indexOf("const stored =")).toBeLessThan(block.indexOf("await recordGeneration("));
   });
 
-  it("stores references after the response too", () => {
-    expect(block).toContain("references: await storeReferenceImages(stripped.images, recUserId),");
-    expect(ROUTE.indexOf("storeReferenceImages(stripped")).toBeGreaterThan(ROUTE.indexOf("after(async () => {"));
+  it("stores no reference image: the free model takes none, so none is ever judged", () => {
+    expect(block).toContain("references: [],");
+    expect(ROUTE).not.toContain("storeReferenceImages(");
   });
 });

@@ -157,7 +157,7 @@ describe("the routes", () => {
   it("mark the images they record", () => {
     // And the image check's own 18+ verdict marks what it delivers.
     expect(HUMAN).toMatch(/recordGeneration\(recSupabase, \{\n\s+adult: adult \|\| seen\.verdict === "adult",/);
-    expect(FREE).toMatch(/recordGeneration\(supabase, \{\n\s+adult,/);
+    expect(FREE).toMatch(/recordGeneration\(supabase, \{\n\s+adult: adult \|\| seen\.verdict === "adult",/);
   });
 
   it("check a prompt before saving it and mark it 18+ by itself", () => {

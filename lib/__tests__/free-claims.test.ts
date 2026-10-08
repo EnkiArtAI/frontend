@@ -108,6 +108,8 @@ describe("the free route", () => {
     expect(FREE).toMatch(/if \(silent\) \{\s+await releaseFreeClaim\(supabaseForChecks, claimId\);\s+return silentFailure\(\);/);
     expect(FREE).toMatch(/error: result\.error \|\| "Image generation failed" \}\)\);\s+await releaseFreeClaim\(supabaseForChecks, claimId\);/);
     expect(FREE).toMatch(/\} catch \(e: unknown\) \{[\s\S]{0,300}await releaseFreeClaim\(getSupabaseServerClientSafe\(\), claimId\);/);
-    expect((FREE.match(/releaseFreeClaim\(/g) ?? []).length).toBe(3);
+    // And an image the image check holds back gives its claim back too.
+    expect(FREE).toMatch(/if \(heldBack\(seen\)\) \{[\s\S]{0,500}await releaseFreeClaim\(supabaseForChecks, claimId\);\n\s+return seen\.verdict === "unavailable"/);
+    expect((FREE.match(/releaseFreeClaim\(/g) ?? []).length).toBe(4);
   });
 });

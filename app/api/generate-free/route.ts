@@ -15,8 +15,9 @@ import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, type
 import { resolveModel } from "@/lib/generation/models";
 import { normalizeTier, RESOLUTION_TIERS } from "@/lib/generation/resolution";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
-import { storeReferenceImages } from "@/lib/generation/reference-images";
 import { storeDeadline, storeGeneratedImage } from "@/lib/generation/derivative-store";
+import { checkImageBytes, heldBack, IMAGE_REFUSED, IMAGE_UNCHECKED } from "@/lib/moderation/image-check-bytes";
+import { recordImageCase } from "@/lib/moderation/image-case";
 import { readImageDimensions } from "@/backend/services/gemini-image-generation";
 import { freeGenerationDecision, releaseFreeClaim } from "@/lib/generation/free-quota";
 
@@ -264,6 +265,25 @@ export async function POST(request: NextRequest) {
     console.log(`✅ Image generated successfully in ${result.generationTime}ms`);
     let delivered = imageUrl;
 
+    // The image check, before anything is stored or shown (Kev, 2026-10-08:
+    // every image; on the free model Enki carries it). Refused or not judged,
+    // no copy of it ever exists, the allowance is given back, and a
+    // child-safety verdict becomes a case an admin decides. Bounded so the
+    // store below keeps its 30 s.
+    const seen = await checkImageBytes(buffer, {
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(Math.max(1, storeDeadline(startedAt) - 30_000 - Date.now()))]),
+    });
+    if (heldBack(seen)) {
+      if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: `image check: ${seen.verdict}` }));
+      if (seen.verdict === "child_safety") {
+        after(recordImageCase(supabaseForChecks, { surface: "generate-free", request, bytes: buffer, scores: seen.scores, about: authoring ? "" : prompt }));
+      }
+      await releaseFreeClaim(supabaseForChecks, claimId);
+      return seen.verdict === "unavailable"
+        ? NextResponse.json({ error: IMAGE_UNCHECKED }, { status: 503 })
+        : NextResponse.json({ error: IMAGE_REFUSED }, { status: 422 });
+    }
+
     // Free does not mean unrecorded. The node editor generates through here,
     // so without this its graphs would be lost exactly like every generation
     // was before the recorder existed. Signed-out callers are not recorded —
@@ -294,7 +314,8 @@ export async function POST(request: NextRequest) {
             ? await storeGeneratedImage(imageUrl, recUserId, Math.min(Date.now() + 120_000, storeDeadline(startedAt)))
             : quick;
           await recordGeneration(supabase, {
-            adult,
+            // Judged 18+ by the image check: delivered, and marked.
+            adult: adult || seen.verdict === "adult",
             ...(stored.imageUrl.startsWith("data:") ? {} : stored),
             userId: recUserId,
             /* Which prompt this came from.
@@ -333,7 +354,9 @@ export async function POST(request: NextRequest) {
             generationMs: result.generationTime ?? null,
             workflow: stripped.workflow,
             workflowTexts: stripped.texts,
-            references: await storeReferenceImages(stripped.images, recUserId),
+            // The free model takes no reference images (refused above), so the
+            // graph's are never judged and never stored: empty slots.
+            references: [],
           });
         });
       }
