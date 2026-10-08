@@ -789,6 +789,25 @@ input[type="range"].pgv-range::-webkit-slider-thumb {
 .pgv-thumb-status.error   { background: #c0392b; color: #fff; }
 .pgv-thumb-status.loading { background: var(--surface-2, var(--pgv-border)); color: var(--pgv-text-muted); }
 
+/* ── Made with this prompt: public images, a row below the showcase strip ── */
+.pgv-made-with { flex-shrink: 0; padding: 2px 0 8px; }
+.pgv-made-with__title {
+  font-size: 11px; font-weight: 600; letter-spacing: .02em;
+  color: var(--pgv-text-muted); padding: 0 0 6px;
+}
+.pgv-made-with__strip {
+  display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+}
+.pgv-made-with__strip::-webkit-scrollbar { display: none; }
+.pgv-made-with__item {
+  width: var(--pgv-thumb); height: var(--pgv-thumb); flex-shrink: 0; padding: 0;
+  border-radius: 7px; overflow: hidden; cursor: pointer;
+  background: var(--surface-1, var(--pgv-raised)); border: 2px solid transparent;
+  transition: transform 0.1s;
+}
+.pgv-made-with__item:hover { transform: scale(1.04); }
+.pgv-made-with__item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
 /* ── Comments / Reviews tabs ── */
 .pgv-center-tabs {
   display: flex;
@@ -1017,6 +1036,17 @@ input[type="range"].pgv-range::-webkit-slider-thumb {
 .pgv-lb-thumb:hover { opacity: 1; }
 .pgv-lb-thumb.on { border-color: #f4f1eb; opacity: 1; }
 .pgv-lb-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* The Public switch on your own image in the large view. */
+.pgv-lb-public {
+  position: absolute; top: 18px; left: 18px;
+  display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+  border-radius: 999px; background: rgba(10,10,12,.55); border: 1px solid rgba(255,255,255,.12);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  color: #f4f1eb; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.pgv-lb-public input { accent-color: #f4f1eb; cursor: pointer; }
+.pgv-lb-public__hint { font-weight: 400; opacity: .7; }
 
 /* History rail on the right, scrolling vertically like the page's own. */
 .pgv-lb-hist {

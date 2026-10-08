@@ -66,6 +66,7 @@ export function fakePostgrest() {
       in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return q; },
       or: (expr: string) => { filters.push(orFilter(expr)); return q; },
       order: () => q, // rows come back in insertion order
+      limit: () => q, // every test seeds fewer rows than any limit
       maybeSingle: () => { one = true; return q; },
       single: () => { one = true; return q; },
       then: (ok: (v: unknown) => unknown): unknown => {

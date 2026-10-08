@@ -607,8 +607,8 @@ export default function PromptGeneratorView({
   /* Fetch user's generations — API returns { data: { generations, total } } via createSuccessResponse */
   const genQueryKey = ["user-generations", userKey, promptId];
   const { data: genData } = useQuery<{
-    data?: { generations?: Array<{ id: string; image_url?: string; image_urls?: string[]; created_at: string; prompt_id?: string }> };
-    generations?: Array<{ id: string; image_url?: string; image_urls?: string[]; created_at: string; prompt_id?: string }>;
+    data?: { generations?: Array<{ id: string; image_url?: string; image_urls?: string[]; visibility?: string; created_at: string; prompt_id?: string }> };
+    generations?: Array<{ id: string; image_url?: string; image_urls?: string[]; visibility?: string; created_at: string; prompt_id?: string }>;
   }>({
     queryKey: genQueryKey,
     queryFn: async () => {
@@ -626,6 +626,47 @@ export default function PromptGeneratorView({
       .filter(g => g.image_urls?.length)
       .flatMap(g => g.image_urls as string[]);
   }, [genData]);
+
+  /* Your recorded images by every URL they answer to (original and preview),
+     so the large view can offer the Public switch on your own ones. */
+  const ownImages = useMemo(() => {
+    const byUrl = new Map<string, { id: string; isPublic: boolean }>();
+    for (const g of genData?.data?.generations ?? genData?.generations ?? []) {
+      for (const url of [g.image_url, ...(g.image_urls ?? [])]) {
+        if (url) byUrl.set(url, { id: g.id, isPublic: g.visibility === "public" });
+      }
+    }
+    return byUrl;
+  }, [genData]);
+
+  /* What people made with this prompt and chose to show (Kev, 2026-10-08):
+     every generation is private until its owner makes it public. */
+  const publicQueryKey = ["prompt-public-images", promptId];
+  const { data: publicImages = [] } = useQuery<Array<{ id: string; url: string; thumbnailUrl: string }>>({
+    queryKey: publicQueryKey,
+    queryFn: async () => {
+      const res = await fetch(`/api/prompts/${encodeURIComponent(promptId)}/images`, { headers: viewerHeaders() });
+      return res.ok ? ((await res.json()).images ?? []) : [];
+    },
+    enabled: !!promptId,
+    staleTime: 30_000,
+  });
+
+  /* Shows one of your images to others, or hides it again; both rows follow. */
+  const setImagePublic = async (id: string, isPublic: boolean) => {
+    const res = await fetch(`/api/images/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
+      body: JSON.stringify({ visibility: isPublic ? "public" : "private" }),
+    }).catch(() => null);
+    if (!res?.ok) {
+      const d = await res?.json().catch(() => null);
+      toast({ title: "Couldn't change who sees this image", description: d?.error, variant: "destructive" });
+      return;
+    }
+    queryClient.invalidateQueries({ queryKey: genQueryKey });
+    queryClient.invalidateQueries({ queryKey: publicQueryKey });
+  };
 
   /* Merge local (immediate) + DB history, deduplicate, cap at 20. A local
      render the server recorded is that row (kept as the original, shown as
@@ -1961,6 +2002,26 @@ export default function PromptGeneratorView({
           </button>
         </div>
 
+        {/* Made with this prompt: images their owners chose to make public. */}
+        {publicImages.length > 0 && (
+          <section className="pgv-made-with" aria-label="Made with this prompt">
+            <div className="pgv-made-with__title">Made with this prompt</div>
+            <div className="pgv-made-with__strip">
+              {publicImages.map((im, i) => (
+                <button
+                  key={im.id}
+                  type="button"
+                  className="pgv-made-with__item"
+                  onClick={() => openLightbox(publicImages.map((p) => p.url), i)}
+                  aria-label={`Made with this prompt, image ${i + 1}`}
+                >
+                  <img src={im.thumbnailUrl} alt="" loading="lazy" draggable={false} />
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* Comments / Reviews tabs */}
         <div className="pgv-center-tabs">
           <button
@@ -2057,6 +2118,21 @@ export default function PromptGeneratorView({
               ))}
             </div>
           )}
+          {/* Your own recorded image: private until you make it public. */}
+          {(() => {
+            const own = ownImages.get(lightbox.urls[lightbox.at]);
+            return own ? (
+              <label className="pgv-lb-public pgv-lb-chrome" onClick={e => e.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  checked={own.isPublic}
+                  onChange={(e) => void setImagePublic(own.id, e.target.checked)}
+                />
+                Public
+                <span className="pgv-lb-public__hint">{own.isPublic ? "Shown under the prompt" : "Only you see it"}</span>
+              </label>
+            ) : null;
+          })()}
           {/* The generation history rides along on the right, as on the page
               — picking one switches the lightbox to browsing the history. */}
           {history.length > 0 && (
