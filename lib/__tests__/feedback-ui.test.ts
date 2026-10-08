@@ -39,7 +39,7 @@ describe("the admin panel's Feedback tab", () => {
     expect(ADMIN).toContain('{ resource: "feedback", action: "setStatus", id: r.id, status: state },');
     expect(ADMIN).toContain("(cur) => ({ ...cur, feedback: cur.feedback.map((x) => (x.id === r.id ? { ...x, state } : x)) }),");
     expect(ADMIN).toMatch(/\{r\.state === "open" && <>\n\s+\{role === "admin" && <Pill kind="green" label="Done"[^\n]*onClick=\{\(\) => decideFb\(r, "done"\)\} \/>\}\n\s+<Pill kind="red" label="Reject" onClick=\{\(\) => decideFb\(r, "rejected"\)\} \/>/);
-    expect(ADMIN).toContain('{r.state !== "open" && !r.paid && <Pill kind="plain" label="Reopen" onClick={() => decideFb(r, "open")} />}');
+    expect(ADMIN).toContain('{r.state !== "open" && !r.paid && (r.state === "rejected" || role === "admin") && <Pill kind="plain" label="Reopen" onClick={() => decideFb(r, "open")} />}');
     expect(ADMIN).toContain('<Badge pal={r.paid ? PILL.green : FB_STATE[r.state].pal} label={r.paid ? "Paid" : FB_STATE[r.state].label} />');
   });
 

@@ -707,12 +707,12 @@ export default function AdminPage() {
                             <Pill kind="green" label={fbPaying ? "Saving…" : "Confirm"} onClick={fbPaying ? undefined : () => void recordPayout(r)} />
                             <Pill kind="plain" label="Cancel" onClick={() => setFbPayId(null)} />
                           </> : <>
-                            {/* Done promises the $100: an admin's word. A mod may reject or reopen. */}
+                            {/* Done promises the $100: an admin's word, given and taken back by admins alone. */}
                             {r.state === "open" && <>
                               {role === "admin" && <Pill kind="green" label="Done" title="We build it: the $100 follows" onClick={() => decideFb(r, "done")} />}
                               <Pill kind="red" label="Reject" onClick={() => decideFb(r, "rejected")} />
                             </>}
-                            {r.state !== "open" && !r.paid && <Pill kind="plain" label="Reopen" onClick={() => decideFb(r, "open")} />}
+                            {r.state !== "open" && !r.paid && (r.state === "rejected" || role === "admin") && <Pill kind="plain" label="Reopen" onClick={() => decideFb(r, "open")} />}
                             {r.state === "done" && !r.paid && role === "admin" && <Pill kind="green" label="Mark paid" title="After sending the $100: paste the transaction" onClick={() => { setFbSig(""); setFbPayId(r.id); }} />}
                             {r.paid && r.txUrl && <a href={r.txUrl} target="_blank" rel="noopener noreferrer" style={{ fontFamily: MONO, fontSize: 9.5, color: "var(--enki-ember)" }}>Payment ↗</a>}
                           </>}
