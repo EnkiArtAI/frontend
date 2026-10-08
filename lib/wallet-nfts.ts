@@ -8,6 +8,7 @@
  * no image address is used as it stands: it goes through the Helius image
  * CDN, which fetches and resizes it on Helius's network, never on ours.
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type DasAsset = {
   id: string;
@@ -62,4 +63,58 @@ export function imageSource(a: DasAsset): string | null {
     a.content?.links?.image,
     files.find((f) => !f.mime)?.uri,
   ].map(httpSource).find((u) => u !== null) ?? null;
+}
+
+/** A Solana address: base58, 32 to 44 characters. */
+const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+/** Each wallet read is one paid index call (10 Helius credits) every time the picker opens. */
+const WALLETS_READ = 3;
+
+/**
+ * The account's Solana wallets to read, the account's own one first, or null
+ * when the database cannot say. A stored value that is no Solana address can
+ * hold nothing, so it costs no call: on 2026-10-08, 6 of the 15 live rows had
+ * been lowercased before PR #69 and are not base58 any more.
+ */
+export async function solanaWallets(supabase: SupabaseClient, userId: string): Promise<string[] | null> {
+  const { data, error } = await supabase
+    .from("user_wallets")
+    .select("address")
+    .eq("user_id", userId)
+    .eq("chain_family", "solana")
+    .is("removed_at", null)
+    .order("is_primary", { ascending: false })
+    .limit(WALLETS_READ);
+  return error ? null : (data ?? []).map((w) => String(w.address)).filter((a) => SOLANA_ADDRESS.test(a));
+}
+
+export type DasFailure = "busy" | "no-das" | "down";
+
+/** What the picker shows for each: the real problem, not one "unavailable" for all. */
+export const DAS_FAILURE: Record<DasFailure, string> = {
+  busy: "The NFT index is busy right now. Try again in a minute.",
+  "no-das": "This RPC has no NFT index (DAS)",
+  down: "NFT index unavailable",
+};
+
+/** One index call: 10 Helius credits. The RPC URL carries its key, so it is never logged or returned. */
+export async function askDas<T>(
+  rpc: string,
+  method: string,
+  params: object,
+  signal: AbortSignal,
+): Promise<{ result: T } | { failure: DasFailure }> {
+  const res = await fetch(rpc, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: "enki-nfts", method, params }),
+    // An index that never answers must not hold the picker for good.
+    signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+  }).catch(() => null);
+  // Helius answers 429 past the plan's rate limit: later works.
+  if (res?.status === 429) return { failure: "busy" };
+  const d = await res?.json().catch(() => null);
+  // Method not found: a plain RPC, without the index.
+  if (d?.error?.code === -32601) return { failure: "no-das" };
+  return res?.ok && d?.result ? { result: d.result as T } : { failure: "down" };
 }
