@@ -621,10 +621,15 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     const name = (stRef.current.title || "").trim() || "Untitled workflow";
     setLibSaving(true);
     try {
+      // Mock-up art is the editor's own placeholder on an output, made again
+      // at will: left out, the output empty, as the library's image check
+      // refuses an SVG. A reference the user added is theirs: never dropped.
+      const graph = buildExportJSON();
+      graph.nodes = graph.nodes.map((n) => (n.type === "EnkiOutputImage" && typeof n.image === "string" && n.image.startsWith("data:image/svg+xml") ? { ...n, image: undefined, status: "empty" } : n));
       const res = await fetch("/api/library", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
-        body: JSON.stringify({ name, kind: "workflow", graph: buildExportJSON(), promptText: stRef.current.body }),
+        body: JSON.stringify({ name, kind: "workflow", graph, promptText: stRef.current.body }),
       });
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       onToast(res.ok ? `Saved "${name}" to your library` : body.error || "Couldn't save. Are you logged in?");
@@ -1847,7 +1852,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     // Per-model cap from the models table (max_reference_images).
     const current = stRef.current.nodes.filter((n) => n.type === "ref").length;
     const room = Math.max(0, modelLimits.maxRefs - current);
-    if (room <= 0) { onToast(`${st.models[0]} allows at most ${modelLimits.maxRefs} reference images`); return; }
+    if (room <= 0) { onToast(`${selectedModel?.name ?? "This model"} allows at most ${modelLimits.maxRefs} reference images`); return; }
     if (urls.length > room) onToast(`Only ${room} more reference image${room === 1 ? "" : "s"} fit (${modelLimits.maxRefs} max for this model)`);
     const take = urls.slice(0, room);
     commit((p) => {

@@ -1,7 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
+import { checkRequestRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { asUrl, checkImageBytes, dataUrlBytes, NOT_AN_IMAGE } from "@/lib/moderation/image-check-bytes";
+import { recordImageCase } from "@/lib/moderation/image-case";
 
 /**
  * Private prompt / workflow library (Kev, 2026-09-05). Every row belongs to
@@ -16,6 +19,28 @@ export const dynamic = "force-dynamic";
 const MAX_NAME = 120;
 const MAX_TEXT = 20_000;
 const MAX_GRAPH_BYTES = 400_000;
+/** The images a saved workflow may carry itself; ones already on Enki are links and do not count. */
+const MAX_IMAGES = 14;
+
+/**
+ * Every string a graph holds that a browser reads as a data: URL (the URL
+ * parser drops controls around it and line breaks within), at any depth:
+ * whatever could show as an image when the workflow is opened again.
+ */
+function dataUrls(graph: unknown): string[] {
+  const found = new Set<string>();
+  // Breadth first, without recursion: in the graph's own order, however deep.
+  const queue = [graph];
+  for (let i = 0; i < queue.length; i++) {
+    const node = queue[i];
+    if (typeof node === "string") {
+      if (/^data:/i.test(asUrl(node))) found.add(node);
+    } else if (node && typeof node === "object") {
+      for (const v of Object.values(node)) queue.push(v);
+    }
+  }
+  return [...found];
+}
 
 async function owner(request: NextRequest) {
   const supabase = getSupabaseServerClient();
@@ -56,6 +81,36 @@ export async function POST(request: NextRequest) {
   const graph = body.graph && typeof body.graph === "object" ? body.graph : null;
   if (graph && JSON.stringify(graph).length > MAX_GRAPH_BYTES) return NextResponse.json({ error: "Workflow too large to save" }, { status: 413 });
   if (!graph && !promptText) return NextResponse.json({ error: "Nothing to save" }, { status: 422 });
+
+  // Every image a workflow carries is judged before it is kept (Kev,
+  // 2026-10-08: every image). The library is private, so 18+ stays; one
+  // refused, or no image at all, saves nothing, and a child-safety one
+  // becomes a case. Each save pays for its checks, hence the limit.
+  const images = graph ? dataUrls(graph) : [];
+  if (images.length > MAX_IMAGES) {
+    return NextResponse.json({ error: `A workflow can carry at most ${MAX_IMAGES} attached images to save. Nothing was saved.` }, { status: 422 });
+  }
+  if (images.length) {
+    const limit = checkRequestRateLimit(`library-save:${userId}`, 20, 60_000);
+    if (!limit.allowed) return rateLimitResponse(limit.retryAfterSeconds);
+    const bytes = images.map(dataUrlBytes);
+    const judged = await Promise.all(bytes.map((b) => (b ? checkImageBytes(b, { signal: request.signal }) : { verdict: "blocked" as const, reason: NOT_AN_IMAGE })));
+    // Text that only begins like one ("Data: a lab at night") holds no image
+    // and claims none: it stays text. A data: URL that names an image type or
+    // base64 and is no image is refused.
+    const seen = judged.filter((v, i) => !(v.verdict === "blocked" && v.reason === NOT_AN_IMAGE && !/^data:(image\/|[^,]*;\s*base64\s*,)/i.test(asUrl(images[i]))));
+    judged.forEach((v, i) => {
+      if (v.verdict === "child_safety") {
+        after(recordImageCase(supabase, { surface: "library", request, bytes: bytes[i] as Buffer, scores: v.scores, about: "An image in a workflow saved to the private library." }));
+      }
+    });
+    if (seen.some((v) => v.verdict === "blocked" || v.verdict === "child_safety")) {
+      return NextResponse.json({ error: "One of this workflow's images can't be saved on Enki. Nothing was saved." }, { status: 422 });
+    }
+    if (seen.some((v) => v.verdict === "unavailable")) {
+      return NextResponse.json({ error: "This workflow's images could not be checked right now. Nothing was saved. Please try again." }, { status: 503 });
+    }
+  }
 
   const { data, error } = await supabase
     .from("saved_workflows")

@@ -34,6 +34,11 @@ const METERED_HOSTS = [
   // downloading the image you just paid for starves the run that follows.
   "api.acedata.cloud",
   "x402.acedata.cloud",
+  // Helius: every RPC and NFT-index call costs credits (getAssetsByOwner 10).
+  // The bare domain on purpose, unlike AceData: cdn.helius-rpc.com carries no
+  // key, but whether Helius throttles or bills it is theirs to decide, so a
+  // probe spends budget on it too.
+  "helius-rpc.com",
 ];
 
 const raw = process.env.METERED_BUDGET;

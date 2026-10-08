@@ -10,6 +10,7 @@ import { checkPrompt, NOT_CHECKED } from "@/lib/moderation/prompt-check";
 import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { hiddenOwners } from "@/lib/hidden-owners";
+import { checkRequestRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 const RATIO_SHAPE = /^[0-9]{1,2}([.][0-9]{1,2})?:[0-9]{1,2}([.][0-9]{1,2})?$/;
 
@@ -303,6 +304,9 @@ export async function PATCH(
       const { data: own } = await supabase.from("prompts").select("id")
         .eq("id", id).in("creator_id", owners).maybeSingle();
       if (!own) return NextResponse.json({ error: "not found" }, { status: 404 });
+      // Each judged edit pays for a check: 20 a minute per account, as a save.
+      const limit = checkRequestRateLimit(`prompt-edit:${owners[0]}`, 20, 60_000);
+      if (!limit.allowed) return rateLimitResponse(limit.retryAfterSeconds);
       // The regex first: what Tier 1 refuses never reaches the chat model, and
       // its refusal is this request's moderation verdict (Kev, 2026-10-06).
       const first = screenFirst(edited);

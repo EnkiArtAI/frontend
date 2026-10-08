@@ -10,7 +10,7 @@ import { readSource } from "@/lib/__tests__/_read-source";
  * 4.5 MB response cap: the buyer paid and got HTTP 413.
  */
 
-type PutOpts = { allowOverwrite?: boolean; abortSignal?: AbortSignal };
+type PutOpts = { allowOverwrite?: boolean; abortSignal?: AbortSignal; contentType?: string };
 const put = vi.fn<(name: string, buf: Buffer, opts: PutOpts) => Promise<{ url: string }>>();
 vi.mock("@vercel/blob", () => {
   class BlobError extends Error {}
@@ -170,6 +170,18 @@ describe("storeGeneratedImage with a deadline", () => {
   const DATA = `data:image/png;base64,${BYTES.toString("base64")}`;
   const rendition = { buffer: BYTES, bytes: 4 };
 
+  it("stores exactly the bytes the image check reads, in any spelling of the data URL", async () => {
+    put.mockImplementation(async (n) => ok(n));
+    const { dataUrlBytes } = await import("@/lib/moderation/image-check-bytes");
+    for (const url of [`data:image/png;BASE64,${BYTES.toString("base64")}`, `data:image/png;Base64,${BYTES.toString("base64")}`]) {
+      put.mockClear();
+      await settle(storeGeneratedImage(url, "u1", Date.now() + 20_000));
+      expect(put.mock.calls[0][1]).toEqual(dataUrlBytes(url));
+      expect(put.mock.calls[0][1]).toEqual(BYTES);
+      expect(put.mock.calls[0][2].contentType).toBe("image/png");
+    }
+  });
+
   it("cuts no renditions when the original did not land", async () => {
     derivatives = { preview: rendition, thumb: rendition, width: 1, height: 1 };
     put.mockRejectedValue(new Error("down"));
@@ -190,6 +202,18 @@ describe("storeGeneratedImage with a deadline", () => {
     const stored = await p;
     expect(stored.imageUrl).toMatch(/\.png$/);
     expect(stored.previewUrl).toBeNull();
+  });
+
+  it("names every copy it may have made, returned or not, so a refusal takes them all down", async () => {
+    derivatives = { preview: rendition, thumb: rendition, width: 1, height: 1 };
+    // The original's upload is cut, yet may land; the renditions never start.
+    put.mockRejectedValue(new Error("cut"));
+    const stored = await settle(storeGeneratedImage(DATA, "u1", Date.now() + 20_000));
+    expect(stored.imageUrl).toBe(DATA);
+    expect(stored.names).toEqual([expect.stringMatching(/^generations\/u1\/\d+_[a-z0-9]+\.png$/), expect.any(String), expect.any(String)]);
+    const base = stored.names[0].replace(/\.png$/, "");
+    expect(stored.names.slice(1)).toEqual([`${base}.preview.webp`, `${base}.thumb.webp`]);
+    expect(put.mock.calls.map(([name]) => name)).toContain(stored.names[0]);
   });
 
   it("bounds the renditions by the same deadline", async () => {

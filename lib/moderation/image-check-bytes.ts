@@ -1,0 +1,108 @@
+import sharp from "sharp";
+import { checkImage, type CheckedImage } from "@/lib/moderation/image-check";
+
+/** The edge the judges see: what the calibration of 2026-10-08 used. */
+const EDGE = 1024;
+
+/** Formats a browser shows as one still picture, when they hold one frame. */
+const STILL = new Set(["jpeg", "png", "webp", "gif"]);
+
+/** An APNG names its frames in an acTL chunk; libvips reads only the first frame. */
+function isApng(png: Buffer): boolean {
+  for (let at = 8; at + 8 <= png.length; at += 12 + png.readUInt32BE(at)) {
+    if (png.toString("latin1", at + 4, at + 8) === "acTL") return true;
+  }
+  return false;
+}
+
+/** Why bytes no image decoder recognises are refused: no retry turns them into an image. */
+export const NOT_AN_IMAGE = "not an image";
+
+/** Of two views of one image, the worse verdict stands, a child-safety one above all. */
+const RANK = { clear: 0, adult: 1, unavailable: 2, blocked: 3, child_safety: 4 } as const;
+
+/**
+ * Check image bytes the way the calibration did: the judges see a JPEG of at
+ * most 1024 px, whatever the stored original weighs. A 4K PNG inline would
+ * cost more tokens than calibrated and may exceed what the APIs accept; a URL
+ * would leave the judging to whatever the host serves. Bytes no decoder
+ * recognises, or an image that does not decode whole (a cut file), are
+ * nothing anyone may see, and no retry changes that: refused.
+ *
+ * The judges see one frame, so an animation, or a format a browser may play
+ * as one, is refused whatever that frame shows; it is judged all the same, so
+ * a child-safety first frame still becomes a case. A transparent image shows
+ * whatever is behind it, so it is judged on black and on white: a picture
+ * drawn in the alpha channel alone shows on one of them.
+ */
+export async function checkImageBytes(bytes: Buffer, opts: { signal?: AbortSignal } = {}): Promise<CheckedImage> {
+  let meta: sharp.Metadata;
+  try {
+    meta = await sharp(bytes).metadata();
+  } catch {
+    return { verdict: "blocked", reason: NOT_AN_IMAGE };
+  }
+  const still = STILL.has(meta.format) && (meta.pages ?? 1) <= 1 && !(meta.format === "png" && isApng(bytes));
+  let views: Buffer[];
+  try {
+    views = await judgedViews(bytes, meta);
+  } catch {
+    return { verdict: "blocked", reason: "unreadable" };
+  }
+  const seen = await Promise.all(views.map((v) => checkImage(`data:image/jpeg;base64,${v.toString("base64")}`, opts)));
+  const worst = seen.reduce((w, v) => (RANK[v.verdict] > RANK[w.verdict] ? v : w));
+  return still || worst.verdict === "child_safety" ? worst : { verdict: "blocked", reason: "not a still" };
+}
+
+/**
+ * What the judges see of an image: a JPEG of at most 1024 px, or two for a
+ * transparent one, on black and on white. Throws when it does not decode whole.
+ */
+export async function judgedViews(bytes: Buffer, meta?: { hasAlpha?: boolean }): Promise<Buffer[]> {
+  const { hasAlpha } = meta ?? (await sharp(bytes).metadata());
+  const backgrounds = hasAlpha && !(await sharp(bytes).stats()).isOpaque ? ["#000000", "#ffffff"] : ["#000000"];
+  return Promise.all(backgrounds.map((background) =>
+    sharp(bytes).rotate().resize({ width: EDGE, height: EDGE, fit: "inside", withoutEnlargement: true }).flatten({ background }).jpeg({ quality: 85 }).toBuffer()));
+}
+
+/**
+ * What the owner of a refused image reads: one sentence for explicit content
+ * and child safety alike, so a noisy verdict never accuses anyone.
+ */
+export const IMAGE_REFUSED = "This image can't be delivered on Enki. Nothing was charged.";
+/** When the judges gave no verdict: the image is held back, never shown unchecked. */
+export const IMAGE_UNCHECKED = "Your image could not be checked right now, so it was not delivered. Nothing was charged. Please try again.";
+export const REFERENCE_REFUSED = "One of your reference images can't be used on Enki. Nothing was generated and nothing was charged.";
+/** A reference sent as a link: nothing here fetches an address a user names, so it comes as the image itself. */
+export const REFERENCE_LINK = "Reference images must be attached as images, not links. Nothing was generated and nothing was charged.";
+export const REFERENCE_UNCHECKED = "Your reference images could not be checked right now. Nothing was generated and nothing was charged. Please try again.";
+
+export const UPLOAD_REFUSED = "This image can't be uploaded to Enki.";
+export const UPLOAD_UNCHECKED = "Your image could not be checked right now, so it was not uploaded. Please try again.";
+
+/** A profile image is public everywhere and has no 18+ mark: only a clear one is taken. */
+export const PROFILE_IMAGE_ADULT = "A profile picture or cover can't be 18+ on Enki.";
+
+/** A message has no 18+ mark and can reach anyone: only a clear image is sent. */
+export const MESSAGE_IMAGE_ADULT = "18+ images can't be sent in messages.";
+
+/** Refused or not judged: such an image is neither shown nor used. */
+export const heldBack = (v: { verdict: string }) => v.verdict === "blocked" || v.verdict === "child_safety" || v.verdict === "unavailable";
+
+/** A string as the URL parser reads it: surrounding spaces and controls dropped, tabs and line breaks removed. */
+export const asUrl = (s: string) => s.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, "").replace(/[\t\n\r]/g, "");
+
+/** A reference that names an address (https:, blob:, ipfs: …) rather than carrying the image. */
+export const isLink = (ref: string) => /^(?!data:)[a-z][a-z0-9+.-]*:/i.test(asUrl(ref));
+
+/**
+ * The bytes a browser reads from a data: URL, or null for anything else:
+ * read as the URL parser reads it, in any case, base64 or percent-encoded.
+ */
+export function dataUrlBytes(url: string): Buffer | null {
+  const m = /^data:([^,]*),([\s\S]*)$/i.exec(asUrl(url));
+  if (!m) return null;
+  if (/;\s*base64\s*$/i.test(m[1])) return Buffer.from(m[2], "base64");
+  return Buffer.concat(m[2].split(/(%[0-9a-f]{2})/i).map((part) =>
+    /^%[0-9a-f]{2}$/i.test(part) ? Buffer.from([parseInt(part.slice(1), 16)]) : Buffer.from(part, "utf8")));
+}

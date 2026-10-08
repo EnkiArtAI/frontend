@@ -18,23 +18,23 @@
  * a failed optimisation must not cost the image that was already paid for.
  */
 import { tryMakeDerivatives } from "@/lib/imageDerivatives";
+import { dataUrlBytes } from "@/lib/moderation/image-check-bytes";
 
 export interface StoredImage {
   imageUrl: string;
   previewUrl: string | null;
   thumbnailUrl: string | null;
+  /** Every name a copy may have landed under, returned or not (a cut upload can still land): removeStored takes them all down. */
+  names: string[];
 }
 
 async function fetchBytes(url: string): Promise<{ buf: Buffer; contentType: string } | null> {
   // Providers answer with a CDN URL or (OpenAI) a data: URI — both are bytes.
+  // Read by the image check's own parser, so what is stored is what was judged.
   if (url.startsWith("data:")) {
-    const comma = url.indexOf(",");
-    if (comma === -1) return null;
-    const meta = url.slice(5, comma);
-    return {
-      buf: Buffer.from(url.slice(comma + 1), meta.includes("base64") ? "base64" : "utf8"),
-      contentType: meta.split(";")[0] || "image/png",
-    };
+    const buf = dataUrlBytes(url);
+    if (!buf) return null;
+    return { buf, contentType: url.slice(5, url.indexOf(",")).split(";")[0] || "image/png" };
   }
   const res = await fetch(url).catch(() => null);
   if (!res?.ok) return null;
@@ -191,9 +191,50 @@ function inOurBlob(url: string): boolean {
   }
 }
 
+/**
+ * Takes stored copies down again: an image the image check refused must not
+ * stay at its URL. A URL of our Blob store goes through del(), one of our
+ * fallback bucket through the storage API, and a bare pathname is removed
+ * from both, since an aborted Blob turn may still land a copy beside the
+ * bucket's (putDurably). data: URLs and other hosts are nothing of ours.
+ * Failures are logged, never thrown: the refusal must still answer.
+ */
+export async function removeStored(entries: (string | null | undefined)[]): Promise<void> {
+  const bucketPrefix = `/storage/v1/object/public/${FALLBACK_BUCKET}/`;
+  const inBlob: string[] = [];
+  const inBucket: string[] = [];
+  for (const e of entries) {
+    if (!e || e.startsWith("data:")) continue;
+    if (!e.includes("://")) {
+      inBlob.push(e);
+      inBucket.push(e);
+    } else if (inOurBlob(e)) {
+      const { pathname } = new URL(e);
+      if (pathname.startsWith(bucketPrefix)) inBucket.push(decodeURIComponent(pathname.slice(bucketPrefix.length)));
+      else inBlob.push(e);
+    }
+  }
+  const failed = (where: string) => (e: unknown) =>
+    console.error(`[derivative-store] a refused image could not be removed from ${where}:`, e instanceof Error ? e.message : e);
+  await Promise.all([
+    inBlob.length && process.env.BLOB_READ_WRITE_TOKEN?.trim()
+      ? loadBlob().then(({ del }) => del(inBlob)).catch(failed("Blob"))
+      : null,
+    inBucket.length
+      ? loadDb()
+          .then(async ({ getSupabaseServerClientSafe }) => {
+            const { error } = (await getSupabaseServerClientSafe()?.storage.from(FALLBACK_BUCKET).remove(inBucket)) ?? { error: null };
+            if (error) throw error;
+          })
+          .catch(failed("the fallback bucket"))
+      : null,
+  ]);
+}
+
 /** With `deadline`, every put is durable and bounded by it (putDurably); without, one attempt each as before. */
 export async function storeGeneratedImage(providerUrl: string, userId: string, deadline?: number): Promise<StoredImage> {
-  const passthrough: StoredImage = { imageUrl: providerUrl, previewUrl: null, thumbnailUrl: null };
+  const names: string[] = [];
+  const passthrough: StoredImage = { imageUrl: providerUrl, previewUrl: null, thumbnailUrl: null, names };
   // With a deadline the fallback bucket may still take it; putDurably decides.
   if (!deadline && !process.env.BLOB_READ_WRITE_TOKEN?.trim()) return passthrough;
 
@@ -203,6 +244,7 @@ export async function storeGeneratedImage(providerUrl: string, userId: string, d
 
     const ext = fetched.contentType.includes("png") ? "png" : fetched.contentType.includes("webp") ? "webp" : "jpg";
     const base = `generations/${userId}/${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    names.push(`${base}.${ext}`, `${base}.preview.webp`, `${base}.thumb.webp`);
 
     const store = (name: string, buf: Buffer, type: string, by = deadline) =>
       by ? putDurably(name, buf, type, by) : putBlob(name, buf, type);
@@ -226,6 +268,7 @@ export async function storeGeneratedImage(providerUrl: string, userId: string, d
       imageUrl: original ?? providerUrl,
       previewUrl,
       thumbnailUrl,
+      names,
     };
   } catch (e) {
     console.warn("[derivative-store] failed:", e instanceof Error ? e.message : e);

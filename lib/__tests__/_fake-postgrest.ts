@@ -36,7 +36,7 @@ const DEFAULTS: Record<string, Row> = {
   reports: { status: "pending" },
 };
 // Unique keys the fake enforces on insert (23505), as the migrations declare them.
-const UNIQUE: Record<string, string[]> = { mfa_factors: ["user_id", "kind"], access_allowlist: ["kind", "value"] };
+const UNIQUE: Record<string, string[]> = { mfa_factors: ["user_id", "kind"], access_allowlist: ["kind", "value"], linked_wallets: ["user_id", "address"] };
 
 export function fakePostgrest() {
   const tables: Record<string, Row[]> = {};
@@ -54,6 +54,7 @@ export function fakePostgrest() {
     const filters: ((r: Row) => boolean)[] = [];
     let op: { kind: "select" | "insert" | "update" | "upsert" | "delete"; values?: Row; rows?: Row[]; head?: boolean; star?: boolean } = { kind: "select" };
     let one = false;
+    let cap = Infinity;
     const rows = () => (tables[table] ??= []);
     const q: Record<string, unknown> = {
       select: (cols?: string, opts?: { head?: boolean }) => { if (op.kind === "select") op = { kind: "select", head: opts?.head, star: cols === "*" }; return q; },
@@ -64,12 +65,13 @@ export function fakePostgrest() {
       eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
       is: (c: string, v: unknown) => { filters.push((r) => (r[c] ?? null) === v); return q; },
       not: (c: string, _op: string, v: unknown) => { filters.push((r) => (r[c] ?? null) !== v); return q; },
+      neq: (c: string, v: unknown) => { filters.push((r) => (r[c] ?? null) !== v); return q; },
       gt: (c: string, v: string) => { filters.push((r) => r[c] != null && String(r[c]) > v); return q; },
       in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return q; },
       ilike: (c: string, v: string) => { filters.push((r) => String(r[c] ?? "").toLowerCase() === v.toLowerCase()); return q; },
       or: (expr: string) => { filters.push(orFilter(expr)); return q; },
       order: () => q, // rows come back in insertion order
-      limit: () => q, // every test seeds fewer rows than any limit
+      limit: (n: number) => { cap = n; return q; }, // rows come back in insertion order
       range: () => q, // likewise: a test seeds one page at most
       maybeSingle: () => { one = true; return q; },
       single: () => { one = true; return q; },
@@ -111,7 +113,7 @@ export function fakePostgrest() {
           } else Object.assign(r, v);
           return Promise.resolve({ data: { ...r }, error: null }).then(ok);
         }
-        const hit = rows().filter((r) => filters.every((f) => f(r)));
+        const hit = rows().filter((r) => filters.every((f) => f(r))).slice(0, op.kind === "select" ? cap : Infinity);
         if (op.kind === "update") hit.forEach((r) => Object.assign(r, op.values));
         if (op.kind === "delete") tables[table] = rows().filter((r) => !hit.includes(r));
         const data = one ? (hit[0] ? { ...hit[0] } : null) : hit.map((r) => ({ ...r }));
@@ -129,5 +131,14 @@ export function fakePostgrest() {
     };
     return q;
   }
-  return { tables, state, client: { from } as never };
+  // consume_auth_nonce as migrations/combined-supabase-migrations.sql has it: an
+  // unused, unexpired nonce issued for this (lowercased) address, used once.
+  async function rpc(fn: string, a: { p_wallet_address: string; p_nonce: string }) {
+    if (fn !== "consume_auth_nonce") throw new Error(`fake rpc: ${fn}`);
+    const n = (tables.auth_nonces ??= []).find((r) => r.nonce === a.p_nonce && r.wallet_address === a.p_wallet_address.toLowerCase()
+      && r.consumed === false && String(r.expires_at) > new Date().toISOString());
+    if (n) n.consumed = true;
+    return { data: Boolean(n), error: null };
+  }
+  return { tables, state, client: { from, rpc } as never };
 }

@@ -29,7 +29,9 @@ import { reportSuccess, reportFailure } from "@/lib/generation/provider-health";
 import { childSafetyScore, recordModerationEvent } from "@/lib/moderation-enforcement";
 import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
 import { storeReferenceImages } from "@/lib/generation/reference-images";
-import { INLINE_MAX_BYTES, putDurably, storeDeadline } from "@/lib/generation/derivative-store";
+import { INLINE_MAX_BYTES, putDurably, removeStored, storeDeadline } from "@/lib/generation/derivative-store";
+import { checkImageBytes, dataUrlBytes, heldBack, isLink, IMAGE_REFUSED, IMAGE_UNCHECKED, REFERENCE_LINK, REFERENCE_REFUSED, REFERENCE_UNCHECKED } from "@/lib/moderation/image-check-bytes";
+import { recordImageCase } from "@/lib/moderation/image-case";
 import { acquireSlot, releaseSlot } from "@/lib/generation/concurrency";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
 import {
@@ -295,6 +297,61 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Too many variables" }, { status: 400 });
     }
 
+    // Login and the rate limits come before the checks below: each of them
+    // is a paid call, so a caller without a session, or over the limit,
+    // never reaches one.
+    const ipLimit = checkRequestRateLimit(rateLimitKey(request, "generate:intent:ip"), 120, 60_000);
+    if (!ipLimit.allowed) return rateLimitResponse(ipLimit.retryAfterSeconds);
+
+    // Session token only — requireAuth's fallback (X-Wallet-Address
+    // signature headers, no server nonce) is replayable and deliberately
+    // not accepted on payment paths (same gate as payments/generation/pay).
+    if (!request.headers.get("X-Session-Token")) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    }
+    let authUser;
+    try {
+      authUser = await requireAuth(request);
+    } catch (e) {
+      return authRefusal(e);
+    }
+    if (!checkRateLimit(authUser.userId, "generate:intent", 60, 60_000)) {
+      return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
+    }
+
+    const paidTier = normalizeTier(paid.resolution);
+    const paidModel = paid.model_id ? await resolveModel(getSupabaseServerClientSafe(), [paid.model_id]) : null;
+    if (!paidTier || !paidModel || toModelFamily(paidModel.name) !== paid.model_family) {
+      // The row it paid for is gone or changed family. Generating on anything
+      // else would be the exact substitution this path exists to prevent.
+      return NextResponse.json(
+        { error: `This payment is for ${paid.model_family}, which is not available right now. Nothing was generated and nothing was charged.` },
+        { status: 409 },
+      );
+    }
+    // A setting the request repeats must agree with the payment, refused here
+    // before the slot and the claim, so there is nothing to void, and before
+    // the checks below, so they judge no more images than were paid for.
+    const attachedRefs = referenceImageCount(body.referenceImages);
+    const mismatch = settingMismatch(
+      paid,
+      { modelIds: body.modelIds, resolution: askedResolution, quality: body.quality, boost: body.boost, referenceImageCount: attachedRefs },
+      paidModel.supportsQuality,
+    );
+    if (mismatch) {
+      return NextResponse.json(
+        { error: `This payment does not cover the requested ${mismatch}. Nothing was generated and nothing was charged.` },
+        { status: 400 },
+      );
+    }
+    // Never sliced away below: a reference the model cannot take is refused.
+    if (attachedRefs > paidModel.maxRefs) {
+      return NextResponse.json(
+        { error: `${paidModel.name} takes at most ${paidModel.maxRefs} reference images. Nothing was generated and nothing was charged.` },
+        { status: 422 },
+      );
+    }
+
     // What the prompt asks for, judged before anything is generated or
     // charged: for an artist's prompt the buyer's values only (the artist's
     // text never goes out for this), otherwise the whole prompt. An explicit
@@ -311,23 +368,54 @@ export async function POST(request: NextRequest) {
     // The regex first: what Tier 1 refuses never reaches the chat model, and
     // its refusal is this request's moderation verdict (Kev, 2026-10-06).
     const first = screenFirst(checked);
-    const check = first ? NOT_CHECKED : await checkPrompt(checked, { hidden: fromArtist, signal: request.signal });
+    // Every reference image is judged too, beside the prompt, before it can
+    // reach a model or anything is charged (Kev, 2026-10-08: every image).
+    // They arrive as data: URLs or bare base64, as the providers read them.
+    const refs = (body.referenceImages ?? []).filter((r): r is string => typeof r === "string" && r.trim() !== "");
+    // A link is never fetched here: refused as one, not judged as junk and
+    // answered "try again".
+    if (refs.some(isLink)) {
+      return NextResponse.json({ error: REFERENCE_LINK }, { status: 422 });
+    }
+    const refBytes = refs.map((r) => dataUrlBytes(r) ?? Buffer.from(r.trim(), "base64"));
+    const [check, refsSeen] = await Promise.all([
+      first ? NOT_CHECKED : checkPrompt(checked, { hidden: fromArtist, signal: request.signal }),
+      Promise.all(refBytes.map((b) => checkImageBytes(b, { signal: request.signal }))),
+    ]);
+    // A child-safety reference becomes a case whatever else refuses the
+    // request, the prompt's own warning below included.
+    refsSeen.forEach((v, i) => {
+      if (v.verdict === "child_safety") {
+        after(recordImageCase(getSupabaseServerClient(), {
+          surface: "generate-image", request, bytes: refBytes[i], scores: v.scores,
+          about: authoring ? "" : JSON.stringify(checked), promptId: about.promptId,
+        }));
+      }
+    });
     if (check.verdict === "minor_sexual" || check.verdict === "explicit_sexual") {
       const outcome = await recordWarning(getSupabaseServerClient(), {
         surface: "generate-image", request, category: check.verdict, text: authoring ? "" : JSON.stringify(checked), confidence: check.confidence, ...about,
       });
       return NextResponse.json({ error: warningMessage(check.verdict, outcome) }, { status: 422 });
     }
+    // A reference the check refuses or cannot judge stops the request before
+    // the slot and the claim, so there is nothing to void.
+    if (refsSeen.some(heldBack)) {
+      return refsSeen.some((v) => v.verdict === "blocked" || v.verdict === "child_safety")
+        ? NextResponse.json({ error: REFERENCE_REFUSED }, { status: 422 })
+        : NextResponse.json({ error: REFERENCE_UNCHECKED }, { status: 503 });
+    }
     if (check.verdict === "unavailable") console.warn("[prompt-check] unavailable:", check.reason);
-    // Refused silently, but only where a real generation fails: after login,
-    // rate limits, slot and claim (below). Answering here, before those,
-    // told a caller without a session which inputs were caught.
+    // Refused silently, but only where a real generation fails: after the
+    // slot and the claim (below). Answering here, before those, told a
+    // caller which inputs were caught.
     const silent = check.verdict !== "clear";
 
     // 18+ (a suggestive prompt, or a prompt marked 18+) is for confirmed adults
     // only, refused before anything is charged.
     // Whatever else the check found, so the refusal never depends on it.
-    const adult = ("adult" in check && check.adult === true) || promptAdult;
+    // A reference judged 18+ makes the render 18+ too.
+    const adult = ("adult" in check && check.adult === true) || promptAdult || refsSeen.some((v) => v.verdict === "adult");
     const asker = adult ? await resolveRecordingUserId(getSupabaseServerClient(), request) : null;
     if (adult && !(await adultConfirmed(getSupabaseServerClient(), asker))) {
       // Counted only for a signed-in account: this answer comes before login,
@@ -389,37 +477,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const paidTier = normalizeTier(paid.resolution);
-    const paidModel = paid.model_id ? await resolveModel(getSupabaseServerClientSafe(), [paid.model_id]) : null;
-    if (!paidTier || !paidModel || toModelFamily(paidModel.name) !== paid.model_family) {
-      // The row it paid for is gone or changed family. Generating on anything
-      // else would be the exact substitution this path exists to prevent.
-      return NextResponse.json(
-        { error: `This payment is for ${paid.model_family}, which is not available right now. Nothing was generated and nothing was charged.` },
-        { status: 409 },
-      );
-    }
-    // A setting the request repeats must agree with the payment, refused here
-    // before the slot and the claim, so there is nothing to void.
-    const attachedRefs = referenceImageCount(body.referenceImages);
-    const mismatch = settingMismatch(
-      paid,
-      { modelIds: body.modelIds, resolution: askedResolution, quality: body.quality, boost: body.boost, referenceImageCount: attachedRefs },
-      paidModel.supportsQuality,
-    );
-    if (mismatch) {
-      return NextResponse.json(
-        { error: `This payment does not cover the requested ${mismatch}. Nothing was generated and nothing was charged.` },
-        { status: 400 },
-      );
-    }
-    // Never sliced away below: a reference the model cannot take is refused.
-    if (attachedRefs > paidModel.maxRefs) {
-      return NextResponse.json(
-        { error: `${paidModel.name} takes at most ${paidModel.maxRefs} reference images. Nothing was generated and nothing was charged.` },
-        { status: 422 },
-      );
-    }
     const preflightModel = paidModel;
     // Chosen HERE and nowhere else, because the quote below carries the price
     // of a specific host: quoting AceData and then generating on WaveSpeed
@@ -525,24 +582,6 @@ export async function POST(request: NextRequest) {
     // the paid resolution comes from the intent row — neither is taken
     // from the request. Redemption is a one-shot conditional UPDATE, so a
     // replayed intentId can never buy a second generation.
-    const ipLimit = checkRequestRateLimit(rateLimitKey(request, "generate:intent:ip"), 120, 60_000);
-    if (!ipLimit.allowed) return rateLimitResponse(ipLimit.retryAfterSeconds);
-
-    // Session token only — requireAuth's fallback (X-Wallet-Address
-    // signature headers, no server nonce) is replayable and deliberately
-    // not accepted on payment paths (same gate as payments/generation/pay).
-    if (!request.headers.get("X-Session-Token")) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    }
-    let authUser;
-    try {
-      authUser = await requireAuth(request);
-    } catch (e) {
-      return authRefusal(e);
-    }
-    if (!checkRateLimit(authUser.userId, "generate:intent", 60, 60_000)) {
-      return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
-    }
     const supabase = getSupabaseServerClient();
     // One claim function for both payment models. Two independent claim
     // paths against one row is how a double charge happens: each correct on
@@ -729,9 +768,10 @@ export async function POST(request: NextRequest) {
     // the deadline AND the bytes fit the response cap: a bigger one used to go
     // inline anyway, was captured, and reached the buyer as HTTP 413 with no
     // image. When neither works, nothing is charged.
+    const storedName = `generations/${Date.now()}_${Math.random().toString(36).substring(2, 9)}.png`;
     const imageUrl =
       (await putDurably(
-        `generations/${Date.now()}_${Math.random().toString(36).substring(2, 9)}.png`,
+        storedName,
         generatedImageBuffer,
         "image/png",
         storeDeadline(startedAt),
@@ -751,7 +791,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // The image exists and is stored. NOW take the money.
+    // The image check, after storage and before the money moves (Kev,
+    // 2026-10-08): what it refuses or cannot judge is not delivered and not
+    // charged, and the stored copy comes down again (both stores: an aborted
+    // Blob turn may still have landed one). Bounded by the store deadline, so
+    // the capture keeps its reserve.
+    const seen = await checkImageBytes(generatedImageBuffer, {
+      // Not the request's signal: a buyer who closes the tab still gets the
+      // render they paid for in the gallery.
+      signal: AbortSignal.timeout(Math.max(1, storeDeadline(startedAt) - Date.now())),
+    });
+    if (heldBack(seen)) {
+      if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: `image check: ${seen.verdict}` }));
+      if (seen.verdict === "child_safety") {
+        after(recordImageCase(getSupabaseServerClient(), {
+          surface: "generate-image", request, bytes: generatedImageBuffer, scores: seen.scores,
+          about: authoring ? "" : JSON.stringify(checked), promptId: about.promptId,
+        }));
+      }
+      after(removeStored([imageUrl, storedName]));
+      await releaseIfConsumed(seen.verdict === "unavailable" ? "provider_failed" : "rejected");
+      await releaseHeldSlot();
+      return seen.verdict === "unavailable"
+        ? NextResponse.json({ error: IMAGE_UNCHECKED }, { status: 503 })
+        : NextResponse.json({ error: IMAGE_REFUSED }, { status: 422 });
+    }
+
+    // The image exists, is stored and passed the check. NOW take the money.
     //
     // This order is the whole promise: "once the image goes through, we will
     // receive the money. otherwise it will be sent back" (Kev, 2026-08-06),
@@ -812,7 +878,8 @@ export async function POST(request: NextRequest) {
         // failing store must not hold the answer to a buyer who has paid.
         after(async () =>
           recordGeneration(recSupabase, {
-            adult,
+            // Judged 18+ by the image check: delivered, and marked.
+            adult: adult || seen.verdict === "adult",
             userId: recUserId,
             promptId: paid.prompt_id ?? null,
             finalPrompt: prompt,
@@ -844,8 +911,10 @@ export async function POST(request: NextRequest) {
             // Uploaded once and referenced, rather than inlined into the
             // workflow blob: the same reference across twenty generations is
             // one object and twenty rows, not twenty copies of the base64.
+            // Only what the image check judged: a graph image that never went
+            // to the model keeps its position as an empty slot.
             references: await storeReferenceImages(
-              stripped.images.length ? stripped.images : (body.referenceImages ?? []),
+              stripped.images.length ? stripped.images.map((img) => (refs.includes(img) ? img : "")) : refs,
               recUserId,
             ),
             chainKey: solanaChainKey(),

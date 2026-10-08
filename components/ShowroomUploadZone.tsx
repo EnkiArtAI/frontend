@@ -11,6 +11,7 @@ import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import { useEmailAuth } from "@/hooks/useEmailAuth";
+import { fitUpload } from "@/lib/shrink-image";
 
 interface UploadPreview {
   file: File;
@@ -134,8 +135,11 @@ export default function ShowroomUploadZone() {
       setUploadProgress((prev) => ({ ...prev, [i]: 0 }));
 
       try {
+        // Made smaller until it arrives: Vercel turns away a body over 4.5 MB (lib/shrink-image).
+        const file = await fitUpload(upload.file);
+        if (!file) throw new Error(`${upload.file.name} could not be read or made small enough to upload.`);
         const formData = new FormData();
-        formData.append('file', upload.file);
+        formData.append('file', file);
         if (upload.prompt) {
           formData.append('prompt', upload.prompt);
         }
@@ -182,7 +186,8 @@ export default function ShowroomUploadZone() {
     if (failCount > 0) {
       toast({
         title: "Some uploads failed",
-        description: `${failCount} image(s) failed to upload. Check console for details.`,
+        // The first reason, in words: "check the console" told a user nothing.
+        description: results.find((r) => !r.success)?.error ?? `${failCount} image(s) failed to upload.`,
         variant: "destructive",
       });
     }
@@ -245,7 +250,7 @@ export default function ShowroomUploadZone() {
                 Drag and drop images here, or click to select
               </p>
               <p className="text-xs text-muted-foreground">
-                PNG, JPEG, WebP up to 10MB each
+                PNG, JPEG or WebP. A large image is made smaller to upload.
               </p>
             </div>
 

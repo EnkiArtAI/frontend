@@ -8,30 +8,43 @@
 import { useEffect, useState } from "react";
 import { X, Check, Loader2, ImageOff } from "lucide-react";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import type { NftPick } from "@/hooks/useReferenceReads";
+import { useEmailAuth } from "@/hooks/useEmailAuth";
+import LinkWalletButtons from "@/components/settings/LinkWalletButtons";
+import { walletsChangedRecently } from "@/components/settings/link-wallet";
 // Shared popup chrome (spinner, CTA button) + its own styles live here.
 import "@/components/enki/bookmarks.css";
 
-type Nft = { id: string; name: string; image: string | null; collection: string | null };
+type Nft = { id: string; name: string; image: string; thumb: string; collection: string | null };
 
 export default function NftPickerModal({ max, onPick, onClose }: {
   /** How many the caller can still take (free reference slots). */
   max: number;
-  onPick: (images: string[]) => void;
+  /** The marked NFTs, each read through our own route (useReferenceReads). */
+  onPick: (picks: NftPick[]) => void;
   onClose: () => void;
 }) {
   const [nfts, setNfts] = useState<Nft[] | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  // No wallet is not no NFTs: the empty list says which.
+  const [wallets, setWallets] = useState(0);
   const [marked, setMarked] = useState<Set<string>>(new Set());
+  // An email account can link a wallet right here (Settings → Profile has the list).
+  const { isAuthed: emailAuthed } = useEmailAuth();
+  // Bumped after a link here: read again, past the browser's one-minute copy of the list
+  // (a link or unlink in Settings asks for the same through walletsChangedRecently).
+  const [round, setRound] = useState(0);
 
   useEffect(() => {
-    fetch("/api/wallet/nfts", { headers: { ...sessionAuthHeaders() } })
+    fetch("/api/wallet/nfts", { headers: { ...sessionAuthHeaders() }, cache: round || walletsChangedRecently() ? "reload" : "default" })
       .then(async (r) => {
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.error || "NFTs unavailable");
+        setWallets(d.wallets ?? 0);
         setNfts(d.nfts);
       })
       .catch((e: Error) => { setNfts([]); setProblem(e.message); });
-  }, []);
+  }, [round]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
@@ -47,8 +60,8 @@ export default function NftPickerModal({ max, onPick, onClose }: {
   });
 
   const use = () => {
-    const imgs = (nfts ?? []).filter((n) => marked.has(n.id) && n.image).map((n) => n.image as string);
-    if (imgs.length) onPick(imgs);
+    const picks = (nfts ?? []).filter((n) => marked.has(n.id)).map(({ image, thumb }) => ({ image, thumb }));
+    if (picks.length) onPick(picks);
     onClose();
   };
 
@@ -61,7 +74,12 @@ export default function NftPickerModal({ max, onPick, onClose }: {
         </div>
         {nfts === null && <div className="enki-nftp-note"><Loader2 size={14} className="enki-bmp-spin" /> Loading your wallets…</div>}
         {problem && <div className="enki-nftp-note"><ImageOff size={14} /> {problem}</div>}
-        {nfts?.length === 0 && !problem && <div className="enki-nftp-note">No NFTs found in your connected wallets.</div>}
+        {nfts?.length === 0 && !problem && (
+          <div className="enki-nftp-note" style={{ flexDirection: "column", alignItems: "flex-start" }}>
+            {wallets ? `No NFTs in your ${wallets === 1 ? "wallet" : "wallets"}.` : "No Solana wallet is linked to this account yet."}
+            {emailAuthed && <LinkWalletButtons buttonClass="enki-bmp-go" onLinked={() => { setNfts(null); setRound((r) => r + 1); }} />}
+          </div>
+        )}
         {max <= 0 && <div className="enki-nftp-note">All image slots are full — remove one first.</div>}
         {!!nfts?.length && (
           <div className="enki-nftp-grid">
@@ -69,7 +87,7 @@ export default function NftPickerModal({ max, onPick, onClose }: {
               <button key={n.id} type="button"
                 className={"enki-nftp-item" + (marked.has(n.id) ? " on" : "")}
                 title={n.name} onClick={() => toggle(n.id)}>
-                {n.image ? <img src={n.image} alt={n.name} draggable={false} loading="lazy" /> : <ImageOff size={16} />}
+                <img src={n.thumb} alt={n.name} draggable={false} loading="lazy" />
                 {marked.has(n.id) && <span className="enki-nftp-check"><Check size={11} /></span>}
               </button>
             ))}

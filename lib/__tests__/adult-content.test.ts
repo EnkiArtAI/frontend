@@ -119,7 +119,8 @@ describe("the routes", () => {
 
   it("refuse 18+ to an unconfirmed buyer before the charge", () => {
     const refuse = HUMAN.indexOf("return NextResponse.json(ADULT_REFUSAL, { status: 403 });");
-    expect(HUMAN).toMatch(/const adult = \("adult" in check && check\.adult === true\) \|\| promptAdult;/);
+    // A reference image judged 18+ makes the render 18+ as well.
+    expect(HUMAN).toMatch(/const adult = \("adult" in check && check\.adult === true\) \|\| promptAdult \|\| refsSeen\.some\(\(v\) => v\.verdict === "adult"\);/);
     // A refusal on 18+ still counts the extraction attempt it refuses.
     expect(HUMAN).toMatch(/if \(check\.verdict === "extraction" && asker\) \{\n\s+after\(recordExtractionHit\([^\n]+\n\s+\}\n\s+return NextResponse\.json\(ADULT_REFUSAL, \{ status: 403 \}\);/);
     expect(refuse).toBeGreaterThan(-1);
@@ -154,8 +155,9 @@ describe("the routes", () => {
   });
 
   it("mark the images they record", () => {
-    expect(HUMAN).toMatch(/recordGeneration\(recSupabase, \{\n\s+adult,/);
-    expect(FREE).toMatch(/recordGeneration\(supabase, \{\n\s+adult,/);
+    // And the image check's own 18+ verdict marks what it delivers.
+    expect(HUMAN).toMatch(/recordGeneration\(recSupabase, \{\n\s+adult: adult \|\| seen\.verdict === "adult",/);
+    expect(FREE).toMatch(/recordGeneration\(supabase, \{\n\s+adult: adult \|\| seen\.verdict === "adult",/);
   });
 
   it("check a prompt before saving it and mark it 18+ by itself", () => {
@@ -163,7 +165,8 @@ describe("the routes", () => {
     expect(check).toBeGreaterThan(-1);
     expect(SAVE.indexOf("const promptRow = {")).toBeGreaterThan(check);
     expect(SAVE).toMatch(/const shownAdult = await showsAdultRender\(supabase, \[\.\.\.uploadedPhotos, \.\.\.\(referenceImages \?\? savedBefore\)\]\);\n\s+if \(shownAdult === null\) \{/);
-    expect(SAVE).toMatch(/const adult = check\.adult === true \|\| shownAdult;/);
+    // A new reference image judged 18+ by the image check marks the prompt too.
+    expect(SAVE).toMatch(/const adult = check\.adult === true \|\| shownAdult \|\| beforeSeen\.some\(\(v\) => v\.verdict === "adult"\);/);
     expect(SAVE).toMatch(/const promptRow = \{\n\s+is_adult: adult,/);
   });
 

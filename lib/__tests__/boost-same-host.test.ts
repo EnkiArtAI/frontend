@@ -69,7 +69,7 @@ describe("every generate surface", () => {
     expect(editor).toContain("boost: boost && boostAt(picked, genResolution),");
     expect(launcher.split("core.boostAt(tier) && boost")).toHaveLength(3);
     expect(viewer.split("core.boostAt(quoteResolution) && boost")).toHaveLength(4);
-    expect(viewer).toContain("resolution: t, boost: core.boostAt(t) && boost, quality }))");
+    expect(viewer).toContain("resolution: t, boost: core.boostAt(t) && boost, quality, referenceImageCount: refs.length }))");
     expect(node).toContain("boost: boostRef.current && boostAt(picked, tier),");
     expect(node).toContain("boost: boost && boostAt(m, tier),");
     for (const s of [editor, launcher, viewer, node]) expect(s).not.toMatch(/boostAvailable && boost|boost && !!m\\.boostAvailable/);

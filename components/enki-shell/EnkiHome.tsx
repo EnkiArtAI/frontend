@@ -21,7 +21,6 @@ import { useMessages } from "@/hooks/useMessages";
 import EnkiFeedPage from "@/components/enki/EnkiFeedPage";
 import { openLogin } from "@/lib/openLogin";
 import EnkiSidebar, { type NavItem } from "./EnkiSidebar";
-import ReferModal from "./ReferModal";
 import BookmarksPanel from "./BookmarksPanel";
 import FeedbackModal from "./FeedbackModal";
 import NodeCreator from "./NodeCreator";
@@ -118,7 +117,6 @@ export default function EnkiHome() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [nodeOpen, setNodeOpen] = useState(false);
-  const [referOpen, setReferOpen] = useState(false);
   /* Which creator the "creator" panel shows. Opened via the cancelable
      "enki:open-creator" event: cards and artist links dispatch it, and a
      consumed event (preventDefault) tells them the shell took over — only
@@ -535,7 +533,6 @@ export default function EnkiHome() {
             setNodeOpen(true); setActiveNav("home"); setCollapsed(true);
           }}
           nodeActive={nodeOpen}
-          onRefer={() => setReferOpen(true)}
           guest={!authed}
           onFeedback={() => setFeedbackOpen(true)}
           account={{ name, handle, initials, avatarUrl: myProfile?.avatarUrl ?? null }}
@@ -658,9 +655,6 @@ export default function EnkiHome() {
         </div>
       )}
       <LoginModal open={loginOpen} prewarm={!authed} onClose={() => setLoginOpen(false)} />
-      {referOpen && (
-        <ReferModal guest={!authed} onClose={() => setReferOpen(false)} />
-      )}
       {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} onToast={showToast} guest={!authed} />}
 
       {logoffOpen && (

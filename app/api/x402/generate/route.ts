@@ -29,6 +29,12 @@
  * moderation are all resolved BEFORE the payment settles — the only thing
  * standing between a settled payment and a delivered image is the provider
  * call itself. Payment first would take money for requests we then refuse.
+ *
+ * The image check judges the render, so it can only run after the payment
+ * settled: an agent's payment expires with its blockhash, about a minute, and
+ * a slow render outlasts it, so it cannot wait for the check. What the check
+ * refuses or cannot judge is withheld, its copies taken down, and recorded
+ * with the signature so support can make it right.
  */
 import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
@@ -37,7 +43,7 @@ import { computeQuote } from "@/lib/payments/generation-quote";
 import { dbUnavailableResponse, isDbUnreachable, refusalBody, type DbOutage } from "@/lib/db-error";
 import { checkAgentPromptInputs } from "@/lib/generation/agent-prompt-inputs";
 import {
-  getModelCostMicro, computeGenerationSplit, UnknownModelError,
+  modelLegMicro, computeGenerationSplit, UnknownModelError,
 } from "@/lib/payments/generation-pricing";
 import { usdcMint, feePayerKeypair, solanaConnection, solanaChainKey, broadcastAndConfirm } from "@/lib/payments/solana";
 import bs58 from "bs58";
@@ -61,7 +67,9 @@ import { moderate, screenFirst, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { resolveModelByFamily, chooseRoute } from "@/lib/generation/models";
 import { clampTier } from "@/lib/generation/resolution";
 import { reportSuccess, reportFailure } from "@/lib/generation/provider-health";
-import { INLINE_MAX_BYTES, storeDeadline, storeGeneratedImage } from "@/lib/generation/derivative-store";
+import { INLINE_MAX_BYTES, removeStored, storeDeadline, storeGeneratedImage } from "@/lib/generation/derivative-store";
+import { checkImageBytes, heldBack } from "@/lib/moderation/image-check-bytes";
+import { recordImageCase } from "@/lib/moderation/image-case";
 import { generateImagesWithWaveSpeed } from "@/backend/services/wavespeed-image-generation";
 import { generateImagesWithOpenAI } from "@/backend/services/openai-image-generation";
 import { generateImagesWithGemini } from "@/backend/services/gemini-image-generation";
@@ -178,7 +186,8 @@ async function requirementsFor(input: Input): Promise<Requirements> {
     description = `Generate 1 image from prompt ${input.promptId} (${input.modelFamily}, ${input.resolution}) — artist share included`;
   } else {
     try {
-      const modelCostMicro = getModelCostMicro(input.modelFamily, input.resolution, { quality: input.quality });
+      // The checks the agent's render runs, as on every paid rail.
+      const modelCostMicro = modelLegMicro(input.modelFamily, input.resolution, { quality: input.quality });
       amountMicro = computeGenerationSplit(0, modelCostMicro).totalMicro;
       legs = [{ recipient: payTo, amountMicro }];
       description = `Generate 1 image (${input.modelFamily}, ${input.resolution})`;
@@ -528,6 +537,8 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
       prompt: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
       error: "image could not be stored", txSignature: signature,
     }));
+    // A cut upload can still land: never left public unjudged.
+    after(removeStored(stored.names));
     return NextResponse.json(
       {
         error: "Your image was made but could not be delivered after your payment settled.",
@@ -535,6 +546,43 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
         note: "Keep this transaction signature — support will make it right.",
       },
       { status: 502 },
+    );
+  }
+
+  // The image check, after storage: refused or not judged, the image is
+  // withheld, its copies come down, and the paid failure is recorded with
+  // the signature. A child-safety verdict becomes a case an admin decides,
+  // by address.
+  const seen = await checkImageBytes(buffer, { signal: AbortSignal.timeout(Math.max(1, storeDeadline(startedAt) - Date.now())) });
+  if (heldBack(seen)) {
+    after(recordGenerationFailure(supabase, {
+      request, surface: "x402-generate", modelId: model.id, resolution: input.resolution, quality: effQuality, boost: false,
+      aspectRatio: ratio, referenceImageCount: 0,
+      prompt: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
+      error: `image check: ${seen.verdict}`, txSignature: signature,
+    }));
+    if (seen.verdict === "child_safety") {
+      after(recordImageCase(supabase, {
+        surface: "x402-generate", request, bytes: buffer, scores: seen.scores, byAddress: true, promptId: input.promptId,
+        about: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
+      }));
+    }
+    // Every copy, by every name it may have landed under, in both stores.
+    after(removeStored(stored.names));
+    return NextResponse.json(
+      {
+        error: seen.verdict === "unavailable"
+          ? "Your image could not be checked right now, so it was not delivered after your payment settled."
+          : "This image can't be delivered on Enki. Your payment settled.",
+        transaction: signature,
+        note: "Keep this transaction signature — support will make it right.",
+      },
+      // Paid, so it says so as x402 does, and never 503: a client retrying
+      // that would pay again for each render withheld the same way.
+      {
+        status: seen.verdict === "unavailable" ? 502 : 422,
+        headers: { "X-PAYMENT-RESPONSE": paymentResponseHeader(signature, "solana", feePayer.publicKey) },
+      },
     );
   }
 

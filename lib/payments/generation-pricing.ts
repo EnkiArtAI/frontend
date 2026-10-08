@@ -36,6 +36,7 @@ export const PRICING_POLICY: {
   quoteTtlSeconds: number;
   networkFeeMicro: number;
   extractionCheckMicro: number;
+  imageCheckMicro: number;
 } = {
   enkiFeeBps: 1000,
   feeBase: "subtotal",
@@ -62,6 +63,15 @@ export const PRICING_POLICY: {
    * cost, so the fee applies to it like to the rest of the API bill.
    */
   extractionCheckMicro: 100,
+  /**
+   * The image check of every image a paid generation takes in or puts out
+   * (lib/moderation/image-check): omni-moderation plus gpt-6-luna at high
+   * detail, about $0.00016 an image (calibration, 2026-10-08), rounded up to
+   * $0.0002. The buyer pays it on every paid render, a free prompt's too:
+   * free only means no artist fee (Kev, 2026-10-08). Part of the model cost,
+   * like the prompt check.
+   */
+  imageCheckMicro: 200,
 };
 
 export const MICRO_PER_USDC = 1_000_000;
@@ -82,6 +92,23 @@ export function usdToMicro(usd: number): number {
  * When `models.price` units in the DB are confirmed, swap the body of this
  * function to the DB lookup — callers only ever see micro-USDC.
  */
+/**
+ * The model leg a buyer pays for one image: the host's price, the prompt
+ * check, and the image check of the result and of each reference image sent
+ * along. getModelCostMicro stays the raw host cost.
+ */
+export function modelLegMicro(
+  modelFamily: string,
+  resolution: string | undefined,
+  opts?: { boost?: boolean; quality?: "low" | "medium" | "high"; references?: number },
+): number {
+  return (
+    getModelCostMicro(modelFamily, resolution, opts) +
+    PRICING_POLICY.extractionCheckMicro +
+    PRICING_POLICY.imageCheckMicro * (1 + (opts?.references ?? 0))
+  );
+}
+
 export function getModelCostMicro(
   modelFamily: string,
   resolution: string | undefined,

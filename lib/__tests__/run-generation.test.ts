@@ -12,6 +12,7 @@ vi.mock("@/lib/session-headers", () => ({ sessionAuthHeaders: () => ({ "X-Sessio
 import { runGeneration } from "@/lib/generation/run-generation";
 import { registerCdpEnsure } from "@/lib/cdp-bridge";
 import type { CatalogueEntry } from "@/hooks/useModelLimits";
+import { REQUEST_MAX_BYTES, REFS_TOO_LARGE } from "@/lib/request-size";
 
 const entry = (over: Partial<CatalogueEntry>): CatalogueEntry => ({
   id: "14b3db65-08e3-49a5-b8bb-57f6d5821099", name: "GPT-Image-2", price: 0.1, mediaType: "image",
@@ -145,5 +146,38 @@ describe("the free model", () => {
     expect(calls[0].body).toMatchObject({ modelId: FLUX.id, prompt: "a cat", resolution: "2K" });
     expect(calls[0].headers["X-Session-Token"]).toBe("t");
     expect(sign).not.toHaveBeenCalled();
+  });
+});
+
+describe("a request too large to arrive", () => {
+  // Vercel turns it away with a 413 before our route runs; a paid one would
+  // meet that only after its payment was signed.
+  const huge = ["data:image/webp;base64," + "A".repeat(REQUEST_MAX_BYTES)];
+
+  it("is refused before the wallet is asked or a payment is opened", async () => {
+    scriptFetch(PAID);
+    const sign = vi.fn(async () => "s");
+    const ensure = vi.fn(async () => {});
+    registerCdpEnsure(ensure);
+    try {
+      expect(await runGeneration({ ...BASE, model: GPT, referenceImages: huge }, sign)).toEqual({ ok: false, error: REFS_TOO_LARGE });
+    } finally {
+      registerCdpEnsure(null);
+    }
+    expect(ensure).not.toHaveBeenCalled();
+    expect(sign).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+  });
+
+  it("is refused on the free route too, unsent", async () => {
+    scriptFetch({ "/api/generate-free": { imageUrl: "https://img/free.png" } });
+    expect(await runGeneration({ ...BASE, model: FLUX, referenceImages: huge }, vi.fn())).toEqual({ ok: false, error: REFS_TOO_LARGE });
+    expect(calls).toEqual([]);
+  });
+
+  it("is measured whole: a request that fits still goes", async () => {
+    scriptFetch(PAID);
+    await runGeneration({ ...BASE, model: GPT, referenceImages: ["data:image/webp;base64," + "A".repeat(REQUEST_MAX_BYTES / 2)] }, vi.fn(async () => "s"));
+    expect(calls.at(-1)?.path).toBe("/api/generate-image");
   });
 });

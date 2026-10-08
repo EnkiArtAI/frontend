@@ -31,7 +31,7 @@ describe("the marketplace generator runs the selected model", () => {
   });
 
   it("quotes the boost that will run, not a hidden one", () => {
-    expect(PGV).toMatch(/fetchGenerationQuote\(\{ promptId: promptId!, modelId: core\.entry!\.id, resolution: quoteResolution, boost: core\.boostAt\(quoteResolution\) && boost, quality \}\)/);
+    expect(PGV).toMatch(/fetchGenerationQuote\(\{ promptId: promptId!, modelId: core\.entry!\.id, resolution: quoteResolution, boost: core\.boostAt\(quoteResolution\) && boost, quality, referenceImageCount: refs\.length \}\)/);
   });
 
   it("free is the server's flag", () => {

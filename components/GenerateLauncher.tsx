@@ -17,7 +17,7 @@ import { usePaymentSigner } from "@/hooks/usePaymentSigner";
 import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
 import { useGenerationCore } from "@/hooks/useGenerationCore";
 import NftPickerModal from "@/components/enki/NftPickerModal";
-import { useReferenceReads, REFS_LOADING } from "@/hooks/useReferenceReads";
+import { useReferenceReads, REFS_LOADING, type NftPick } from "@/hooks/useReferenceReads";
 
 /* No literals: models, ratios, tiers, prices, the boost lever and the NFT
    reference limit all come from useGenerationCore — the one global source
@@ -79,6 +79,8 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
   useEffect(() => { if (!core.loading && core.clampTier(resolution) !== resolution) setResolution(core.clampTier(resolution)); }, [core, resolution]);
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const [nftImages, setNftImages] = useState<string[]>([]);
+  // Bumped whenever another prompt opens: a read still running lands nowhere.
+  const refsEpoch = useRef(0);
 
   /* Every price shown is a server quote (Kev, 2026-10-02: "ich brauche safe
      überall den server-quote"): the current settings first, then each tier
@@ -128,6 +130,7 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
     setValueByToken(seededValues);
     setSeededVariables(mapped.length ? mapped : null);
     setLocked(isPaid);
+    refsEpoch.current++;
     setReferenceImages([]);
     setNftImages([]);
     setResults([]);
@@ -237,9 +240,6 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
     }
   };
 
-  // Pick an NFT as a reference. The real wallet NFT-picker isn't built in this
-  // free build yet — for now this opens a file picker so the NFT deck is
-  // usable; swap this for the wallet's NFT selection flow when ready.
   /* The NFT button opens the WALLET picker — it used to click the hidden
      file input, so "NFTs" opened an upload-from-PC dialog (Kev, 2026-08-22).
      The file input stays for the plain image-upload path only. */
@@ -255,8 +255,9 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
         toast({ title: "File type not supported", description: `${file.name} — this model accepts ${modelLimits.filetypes.map((t) => t.split("/")[1]).join(", ")}.`, variant: "destructive" });
         return;
       }
+      const epoch = refsEpoch.current;
       void readRef(file).then((url) => {
-        if (url) {
+        if (url && epoch === refsEpoch.current) {
           setList((prev) => {
             if (prev.length >= modelLimits.maxRefs) {
               toast({ title: "Reference limit reached", description: `This model allows up to ${modelLimits.maxRefs} reference images.` });
@@ -270,6 +271,31 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
   };
 
   const addReferenceImages = (files: FileList) => addToList(files, setReferenceImages);
+
+  // Each picked NFT travels as the image itself, read like an upload and held
+  // to the same file types and limit: the server judges bytes, never a link.
+  const addNfts = (picks: NftPick[]) => {
+    const epoch = refsEpoch.current;
+    picks.forEach((p) => void readRef(p).then((img) => {
+      if (epoch !== refsEpoch.current) return;
+      if (!img) {
+        toast({ title: "NFT image unavailable", description: "This NFT's image could not be loaded, so it was not added.", variant: "destructive" });
+        return;
+      }
+      const type = /^data:([^;,]*)/i.exec(img)?.[1].toLowerCase() ?? "";
+      if (modelLimits.filetypes.length && !modelLimits.filetypes.includes(type)) {
+        toast({ title: "File type not supported", description: `This NFT's image is ${type || "no image"} — this model accepts ${modelLimits.filetypes.map((t) => t.split("/")[1]).join(", ")}.`, variant: "destructive" });
+        return;
+      }
+      setNftImages((prev) => {
+        if (prev.length + referenceImages.length >= modelLimits.maxRefs) {
+          toast({ title: "Reference limit reached", description: `This model allows up to ${modelLimits.maxRefs} reference images.` });
+          return prev;
+        }
+        return [...prev, img];
+      });
+    }));
+  };
 
   const reorder = (list: string[], from: number, to: number) => {
     if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) {
@@ -286,8 +312,8 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
       {/* The wallet NFT picker — capped by the model's own reference limit. */}
       {nftPickerOpen && (
         <NftPickerModal
-          max={Math.max(0, (core.entry?.maxRefs ?? 14) - referenceImages.length - nftImages.length)}
-          onPick={(urls) => setNftImages((prev) => [...prev, ...urls])}
+          max={Math.max(0, modelLimits.maxRefs - refCount - refsPending.length)}
+          onPick={addNfts}
           onClose={() => setNftPickerOpen(false)}
         />
       )}
@@ -327,7 +353,8 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
         onReorderReferenceImages={(from, to) =>
           setReferenceImages((prev) => reorder(prev, from, to))
         }
-        onPickNFT={pickNFT}
+        // No NFT button for a model that takes no references (Flux takes none).
+        onPickNFT={modelLimits.maxRefs > 0 ? pickNFT : undefined}
         nftImages={nftImages}
         onRemoveNFT={(i) => setNftImages((prev) => prev.filter((_, idx) => idx !== i))}
         onReorderNFTs={(from, to) => setNftImages((prev) => reorder(prev, from, to))}

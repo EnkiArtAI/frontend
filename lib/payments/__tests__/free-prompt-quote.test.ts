@@ -32,7 +32,7 @@ function db(prompt: Record<string, unknown> | null) {
 }
 const quote = (prompt: Record<string, unknown>) =>
   computeQuote(db({ creator_id: "c1", is_free_showcase: false, is_listed: true, listing_status: "active", deleted_at: null, ...prompt }), { promptId: "p1", modelFamily: "nano-banana-pro", resolution: "2K" });
-const model = getModelCostMicro("nano-banana-pro", "2K", {}) + PRICING_POLICY.extractionCheckMicro;
+const model = getModelCostMicro("nano-banana-pro", "2K", {}) + PRICING_POLICY.extractionCheckMicro + PRICING_POLICY.imageCheckMicro;
 
 describe("a free prompt's quote", () => {
   it.each([

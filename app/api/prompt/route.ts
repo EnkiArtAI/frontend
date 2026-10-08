@@ -10,10 +10,13 @@ import { resolveOwnerIds, resolveSessionUserId, resolveSessionUserWithBan } from
 import { isPublicText } from "@/lib/prompt-visibility";
 import { keepableImage, ownShowcaseImages } from "@/lib/generation/derivative-store";
 import { ownRenders } from "@/lib/generation/own-renders";
+import { checkImageBytes, dataUrlBytes, heldBack, NOT_AN_IMAGE } from "@/lib/moderation/image-check-bytes";
+import { recordImageCase } from "@/lib/moderation/image-case";
 import { extractTags, storedTags } from "@/lib/search/tags";
 import { artistPayoutWallet } from "@/lib/payments/generation-quote";
 import { DEFAULT_PROMPT_PRICE_USD } from "@/shared/revenue-config";
 import { storedName } from "@/lib/generation/prompt-text";
+import { checkRequestRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 type VariableType =
   | "text"
@@ -189,7 +192,10 @@ function toDbVarName(name: unknown, position: number, taken: Set<string>): strin
    options; a text, number, yes/no or one flat list of those as its default.
    The prompt check reads exactly these, one level deep, so anything nested
    would be stored, shown and generated from without ever being judged. */
-const plain = (x: unknown) => x == null || ["string", "number", "boolean"].includes(typeof x);
+// Never an image in text's clothes: a data: default would be shown publicly,
+// around both the showcase rule and the image check.
+const plain = (x: unknown) =>
+  x == null || ["number", "boolean"].includes(typeof x) || (typeof x === "string" && !/^\s*data:/i.test(x));
 const text = (x: unknown) => x == null || typeof x === "string";
 function isPlainVariable(v: VariablePayload): boolean {
   return (
@@ -441,6 +447,11 @@ export async function POST(req: Request) {
       payee = creatorId;
     }
 
+    // Every save below pays for checks, the prompt's and up to one per new
+    // reference image, so an account saves at most 20 a minute.
+    const limit = checkRequestRateLimit(`prompt-save:${payee}`, 20, 60_000);
+    if (!limit.allowed) return rateLimitResponse(limit.retryAfterSeconds);
+
     // What is for sale must be sellable: it has a text, it is free or paid,
     // and a paid one has a price. Asked before any check is paid for.
     if (live) {
@@ -525,7 +536,25 @@ export async function POST(req: Request) {
     if (shownAdult === null) {
       return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 });
     }
-    const adult = check.adult === true || shownAdult;
+    // A new reference image is judged like any image (Kev, 2026-10-08),
+    // before anything is stored: one refused or not judged saves nothing, a
+    // child-safety one becomes a case an admin decides, an 18+ one marks the
+    // prompt 18+. Saved ones and our own renders were judged already.
+    const freshBefore = (referenceImages ?? []).filter((url) => url.startsWith("data:") && !savedBefore.includes(url));
+    const freshBytes = freshBefore.map((url) => dataUrlBytes(url));
+    const beforeSeen = await Promise.all(freshBytes.map((b) => (b ? checkImageBytes(b, { signal: req.signal }) : Promise.resolve({ verdict: "blocked" as const, reason: NOT_AN_IMAGE }))));
+    if (beforeSeen.some(heldBack)) {
+      beforeSeen.forEach((v, i) => {
+        const bytes = freshBytes[i];
+        if (v.verdict === "child_safety" && bytes) {
+          after(recordImageCase(supabase, { surface: "prompt-save", request: req, bytes, scores: v.scores, about: `Reference image of the prompt "${body.title}" being saved.` }));
+        }
+      });
+      return beforeSeen.some((v) => v.verdict === "blocked" || v.verdict === "child_safety")
+        ? NextResponse.json({ error: "One of your reference images can't be used on Enki. Nothing was saved." }, { status: 422 })
+        : NextResponse.json({ error: "Your reference images could not be checked right now. Nothing was saved." }, { status: 503 });
+    }
+    const adult = check.adult === true || shownAdult || beforeSeen.some((v) => v.verdict === "adult");
 
     // Moderation. This route had none: a listed prompt is the one piece of
     // user text we hand to a model on someone else's behalf AND show publicly
