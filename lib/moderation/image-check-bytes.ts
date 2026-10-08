@@ -45,15 +45,24 @@ export async function checkImageBytes(bytes: Buffer, opts: { signal?: AbortSigna
   const still = STILL.has(meta.format) && (meta.pages ?? 1) <= 1 && !(meta.format === "png" && isApng(bytes));
   let views: Buffer[];
   try {
-    const backgrounds = meta.hasAlpha && !(await sharp(bytes).stats()).isOpaque ? ["#000000", "#ffffff"] : ["#000000"];
-    views = await Promise.all(backgrounds.map((background) =>
-      sharp(bytes).rotate().resize({ width: EDGE, height: EDGE, fit: "inside", withoutEnlargement: true }).flatten({ background }).jpeg({ quality: 85 }).toBuffer()));
+    views = await judgedViews(bytes, meta);
   } catch {
     return { verdict: "blocked", reason: "unreadable" };
   }
   const seen = await Promise.all(views.map((v) => checkImage(`data:image/jpeg;base64,${v.toString("base64")}`, opts)));
   const worst = seen.reduce((w, v) => (RANK[v.verdict] > RANK[w.verdict] ? v : w));
   return still || worst.verdict === "child_safety" ? worst : { verdict: "blocked", reason: "not a still" };
+}
+
+/**
+ * What the judges see of an image: a JPEG of at most 1024 px, or two for a
+ * transparent one, on black and on white. Throws when it does not decode whole.
+ */
+export async function judgedViews(bytes: Buffer, meta?: { hasAlpha?: boolean }): Promise<Buffer[]> {
+  const { hasAlpha } = meta ?? (await sharp(bytes).metadata());
+  const backgrounds = hasAlpha && !(await sharp(bytes).stats()).isOpaque ? ["#000000", "#ffffff"] : ["#000000"];
+  return Promise.all(backgrounds.map((background) =>
+    sharp(bytes).rotate().resize({ width: EDGE, height: EDGE, fit: "inside", withoutEnlargement: true }).flatten({ background }).jpeg({ quality: 85 }).toBuffer()));
 }
 
 /**

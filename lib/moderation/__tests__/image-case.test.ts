@@ -59,6 +59,13 @@ beforeEach(async () => {
   };
 });
 
+/** A data: URL's size and its first and last pixel. */
+const pixels = async (url: string) => {
+  const { data, info } = await sharp(Buffer.from(url.split(",")[1], "base64")).raw().toBuffer({ resolveWithObject: true });
+  const at = (i: number) => [...data.subarray(i * info.channels, i * info.channels + 3)].map((c) => Math.round(c / 10) * 10);
+  return { width: info.width, height: info.height, first: at(0), last: at(info.width * info.height - 1) };
+};
+
 const record = (over: Partial<Parameters<typeof recordImageCase>[1]> = {}) =>
   recordImageCase(client as never, { surface: "generate-image", request: req(), bytes: png, scores: { sexual: 0.4, minor: 0.9 }, about: "inputs: {...}", ...over });
 
@@ -84,16 +91,36 @@ describe("a child-safety image", () => {
     expect(buckets.get(EVIDENCE_BUCKET)).toEqual({ public: false });
     const stored = files.get(`${EVIDENCE_BUCKET}/${id}.json`)!;
     expect(stored.includes(png.toString("base64"))).toBe(false);
-    expect(await readImageEvidence(client as never, id)).toBe(`data:image/png;base64,${png.toString("base64")}`);
+    const shown = await readImageEvidence(client as never, id);
+    expect(shown?.startsWith("data:image/jpeg;base64,")).toBe(true);
+    expect(await pixels(shown!)).toMatchObject({ width: 8, height: 8, first: [200, 0, 0] });
   });
 
-  it("opens as the image it is, for every still the check judges", async () => {
-    for (const [format, type] of [["jpeg", "image/jpeg"], ["webp", "image/webp"], ["gif", "image/gif"]] as const) {
+  it("opens as the judges saw it, whatever the kept copy's format: one JPEG view", async () => {
+    for (const format of ["jpeg", "webp", "gif"] as const) {
       db.tables.automod_events = [];
-      const bytes = await sharp(png)[format]().toBuffer();
-      await record({ bytes });
-      expect(await readImageEvidence(client as never, String(db.tables.automod_events[0].id))).toBe(`data:${type};base64,${bytes.toString("base64")}`);
+      await record({ bytes: await sharp(png)[format]().toBuffer() });
+      const shown = await readImageEvidence(client as never, String(db.tables.automod_events[0].id));
+      expect(shown?.startsWith("data:image/jpeg;base64,")).toBe(true);
+      expect(await pixels(shown!)).toMatchObject({ width: 8, height: 8 });
     }
+  });
+
+  it("opens at most 1024 px wide, so a 2K original fits an answer (capped at 4.5 MB)", async () => {
+    const raw = Buffer.from(Array.from({ length: 2048 * 2048 * 3 }, (_, i) => (i * 7919) % 251));
+    await record({ bytes: await sharp(raw, { raw: { width: 2048, height: 2048, channels: 3 } }).png().toBuffer() });
+    const shown = (await readImageEvidence(client as never, String(db.tables.automod_events[0].id)))!;
+    expect(await pixels(shown)).toMatchObject({ width: 1024, height: 1024 });
+    expect(shown.length).toBeLessThan(3 * 1024 * 1024);
+  });
+
+  it("opens a transparent copy on black and on white, side by side, as the judges saw it", async () => {
+    const ink = await sharp({ create: { width: 8, height: 8, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).png().toBuffer();
+    await record({ bytes: ink });
+    const shown = await pixels((await readImageEvidence(client as never, String(db.tables.automod_events[0].id)))!);
+    expect(shown).toMatchObject({ width: 8 + 8 + 8, height: 8 });
+    expect(shown.first).toEqual([0, 0, 0]);
+    expect(shown.last.every((c) => c >= 250)).toBe(true);
   });
 
   it("does not open under another case's id", async () => {

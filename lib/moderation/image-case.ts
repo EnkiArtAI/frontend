@@ -5,6 +5,8 @@ import { sealEvidence } from "@/lib/moderation/evidence";
 import { getClientIp, hashIp } from "@/lib/ip-hash";
 import { resolveSessionUserWithBan } from "@/lib/session-user";
 import { notifyAdmins } from "@/lib/admin-notify";
+import sharp from "sharp";
+import { judgedViews } from "@/lib/moderation/image-check-bytes";
 
 /**
  * A suspected child-safety image (the image check's child_safety verdict).
@@ -98,23 +100,24 @@ export async function recordImageCase(
   }
 }
 
-/** The kept copy as a data: URL for the owner's logged reveal, or null when there is none. */
+/**
+ * For the owner's logged reveal: the kept copy as the judges saw it, a JPEG of
+ * at most 1024 px, a transparent one on black and on white side by side, so a
+ * picture that shows on one backing only is never lost on the page's. Small
+ * enough for any answer (a function's is capped at 4.5 MB; a 2K original is
+ * twice that). The original stays sealed with the case. Null when there is none.
+ */
 export async function readImageEvidence(supabase: SupabaseClient, eventId: string): Promise<string | null> {
   try {
     const { data, error } = await supabase.storage.from(EVIDENCE_BUCKET).download(path(eventId));
     if (error || !data) return null;
     const bytes = Buffer.from(decryptString(JSON.parse(await data.text()) as EncryptedPayload, aad(eventId)), "base64");
-    return `data:${mediaType(bytes)};base64,${bytes.toString("base64")}`;
+    const views = await judgedViews(bytes);
+    const seen = views.length > 1
+      ? await sharp(views, { join: { across: views.length, shim: 8, background: "#808080" } }).jpeg({ quality: 85 }).toBuffer()
+      : views[0];
+    return `data:image/jpeg;base64,${seen.toString("base64")}`;
   } catch {
     return null;
   }
-}
-
-/** By the first bytes: the copy is whatever the route held, a still the check judges (PNG, JPEG, WebP or GIF). */
-function mediaType(b: Buffer): string {
-  if (b.subarray(0, 4).toString("hex") === "89504e47") return "image/png";
-  if (b.subarray(0, 3).toString("hex") === "ffd8ff") return "image/jpeg";
-  if (b.subarray(0, 4).toString("latin1") === "RIFF" && b.subarray(8, 12).toString("latin1") === "WEBP") return "image/webp";
-  if (b.subarray(0, 4).toString("latin1") === "GIF8") return "image/gif";
-  return "application/octet-stream";
 }

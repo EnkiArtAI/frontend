@@ -341,7 +341,7 @@ export default function AdminPage() {
         )}
       </span>
       {/* eslint-disable-next-line @next/next/no-img-element -- the case's own evidence, a data: URL shown once on a logged reveal */}
-      {revealed[id]?.image && <img src={revealed[id].image!} alt="Evidence held with the case" style={{ maxWidth: 320, maxHeight: 320, objectFit: "contain", borderRadius: 6 }} />}
+      {revealed[id]?.image && <img src={revealed[id].image!} alt="Evidence held with the case, as the judges saw it (a transparent image on black and on white)" style={{ maxWidth: "min(100%, 680px)", maxHeight: 360, objectFit: "contain", borderRadius: 6 }} />}
     </div>
   );
 
