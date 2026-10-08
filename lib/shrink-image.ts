@@ -5,9 +5,9 @@ import { REQUEST_MAX_BYTES } from "@/lib/request-size";
  * request body over 4.5 MB before any route of ours runs, and a reference
  * travels as base64, a third larger than its bytes.
  *
- * Kev, 2026-10-08: every reference at most 1024 px on its long edge, as WebP
- * at 0.85, transparency kept. 1024 px is the edge the image check judges at
- * (lib/moderation/image-check-bytes), so the judges lose nothing. An
+ * Kev, 2026-10-08: every reference at most 1024 px, as WebP. 1024 px is the
+ * edge the image check judges at (lib/moderation/image-check-bytes), so the
+ * judges lose nothing; quality 0.85 and kept transparency are ours. An
  * animation decodes to its first frame: one still is what is judged and sent.
  */
 const REFERENCE_EDGE = 1024;
