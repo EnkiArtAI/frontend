@@ -21,6 +21,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { ArrowLeft, ChevronDown, Sparkles, ImageOff, User, Pencil, Loader2, ZoomIn, Heart, Flag } from "lucide-react";
 import { ReportButton } from "@/components/ReportButton";
 import "@/components/enki/enki.css";
+import { encodeCanvas } from "@/lib/shrink-image";
 
 const PROFILE_STAT_LABELS = ["Prompts", "Uses", "Followers", "This month"] as const;
 
@@ -88,8 +89,9 @@ async function exportCrop(s: ImgState, fw: number, fh: number, outW: number, out
   if (!ctx) return null;
   ctx.drawImage(img, -ox / sc, -oy / sc, fw / sc, fh / sc, 0, 0, outW, outH);
   try {
-    const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, "image/webp", 0.85));
-    return blob ? new File([blob], "image.webp", { type: "image/webp" }) : null;
+    // WebP, or a JPEG on Safari, which encodes no WebP: labelled as what it is (lib/shrink-image).
+    const blob = await encodeCanvas(canvas, 0.85);
+    return blob ? new File([blob], `image.${blob.type.split("/")[1]}`, { type: blob.type }) : null;
   } catch {
     return null; // canvas tainted (source without CORS) — needs a fresh file
   }

@@ -39,4 +39,10 @@ describe("an upload", () => {
     expect(panel).toContain('fd.append("file", fit);');
     expect(panel).not.toContain('fd.append("file", f);');
   });
+
+  it("of a profile picture or cover is labelled as what the browser encoded", () => {
+    const profile = src("components", "profile", "ProfileView.tsx");
+    expect(profile).toContain("const blob = await encodeCanvas(canvas, 0.85);");
+    expect(profile).toContain('return blob ? new File([blob], `image.${blob.type.split("/")[1]}`, { type: blob.type }) : null;');
+  });
 });

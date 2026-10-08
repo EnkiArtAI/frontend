@@ -36,7 +36,7 @@ function opaque(canvas: HTMLCanvasElement): boolean {
  * several times larger: an opaque image then goes as a JPEG of the same
  * quality, a transparent one stays that PNG, so its transparency is kept.
  */
-async function encodeCanvas(canvas: HTMLCanvasElement, quality: number): Promise<Blob | null> {
+export async function encodeCanvas(canvas: HTMLCanvasElement, quality: number): Promise<Blob | null> {
   const webp = await toBlob(canvas, "image/webp", quality);
   if (!webp || webp.type === "image/webp") return webp;
   return opaque(canvas) ? toBlob(canvas, "image/jpeg", quality) : webp;
