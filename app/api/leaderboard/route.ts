@@ -122,7 +122,7 @@ export async function GET(req: NextRequest) {
   }
   // Not an image of a banned or deleted account; none when that cannot be read.
   const renders = (genImgRes.data ?? []) as { prompt_id: string; user_id: string; thumbnail_url: string | null; storage_url: string | null }[];
-  const renderOwners = await hiddenOwners(supabase, renders.map((g) => String(g.user_id)));
+  const renderOwners = await hiddenOwners(supabase, renders.map((g) => String(g.user_id ?? "")));
   for (const g of renderOwners ? renders.filter((g) => !renderOwners.has(String(g.user_id))) : []) {
     const u = g.thumbnail_url || g.storage_url;
     if (u && !images.has(g.prompt_id)) images.set(g.prompt_id, u);

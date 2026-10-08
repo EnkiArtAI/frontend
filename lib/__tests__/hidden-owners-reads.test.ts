@@ -75,6 +75,16 @@ describe("the /showcase list", () => {
     expect(nextCursor).toBe("2");
   });
 
+  it("counts no rating of a banned account on a card", async () => {
+    db.current!.tables.prompt_comments = [
+      { id: "c1", prompt_id: P1, user_id: KEPT, rating: 5 },
+      { id: "c2", prompt_id: P1, user_id: BANNED, rating: 1 },
+    ];
+    expect((await list()).items[0].rating).toBe(3);
+    ban();
+    expect((await list()).items[0].rating).toBe(5);
+  });
+
   it("shows nothing it cannot vouch for when the creators cannot be read", async () => {
     db.current!.state.failNext = { table: "bans", op: "select", code: "PGRST000" };
     expect((await list()).items).toEqual([]);
