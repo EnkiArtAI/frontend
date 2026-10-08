@@ -13,6 +13,16 @@ export function readImageFile(file: Blob): Promise<string | null> {
 }
 
 /**
+ * A reference as a data URL: a file is read in place, a link (a wallet NFT's
+ * image) is fetched first. The server judges every reference by its bytes and
+ * never fetches an address a user names.
+ */
+export async function readReference(src: Blob | string): Promise<string | null> {
+  const blob = typeof src === "string" ? await fetch(src).then((r) => (r.ok ? r.blob() : null), () => null) : src;
+  return blob ? readImageFile(blob) : null;
+}
+
+/**
  * Reference images are read in the browser before they can travel with a
  * generation. While one is still being read, Generate waits: a click in that
  * moment paid for a picture that never saw the image (Kev, 2026-10-06).
@@ -21,17 +31,18 @@ export function readImageFile(file: Blob): Promise<string | null> {
  * greyed while it loads, gone if it fails, kept once it is in). The previews
  * are blob: URLs and live only here, never in a reference list, so none can
  * be saved with a draft or sent with a generation.
+ * A link is previewed by its own address while it loads.
  */
 export function useReferenceReads() {
   const [pending, setPending] = useState<string[]>([]);
-  const read = useCallback(async (file: Blob) => {
-    const preview = URL.createObjectURL(file);
+  const read = useCallback(async (file: Blob | string) => {
+    const preview = typeof file === "string" ? file : URL.createObjectURL(file);
     setPending((p) => [...p, preview]);
     try {
-      return await readImageFile(file);
+      return await readReference(file);
     } finally {
       setPending((p) => p.filter((u) => u !== preview));
-      URL.revokeObjectURL(preview);
+      if (typeof file !== "string") URL.revokeObjectURL(preview);
     }
   }, []);
   return { loading: pending.length > 0, pending, read };

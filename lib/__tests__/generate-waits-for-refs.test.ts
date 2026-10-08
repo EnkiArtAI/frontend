@@ -45,6 +45,38 @@ describe("readImageFile", () => {
     const { readImageFile } = await import("@/hooks/useReferenceReads");
     await expect(readImageFile(new Blob(["x"]))).resolves.toBeNull();
   });
+
+  // A picked NFT is a link; the server never fetches one, so the browser sends its bytes.
+  const fetching = (answer: () => Promise<Response>) => {
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (u: string) => { asked.push(u); return answer(); }));
+    return asked;
+  };
+
+  it("readReference fetches a link and reads its bytes as the image", async () => {
+    vi.stubGlobal("FileReader", fakeReader("load"));
+    const asked = fetching(async () => new Response(new Blob(["x"])));
+    const { readReference } = await import("@/hooks/useReferenceReads");
+    await expect(readReference("https://arweave.net/a.png")).resolves.toBe("data:image/png;base64,AA==");
+    expect(asked).toEqual(["https://arweave.net/a.png"]);
+  });
+
+  it("readReference answers null when a link fails or answers an error, so nothing waits for good", async () => {
+    vi.stubGlobal("FileReader", fakeReader("load"));
+    const { readReference } = await import("@/hooks/useReferenceReads");
+    fetching(async () => { throw new TypeError("blocked by CORS"); });
+    await expect(readReference("https://x.test/a.png")).resolves.toBeNull();
+    fetching(async () => new Response("gone", { status: 404 }));
+    await expect(readReference("https://x.test/a.png")).resolves.toBeNull();
+  });
+
+  it("readReference reads a file in place and fetches nothing", async () => {
+    vi.stubGlobal("FileReader", fakeReader("load"));
+    const asked = fetching(async () => new Response(new Blob(["x"])));
+    const { readReference } = await import("@/hooks/useReferenceReads");
+    await expect(readReference(new Blob(["x"]))).resolves.toBe("data:image/png;base64,AA==");
+    expect(asked).toEqual([]);
+  });
 });
 
 describe("every generate surface waits for its reference images", () => {
@@ -58,6 +90,9 @@ describe("every generate surface waits for its reference images", () => {
   it("quick create refuses and greys Generate while they load", () => {
     expect(LAUNCHER).toMatch(/if \(generating\) return;\n\s+if \(refsLoading\) \{/);
     expect(LAUNCHER).toMatch(/generateBlocked=\{refsLoading\}/);
+    // A picked NFT waits the same way, and travels as the image itself.
+    expect(LAUNCHER).toContain("onPick={(urls) => urls.forEach((u) => void readRef(u).then((img) => {");
+    expect(LAUNCHER).toContain("if (img) setNftImages((prev) => [...prev, img]);");
     expect(MODAL).toMatch(/onClick=\{\(\) => onGenerate\(genCountNum\)\} disabled=\{isGenerating \|\| generateBlocked\}/);
   });
 
@@ -83,9 +118,10 @@ describe("an image still being read shows greyed, and only there", () => {
   const HOOK = src("hooks", "useReferenceReads.ts");
 
   it("gets a preview before the read and loses it after, whatever the read answered", () => {
-    const added = HOOK.search(/const preview = URL\.createObjectURL\(file\);\s+setPending\(\(p\) => \[\.\.\.p, preview\]\);/);
-    const read = HOOK.search(/return await readImageFile\(file\);/);
-    const gone = HOOK.search(/\} finally \{\s+setPending\(\(p\) => p\.filter\(\(u\) => u !== preview\)\);\s+URL\.revokeObjectURL\(preview\);/);
+    // A link is previewed by its own address, which is never revoked.
+    const added = HOOK.search(/const preview = typeof file === "string" \? file : URL\.createObjectURL\(file\);\s+setPending\(\(p\) => \[\.\.\.p, preview\]\);/);
+    const read = HOOK.search(/return await readReference\(file\);/);
+    const gone = HOOK.search(/\} finally \{\s+setPending\(\(p\) => p\.filter\(\(u\) => u !== preview\)\);\s+if \(typeof file !== "string"\) URL\.revokeObjectURL\(preview\);/);
     expect(added).toBeGreaterThan(-1);
     expect(read).toBeGreaterThan(added);
     expect(gone).toBeGreaterThan(read);

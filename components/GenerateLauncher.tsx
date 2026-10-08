@@ -287,7 +287,11 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
       {nftPickerOpen && (
         <NftPickerModal
           max={Math.max(0, (core.entry?.maxRefs ?? 14) - referenceImages.length - nftImages.length)}
-          onPick={(urls) => setNftImages((prev) => [...prev, ...urls])}
+          // Each picked NFT travels as the image itself, read like an upload.
+          onPick={(urls) => urls.forEach((u) => void readRef(u).then((img) => {
+            if (img) setNftImages((prev) => [...prev, img]);
+            else toast({ title: "NFT image unavailable", description: "This NFT's image could not be loaded, so it was not added.", variant: "destructive" });
+          }))}
           onClose={() => setNftPickerOpen(false)}
         />
       )}
