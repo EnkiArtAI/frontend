@@ -15,9 +15,8 @@ import { createHash } from "crypto";
 import { decryptString, encryptString, type EncryptedPayload } from "@/lib/crypto";
 import { checkImageBytes, NOT_AN_IMAGE } from "@/lib/moderation/image-check-bytes";
 import { recordImageCase } from "@/lib/moderation/image-case";
+import { FEEDBACK_BUCKET, FEEDBACK_FILE_EXT, FEEDBACK_MAX_FILES } from "@/lib/feedback";
 
-const BUCKET = "feedback";
-const MAX_FILES = 5;
 /** A video container by its own first bytes: MP4 and MOV (ftyp), WebM (EBML). */
 const isVideo = (b: Buffer) => b.toString("latin1", 4, 8) === "ftyp" || b.subarray(0, 4).toString("hex") === "1a45dfa3";
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -28,10 +27,6 @@ const SEV_MAP: Record<string, { severity: string; category: string }> = {
   issue: { severity: "high", category: "other" },
   annoying: { severity: "medium", category: "other" },
   minor: { severity: "low", category: "other" },
-};
-const EXT: Record<string, string> = {
-  "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif",
-  "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov",
 };
 
 export async function POST(req: NextRequest) {
@@ -55,9 +50,9 @@ export async function POST(req: NextRequest) {
   if (description.length < 10) return NextResponse.json({ error: "Describe the change in a bit more detail (at least 10 characters)" }, { status: 400 });
   if (description.length > 4000) return NextResponse.json({ error: "Keep it under 4000 characters" }, { status: 400 });
 
-  const files = fd.getAll("files").filter((f): f is File => f instanceof File).slice(0, MAX_FILES);
+  const files = fd.getAll("files").filter((f): f is File => f instanceof File).slice(0, FEEDBACK_MAX_FILES);
   for (const f of files) {
-    if (!EXT[f.type]) return NextResponse.json({ error: "Attachments can be PNG, JPG, WebP, GIF, MP4, WebM or MOV" }, { status: 400 });
+    if (!FEEDBACK_FILE_EXT[f.type]) return NextResponse.json({ error: "Attachments can be PNG, JPG, WebP, GIF, MP4, WebM or MOV" }, { status: 400 });
     if (f.size > MAX_BYTES) return NextResponse.json({ error: "Attachments can be up to 20 MB each" }, { status: 400 });
   }
 
@@ -104,10 +99,10 @@ export async function POST(req: NextRequest) {
   // and the sender is told how many were not kept
   let kept = 0;
   if (files.length) {
-    await supabase.storage.createBucket(BUCKET, { public: false }).catch(() => {});
+    await supabase.storage.createBucket(FEEDBACK_BUCKET, { public: false }).catch(() => {});
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
-      const path = `${row.id}/${i}-${Date.now()}.${EXT[f.type]}`;
+      const path = `${row.id}/${i}-${Date.now()}.${FEEDBACK_FILE_EXT[f.type]}`;
       const buf = Buffer.from(await f.arrayBuffer());
       // Every attachment is judged by its bytes, never by its label (Kev,
       // 2026-10-08: every image). Admins alone see attachments, so 18+ stays;
@@ -121,7 +116,7 @@ export async function POST(req: NextRequest) {
       }
       const video = seen.verdict === "blocked" && seen.reason === NOT_AN_IMAGE && f.type.startsWith("video/") && isVideo(buf);
       if (!video && seen.verdict !== "clear" && seen.verdict !== "adult") continue;
-      const up = await supabase.storage.from(BUCKET).upload(path, buf, { contentType: f.type, upsert: false });
+      const up = await supabase.storage.from(FEEDBACK_BUCKET).upload(path, buf, { contentType: f.type, upsert: false });
       if (up.error) continue;
       const { error: rowError } = await supabase.from("feedback_attachments").insert({
         feedback_id: row.id, image_url: path, storage_key: path,
@@ -129,7 +124,7 @@ export async function POST(req: NextRequest) {
       });
       // A file no row points to is one no admin ever sees: taken down, not kept.
       if (rowError) {
-        await supabase.storage.from(BUCKET).remove([path]);
+        await supabase.storage.from(FEEDBACK_BUCKET).remove([path]);
         continue;
       }
       kept++;
