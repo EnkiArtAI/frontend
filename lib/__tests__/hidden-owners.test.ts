@@ -89,6 +89,14 @@ describe("every public read and the sell path", () => {
     expect(feed).toContain("const hasMore = prompts.length === limit;");
   });
 
+  it("a feed page with nothing to show still asks for the next, on the home feed and on /showcase", () => {
+    const home = src("components", "enki", "EnkiFeedPage.tsx");
+    expect(home).toMatch(/\) : hasNextPage \? \([\s\S]{0,260}<section className="enki-masonry">\n\s+<div ref=\{sentinelCallback\}/);
+    expect(home.indexOf(") : hasNextPage ? (")).toBeLessThan(home.indexOf(") : showEmpty ? ("));
+    const showcase = src("app", "showcase", "page.tsx");
+    expect(showcase).toContain("if (visiblePrompts.length === 0 && !promptsData?.nextCursor) {");
+  });
+
   it("a link preview of a hidden creator's prompt is the brand card, title and words included", () => {
     const head = src("app", "generator", "[id]", "page.tsx");
     expect(head).toContain('.select("title, description, is_free_showcase, price_usd_cents, is_listed, listing_status, deleted_at, creator_id")');

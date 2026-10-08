@@ -177,7 +177,9 @@ export default function Showcase() {
     );
   }
 
-  if (visiblePrompts.length === 0) {
+  // An empty page with more behind it (every card a hidden creator's) falls
+  // through to the grid, whose sentinel asks for the next page.
+  if (visiblePrompts.length === 0 && !promptsData?.nextCursor) {
     return (
       <div className="min-h-screen bg-background pt-16">
         <FilterBar onFilterChange={(f) => console.log("Filters:", f)} />

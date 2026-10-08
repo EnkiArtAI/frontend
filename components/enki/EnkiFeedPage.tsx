@@ -268,6 +268,16 @@ export default function EnkiFeedPage() {
               <button type="button" className="ek-btn" style={{ marginTop: 16, minHeight: 40 }} onClick={() => void refetch()}>Try again</button>
             </div>
           </section>
+        ) : hasNextPage ? (
+          // Nothing to show yet, more to read (a page of hidden creators'
+          // cards, or none in the picked category): the sentinel stays on
+          // screen and asks for the next page.
+          <section className="enki-masonry">
+            <div ref={sentinelCallback} style={{ height: 1, breakInside: "avoid" }} />
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={`sk-more-${i}`} className="enki-skeleton" />
+            ))}
+          </section>
         ) : showEmpty ? (
           <section className="enki-empty-state">
             <div className="enki-account-card">
