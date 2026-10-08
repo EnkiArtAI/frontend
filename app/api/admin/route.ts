@@ -604,10 +604,12 @@ export async function POST(req: NextRequest) {
   if (body.resource === "feedback" && body.action === "setStatus" && body.id) {
     const to = body.status ?? "";
     if (!Object.hasOwn(FEEDBACK_STATUS, to)) return NextResponse.json({ error: "Unknown status" }, { status: 400 });
-    // Done promises the $100: an admin's word. A mod may reject or reopen.
+    // Done promises the $100: an admin's word, given and taken back by admins alone.
+    // A mod rejects an open report or reopens a rejected one.
     if (to === "done" && role !== "admin") return NextResponse.json({ error: "Only admins mark a report done" }, { status: 403 });
-    const { data: cur } = await supabase.from("feedback_submissions").select("paid_at").eq("id", body.id).maybeSingle();
+    const { data: cur } = await supabase.from("feedback_submissions").select("status, paid_at").eq("id", body.id).maybeSingle();
     if (!cur) return NextResponse.json({ error: "Feedback not found" }, { status: 404 });
+    if (cur.status === FEEDBACK_STATUS.done && role !== "admin") return NextResponse.json({ error: "Only admins change a report marked done" }, { status: 403 });
     if (cur.paid_at) return NextResponse.json({ error: "This report is paid already" }, { status: 409 });
     const { error } = await supabase.from("feedback_submissions")
       .update({ status: FEEDBACK_STATUS[to as FeedbackDecision], reviewer_id: userId, reviewed_at: now })

@@ -127,6 +127,16 @@ describe("deciding a feedback report", () => {
     expect(fb1().status).toBe("pending");
   });
 
+  it("a mod cannot take back an admin's done: the $100 promise stands until an admin changes it", async () => {
+    await decide("admin-tok", "done");
+    for (const status of ["rejected", "open"]) expect((await decide("mod-tok", status)).status).toBe(403);
+    expect(fb1()).toMatchObject({ status: FEEDBACK_STATUS.done, reviewer_id: "admin-1" });
+    expect((await decide("admin-tok", "open")).status).toBe(200);
+    expect(fb1().status).toBe("pending");
+    // The fake answers every column; the live read, deciding and paying alike, names status.
+    expect(ADMIN_ROUTE.split('.from("feedback_submissions").select("status, paid_at").eq("id", body.id).maybeSingle();').length - 1).toBe(2);
+  });
+
   it("takes only the three decisions", async () => {
     for (const status of ["paid", "pending", "accepted", "constructor", ""]) expect((await decide("admin-tok", status)).status).toBe(400);
     expect(fb1()).toMatchObject({ status: "pending", reviewer_id: null });
