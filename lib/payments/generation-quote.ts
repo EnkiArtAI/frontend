@@ -132,7 +132,10 @@ async function quote(
     // let through to their own (the generator page opens for it), recognised
     // the way a save recognises them; a lookup that fails lets nobody through.
     const mine = async () =>
-      ((await resolveOwnerIds(supabase, sessionToken ?? null).catch(() => null)) ?? []).includes(String(data?.creator_id));
+      ((await resolveOwnerIds(supabase, sessionToken ?? null).catch((e) => {
+        if (isDbUnreachable(e)) throw e; // an outage, which computeQuote answers with 503
+        return null;
+      })) ?? []).includes(String(data?.creator_id));
     if (!data || (!isListed(data) && !(await mine()))) {
       return { ok: false, status: 404, error: "Prompt not found" };
     }

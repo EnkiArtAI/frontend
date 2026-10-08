@@ -13,6 +13,7 @@ import { resolveSessionUserId } from "@/lib/session-user";
 import { notifyEvent } from "@/lib/notifications";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { hiddenOwners } from "@/lib/hidden-owners";
+import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
 
 const postSchema = z
   .object({
@@ -23,7 +24,17 @@ const postSchema = z
     message: "Provide a rating, a comment, or both",
   });
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+/** A database that cannot be reached is an outage (503), never "no comments yet". */
+export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    return await readComments(ctx);
+  } catch (e) {
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
+    throw e;
+  }
+}
+
+async function readComments({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const supabase = getSupabaseServerClient();
 
@@ -33,13 +44,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     .eq("prompt_id", id)
     .order("created_at", { ascending: false })
     .limit(100);
+  if (isDbUnreachable(error)) return dbUnavailableResponse();
   if (error) {
     // Table not migrated yet → empty, never a broken prompt page.
     return NextResponse.json({ comments: [], stats: { count: 0, avgRating: null } });
   }
   // A banned or deleted account's comments and ratings leave the page.
-  // An outage shows no comments, as a failed read above does.
-  const hidden = await hiddenOwners(supabase, (all ?? []).map((r) => String(r.user_id))).catch(() => null);
+  const hidden = await hiddenOwners(supabase, (all ?? []).map((r) => String(r.user_id)));
   if (!hidden) return NextResponse.json({ comments: [], stats: { count: 0, avgRating: null } });
   const rows = (all ?? []).filter((r) => !hidden.has(String(r.user_id)));
 

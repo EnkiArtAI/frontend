@@ -43,7 +43,7 @@ export async function GET(req: Request, context: { params: Promise<{ id: string 
     // Images of a banned or deleted account leave the row, as from every public
     // read; a hidden creator's prompt shows none.
     const hidden = await hiddenOwners(supabase, [String(prompt.creator_id ?? ""), ...(data ?? []).map((r) => String(r.user_id ?? ""))]);
-    if (!hidden) return dbUnavailableResponse();
+    if (!hidden) return NextResponse.json({ error: "Could not load the images" }, { status: 500 });
     if (hidden.has(String(prompt.creator_id))) return NextResponse.json({ images: [] });
     return NextResponse.json({
       images: (data ?? []).filter((r) => !hidden.has(String(r.user_id))).map((r) => ({

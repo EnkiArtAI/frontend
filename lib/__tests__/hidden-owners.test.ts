@@ -74,14 +74,14 @@ describe("every public read and the sell path", () => {
 
   it("a profile's gallery, one image, the profile and the prompt page answer like nothing is there", () => {
     const gallery = src("app", "api", "generations", "route.ts");
-    expect(gallery).toMatch(/if \(v\.userId !== ownerId\) \{\n\s+const hidden = await hiddenOwners\(supabase, \[ownerId\]\);\n\s+if \(!hidden\) return createErrorResponse\("Gallery unavailable", 503\);\n\s+if \(hidden\.has\(ownerId\)\) return createSuccessResponse\(\{ generations: \[\], total: 0, limit, offset \}\);/);
+    expect(gallery).toMatch(/if \(v\.userId !== ownerId\) \{\n\s+const hidden = await hiddenOwners\(supabase, \[ownerId\]\);\n\s+if \(!hidden\) return createErrorResponse\("Gallery unavailable", 500\);\n\s+if \(hidden\.has\(ownerId\)\) return createSuccessResponse\(\{ generations: \[\], total: 0, limit, offset \}\);/);
     const image = src("app", "api", "images", "[id]", "route.ts");
     expect(image).toContain('if (hidden.has(String(data.user_id))) return NextResponse.json({ error: "Image not found" }, { status: 404 });');
     expect(image).toContain(".select(\"id, user_id, storage_url, preview_url, thumbnail_url, width, height, prompt_id, created_at\")");
     const profile = src("app", "api", "creators", "[id]", "profile", "route.ts");
     expect(profile).toMatch(/if \(hidden\.has\(String\(userData\.id\)\)\) \{\n\s+return NextResponse\.json\(\{ success: false, error: "Creator not found" \}, \{ status: 404 \}\);/);
     const detail = src("app", "api", "prompts", "[id]", "route.ts");
-    expect(detail).toMatch(/if \(!isOwner\) \{\n\s+const hidden = await hiddenOwners\(supabase, \[String\(prompt\.creator_id \?\? ""\)\]\);\n\s+if \(!hidden\) return dbUnavailableResponse\(\);\n\s+if \(hidden\.has\(String\(prompt\.creator_id\)\)\) return NextResponse\.json\(\{ error: "not found" \}, \{ status: 404 \}\);/);
+    expect(detail).toMatch(/if \(!isOwner\) \{\n\s+const hidden = await hiddenOwners\(supabase, \[String\(prompt\.creator_id \?\? ""\)\]\);\n\s+if \(!hidden\) return NextResponse\.json\(\{ error: "Could not load the prompt" \}, \{ status: 500 \}\);\n\s+if \(hidden\.has\(String\(prompt\.creator_id\)\)\) return NextResponse\.json\(\{ error: "not found" \}, \{ status: 404 \}\);/);
   });
 
   it("the feed pages on the rows it read, so a hidden card never ends it", () => {

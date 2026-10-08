@@ -66,6 +66,7 @@ export function fakePostgrest() {
       not: (c: string, _op: string, v: unknown) => { filters.push((r) => (r[c] ?? null) !== v); return q; },
       gt: (c: string, v: string) => { filters.push((r) => r[c] != null && String(r[c]) > v); return q; },
       in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return q; },
+      ilike: (c: string, v: string) => { filters.push((r) => String(r[c] ?? "").toLowerCase() === v.toLowerCase()); return q; },
       or: (expr: string) => { filters.push(orFilter(expr)); return q; },
       order: () => q, // rows come back in insertion order
       limit: () => q, // every test seeds fewer rows than any limit

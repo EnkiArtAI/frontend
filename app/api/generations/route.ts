@@ -39,7 +39,7 @@ export async function GET(req: Request) {
     // slip past the hidden-owner check below while .eq() still matches it.
     let ownerId = isUuid ? userId.toLowerCase() : null;
     if (!ownerId) {
-      const { data: walletRow } = await supabase
+      const { data: walletRow, error: walletError } = await supabase
         .from("user_wallets")
         .select("user_id")
         // addresses are stored lowercased; base58 is case-sensitive, so compare
@@ -47,6 +47,8 @@ export async function GET(req: Request) {
         .ilike("address", userId)
         .is("removed_at", null)
         .maybeSingle();
+      // A failed lookup is no empty gallery: the catch answers it (503 for an outage).
+      if (walletError) throw walletError;
       ownerId = (walletRow?.user_id as string) ?? null;
     }
     if (!ownerId) {
@@ -60,7 +62,7 @@ export async function GET(req: Request) {
     // A banned or deleted account's gallery is empty to everyone but itself.
     if (v.userId !== ownerId) {
       const hidden = await hiddenOwners(supabase, [ownerId]);
-      if (!hidden) return createErrorResponse("Gallery unavailable", 503);
+      if (!hidden) return createErrorResponse("Gallery unavailable", 500);
       if (hidden.has(ownerId)) return createSuccessResponse({ generations: [], total: 0, limit, offset });
     }
     let gallery = supabase

@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { isListed } from "@/lib/prompt-visibility";
 import { hiddenOwners } from "@/lib/hidden-owners";
+import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TREND_DAYS = 14;
@@ -43,7 +44,17 @@ const firstShowcase = (v: unknown): string | null => {
   return null;
 };
 
+/** A database that cannot be reached is an outage (503), never an empty board. */
 export async function GET(req: NextRequest) {
+  try {
+    return await board(req);
+  } catch (e) {
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
+    throw e;
+  }
+}
+
+async function board(req: NextRequest) {
   const metric = req.nextUrl.searchParams.get("metric") === "earnings" ? "earnings" : "generations";
   const period = req.nextUrl.searchParams.get("period") ?? "week";
   const since =
@@ -57,11 +68,12 @@ export async function GET(req: NextRequest) {
     isEarn ? "leaderboard_earnings" : "leaderboard_generations",
     { p_since: since, p_limit: 20 },
   );
+  if (isDbUnreachable(error)) return dbUnavailableResponse();
   if (error) return NextResponse.json({ rows: [] }); // pre-migration → empty
 
   // A banned or deleted account leaves the board; a lookup that fails shows none.
   const all = (data ?? []) as (GenRow & EarnRow)[];
-  const offBoard = await hiddenOwners(supabase, all.map((r) => String(r.creator_id))).catch(() => null);
+  const offBoard = await hiddenOwners(supabase, all.map((r) => String(r.creator_id)));
   if (!offBoard) return NextResponse.json({ rows: [] });
   const raw = all.filter((r) => !offBoard.has(String(r.creator_id)));
   const ids = raw.map((r) => r.creator_id);
@@ -122,7 +134,7 @@ export async function GET(req: NextRequest) {
   }
   // Not an image of a banned or deleted account; none when that cannot be read.
   const renders = (genImgRes.data ?? []) as { prompt_id: string; user_id: string; thumbnail_url: string | null; storage_url: string | null }[];
-  const renderOwners = await hiddenOwners(supabase, renders.map((g) => String(g.user_id ?? ""))).catch(() => null);
+  const renderOwners = await hiddenOwners(supabase, renders.map((g) => String(g.user_id ?? "")));
   for (const g of renderOwners ? renders.filter((g) => !renderOwners.has(String(g.user_id))) : []) {
     const u = g.thumbnail_url || g.storage_url;
     if (u && !images.has(g.prompt_id)) images.set(g.prompt_id, u);

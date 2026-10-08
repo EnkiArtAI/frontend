@@ -28,7 +28,7 @@ import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/ra
 import { PRICING_POLICY, splitToBreakdown } from "@/lib/payments/generation-pricing";
 import { computeQuote } from "@/lib/payments/generation-quote";
 import { settingsSchema, resolvePaidSettings } from "@/lib/payments/generation-settings";
-import { refusalBody } from "@/lib/db-error";
+import { dbUnavailableResponse, isDbUnreachable, refusalBody } from "@/lib/db-error";
 
 export async function POST(req: NextRequest) {
   // 60 payments/min per user (Kev, 2026-07-08 — dApp-friendly). The IP cap
@@ -114,6 +114,7 @@ export async function POST(req: NextRequest) {
     })
     .select("id")
     .single();
+  if (isDbUnreachable(insertError)) return dbUnavailableResponse();
   if (insertError || !intent) {
     console.error("[payments/intent] insert failed:", insertError?.message);
     return NextResponse.json({ error: "Failed to create payment intent" }, { status: 500 });

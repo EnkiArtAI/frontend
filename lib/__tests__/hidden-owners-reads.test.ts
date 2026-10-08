@@ -50,6 +50,16 @@ describe("a gallery asked for by an upper-case id", () => {
     expect(await read(BANNED.toUpperCase())).toEqual(["g1"]);
   });
 
+  it("by a wallet address is no empty gallery while the database is down: 503, and 500 for any other failure", async () => {
+    const status = async () => (await gallery(new Request("http://enki.test/api/generations?userId=WaLLet111"))).status;
+    db.current!.state.failNext = { table: "user_wallets", op: "select", code: "ECONNREFUSED" };
+    expect(await status()).toBe(503);
+    db.current!.state.failNext = { table: "user_wallets", op: "select", code: "PGRST000" };
+    expect(await status()).toBe(500);
+    db.current!.tables.user_wallets = [{ address: "wallet111", user_id: BANNED, removed_at: null }];
+    expect(await status()).toBe(200);
+  });
+
   it("is empty once the account is banned, however the id is spelled", async () => {
     ban();
     expect(await read(BANNED.toUpperCase())).toEqual([]);
@@ -106,6 +116,13 @@ describe("a prompt's comments and ratings", () => {
       comments: [{ id: "c1", handle: "kept", rating: 4, body: "lovely", createdAt: undefined }],
       stats: { count: 1, avgRating: 4 },
     });
+  });
+
+  it("answer an outage with 503, never 'no comments yet', whichever read meets it", async () => {
+    db.current!.state.failNext = { table: "prompt_comments", op: "select", code: "ECONNREFUSED" };
+    expect((await comments(new NextRequest(`http://enki.test/api/prompts/${P1}/comments`), { params: Promise.resolve({ id: P1 }) })).status).toBe(503);
+    db.current!.state.failNext = { table: "bans", op: "select", code: "ECONNREFUSED" };
+    expect((await comments(new NextRequest(`http://enki.test/api/prompts/${P1}/comments`), { params: Promise.resolve({ id: P1 }) })).status).toBe(503);
   });
 
   it("show none when the accounts cannot be read", async () => {

@@ -120,10 +120,21 @@ describe("every route passes the outage on", () => {
     }
   });
 
-  it("the board and the comments show nothing in an outage, as on any failed read of theirs", () => {
+  it("the board answers an outage with 503, never an empty board", () => {
     const board = src("app", "api", "leaderboard", "route.ts");
-    expect(board).toContain("const offBoard = await hiddenOwners(supabase, all.map((r) => String(r.creator_id))).catch(() => null);");
-    expect(board).toContain('const renderOwners = await hiddenOwners(supabase, renders.map((g) => String(g.user_id ?? ""))).catch(() => null);');
-    expect(src("app", "api", "prompts", "[id]", "comments", "route.ts")).toContain("const hidden = await hiddenOwners(supabase, (all ?? []).map((r) => String(r.user_id))).catch(() => null);");
+    expect(board).toMatch(/export async function GET\(req: NextRequest\) \{\n\s+try \{\n\s+return await board\(req\);\n\s+\} catch \(e\) \{\n\s+if \(isDbUnreachable\(e\)\) return dbUnavailableResponse\(\);/);
+    expect(board).toContain("  if (isDbUnreachable(error)) return dbUnavailableResponse();\n  if (error) return NextResponse.json({ rows: [] });");
+  });
+
+  it("a profile, the intent and the quote's owner check answer an outage as one", () => {
+    expect(src("app", "api", "creators", "[id]", "profile", "route.ts")).toContain("    if (isDbUnreachable(userError)) return dbUnavailableResponse();\n    if (userError || !userData) {");
+    expect(src("app", "api", "payments", "generation", "intent", "route.ts")).toContain("  if (isDbUnreachable(insertError)) return dbUnavailableResponse();\n  if (insertError || !intent) {");
+  });
+
+  it("a failed hidden-owner lookup that is no outage is a 500, never labelled DB_UNAVAILABLE", () => {
+    expect(src("app", "api", "images", "[id]", "route.ts")).toContain('if (!hidden) return NextResponse.json({ error: "Could not load the image" }, { status: 500 });');
+    expect(src("app", "api", "prompts", "[id]", "images", "route.ts")).toContain('if (!hidden) return NextResponse.json({ error: "Could not load the images" }, { status: 500 });');
+    expect(src("app", "api", "prompts", "[id]", "route.ts")).toContain('if (!hidden) return NextResponse.json({ error: "Could not load the prompt" }, { status: 500 });');
+    expect(src("app", "api", "creators", "[id]", "profile", "route.ts")).toContain('if (!hidden) return NextResponse.json({ success: false, error: "Creator unavailable" }, { status: 500 });');
   });
 });

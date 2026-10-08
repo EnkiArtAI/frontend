@@ -34,6 +34,7 @@ export async function GET(
       .eq(UUID.test(creatorId) ? "id" : "handle", creatorId)
       .maybeSingle();
 
+    if (isDbUnreachable(userError)) return dbUnavailableResponse();
     if (userError || !userData) {
       if (userError) console.error("[API] creator lookup failed:", userError.message);
       return NextResponse.json(
@@ -43,7 +44,7 @@ export async function GET(
     }
     // A banned or deleted account has no public profile (and no public wallet).
     const hidden = await hiddenOwners(supabase, [String(userData.id)]);
-    if (!hidden) return NextResponse.json({ success: false, error: "Creator unavailable" }, { status: 503 });
+    if (!hidden) return NextResponse.json({ success: false, error: "Creator unavailable" }, { status: 500 });
     if (hidden.has(String(userData.id))) {
       return NextResponse.json({ success: false, error: "Creator not found" }, { status: 404 });
     }

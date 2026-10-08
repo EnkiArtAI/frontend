@@ -31,7 +31,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
     if (!data) return NextResponse.json({ error: "Image not found" }, { status: 404 });
     // A banned or deleted account's image is no longer public.
     const hidden = await hiddenOwners(supabase, [String(data.user_id ?? "")]);
-    if (!hidden) return dbUnavailableResponse();
+    if (!hidden) return NextResponse.json({ error: "Could not load the image" }, { status: 500 });
     if (hidden.has(String(data.user_id))) return NextResponse.json({ error: "Image not found" }, { status: 404 });
     return NextResponse.json({
       id: data.id,

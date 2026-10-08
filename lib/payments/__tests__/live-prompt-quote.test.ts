@@ -168,9 +168,11 @@ describe("who counts as the creator of a prompt that is not live", () => {
     expect(await quote("artist")).toMatchObject({ ok: false, status: 404 });
   });
 
-  it("nobody while the session cannot be read", async () => {
+  it("nobody while the session cannot be read: an outage answers 503, any other failure 404", async () => {
     prompt(NOT_LIVE[0][1]);
     failing = "auth_sessions";
+    expect(await quote("artist")).toMatchObject({ ok: false, status: 503, code: "DB_UNAVAILABLE" });
+    failWith = "permission denied for table auth_sessions";
     expect(await quote("artist")).toMatchObject({ ok: false, status: 404 });
   });
 });

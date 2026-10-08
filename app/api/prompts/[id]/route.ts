@@ -87,7 +87,7 @@ export async function GET(
     // A banned or deleted creator's prompt answers like a missing one.
     if (!isOwner) {
       const hidden = await hiddenOwners(supabase, [String(prompt.creator_id ?? "")]);
-      if (!hidden) return dbUnavailableResponse();
+      if (!hidden) return NextResponse.json({ error: "Could not load the prompt" }, { status: 500 });
       if (hidden.has(String(prompt.creator_id))) return NextResponse.json({ error: "not found" }, { status: 404 });
     }
 
