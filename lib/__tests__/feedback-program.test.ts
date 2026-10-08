@@ -146,7 +146,7 @@ describe("deciding a feedback report", () => {
     fb1().status = FEEDBACK_STATUS.rejected;
     expect((await get("admin-tok")).body.feedback.map((f: { state: string }) => f.state)).toEqual(["rejected", "open"]);
     // The fake answers every column; the live read only those it names.
-    expect(ADMIN_ROUTE).toMatch(/\.from\("feedback_submissions"\)\n\s+\.select\("[^"]*\bstatus\b[^"]*"\)/);
+    expect(ADMIN_ROUTE).toMatch(/const FEEDBACK_COLUMNS = "[^"]*\bstatus\b[^"]*";/);
   });
 });
 
@@ -212,7 +212,7 @@ describe("recording a payout", () => {
     expect(feedback[0]).toMatchObject({ wallet: "LiveSol", paid: true, txUrl: `https://explorer.solana.com/tx/${SIG}` });
     expect(feedback[1]).toMatchObject({ wallet: null, paid: false, txUrl: null });
     // The fake answers every column; the live reads only those they name.
-    expect(ADMIN_ROUTE).toMatch(/\.from\("feedback_submissions"\)\n\s+\.select\("[^"]*\bpayout_tx_hash, payout_chain_key\b[^"]*"\)/);
+    expect(ADMIN_ROUTE).toMatch(/const FEEDBACK_COLUMNS = "[^"]*\bpayout_tx_hash, payout_chain_key\b[^"]*";/);
     expect(ADMIN_ROUTE).toContain('supabase.from("user_wallets").select("user_id, address").in("user_id", chunk).eq("chain_family", "solana").is("removed_at", null)');
   });
 });
@@ -238,5 +238,24 @@ describe("the sender's own reports", () => {
 
   it("asks for a session", async () => {
     expect((await mine("")).status).toBe(401);
+  });
+});
+
+describe("the Feedback tab's list", () => {
+  it("keeps every report staff still owe a decision or the $100, however many newer ones arrive", async () => {
+    const FB3 = "aaaaaaaa-0000-4000-8000-000000000003";
+    const FB4 = "aaaaaaaa-0000-4000-8000-000000000004";
+    // Rows come back in insertion order: the hundred newer ones first.
+    const newer = Array.from({ length: 100 }, (_, i) => row(`bbbbbbbb-0000-4000-8000-${String(i).padStart(12, "0")}`, { status: FEEDBACK_STATUS.rejected, created_at: "2026-10-09T10:00:00Z" }));
+    db.current!.tables.feedback_submissions = [...newer, row(FB1, { status: FEEDBACK_STATUS.done }), row(FB2, { status: FEEDBACK_STATUS.rejected }), row(FB3),
+      row(FB4, { status: FEEDBACK_STATUS.done, paid_at: "2026-10-08T12:00:00Z" })];
+    const ids = (await get("admin-tok")).body.feedback.map((f: { id: string }) => f.id);
+    expect(ids).toContain(FB1); // done, unpaid: the $100 is owed
+    expect(ids).toContain(FB3); // still open
+    expect(ids).not.toContain(FB2); // rejected, and older than the newest hundred
+    expect(ids).not.toContain(FB4); // paid, and older than the newest hundred
+    expect(ids).toHaveLength(102);
+    // Newest first, each once.
+    expect(ids.slice(0, 100)).toEqual(newer.map((r) => r.id));
   });
 });

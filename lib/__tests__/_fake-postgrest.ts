@@ -54,6 +54,7 @@ export function fakePostgrest() {
     const filters: ((r: Row) => boolean)[] = [];
     let op: { kind: "select" | "insert" | "update" | "upsert" | "delete"; values?: Row; rows?: Row[]; head?: boolean; star?: boolean } = { kind: "select" };
     let one = false;
+    let cap = Infinity;
     const rows = () => (tables[table] ??= []);
     const q: Record<string, unknown> = {
       select: (cols?: string, opts?: { head?: boolean }) => { if (op.kind === "select") op = { kind: "select", head: opts?.head, star: cols === "*" }; return q; },
@@ -70,7 +71,7 @@ export function fakePostgrest() {
       ilike: (c: string, v: string) => { filters.push((r) => String(r[c] ?? "").toLowerCase() === v.toLowerCase()); return q; },
       or: (expr: string) => { filters.push(orFilter(expr)); return q; },
       order: () => q, // rows come back in insertion order
-      limit: () => q, // every test seeds fewer rows than any limit
+      limit: (n: number) => { cap = n; return q; }, // rows come back in insertion order
       range: () => q, // likewise: a test seeds one page at most
       maybeSingle: () => { one = true; return q; },
       single: () => { one = true; return q; },
@@ -112,7 +113,7 @@ export function fakePostgrest() {
           } else Object.assign(r, v);
           return Promise.resolve({ data: { ...r }, error: null }).then(ok);
         }
-        const hit = rows().filter((r) => filters.every((f) => f(r)));
+        const hit = rows().filter((r) => filters.every((f) => f(r))).slice(0, op.kind === "select" ? cap : Infinity);
         if (op.kind === "update") hit.forEach((r) => Object.assign(r, op.values));
         if (op.kind === "delete") tables[table] = rows().filter((r) => !hit.includes(r));
         const data = one ? (hit[0] ? { ...hit[0] } : null) : hit.map((r) => ({ ...r }));

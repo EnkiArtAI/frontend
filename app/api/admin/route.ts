@@ -38,6 +38,7 @@ const unexpired = () => `expires_at.is.null,expires_at.gt.${new Date().toISOStri
 type Supabase = ReturnType<typeof getSupabaseServerClient>;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FEEDBACK_SIGN_TTL = 600; // seconds
+const FEEDBACK_COLUMNS = "id, user_id, submitter_name, submitter_email_ct, submitter_email_iv, submitter_email_tag, submitter_email_kid, description, category, severity, status, payout_cents, payout_tx_hash, payout_chain_key, paid_at, created_at";
 
 /** A Solana transaction signature: 64 bytes in base58. Its shape only; nothing asks the chain. */
 function isTxSignature(s: string): boolean {
@@ -258,14 +259,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ files: rows.map((a) => ({ url: url.get(String(a.storage_key)) ?? null, mime: String(a.mime_type ?? "") })) });
   }
 
-  const [imp, rep, fb, hu, st, ba, ap, rec, council, genPolicy, automod, people, access] = await Promise.all([
+  const [imp, rep, fb, hu, st, ba, ap, rec, council, genPolicy, automod, people, access, fbDue] = await Promise.all([
     supabase.from("hunt_submissions")
       .select("id, hunter_user_id, source_url, suggested_title, suggested_tags, submitted_at")
       .eq("status", "pending").order("submitted_at", { ascending: false }).limit(100),
     pendingReports(supabase),
-    supabase.from("feedback_submissions")
-      .select("id, user_id, submitter_name, submitter_email_ct, submitter_email_iv, submitter_email_tag, submitter_email_kid, description, category, severity, status, payout_cents, payout_tx_hash, payout_chain_key, paid_at, created_at")
-      .order("created_at", { ascending: false }).limit(100),
+    supabase.from("feedback_submissions").select(FEEDBACK_COLUMNS).order("created_at", { ascending: false }).limit(100),
     supabase.from("hunter_stats")
       .select("user_id, total_submissions, approved_count, rejected_count, duplicate_count, earnings_cents")
       .order("approved_count", { ascending: false }).limit(50),
@@ -295,13 +294,19 @@ export async function GET(req: NextRequest) {
       .order("created_at", { ascending: false }).limit(150),
     listPeople(supabase),
     accessFor(supabase, role),
+    // Every report staff still owe a decision or the $100, however old: the
+    // newest hundred alone let a done report fall out of view, unpaid.
+    supabase.from("feedback_submissions").select(FEEDBACK_COLUMNS).is("paid_at", null).neq("status", FEEDBACK_STATUS.rejected)
+      .order("created_at", { ascending: true }).limit(300),
   ]);
+  const fbRows = [...new Map([...(fb.data ?? []), ...(fbDue.data ?? [])].map((r) => [String(r.id), r])).values()]
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
 
   // attachments per feedback + evidence per recovery request
-  const fbIds = (fb.data ?? []).map((r) => String(r.id));
+  const fbIds = fbRows.map((r) => String(r.id));
   const recIds = (rec.data ?? []).map((r) => String(r.id));
   // Where a report's $100 goes: the account's live Solana wallet, as artist payouts read it.
-  const fbUsers = (fb.data ?? []).filter((r) => r.user_id).map((r) => String(r.user_id));
+  const fbUsers = fbRows.filter((r) => r.user_id).map((r) => String(r.user_id));
   const [att, evi, wallets] = await Promise.all([
     fbIds.length ? supabase.from("feedback_attachments").select("feedback_id").in("feedback_id", fbIds) : Promise.resolve({ data: [] }),
     recIds.length ? supabase.from("recovery_request_evidence").select("request_id, kind, matched, value_url").in("request_id", recIds) : Promise.resolve({ data: [] }),
@@ -415,7 +420,7 @@ export async function GET(req: NextRequest) {
         at: r.created_at,
       };
     }).sort((a, b) => severityRank(a.severity) - severityRank(b.severity)),
-    feedback: (fb.data ?? []).map((r) => ({
+    feedback: fbRows.map((r) => ({
       id: String(r.id),
       name: (r.submitter_name as string) || "Anonymous",
       // The sender's email is an admin's to see, not a mod's (Kev, 2026-10-08).
