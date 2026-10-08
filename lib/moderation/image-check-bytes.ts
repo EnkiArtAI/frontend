@@ -29,15 +29,17 @@ const RANK = { clear: 0, adult: 1, unavailable: 2, blocked: 3, child_safety: 4 }
  * decode as an image are nothing anyone may see: "unavailable".
  *
  * The judges see one frame, so an animation, or a format a browser may play
- * as one, is refused rather than judged by its first frame. A transparent
- * image shows whatever is behind it, so it is judged on black and on white:
- * a picture drawn in the alpha channel alone shows on one of them.
+ * as one, is refused whatever that frame shows; it is judged all the same, so
+ * a child-safety first frame still becomes a case. A transparent image shows
+ * whatever is behind it, so it is judged on black and on white: a picture
+ * drawn in the alpha channel alone shows on one of them.
  */
 export async function checkImageBytes(bytes: Buffer, opts: { signal?: AbortSignal } = {}): Promise<CheckedImage> {
+  let still: boolean;
   let views: Buffer[];
   try {
     const meta = await sharp(bytes).metadata();
-    if (!STILL.has(meta.format) || (meta.pages ?? 1) > 1 || (meta.format === "png" && isApng(bytes))) return { verdict: "blocked", reason: "not a still" };
+    still = STILL.has(meta.format) && (meta.pages ?? 1) <= 1 && !(meta.format === "png" && isApng(bytes));
     const backgrounds = meta.hasAlpha && !(await sharp(bytes).stats()).isOpaque ? ["#000000", "#ffffff"] : ["#000000"];
     views = await Promise.all(backgrounds.map((background) =>
       sharp(bytes).rotate().resize({ width: EDGE, height: EDGE, fit: "inside", withoutEnlargement: true }).flatten({ background }).jpeg({ quality: 85 }).toBuffer()));
@@ -45,7 +47,8 @@ export async function checkImageBytes(bytes: Buffer, opts: { signal?: AbortSigna
     return { verdict: "unavailable", reason: NOT_AN_IMAGE };
   }
   const seen = await Promise.all(views.map((v) => checkImage(`data:image/jpeg;base64,${v.toString("base64")}`, opts)));
-  return seen.reduce((worst, v) => (RANK[v.verdict] > RANK[worst.verdict] ? v : worst));
+  const worst = seen.reduce((w, v) => (RANK[v.verdict] > RANK[w.verdict] ? v : w));
+  return still || worst.verdict === "child_safety" ? worst : { verdict: "blocked", reason: "not a still" };
 }
 
 /**

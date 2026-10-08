@@ -63,16 +63,28 @@ describe("checkImageBytes", () => {
     expect(seen.urls).toHaveLength(3);
   });
 
-  it("refuses an animation, which the judges would see by its first frame only, and asks nobody", async () => {
+  const animations = async () => {
     const frames = [await image(8, 8), await sharp({ create: { width: 8, height: 8, channels: 3, background: "#000" } }).png().toBuffer()];
-    for (const animated of [
+    return [
       await sharp(frames, { join: { animated: true } }).gif().toBuffer(),
       await sharp(frames, { join: { animated: true } }).webp().toBuffer(),
       withChunk(await image(8, 8), "acTL", Buffer.from([0, 0, 0, 2, 0, 0, 0, 0])),
-    ]) {
+    ];
+  };
+
+  it("refuses an animation, which the judges see by its first frame only, whatever that frame shows", async () => {
+    for (const animated of await animations()) {
       expect(await checkImageBytes(animated)).toEqual({ verdict: "blocked", reason: "not a still" });
     }
-    expect(seen.urls).toEqual([]);
+    // Judged all the same: one first frame each.
+    expect(seen.urls).toHaveLength(3);
+  });
+
+  it("an animation whose first frame is child safety is a child-safety case, not a mere refusal", async () => {
+    for (const animated of await animations()) {
+      seen.answers = [{ verdict: "child_safety", scores: { minor: 0.9 } }];
+      expect(await checkImageBytes(animated)).toEqual({ verdict: "child_safety", scores: { minor: 0.9 } });
+    }
   });
 
   it("reads an APNG's chunks, so a still PNG whose text says acTL is still judged", async () => {
@@ -80,12 +92,13 @@ describe("checkImageBytes", () => {
     expect(seen.urls).toHaveLength(1);
   });
 
-  it("refuses a format a browser may play or that is no picture (SVG, TIFF), and asks nobody", async () => {
+  it("refuses a format a browser may play or that is no picture (SVG, TIFF), judged first all the same", async () => {
     const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="red"/></svg>');
     for (const other of [svg, await sharp(await image(8, 8)).tiff().toBuffer()]) {
       expect(await checkImageBytes(other)).toEqual({ verdict: "blocked", reason: "not a still" });
+      seen.answers = [{ verdict: "child_safety" }];
+      expect((await checkImageBytes(other)).verdict).toBe("child_safety");
     }
-    expect(seen.urls).toEqual([]);
   });
 
   it("judges a transparent image on black and on white", async () => {
