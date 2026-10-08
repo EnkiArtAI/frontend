@@ -165,7 +165,8 @@ describe("the routes", () => {
     expect(check).toBeGreaterThan(-1);
     expect(SAVE.indexOf("const promptRow = {")).toBeGreaterThan(check);
     expect(SAVE).toMatch(/const shownAdult = await showsAdultRender\(supabase, \[\.\.\.uploadedPhotos, \.\.\.\(referenceImages \?\? savedBefore\)\]\);\n\s+if \(shownAdult === null\) \{/);
-    expect(SAVE).toMatch(/const adult = check\.adult === true \|\| shownAdult;/);
+    // A new reference image judged 18+ by the image check marks the prompt too.
+    expect(SAVE).toMatch(/const adult = check\.adult === true \|\| shownAdult \|\| beforeSeen\.some\(\(v\) => v\.verdict === "adult"\);/);
     expect(SAVE).toMatch(/const promptRow = \{\n\s+is_adult: adult,/);
   });
 
