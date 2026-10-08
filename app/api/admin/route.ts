@@ -620,8 +620,8 @@ export async function POST(req: NextRequest) {
     if (!cur) return NextResponse.json({ error: "Feedback not found" }, { status: 404 });
     if (cur.paid_at) return NextResponse.json({ error: "This report is paid already" }, { status: 409 });
     if (cur.status === FEEDBACK_STATUS.rejected) return NextResponse.json({ error: "This report was rejected: reopen it before paying" }, { status: 409 });
-    // One transfer pays one report: the same signature twice is a paste gone wrong.
-    const { data: twice } = await supabase.from("feedback_submissions").select("id").eq("payout_tx_hash", signature).limit(1);
+    // One transfer pays one report: the same signature on another report is a paste gone wrong.
+    const { data: twice } = await supabase.from("feedback_submissions").select("id").eq("payout_tx_hash", signature).neq("id", body.id).limit(1);
     if (twice?.length) return NextResponse.json({ error: "That transaction is recorded for another report already" }, { status: 409 });
     const { error } = await supabase.from("feedback_submissions").update({
       status: FEEDBACK_STATUS.done, paid_at: now, payout_tx_hash: signature, payout_chain_key: PAYOUT_CHAIN,

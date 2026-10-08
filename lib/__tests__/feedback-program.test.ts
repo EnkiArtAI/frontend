@@ -182,6 +182,13 @@ describe("recording a payout", () => {
     expect(db.current!.tables.feedback_submissions[1].paid_at).toBeNull();
   });
 
+  it("a second Confirm for the same report never reads as another report's transfer", async () => {
+    // The first record committed between the second request's reads: its own row now carries the signature.
+    Object.assign(fb1(), { payout_tx_hash: SIG });
+    expect(await pay("admin-tok", SIG)).toEqual({ status: 200, body: { ok: true } });
+    expect(fb1().paid_at).toEqual(expect.any(String));
+  });
+
   it("a rejected report is reopened before it is paid", async () => {
     fb1().status = FEEDBACK_STATUS.rejected;
     expect((await pay("admin-tok", SIG)).status).toBe(409);
