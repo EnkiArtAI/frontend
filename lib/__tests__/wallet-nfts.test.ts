@@ -216,14 +216,18 @@ describe("the NFT list costs", () => {
     expect([res.headers.get("Cache-Control"), res.headers.get("Vary")]).toEqual(["private, max-age=60", "X-Session-Token"]);
   });
 
-  it("holds one account to ten lists a minute, before any paid call; another account is not held", async () => {
+  it("holds one account to thirty lists an hour, before any paid call; another account is not held", async () => {
     net(() => result({ items: [] }));
-    for (let i = 0; i < 10; i++) expect((await list(ask("/api/wallet/nfts", "collector"))).status).toBe(200);
+    for (let i = 0; i < 30; i++) expect((await list(ask("/api/wallet/nfts", "collector"))).status).toBe(200);
     const eleventh = await list(ask("/api/wallet/nfts", "collector"));
     expect(eleventh.status).toBe(429);
     expect(eleventh.headers.get("Retry-After")).toEqual(expect.any(String));
-    expect(rpcCalls).toHaveLength(10);
+    expect(rpcCalls).toHaveLength(30);
     expect((await list(ask("/api/wallet/nfts", "someone-else"))).status).toBe(200);
+    // Not a minute's window: an hour later than a minute still holds.
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 61_000);
+    expect((await list(ask("/api/wallet/nfts", "collector"))).status).toBe(429);
+    vi.restoreAllMocks();
   });
 });
 

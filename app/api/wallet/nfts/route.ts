@@ -28,8 +28,9 @@ export async function GET(req: NextRequest) {
   const supabase = getSupabaseServerClient();
   const userId = await resolveSessionUserId(supabase, req.headers.get("X-Session-Token"));
   if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  // Each wallet read is a paid index call, on the key the payments use too.
-  const limit = checkRequestRateLimit(rateLimitKey(req, "nfts:list", userId), 10, 60_000);
+  // Each wallet read is a paid index call (up to six a list), on the key the payments use
+  // too. Thirty lists an hour is ample for picking; the browser keeps each answer a minute.
+  const limit = checkRequestRateLimit(rateLimitKey(req, "nfts:list", userId), 30, 60 * 60_000);
   if (!limit.allowed) return rateLimitResponse(limit.retryAfterSeconds);
 
   const wallets = await solanaWallets(supabase, userId);
