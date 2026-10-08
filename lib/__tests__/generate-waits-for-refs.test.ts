@@ -47,11 +47,22 @@ describe("readImageFile", () => {
   });
 
   // A picked NFT is a link; the server never fetches one, so the browser sends its bytes.
+  let signals: (AbortSignal | undefined)[] = [];
   const fetching = (answer: () => Promise<Response>) => {
     const asked: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (u: string) => { asked.push(u); return answer(); }));
+    signals = [];
+    vi.stubGlobal("fetch", vi.fn(async (u: string, init?: RequestInit) => { asked.push(u); signals.push(init?.signal ?? undefined); return answer(); }));
     return asked;
   };
+
+  it("readReference gives a link 20 s, so a host that never answers holds nothing for good", async () => {
+    vi.stubGlobal("FileReader", fakeReader("load"));
+    fetching(async () => new Response(new Blob(["x"])));
+    const { readReference } = await import("@/hooks/useReferenceReads");
+    await readReference("https://x.test/a.png");
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+    expect(src("hooks", "useReferenceReads.ts")).toContain("fetch(src, { signal: AbortSignal.timeout(20_000) })");
+  });
 
   it("readReference fetches a link and reads its bytes as the image", async () => {
     vi.stubGlobal("FileReader", fakeReader("load"));
@@ -119,7 +130,8 @@ describe("an image still being read shows greyed, and only there", () => {
 
   it("gets a preview before the read and loses it after, whatever the read answered", () => {
     // A link is previewed by its own address, which is never revoked.
-    const added = HOOK.search(/const preview = typeof file === "string" \? file : URL\.createObjectURL\(file\);\s+setPending\(\(p\) => \[\.\.\.p, preview\]\);/);
+    // A link's preview is its address made unique, so two reads of one address each hold Generate.
+    const added = HOOK.search(/const preview = typeof file === "string" \? `\$\{file\}#read-\$\{\+\+linkReads\}` : URL\.createObjectURL\(file\);\s+setPending\(\(p\) => \[\.\.\.p, preview\]\);/);
     const read = HOOK.search(/return await readReference\(file\);/);
     const gone = HOOK.search(/\} finally \{\s+setPending\(\(p\) => p\.filter\(\(u\) => u !== preview\)\);\s+if \(typeof file !== "string"\) URL\.revokeObjectURL\(preview\);/);
     expect(added).toBeGreaterThan(-1);

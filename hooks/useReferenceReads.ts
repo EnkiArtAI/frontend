@@ -18,9 +18,15 @@ export function readImageFile(file: Blob): Promise<string | null> {
  * never fetches an address a user names.
  */
 export async function readReference(src: Blob | string): Promise<string | null> {
-  const blob = typeof src === "string" ? await fetch(src).then((r) => (r.ok ? r.blob() : null), () => null) : src;
+  // A host that never answers would hold Generate for good: 20 s at most.
+  const blob = typeof src === "string"
+    ? await fetch(src, { signal: AbortSignal.timeout(20_000) }).then((r) => (r.ok ? r.blob() : null), () => null)
+    : src;
   return blob ? readImageFile(blob) : null;
 }
+
+/** Each link read is its own pending entry: two NFTs often share one image address. */
+let linkReads = 0;
 
 /**
  * Reference images are read in the browser before they can travel with a
@@ -31,12 +37,13 @@ export async function readReference(src: Blob | string): Promise<string | null> 
  * greyed while it loads, gone if it fails, kept once it is in). The previews
  * are blob: URLs and live only here, never in a reference list, so none can
  * be saved with a draft or sent with a generation.
- * A link is previewed by its own address while it loads.
+ * A link is previewed by its own address while it loads, made unique by a
+ * fragment, so one finished read never clears another of the same address.
  */
 export function useReferenceReads() {
   const [pending, setPending] = useState<string[]>([]);
   const read = useCallback(async (file: Blob | string) => {
-    const preview = typeof file === "string" ? file : URL.createObjectURL(file);
+    const preview = typeof file === "string" ? `${file}#read-${++linkReads}` : URL.createObjectURL(file);
     setPending((p) => [...p, preview]);
     try {
       return await readReference(file);
