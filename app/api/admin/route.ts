@@ -63,6 +63,21 @@ function tryDecrypt(ct: unknown, iv: unknown, tag: unknown, kid: unknown, aads: 
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 const severityRank = (s: unknown) => SEVERITY_RANK[String(s)] ?? 4;
 
+/** Open reports: the urgent ones (critical, high) and the newest, 100 of each, each once. */
+async function pendingReports(supabase: Supabase) {
+  const read = (urgent: boolean) => {
+    const q = supabase.from("reports")
+      .select("id, reporter_user_id, target_type, target_uuid, reason, details, severity, status, created_at")
+      .eq("status", "pending");
+    return (urgent ? q.in("severity", ["critical", "high"]) : q).order("created_at", { ascending: false }).limit(100);
+  };
+  const [urgent, newest] = await Promise.all([read(true), read(false)]);
+  const seen = new Set<string>();
+  return {
+    data: [...(urgent.data ?? []), ...(newest.data ?? [])].filter((r) => !seen.has(String(r.id)) && !!seen.add(String(r.id))),
+  };
+}
+
 const handleMap = async (supabase: Supabase, ids: string[]): Promise<Map<string, string>> => {
   const uniq = [...new Set(ids.filter(Boolean))];
   if (!uniq.length) return new Map();
@@ -216,9 +231,7 @@ export async function GET(req: NextRequest) {
     supabase.from("hunt_submissions")
       .select("id, hunter_user_id, source_url, suggested_title, suggested_tags, submitted_at")
       .eq("status", "pending").order("submitted_at", { ascending: false }).limit(100),
-    supabase.from("reports")
-      .select("id, reporter_user_id, target_type, target_uuid, reason, details, severity, status, created_at")
-      .eq("status", "pending").order("created_at", { ascending: false }).limit(100),
+    pendingReports(supabase),
     supabase.from("feedback_submissions")
       .select("id, user_id, submitter_name, submitter_email_ct, submitter_email_iv, submitter_email_tag, submitter_email_kid, description, category, severity, payout_cents, paid_at, created_at")
       .order("created_at", { ascending: false }).limit(100),

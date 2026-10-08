@@ -73,6 +73,7 @@ describe("the Reports tab", () => {
     db.current!.tables.generated_images[0].preview_url = "https://blob/i.preview.webp";
     const res = await GET(new NextRequest("http://enki.test/api/admin"));
     const { reports } = await res.json();
+    // Each once, though the urgent ones are read twice (urgent and newest).
     expect(reports.map((r: { id: string }) => r.id)).toEqual(["r-crit", "r-high-new", "r-high-old", "r-low"]);
     expect(reports[0]).toMatchObject({ type: "image", target: "Image by @olga", href: "https://blob/i.preview.webp", reason: "child_safety", reporter: "rita" });
     expect(reports[1]).toMatchObject({ type: "profile", target: "@carl", href: "/creators/creator", details: "slurs in bio" });
@@ -82,8 +83,9 @@ describe("the Reports tab", () => {
   const ROUTE = readSource(join(__dirname, "..", "..", "app", "api", "admin", "route.ts"));
   const PAGE = readSource(join(__dirname, "..", "..", "app", "admin", "page.tsx"));
 
-  it("keeps the newest first within one severity (the fake ignores order)", () => {
-    expect(ROUTE).toMatch(/\.eq\("status", "pending"\)\.order\("created_at", \{ ascending: false \}\)\.limit\(100\)/);
+  it("reads every urgent report besides the newest, so none drowns below the hundred newest", () => {
+    expect(ROUTE).toContain('return (urgent ? q.in("severity", ["critical", "high"]) : q).order("created_at", { ascending: false }).limit(100);');
+    expect(ROUTE).toContain('.eq("status", "pending");');
   });
 
   it("links what was reported", () => {
