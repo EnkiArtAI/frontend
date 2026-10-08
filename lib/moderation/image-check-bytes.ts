@@ -89,11 +89,20 @@ export const MESSAGE_IMAGE_ADULT = "18+ images can't be sent in messages.";
 /** Refused or not judged: such an image is neither shown nor used. */
 export const heldBack = (v: { verdict: string }) => v.verdict === "blocked" || v.verdict === "child_safety" || v.verdict === "unavailable";
 
-/** A reference that names an address (https:, blob:, ipfs: …) rather than carrying the image. */
-export const isLink = (ref: string) => /^(?!data:)[a-z][a-z0-9+.-]*:/i.test(ref.trim());
+/** A string as the URL parser reads it: surrounding spaces and controls dropped, tabs and line breaks removed. */
+export const asUrl = (s: string) => s.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, "").replace(/[\t\n\r]/g, "");
 
-/** The bytes of a base64 data: URL, spelled any way a browser reads one, or null for anything else. */
+/** A reference that names an address (https:, blob:, ipfs: …) rather than carrying the image. */
+export const isLink = (ref: string) => /^(?!data:)[a-z][a-z0-9+.-]*:/i.test(asUrl(ref));
+
+/**
+ * The bytes a browser reads from a data: URL, or null for anything else:
+ * read as the URL parser reads it, in any case, base64 or percent-encoded.
+ */
 export function dataUrlBytes(url: string): Buffer | null {
-  const m = /^data:[^,]*;base64,([\s\S]*)$/i.exec(url.trim());
-  return m ? Buffer.from(m[1], "base64") : null;
+  const m = /^data:([^,]*),([\s\S]*)$/i.exec(asUrl(url));
+  if (!m) return null;
+  if (/;\s*base64\s*$/i.test(m[1])) return Buffer.from(m[2], "base64");
+  return Buffer.concat(m[2].split(/(%[0-9a-f]{2})/i).map((part) =>
+    /^%[0-9a-f]{2}$/i.test(part) ? Buffer.from([parseInt(part.slice(1), 16)]) : Buffer.from(part, "utf8")));
 }

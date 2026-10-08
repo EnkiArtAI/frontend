@@ -140,19 +140,28 @@ describe("checkImageBytes", () => {
 
 describe("isLink", () => {
   it("tells an address from an image carried whole", () => {
-    for (const link of ["https://arweave.net/x.png", "http://x.test/a", " HTTPS://X.TEST/a", "blob:https://enki.art/1", "ipfs://bafy/1.png"]) expect(isLink(link), link).toBe(true);
-    for (const image of ["data:image/png;base64,iVBORw0KGgo=", "iVBORw0KGgo=", "/9j/4AAQSkZJRg==", "R0lGODlhAQABAAAAACw="]) expect(isLink(image), image).toBe(false);
+    for (const link of ["https://arweave.net/x.png", "http://x.test/a", " HTTPS://X.TEST/a", "\u0001https://x.test/a", "ht\ttps://x.test/a", "blob:https://enki.art/1", "ipfs://bafy/1.png"]) expect(isLink(link), link).toBe(true);
+    for (const image of ["data:image/png;base64,iVBORw0KGgo=", "\u0001data:image/png;base64,iVBORw0KGgo=", "iVBORw0KGgo=", "/9j/4AAQSkZJRg==", "R0lGODlhAQABAAAAACw="]) expect(isLink(image), image).toBe(false);
   });
 });
 
 describe("dataUrlBytes", () => {
-  it("reads a base64 data: URL and nothing else", () => {
+  it("reads a data: URL as a browser does, and nothing else", () => {
     expect(dataUrlBytes("data:image/png;base64,aGVsbG8=")?.toString()).toBe("hello");
-    // Any spelling a browser reads: case, no media type, parameters, spaces around.
-    for (const url of ["DATA:Image/PNG;BASE64,aGVsbG8=", "data:;base64,aGVsbG8=", "data:image/png;name=a.png;base64,aGVsbG8=", " data:image/png;base64,aGVsbG8= "]) {
-      expect(dataUrlBytes(url)?.toString(), url).toBe("hello");
+    // Any spelling a browser reads: case, no media type, parameters, spaces and
+    // controls around it, tabs and line breaks anywhere.
+    for (const url of [
+      "DATA:Image/PNG;BASE64,aGVsbG8=", "data:;base64,aGVsbG8=", "data:image/png;name=a.png;base64,aGVsbG8=", "data:image/png; base64 ,aGVsbG8=",
+      " data:image/png;base64,aGVsbG8= ", "\u0001data:image/png;base64,aGVsbG8=\u001f", "d\ta\nt\ra:image/png;base64,aGVs\nbG8=",
+    ]) {
+      expect(dataUrlBytes(url)?.toString(), JSON.stringify(url)).toBe("hello");
     }
+    // Without base64, percent-encoded bytes, the rest as UTF-8.
+    expect(dataUrlBytes("data:text/plain,hello")?.toString()).toBe("hello");
+    expect(dataUrlBytes("data:image/svg+xml,%3Csvg%2F%3E")?.toString()).toBe("<svg/>");
+    expect([...dataUrlBytes("data:,%89P%c3é")!]).toEqual([0x89, 0x50, 0xc3, 0xc3, 0xa9]);
+    expect(dataUrlBytes("data:,100% sure")?.toString()).toBe("100% sure");
     expect(dataUrlBytes("https://x.test/a.png")).toBeNull();
-    expect(dataUrlBytes("data:text/plain,hello")).toBeNull();
+    expect(dataUrlBytes("data:no comma")).toBeNull();
   });
 });

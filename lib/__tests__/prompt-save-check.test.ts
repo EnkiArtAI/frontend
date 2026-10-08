@@ -532,8 +532,8 @@ describe("a prompt's new reference images and the image check (2026-10-08)", () 
     expect(stored.calls.length).toBe(storesBefore);
   });
 
-  it("a data URL that carries no base64 image is refused for good, not answered try again", async () => {
-    const res = await save({ ...BASE, referenceImages: ["data:image/png,not-base64"] });
+  it("a data URL that carries no image at all is refused for good, not answered try again", async () => {
+    const res = await save({ ...BASE, referenceImages: ["data:image/png;no-comma"] });
     expect(res.status).toBe(422);
     expect(imageCheck.calls).toBe(0);
     expect(tables.prompts).toEqual([]);

@@ -101,11 +101,34 @@ describe("a workflow saved to the library", () => {
     expect(s.judged).toEqual(expect.arrayContaining([1, 2, 3].map((n) => Buffer.from(payload(n), "base64").toString("base64"))));
   });
 
-  it("refuses a data URL that carries no base64 image, judging nothing", async () => {
-    const res = await save(graphOf("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E"));
+  it("judges a percent-encoded data URL by the bytes a browser reads from it", async () => {
+    s.verdicts = [{ verdict: "blocked", reason: "not a still" }];
+    const res = await save(graphOf("data:image/svg+xml,%3Csvg%2F%3E"));
     expect(res.status).toBe(422);
-    expect(s.judged).toEqual([]);
+    expect(s.judged).toEqual([Buffer.from("<svg/>").toString("base64")]);
     expect(s.rows).toEqual([]);
+  });
+
+  it("judges what the URL parser reads as a data URL: controls around it, line breaks within", async () => {
+    const res = await save(graphOf(`\u0001data:image/png;base64,${payload(1)}`, `d\ta\nt\ra:image/png;base64,${payload(2)}`));
+    expect(res.status).toBe(201);
+    expect(s.judged).toEqual([1, 2].map((n) => Buffer.from(payload(n), "base64").toString("base64")));
+  });
+
+  it("records a child-safety case with that image's own bytes, text beside it or not", async () => {
+    s.verdicts = [{ verdict: "blocked", reason: "not an image" }, { verdict: "child_safety" }];
+    expect((await save({ title: "Data: a lab, at night", nodes: [{ image: img(2) }] })).status).toBe(422);
+    expect(s.cases).toEqual([expect.objectContaining({ bytes: Buffer.from(payload(2), "base64") })]);
+  });
+
+  it("keeps text that only begins like a data URL, and refuses a data URL that claims an image and holds none", async () => {
+    const none = { verdict: "blocked", reason: "not an image" };
+    s.verdicts = [none, none];
+    expect((await save({ title: "Data: a lab, at night", prompt: "data: no comma here" })).status).toBe(201);
+    for (const claim of ["data:image/png,garbage", "data:;base64,AAAA"]) {
+      s.verdicts = [none];
+      expect((await save(graphOf(claim))).status, claim).toBe(422);
+    }
   });
 
   it("takes long plain text for text, however much it looks like base64", async () => {

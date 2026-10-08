@@ -3,7 +3,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { checkRequestRateLimit, rateLimitResponse } from "@/lib/rate-limit";
-import { checkImageBytes, dataUrlBytes, NOT_AN_IMAGE } from "@/lib/moderation/image-check-bytes";
+import { asUrl, checkImageBytes, dataUrlBytes, NOT_AN_IMAGE } from "@/lib/moderation/image-check-bytes";
 import { recordImageCase } from "@/lib/moderation/image-case";
 
 /**
@@ -23,9 +23,9 @@ const MAX_GRAPH_BYTES = 400_000;
 const MAX_IMAGES = 14;
 
 /**
- * Every data: URL a graph holds, at any depth and in any spelling: whatever
- * a browser could show as an image when the workflow is opened again. Plain
- * text, however long, is not one.
+ * Every string a graph holds that a browser reads as a data: URL (the URL
+ * parser drops controls around it and line breaks within), at any depth:
+ * whatever could show as an image when the workflow is opened again.
  */
 function dataUrls(graph: unknown): string[] {
   const found = new Set<string>();
@@ -34,7 +34,7 @@ function dataUrls(graph: unknown): string[] {
   for (let i = 0; i < queue.length; i++) {
     const node = queue[i];
     if (typeof node === "string") {
-      if (/^\s*data:/i.test(node)) found.add(node);
+      if (/^data:/i.test(asUrl(node))) found.add(node);
     } else if (node && typeof node === "object") {
       for (const v of Object.values(node)) queue.push(v);
     }
@@ -94,9 +94,12 @@ export async function POST(request: NextRequest) {
     const limit = checkRequestRateLimit(`library-save:${userId}`, 20, 60_000);
     if (!limit.allowed) return rateLimitResponse(limit.retryAfterSeconds);
     const bytes = images.map(dataUrlBytes);
-    // A data: URL that carries no base64 (percent-encoded) cannot be judged: refused.
-    const seen = await Promise.all(bytes.map((b) => (b ? checkImageBytes(b, { signal: request.signal }) : { verdict: "blocked" as const, reason: NOT_AN_IMAGE })));
-    seen.forEach((v, i) => {
+    const judged = await Promise.all(bytes.map((b) => (b ? checkImageBytes(b, { signal: request.signal }) : { verdict: "blocked" as const, reason: NOT_AN_IMAGE })));
+    // Text that only begins like one ("Data: a lab at night") holds no image
+    // and claims none: it stays text. A data: URL that names an image type or
+    // base64 and is no image is refused.
+    const seen = judged.filter((v, i) => !(v.verdict === "blocked" && v.reason === NOT_AN_IMAGE && !/^data:(image\/|[^,]*;\s*base64\s*,)/i.test(asUrl(images[i]))));
+    judged.forEach((v, i) => {
       if (v.verdict === "child_safety") {
         after(recordImageCase(supabase, { surface: "library", request, bytes: bytes[i] as Buffer, scores: v.scores, about: "An image in a workflow saved to the private library." }));
       }
