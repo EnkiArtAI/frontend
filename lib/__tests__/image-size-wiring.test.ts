@@ -16,4 +16,8 @@ describe("the prompt editor's save", () => {
   it("is refused before it is sent when it is too large to arrive", () => {
     expect(EDITOR).toMatch(/if \(tooLargeToSend\(payload\)\) throw new Error\(SAVE_TOO_LARGE\);\n\s+const response = await fetch\("\/api\/prompt", \{/);
   });
+
+  it("reads an answer that is not JSON as a failed save, not a parse error", () => {
+    expect(EDITOR).toContain("const savedPrompt: unknown = await response.json().catch(() => null);");
+  });
 });
