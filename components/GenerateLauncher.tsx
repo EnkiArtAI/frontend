@@ -240,9 +240,6 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
     }
   };
 
-  // Pick an NFT as a reference. The real wallet NFT-picker isn't built in this
-  // free build yet — for now this opens a file picker so the NFT deck is
-  // usable; swap this for the wallet's NFT selection flow when ready.
   /* The NFT button opens the WALLET picker — it used to click the hidden
      file input, so "NFTs" opened an upload-from-PC dialog (Kev, 2026-08-22).
      The file input stays for the plain image-upload path only. */
@@ -315,7 +312,7 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
       {/* The wallet NFT picker — capped by the model's own reference limit. */}
       {nftPickerOpen && (
         <NftPickerModal
-          max={Math.max(0, (core.entry?.maxRefs ?? 14) - referenceImages.length - nftImages.length)}
+          max={Math.max(0, modelLimits.maxRefs - refCount - refsPending.length)}
           onPick={addNfts}
           onClose={() => setNftPickerOpen(false)}
         />
@@ -356,7 +353,8 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
         onReorderReferenceImages={(from, to) =>
           setReferenceImages((prev) => reorder(prev, from, to))
         }
-        onPickNFT={pickNFT}
+        // No NFT button for a model that takes no references (Flux takes none).
+        onPickNFT={modelLimits.maxRefs > 0 ? pickNFT : undefined}
         nftImages={nftImages}
         onRemoveNFT={(i) => setNftImages((prev) => prev.filter((_, idx) => idx !== i))}
         onReorderNFTs={(from, to) => setNftImages((prev) => reorder(prev, from, to))}

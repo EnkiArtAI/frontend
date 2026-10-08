@@ -10,6 +10,7 @@ import { readSource } from "@/lib/__tests__/_read-source";
 const ROOT = join(__dirname, "..", "..");
 const PICKER = readSource(join(ROOT, "components", "enki", "NftPickerModal.tsx"));
 const BUYER = readSource(join(ROOT, "components", "PromptGeneratorView.tsx"));
+const LAUNCHER = readSource(join(ROOT, "components", "GenerateLauncher.tsx"));
 
 describe("the NFT picker", () => {
   it("shows the CDN's tile, never the NFT's own host", () => {
@@ -47,5 +48,13 @@ describe("the buyer page's references", () => {
     expect(add).toMatch(/if \(!url\) \{\n\s+toast\(\{ title: "NFT image unavailable"[^\n]*variant: "destructive" \}\);\n\s+return;/);
     expect(add).toContain("setRefs(prev => prev.length >= maxRefs ? prev : [...prev, url]);");
     expect(add).toContain("}, [maxRefs, readRef, toast]);");
+  });
+});
+
+describe("quick create's NFT button", () => {
+  it("is offered only for a model that takes references, and for no more than it has left", () => {
+    expect(LAUNCHER).toContain("onPickNFT={modelLimits.maxRefs > 0 ? pickNFT : undefined}");
+    expect(LAUNCHER).toContain("max={Math.max(0, modelLimits.maxRefs - refCount - refsPending.length)}");
+    expect(LAUNCHER).toContain("const refCount = referenceImages.length + nftImages.length;");
   });
 });
