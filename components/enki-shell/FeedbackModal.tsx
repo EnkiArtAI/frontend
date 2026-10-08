@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "./icons";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import { FEEDBACK_FILE_EXT, FEEDBACK_MAX_BYTES, addFeedbackFiles } from "@/lib/feedback";
+import { fitUpload } from "@/lib/shrink-image";
 
 const SEVS = [
   { id: "bug", label: "Bug — broken", bg: "#FDE8E8", ink: "#8B2E2E", border: "#E8A0A0" },
@@ -16,6 +17,9 @@ const SEVS = [
   { id: "annoying", label: "Annoying", bg: "#FDF6E8", ink: "#6E4A1E", border: "#E8C89A" },
   { id: "minor", label: "Somewhat annoying", bg: "var(--enki-paper-2)", ink: "var(--enki-ink-3)", border: "var(--enki-rule)" },
 ];
+
+/** Still images are drawn anew before they count; a GIF would lose its motion and a video cannot be. */
+const STILLS = ["image/png", "image/jpeg", "image/webp"];
 
 const MONO = "var(--font-mono), monospace";
 const SERIF = "var(--font-serif), Georgia, serif";
@@ -29,6 +33,8 @@ export default function FeedbackModal({ onClose, onToast, guest = false }: { onC
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
+  // While picked images are redrawn the list holds still, so nothing is added to a stale one.
+  const [attaching, setAttaching] = useState(false);
   const [done, setDone] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const doneT = useRef<number | null>(null);
@@ -45,15 +51,23 @@ export default function FeedbackModal({ onClose, onToast, guest = false }: { onC
     return () => { window.removeEventListener("keydown", onKey, true); if (doneT.current) window.clearTimeout(doneT.current); };
   }, [onClose]);
 
-  const canSend = !!sev && text.trim().length >= 10 && !busy; // server wants ≥10 chars
+  const canSend = !!sev && text.trim().length >= 10 && !busy && !attaching; // server wants ≥10 chars
 
   // The route's own rules (lib/feedback): a file it would refuse is named now, not after sending.
-  const addFiles = (list: FileList | null) => {
-    if (!list) return;
-    const { files: next, refused } = addFeedbackFiles(files, Array.from(list));
-    setFiles(next);
-    // One toast for the lot: each would replace the one before.
-    if (refused.length) onToast(refused.join(" "));
+  const addFiles = async (list: FileList | null) => {
+    if (!list?.length) return;
+    setAttaching(true);
+    try {
+      // Every upload is made smaller in the browser (Kev, 2026-10-08): a screenshot
+      // then takes a few hundred KB of the 4 MB. One that cannot be redrawn goes as it is.
+      const picked = await Promise.all(Array.from(list).map(async (f) => (STILLS.includes(f.type) ? ((await fitUpload(f)) ?? f) : f)));
+      const { files: next, refused } = addFeedbackFiles(files, picked);
+      setFiles(next);
+      // One toast for the lot: each would replace the one before.
+      if (refused.length) onToast(refused.join(" "));
+    } finally {
+      setAttaching(false);
+    }
   };
 
   const send = async () => {
@@ -134,9 +148,9 @@ export default function FeedbackModal({ onClose, onToast, guest = false }: { onC
 
             <span style={{ ...microLabel, margin: "11px 0 5px" }}>Attachments · up to {FEEDBACK_MAX_BYTES / 1048576} MB in total</span>
             <input ref={fileRef} type="file" accept={Object.keys(FEEDBACK_FILE_EXT).join(",")} multiple style={{ display: "none" }}
-              onChange={(e) => { addFiles(e.target.files); e.currentTarget.value = ""; }} />
+              onChange={(e) => { void addFiles(e.target.files); e.currentTarget.value = ""; }} />
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-              <button onClick={() => fileRef.current?.click()} title="Attach images or videos" style={{ width: 52, height: 40, border: "1px dashed var(--enki-rule)", borderRadius: 9, background: "var(--enki-paper)", color: "var(--enki-ink-3)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+              <button onClick={() => fileRef.current?.click()} disabled={attaching} title={attaching ? "Preparing images…" : "Attach images or videos"} style={{ width: 52, height: 40, border: "1px dashed var(--enki-rule)", borderRadius: 9, background: "var(--enki-paper)", color: "var(--enki-ink-3)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
                 <Icon name="upload" size={15} stroke={2} />
               </button>
               {files.map((f, i) => (
@@ -147,7 +161,7 @@ export default function FeedbackModal({ onClose, onToast, guest = false }: { onC
                       {(f.type || "").startsWith("video") ? "Video" : "Image"} · {(f.size / 1048576).toFixed(1)} MB
                     </span>
                   </span>
-                  <button onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))} aria-label="Remove attachment"
+                  <button onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))} disabled={attaching} aria-label="Remove attachment"
                     style={{ width: 16, height: 16, border: "none", borderRadius: "50%", background: "var(--enki-paper-2)", color: "var(--enki-ink-3)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, padding: 0, cursor: "pointer" }}>
                     <Icon name="x" size={9} stroke={2.4} />
                   </button>
