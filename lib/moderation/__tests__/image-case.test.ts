@@ -21,6 +21,7 @@ let db: ReturnType<typeof fakePostgrest>;
 let files: Map<string, Buffer>;
 let buckets: Map<string, { public: boolean }>;
 let uploadFails: boolean;
+let bucketUnread: boolean;
 let client: unknown;
 const req = (headers: Record<string, string> = { "X-Session-Token": "tok", "x-forwarded-for": "1.2.3.4" }) =>
   ({ headers: { get: (n: string) => headers[n] ?? headers[n.toLowerCase()] ?? null } });
@@ -36,11 +37,13 @@ beforeEach(async () => {
   files = new Map();
   buckets = new Map();
   uploadFails = false;
+  bucketUnread = false;
   notify.mockClear();
   client = {
     from: (t: string) => (db.client as { from: (t: string) => unknown }).from(t),
     storage: {
       createBucket: async (name: string, o: { public: boolean }) => { if (!buckets.has(name)) buckets.set(name, o); return { error: null }; },
+      getBucket: async (name: string) => (buckets.has(name) && !bucketUnread ? { data: { id: name, ...buckets.get(name) }, error: null } : { data: null, error: { message: "not found" } }),
       from: (bucket: string) => ({
         upload: async (path: string, body: Buffer) => {
           if (uploadFails) return { error: { message: "storage down" } };
@@ -98,6 +101,21 @@ describe("a child-safety image", () => {
     const id = String(db.tables.automod_events[0].id);
     files.set(`${EVIDENCE_BUCKET}/other.json`, files.get(`${EVIDENCE_BUCKET}/${id}.json`)!);
     expect(await readImageEvidence(client as never, "other")).toBeNull();
+  });
+
+  it("keeps nothing in an evidence bucket someone made public", async () => {
+    buckets.set(EVIDENCE_BUCKET, { public: true });
+    await record();
+    expect([...files.keys()]).toEqual([]);
+    expect(db.tables.automod_events).toHaveLength(1);
+    expect(((notify.mock.calls[0] as unknown[])[1] as { text: string }).text).toContain("The private copy could NOT be kept.");
+  });
+
+  it("keeps nothing when the bucket's privacy cannot be read", async () => {
+    bucketUnread = true;
+    await record();
+    expect([...files.keys()]).toEqual([]);
+    expect(db.tables.automod_events).toHaveLength(1);
   });
 
   it("still becomes a case when the copy cannot be kept, and the mail says so", async () => {

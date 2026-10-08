@@ -43,6 +43,10 @@ export async function recordImageCase(
     let kept = false;
     try {
       await supabase.storage.createBucket(EVIDENCE_BUCKET, { public: false }).catch(() => {});
+      // Never where anyone could fetch it, sealed or not: a bucket made
+      // public by hand keeps nothing.
+      const { data: bucket } = await supabase.storage.getBucket(EVIDENCE_BUCKET);
+      if (bucket?.public !== false) throw new Error("the evidence bucket is not private");
       const sealed = encryptString(ctx.bytes.toString("base64"), aad(eventId));
       const { error } = await supabase.storage.from(EVIDENCE_BUCKET)
         .upload(path(eventId), Buffer.from(JSON.stringify(sealed)), { contentType: "application/json", upsert: false });
