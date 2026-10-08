@@ -23,6 +23,8 @@ export interface StoredImage {
   imageUrl: string;
   previewUrl: string | null;
   thumbnailUrl: string | null;
+  /** Every name a copy may have landed under, returned or not (a cut upload can still land): removeStored takes them all down. */
+  names: string[];
 }
 
 async function fetchBytes(url: string): Promise<{ buf: Buffer; contentType: string } | null> {
@@ -233,7 +235,8 @@ export async function removeStored(entries: (string | null | undefined)[]): Prom
 
 /** With `deadline`, every put is durable and bounded by it (putDurably); without, one attempt each as before. */
 export async function storeGeneratedImage(providerUrl: string, userId: string, deadline?: number): Promise<StoredImage> {
-  const passthrough: StoredImage = { imageUrl: providerUrl, previewUrl: null, thumbnailUrl: null };
+  const names: string[] = [];
+  const passthrough: StoredImage = { imageUrl: providerUrl, previewUrl: null, thumbnailUrl: null, names };
   // With a deadline the fallback bucket may still take it; putDurably decides.
   if (!deadline && !process.env.BLOB_READ_WRITE_TOKEN?.trim()) return passthrough;
 
@@ -243,6 +246,7 @@ export async function storeGeneratedImage(providerUrl: string, userId: string, d
 
     const ext = fetched.contentType.includes("png") ? "png" : fetched.contentType.includes("webp") ? "webp" : "jpg";
     const base = `generations/${userId}/${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    names.push(`${base}.${ext}`, `${base}.preview.webp`, `${base}.thumb.webp`);
 
     const store = (name: string, buf: Buffer, type: string, by = deadline) =>
       by ? putDurably(name, buf, type, by) : putBlob(name, buf, type);
@@ -266,6 +270,7 @@ export async function storeGeneratedImage(providerUrl: string, userId: string, d
       imageUrl: original ?? providerUrl,
       previewUrl,
       thumbnailUrl,
+      names,
     };
   } catch (e) {
     console.warn("[derivative-store] failed:", e instanceof Error ? e.message : e);

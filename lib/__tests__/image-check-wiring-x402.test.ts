@@ -34,9 +34,14 @@ describe("the agent rail", () => {
     const block = heldBlock();
     expect(block).toMatch(/error: `image check: \$\{seen\.verdict\}`, txSignature: signature,/);
     expect(block).toMatch(/if \(seen\.verdict === "child_safety"\) \{\n\s+after\(recordImageCase\(supabase, \{\n\s+surface: "x402-generate", request, bytes: buffer, scores: seen\.scores, byAddress: true,/);
-    expect(block).toContain("after(removeStored([stored.imageUrl, stored.previewUrl, stored.thumbnailUrl]));");
+    expect(block).toContain("after(removeStored(stored.names));");
     // The refusal returns before the delivery's own answer begins.
     expect(block).toMatch(/\n\s+\);\n\s+\}\n\n\s+return NextResponse\.json\(\n\s+\{\n\s+$/);
+  });
+
+  it("an image it could not store is never left public unjudged: every copy a cut upload may land comes down", () => {
+    const unstored = at("if (stored.imageUrl === dataUrl && buffer.length > INLINE_MAX_BYTES) {");
+    expect(AGENT.slice(unstored, at("const seen = await checkImageBytes(buffer,"))).toContain("after(removeStored(stored.names));");
   });
 
   it("tells the agent its payment settled and keeps the signature for support", () => {

@@ -192,6 +192,18 @@ describe("storeGeneratedImage with a deadline", () => {
     expect(stored.previewUrl).toBeNull();
   });
 
+  it("names every copy it may have made, returned or not, so a refusal takes them all down", async () => {
+    derivatives = { preview: rendition, thumb: rendition, width: 1, height: 1 };
+    // The original's upload is cut, yet may land; the renditions never start.
+    put.mockRejectedValue(new Error("cut"));
+    const stored = await settle(storeGeneratedImage(DATA, "u1", Date.now() + 20_000));
+    expect(stored.imageUrl).toBe(DATA);
+    expect(stored.names).toEqual([expect.stringMatching(/^generations\/u1\/\d+_[a-z0-9]+\.png$/), expect.any(String), expect.any(String)]);
+    const base = stored.names[0].replace(/\.png$/, "");
+    expect(stored.names.slice(1)).toEqual([`${base}.preview.webp`, `${base}.thumb.webp`]);
+    expect(put.mock.calls.map(([name]) => name)).toContain(stored.names[0]);
+  });
+
   it("bounds the renditions by the same deadline", async () => {
     derivatives = { preview: rendition, thumb: rendition, width: 1, height: 1 };
     put.mockImplementation(async (n) => ok(n));

@@ -537,6 +537,8 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
       prompt: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
       error: "image could not be stored", txSignature: signature,
     }));
+    // A cut upload can still land: never left public unjudged.
+    after(removeStored(stored.names));
     return NextResponse.json(
       {
         error: "Your image was made but could not be delivered after your payment settled.",
@@ -565,7 +567,8 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
         about: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
       }));
     }
-    after(removeStored([stored.imageUrl, stored.previewUrl, stored.thumbnailUrl]));
+    // Every copy, by every name it may have landed under, in both stores.
+    after(removeStored(stored.names));
     return NextResponse.json(
       {
         error: seen.verdict === "unavailable"
