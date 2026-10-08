@@ -102,8 +102,26 @@ describe("every generate surface waits for its reference images", () => {
     expect(LAUNCHER).toMatch(/if \(generating\) return;\n\s+if \(refsLoading\) \{/);
     expect(LAUNCHER).toMatch(/generateBlocked=\{refsLoading\}/);
     // A picked NFT waits the same way, and travels as the image itself.
-    expect(LAUNCHER).toContain("onPick={(urls) => urls.forEach((u) => void readRef(u).then((img) => {");
-    expect(LAUNCHER).toContain("if (img) setNftImages((prev) => [...prev, img]);");
+    expect(LAUNCHER).toContain("onPick={addNfts}");
+    expect(LAUNCHER).toContain("urls.forEach((u) => void readRef(u).then((img) => {");
+  });
+
+  it("quick create holds a picked NFT to the model's file types and limit, as an upload", () => {
+    const add = LAUNCHER.slice(LAUNCHER.indexOf("const addNfts = (urls: string[]) => {"), LAUNCHER.indexOf("const reorder = "));
+    expect(add).toContain('const type = /^data:([^;,]*)/i.exec(img)?.[1].toLowerCase() ?? "";');
+    expect(add).toMatch(/if \(modelLimits\.filetypes\.length && !modelLimits\.filetypes\.includes\(type\)\) \{\n\s+toast\(\{ title: "File type not supported"[^\n]*\n\s+return;/);
+    expect(add).toMatch(/if \(prev\.length \+ referenceImages\.length >= modelLimits\.maxRefs\) \{\n\s+toast\(\{ title: "Reference limit reached"[^\n]*\n\s+return prev;/);
+    expect(add).toContain("return [...prev, img];");
+  });
+
+  it("quick create drops a read that ends after another prompt opened", () => {
+    const seed = LAUNCHER.slice(LAUNCHER.indexOf("setLocked(isPaid);"), LAUNCHER.indexOf("}, [seedPrompt]);"));
+    expect(seed).toContain("refsEpoch.current++;");
+    expect(LAUNCHER).toMatch(/const addNfts = \(urls: string\[\]\) => \{\n\s+const epoch = refsEpoch\.current;\n\s+urls\.forEach\(\(u\) => void readRef\(u\)\.then\(\(img\) => \{\n\s+if \(epoch !== refsEpoch\.current\) return;/);
+    expect(LAUNCHER).toMatch(/const epoch = refsEpoch\.current;\n\s+void readRef\(file\)\.then\(\(url\) => \{\n\s+if \(url && epoch === refsEpoch\.current\) \{/);
+  });
+
+  it("quick create's Generate is greyed by the modal while they load", () => {
     expect(MODAL).toMatch(/onClick=\{\(\) => onGenerate\(genCountNum\)\} disabled=\{isGenerating \|\| generateBlocked\}/);
   });
 

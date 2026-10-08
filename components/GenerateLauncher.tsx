@@ -79,6 +79,8 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
   useEffect(() => { if (!core.loading && core.clampTier(resolution) !== resolution) setResolution(core.clampTier(resolution)); }, [core, resolution]);
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const [nftImages, setNftImages] = useState<string[]>([]);
+  // Bumped whenever another prompt opens: a read still running lands nowhere.
+  const refsEpoch = useRef(0);
 
   /* Every price shown is a server quote (Kev, 2026-10-02: "ich brauche safe
      überall den server-quote"): the current settings first, then each tier
@@ -128,6 +130,7 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
     setValueByToken(seededValues);
     setSeededVariables(mapped.length ? mapped : null);
     setLocked(isPaid);
+    refsEpoch.current++;
     setReferenceImages([]);
     setNftImages([]);
     setResults([]);
@@ -255,8 +258,9 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
         toast({ title: "File type not supported", description: `${file.name} — this model accepts ${modelLimits.filetypes.map((t) => t.split("/")[1]).join(", ")}.`, variant: "destructive" });
         return;
       }
+      const epoch = refsEpoch.current;
       void readRef(file).then((url) => {
-        if (url) {
+        if (url && epoch === refsEpoch.current) {
           setList((prev) => {
             if (prev.length >= modelLimits.maxRefs) {
               toast({ title: "Reference limit reached", description: `This model allows up to ${modelLimits.maxRefs} reference images.` });
@@ -270,6 +274,31 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
   };
 
   const addReferenceImages = (files: FileList) => addToList(files, setReferenceImages);
+
+  // Each picked NFT travels as the image itself, read like an upload and held
+  // to the same file types and limit: the server judges bytes, never a link.
+  const addNfts = (urls: string[]) => {
+    const epoch = refsEpoch.current;
+    urls.forEach((u) => void readRef(u).then((img) => {
+      if (epoch !== refsEpoch.current) return;
+      if (!img) {
+        toast({ title: "NFT image unavailable", description: "This NFT's image could not be loaded, so it was not added.", variant: "destructive" });
+        return;
+      }
+      const type = /^data:([^;,]*)/i.exec(img)?.[1].toLowerCase() ?? "";
+      if (modelLimits.filetypes.length && !modelLimits.filetypes.includes(type)) {
+        toast({ title: "File type not supported", description: `This NFT's image is ${type || "no image"} — this model accepts ${modelLimits.filetypes.map((t) => t.split("/")[1]).join(", ")}.`, variant: "destructive" });
+        return;
+      }
+      setNftImages((prev) => {
+        if (prev.length + referenceImages.length >= modelLimits.maxRefs) {
+          toast({ title: "Reference limit reached", description: `This model allows up to ${modelLimits.maxRefs} reference images.` });
+          return prev;
+        }
+        return [...prev, img];
+      });
+    }));
+  };
 
   const reorder = (list: string[], from: number, to: number) => {
     if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) {
@@ -287,11 +316,7 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
       {nftPickerOpen && (
         <NftPickerModal
           max={Math.max(0, (core.entry?.maxRefs ?? 14) - referenceImages.length - nftImages.length)}
-          // Each picked NFT travels as the image itself, read like an upload.
-          onPick={(urls) => urls.forEach((u) => void readRef(u).then((img) => {
-            if (img) setNftImages((prev) => [...prev, img]);
-            else toast({ title: "NFT image unavailable", description: "This NFT's image could not be loaded, so it was not added.", variant: "destructive" });
-          }))}
+          onPick={addNfts}
           onClose={() => setNftPickerOpen(false)}
         />
       )}
