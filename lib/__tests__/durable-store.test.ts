@@ -10,7 +10,7 @@ import { readSource } from "@/lib/__tests__/_read-source";
  * 4.5 MB response cap: the buyer paid and got HTTP 413.
  */
 
-type PutOpts = { allowOverwrite?: boolean; abortSignal?: AbortSignal };
+type PutOpts = { allowOverwrite?: boolean; abortSignal?: AbortSignal; contentType?: string };
 const put = vi.fn<(name: string, buf: Buffer, opts: PutOpts) => Promise<{ url: string }>>();
 vi.mock("@vercel/blob", () => {
   class BlobError extends Error {}
@@ -169,6 +169,18 @@ describe("the deadline and the inline cap", () => {
 describe("storeGeneratedImage with a deadline", () => {
   const DATA = `data:image/png;base64,${BYTES.toString("base64")}`;
   const rendition = { buffer: BYTES, bytes: 4 };
+
+  it("stores exactly the bytes the image check reads, in any spelling of the data URL", async () => {
+    put.mockImplementation(async (n) => ok(n));
+    const { dataUrlBytes } = await import("@/lib/moderation/image-check-bytes");
+    for (const url of [`data:image/png;BASE64,${BYTES.toString("base64")}`, `data:image/png;Base64,${BYTES.toString("base64")}`]) {
+      put.mockClear();
+      await settle(storeGeneratedImage(url, "u1", Date.now() + 20_000));
+      expect(put.mock.calls[0][1]).toEqual(dataUrlBytes(url));
+      expect(put.mock.calls[0][1]).toEqual(BYTES);
+      expect(put.mock.calls[0][2].contentType).toBe("image/png");
+    }
+  });
 
   it("cuts no renditions when the original did not land", async () => {
     derivatives = { preview: rendition, thumb: rendition, width: 1, height: 1 };

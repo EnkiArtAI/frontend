@@ -18,6 +18,7 @@
  * a failed optimisation must not cost the image that was already paid for.
  */
 import { tryMakeDerivatives } from "@/lib/imageDerivatives";
+import { dataUrlBytes } from "@/lib/moderation/image-check-bytes";
 
 export interface StoredImage {
   imageUrl: string;
@@ -29,14 +30,11 @@ export interface StoredImage {
 
 async function fetchBytes(url: string): Promise<{ buf: Buffer; contentType: string } | null> {
   // Providers answer with a CDN URL or (OpenAI) a data: URI — both are bytes.
+  // Read by the image check's own parser, so what is stored is what was judged.
   if (url.startsWith("data:")) {
-    const comma = url.indexOf(",");
-    if (comma === -1) return null;
-    const meta = url.slice(5, comma);
-    return {
-      buf: Buffer.from(url.slice(comma + 1), meta.includes("base64") ? "base64" : "utf8"),
-      contentType: meta.split(";")[0] || "image/png",
-    };
+    const buf = dataUrlBytes(url);
+    if (!buf) return null;
+    return { buf, contentType: url.slice(5, url.indexOf(",")).split(";")[0] || "image/png" };
   }
   const res = await fetch(url).catch(() => null);
   if (!res?.ok) return null;
