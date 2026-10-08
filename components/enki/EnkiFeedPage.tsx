@@ -1,21 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
-import EnkiCard from "@/components/enki/EnkiCard";
 import EnkiFilters from "@/components/enki/EnkiFilters";
+import FeedCard from "@/components/enki/FeedCard";
+import MasonryGrid from "@/components/enki/MasonryGrid";
 import GenerateLauncher from "@/components/GenerateLauncher";
 import EnkiDetailPanel from "@/components/enki/EnkiDetailPanel";
-import { seedFromEnkiPrompt } from "@/lib/ui/image-view/seed";
-import type { EnkiPrompt } from "@/lib/enkiPromptAdapter";
-import { mapMarketplacePromptToEnkiPrompt } from "@/lib/enkiPromptAdapter";
+import { seedFromFeedCard, toFeedCard, type FeedCard as Card } from "@/lib/ui/feed/card";
 import { useModelCatalogue } from "@/hooks/useModelLimits";
+import { useBookmarkIndex } from "@/hooks/useBookmarkIndex";
 import { toModelFamily } from "@/lib/generation/model-family";
 import { useBetaAccess } from "@/components/BetaGate";
 import { sessionHeadersWith } from "@/lib/session-headers";
 import { openCreator } from "@/lib/openCreator";
 import { SEARCH_DEBOUNCE_MS, failureSentence, type SearchCreator } from "@/lib/search/client";
+import "./feed.css";
 
 /* The value a debounce later: the field writes ?q= on every keystroke, the
    server is asked once the typing pauses. */
@@ -28,31 +29,9 @@ function useDebounced(value: string, ms: number) {
   return settled;
 }
 
-function useLocalFavorites() {
-  const [favs, setFavs] = useState<Record<string, boolean>>(() => {
-    if (typeof window === "undefined") return {};
-    try {
-      return JSON.parse(localStorage.getItem("enki:favorites") || "{}");
-    } catch {
-      return {};
-    }
-  });
-
-  const toggleFav = (id: string) => {
-    setFavs((current) => {
-      const next = { ...current, [id]: !current[id] };
-      if (typeof window !== "undefined") {
-        localStorage.setItem("enki:favorites", JSON.stringify(next));
-      }
-      return next;
-    });
-  };
-
-  return { favs, toggleFav };
-}
-
 export default function EnkiFeedPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [tags, setTags] = useState<string[]>([]);
   /* The shell search: ?q= is written by SearchChip on every keystroke. A
      non empty query, debounced, swaps the feed's source for /api/search;
@@ -78,21 +57,38 @@ export default function EnkiFeedPage() {
     };
     return [...branch("Image", "image"), ...branch("Video", "video")];
   }, [catalogue]);
-  const [open, setOpen] = useState<EnkiPrompt | null>(null);
-  const { favs, toggleFav } = useLocalFavorites();
+  const [open, setOpen] = useState<Card | null>(null);
+  /* Cards whose prompt the server refused on open: gone for the visit
+     (the feed lists rows the detail route no longer serves). */
+  const [gone, setGone] = useState<ReadonlySet<string>>(() => new Set());
   /* 18+ pill (Kev, 2026-10-03): only a user who confirmed in Settings that
      they are 18 or older sees it, off until they turn it on, and it belongs
      to their account (BetaGate). The page asks for exactly what it shows, and
      the server checks the confirmation again behind the header. */
-  const { adultConfirmed, adultPill, setAdultPill } = useBetaAccess();
+  const { access, role, adultConfirmed, adultPill, setAdultPill } = useBetaAccess();
+  const authed = access === "ok" && role !== "team";
   const showAdult = adultConfirmed && adultPill;
 
-  // OPEN counter: opening a prompt fires a fire-and-forget beacon; the server
-  // dedupes per viewer for 10 min and increments prompts.opens atomically.
+  /* Touch: the card revealed by a first tap. It belongs to one view of the
+     wall, so a new category or search clears it. */
+  const view = `${tags.join()}|${query}`;
+  const [reveal, setReveal] = useState<{ id: string; view: string } | null>(null);
+  const revealedId = reveal?.view === view ? reveal.id : null;
   useEffect(() => {
-    if (!open?.id) return;
-    fetch(`/api/prompts/${encodeURIComponent(open.id)}/view`, { method: "POST" }).catch(() => {});
-  }, [open?.id]);
+    if (!revealedId) return;
+    const onDown = (e: PointerEvent) => {
+      if (!(e.target as Element).closest?.("[data-pid], .enki-bmp")) setReveal(null);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [revealedId]);
+
+  /* The shell's Home with nothing open: back to All at the top. */
+  useEffect(() => {
+    const onHome = () => setTags([]);
+    window.addEventListener("enki:home", onHome);
+    return () => window.removeEventListener("enki:home", onHome);
+  }, []);
 
   // VIEW counter (timeline impressions): one IntersectionObserver watches every
   // card; ids that became at least half visible are buffered and flushed as ONE
@@ -126,7 +122,7 @@ export default function EnkiFeedPage() {
     }, 3000);
     return () => { impressionObserver.current?.disconnect(); clearInterval(flush); };
   }, []);
-  const observeCard = useCallback((el: HTMLDivElement | null) => {
+  const observeCard = useCallback((el: HTMLElement | null) => {
     if (el) impressionObserver.current?.observe(el);
   }, []);
 
@@ -178,7 +174,10 @@ export default function EnkiFeedPage() {
     staleTime: 60_000,
   });
 
-  /* IntersectionObserver for infinite scroll */
+  const index = useBookmarkIndex(authed && data !== undefined);
+
+  /* IntersectionObserver for infinite scroll: 800 px ahead, so the next
+     page is asked for before the reader reaches the end. */
   const observerRef = useRef<IntersectionObserver | null>(null);
   const sentinelCallback = useCallback(
     (node: HTMLDivElement | null) => {
@@ -187,47 +186,71 @@ export default function EnkiFeedPage() {
         if (entries[0].isIntersecting && hasNextPage && !isFetchingNextPage) {
           fetchNextPage();
         }
-      });
+      }, { rootMargin: "800px 0px" });
       if (node) observerRef.current.observe(node);
     },
     [fetchNextPage, hasNextPage, isFetchingNextPage]
   );
 
-  const allPrompts = useMemo<EnkiPrompt[]>(() => {
-    const pages = data?.pages ?? [];
-    const flat = pages.flatMap((page, pageIndex) =>
-      Array.isArray(page.prompts)
-        ? page.prompts.map((item: unknown, idx: number) => mapMarketplacePromptToEnkiPrompt(item, pageIndex * 24 + idx))
-        : []
-    );
-    return flat;
-  }, [data]);
+  /* Each prompt once: an offset page can repeat the last row of the one
+     before when a prompt was listed in between. */
+  const allPrompts = useMemo<Card[]>(() => {
+    const seen = new Set<string>(gone);
+    const cards: Card[] = [];
+    for (const raw of (data?.pages ?? []).flatMap((page) => (Array.isArray(page.prompts) ? page.prompts : []))) {
+      const card = toFeedCard(raw);
+      if (card && !seen.has(card.id)) { seen.add(card.id); cards.push(card); }
+    }
+    return cards;
+  }, [data, gone]);
 
   const creators = query ? data?.pages[0]?.creators ?? [] : [];
 
-  const visible = useMemo<EnkiPrompt[]>(() => {
+  const visible = useMemo<Card[]>(() => {
     if (!tags.length) return allPrompts;
     // The chips are categories: a prompt has one, and any picked chip shows it.
     return allPrompts.filter((prompt) => tags.includes(prompt.category));
   }, [allPrompts, tags]);
 
-  const toggleTag = (tag: string) => {
-    setTags((current) => (current.includes(tag) ? [] : [tag]));
+  const pick = (key: string | null) => {
+    setTags(key ? [key] : []);
+    window.scrollTo({ top: 0 });
   };
+
+  const openCard = (card: Card) => {
+    setOpen(card);
+    setReveal(null);
+    // OPEN counter: fire-and-forget; the server dedupes per viewer for 10 min.
+    fetch(`/api/prompts/${encodeURIComponent(card.id)}/view`, { method: "POST" }).catch(() => {});
+  };
+  const closeCard = () => {
+    // The view's own read of the prompt answered 404: drop the card for the visit.
+    const read = open && queryClient.getQueryState([`/api/prompts/${open.id}`]);
+    if (open && read?.status === "error" && /^404\b/.test(read.error?.message ?? "")) setGone((g) => new Set(g).add(open.id));
+    setOpen(null);
+  };
+
+  const renderCard = (card: Card) => (
+    <FeedCard ref={observeCard} card={card} revealed={revealedId === card.id} onReveal={(id) => setReveal({ id, view })}
+      onOpen={openCard} canBookmark={authed} saved={index?.get(card.id)} />
+  );
 
   const showEmpty = !isPending && visible.length === 0 && !isFetchingNextPage;
 
   return (
     <>
-      <main className="enki">
+      <div className="feed kit-focus">
+        <EnkiFilters active={tags} onPick={pick}
+          generators={generatorGroups} generatorFilter={genFilter} onGeneratorFilter={setGenFilter}
+          showAdult={showAdult} onShowAdult={adultConfirmed ? setAdultPill : undefined} />
         {creators.length > 0 && (
-          <div className="enki-search-creators" aria-label="Creators">
+          <div className="feed-creators" aria-label="Creators">
             {creators.map((c) => (
-              <button key={c.id} type="button" className="enki-search-creator" onClick={() => openCreator(c.handle, router)}>
+              <button key={c.id} type="button" className="feed-creator" onClick={() => openCreator(c.handle, router)}>
                 {c.avatarUrl
                   // eslint-disable-next-line @next/next/no-img-element
                   ? <img src={c.avatarUrl} alt="" draggable={false} />
-                  : <span className="enki-search-creator-initial">{c.handle[0]?.toUpperCase()}</span>}
+                  : <span className="feed-creator-initial">{c.handle[0]?.toUpperCase()}</span>}
                 <span>{c.displayName}</span>
                 <small>@{c.handle}</small>
               </button>
@@ -235,90 +258,49 @@ export default function EnkiFeedPage() {
           </div>
         )}
         {visible.length > 0 ? (
-          <section className="enki-masonry">
-            {visible.map((prompt) => (
-              <div key={prompt.id} data-pid={prompt.id} ref={observeCard} style={{ breakInside: "avoid" }}>
-                <EnkiCard
-                  prompt={prompt}
-                  onOpen={setOpen}
-                />
-              </div>
-            ))}
-            {/* Sentinel for infinite scroll */}
-            <div ref={sentinelCallback} style={{ height: 1, breakInside: "avoid" }} />
-            {/* Skeleton loaders for next page */}
-            {isFetchingNextPage && (
-              <>
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <div key={`sk-${i}`} className="enki-skeleton" />
-                ))}
-              </>
-            )}
-          </section>
+          <>
+            <MasonryGrid items={visible} skeletons={isFetchingNextPage ? 6 : 0} renderItem={renderCard} />
+            <div ref={sentinelCallback} className="feed-sentinel" />
+          </>
         ) : isPending ? (
-          <section className="enki-masonry">
-            {Array.from({ length: 12 }).map((_, i) => (
-              <div key={`sk-init-${i}`} className="enki-skeleton" />
-            ))}
-          </section>
+          <MasonryGrid items={[]} skeletons={12} renderItem={renderCard} />
         ) : error ? (
-          <section className="enki-empty-state">
-            <div className="enki-account-card">
-              <div className="serif" style={{ fontSize: 28, marginBottom: 8 }}>{query ? "Search failed." : "Couldn't load the feed."}</div>
-              <p style={{ margin: 0, color: "var(--enki-ink-2)" }}>{error.message}</p>
-              <button type="button" className="ek-btn" style={{ marginTop: 16, minHeight: 40 }} onClick={() => void refetch()}>Try again</button>
-            </div>
+          <section className="feed-note" role="alert">
+            <h2 className="kit-title">{query ? "Search failed." : "Couldn't load the feed."}</h2>
+            <p>{error.message}</p>
+            <button type="button" className="ek-btn" onClick={() => void refetch()}>Try again</button>
           </section>
         ) : hasNextPage ? (
           // Nothing to show yet, more to read (a page of hidden creators'
           // cards, or none in the picked category): the sentinel stays on
           // screen and asks for the next page.
-          <section className="enki-masonry">
-            <div ref={sentinelCallback} style={{ height: 1, breakInside: "avoid" }} />
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={`sk-more-${i}`} className="enki-skeleton" />
-            ))}
-          </section>
+          <>
+            <div ref={sentinelCallback} className="feed-sentinel" />
+            <MasonryGrid items={[]} skeletons={6} renderItem={renderCard} />
+          </>
         ) : showEmpty ? (
-          <section className="enki-empty-state">
-            <div className="enki-account-card">
-              <div className="serif" style={{ fontSize: 28, marginBottom: 8 }}>
-                {query ? `No ${creators.length ? "prompts" : "results"} for “${query}”.` : "No prompts here yet."}
-              </div>
-              <p style={{ margin: 0, color: "var(--enki-ink-2)" }}>
-                {query ? "Try another word." : "Adjust your filters to widen the results."}
-              </p>
-            </div>
+          <section className="feed-note">
+            <h2 className="kit-title">
+              {query ? `No ${creators.length ? "prompts" : "results"} for “${query}”.` : "No prompts here yet."}
+            </h2>
+            <p>{query ? "Try another word." : "Adjust your filters to widen the results."}</p>
           </section>
         ) : null}
+      </div>
 
-        {/* The floating "Generate" button, and only that. It used to be handed
-            the clicked card as a seed, which opened the quick-create modal
-            over the feed — Kev, 2026-08-13: "wenn ich ein image anclicke SOLL
-            NICHT quick create oder sowas aufgehen". */}
-        <GenerateLauncher />
-      </main>
+      {/* The floating "Generate" button, and only that. It used to be handed
+          the clicked card as a seed, which opened the quick-create modal
+          over the feed — Kev, 2026-08-13: "wenn ich ein image anclicke SOLL
+          NICHT quick create oder sowas aufgehen". */}
+      <GenerateLauncher />
 
       {/* Clicking a card opens the canonical image view — the same one the
-          /generator route and the profile grid open, so a buyer meets one
-          layout everywhere: variables and generate on the left, the image in
-          the middle, the session's other images beneath it, comments and
-          reviews at the top, history on the right.
-
-          EnkiDetailPanel is the frame that already knows to start where the
-          shell's menu ends, so this inherits that rather than restating it. */}
+          /generator route and the profile grid open. EnkiDetailPanel is the
+          frame that already knows to start where the shell's menu ends.
+          (faved/toggleFav are still required by its props, and unused.) */}
       {open && (
-        <EnkiDetailPanel
-          seed={seedFromEnkiPrompt(open)}
-          onClose={() => setOpen(null)}
-          faved={Boolean(favs[open.id])}
-          toggleFav={toggleFav}
-        />
+        <EnkiDetailPanel seed={seedFromFeedCard(open)} onClose={closeCard} faved={false} toggleFav={() => {}} />
       )}
-
-      <EnkiFilters active={tags} toggle={toggleTag}
-        generators={generatorGroups} generatorFilter={genFilter} onGeneratorFilter={setGenFilter}
-        showAdult={showAdult} onShowAdult={adultConfirmed ? setAdultPill : undefined} />
     </>
   );
 }
