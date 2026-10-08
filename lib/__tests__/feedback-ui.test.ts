@@ -9,6 +9,7 @@ import { readSource } from "./_read-source";
  */
 const ROOT = join(__dirname, "..", "..");
 const MODAL = readSource(join(ROOT, "components", "enki-shell", "FeedbackModal.tsx"));
+const ADMIN = readSource(join(ROOT, "app", "admin", "page.tsx"));
 
 describe("the feedback modal", () => {
   it("lists the sender's own reports with the session, a guest none", () => {
@@ -20,5 +21,17 @@ describe("the feedback modal", () => {
     expect(MODAL).toContain('const STATE_LABEL: Record<FeedbackDecision, string> = { open: "In review", done: "Done", rejected: "Declined" };');
     expect(MODAL).toMatch(/\{m\.paid && m\.txUrl\n\s+\? <a href=\{m\.txUrl\} target="_blank" rel="noopener noreferrer"/);
     expect(MODAL).toContain(': <span style={{ fontSize: 10, color: "var(--enki-ink-3)", flexShrink: 0 }}>{m.paid ? "Paid" : STATE_LABEL[m.state]}</span>}');
+  });
+});
+
+describe("the admin panel's Feedback tab", () => {
+  it("signs a report's attachments anew each time its row opens, and shows each by its kind", () => {
+    expect(ADMIN).toContain("onClick={() => void openFeedback(r)}");
+    const open = ADMIN.slice(ADMIN.indexOf("const openFeedback = async (r: Fb) => {"), ADMIN.indexOf("const post = async"));
+    expect(open).toContain("if (fbOpen === r.id) { setFbOpen(null); return; }");
+    expect(open).toContain("if (!r.images) return;");
+    expect(open).toContain("const res = await fetch(`/api/admin?feedback=${encodeURIComponent(r.id)}`, { headers: sessionAuthHeaders() });");
+    expect(open).toContain("setFbFiles((cur) => ({ ...cur, [r.id]: files }));");
+    expect(ADMIN).toMatch(/\{fbFiles\[r\.id\]\.map\(\(f, i\) => f\.url && \(f\.mime\.startsWith\("video\/"\)\n\s+\? <video key=\{i\} src=\{f\.url\} controls/);
   });
 });

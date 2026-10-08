@@ -24,6 +24,7 @@ import { REPORT_REASONS } from "@/lib/report-reasons";
 type Imp = { id: string; name: string; url: string | null; hunter: string; tags: string[]; at: string };
 type Rep = { id: string; target: string; type: "prompt" | "image" | "profile"; href: string | null; reason: string; details: string | null; reporter: string; severity: string | null; at: string };
 type Fb = { id: string; name: string; email: string | null; desc: string; images: number; paid: boolean; payoutCents: number | null; at: string };
+type FbFile = { url: string | null; mime: string };
 type Hunter = { handle: string; total: number; approved: number; denied: number; earningsCents: number };
 type StrikeRow = { userId: string; handle: string; strikes: { id: string; reason: string | null }[]; banned: boolean; permanent: boolean; note: string | null; appeal: { id: string; note: string | null; against: { reason: string | null; until: string | null } | null } | null };
 type Rec = { id: string; handle: string; wallet: string | null; contact: string | null; explanation: string | null; evidence: { kind: string; matched: boolean | null }[]; status: string; at: string };
@@ -152,6 +153,7 @@ export default function AdminPage() {
   const [impRejectId, setImpRejectId] = useState<string | null>(null);
   const [impReason, setImpReason] = useState(REJECT_REASONS[0]);
   const [fbOpen, setFbOpen] = useState<string | null>(null);
+  const [fbFiles, setFbFiles] = useState<Record<string, FbFile[]>>({});
   const [invEmail, setInvEmail] = useState("");
   const [invWallet, setInvWallet] = useState("");
   const [granting, setGranting] = useState(false);
@@ -221,6 +223,21 @@ export default function AdminPage() {
     if (!g) return;
     setGenLimit(g.maxConcurrentPerUser === null ? "" : String(g.maxConcurrentPerUser));
   }, [data?.generation]);
+
+  /* A report's attachments are signed each time its row opens: the links
+     expire within minutes, so none outlives the look. */
+  const openFeedback = async (r: Fb) => {
+    if (fbOpen === r.id) { setFbOpen(null); return; }
+    setFbOpen(r.id);
+    if (!r.images) return;
+    try {
+      const res = await fetch(`/api/admin?feedback=${encodeURIComponent(r.id)}`, { headers: sessionAuthHeaders() });
+      if (res.ok) {
+        const { files } = (await res.json()) as { files: FbFile[] };
+        setFbFiles((cur) => ({ ...cur, [r.id]: files }));
+      }
+    } catch { /* the text still shows */ }
+  };
 
   const post = async (payload: Record<string, unknown>, okMsg: string, apply: (d: AdminData) => AdminData) => {
     try {
@@ -641,7 +658,7 @@ export default function AdminPage() {
                   {filteredFeedback.length === 0 && <div style={{ padding: 30, textAlign: "center", fontSize: 12, color: "var(--enki-ink-3)" }}>No feedback yet.</div>}
                   {filteredFeedback.map((r) => (
                     <div key={r.id}>
-                      <div style={{ ...rowStyle, cursor: "pointer" }} onClick={() => setFbOpen((v) => (v === r.id ? null : r.id))}>
+                      <div style={{ ...rowStyle, cursor: "pointer" }} onClick={() => void openFeedback(r)}>
                         <span style={{ width: 116, fontSize: 12, fontWeight: 600, color: "var(--enki-ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
                         <span style={{ width: 132, fontFamily: MONO, fontSize: 9.5, color: "var(--enki-ink-3)", overflow: "hidden", textOverflow: "ellipsis" }}>{r.email ?? "—"}</span>
                         <span style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: "var(--enki-ink-3)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.desc}</span>
@@ -657,6 +674,18 @@ export default function AdminPage() {
                       {fbOpen === r.id && (
                         <div style={{ padding: "2px 0 12px 10px", borderLeft: `3px solid ${PILL.amber.border}`, margin: "0 0 8px 4px" }}>
                           <p style={{ margin: 0, fontSize: 12, color: "var(--enki-ink-2)", lineHeight: 1.65, maxWidth: 640 }}>{r.desc}</p>
+                          {(fbFiles[r.id] ?? []).length > 0 && (
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                              {fbFiles[r.id].map((f, i) => f.url && (f.mime.startsWith("video/")
+                                ? <video key={i} src={f.url} controls preload="metadata" style={{ maxWidth: 320, maxHeight: 220, borderRadius: 6, background: "#000" }} />
+                                : (
+                                  <a key={i} href={f.url} target="_blank" rel="noopener noreferrer">
+                                    {/* eslint-disable-next-line @next/next/no-img-element -- a private attachment by a link that expires in minutes; next/image would fetch and cache it on our server */}
+                                    <img src={f.url} alt={`Attachment ${i + 1} of the report`} style={{ display: "block", maxWidth: 220, maxHeight: 160, objectFit: "contain", borderRadius: 6, border: "1px solid var(--enki-rule)" }} />
+                                  </a>
+                                )))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
