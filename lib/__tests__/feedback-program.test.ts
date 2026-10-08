@@ -32,6 +32,7 @@ vi.mock("@/lib/session-user", async (original) => ({
 vi.mock("@/lib/crypto", async (original) => ({ ...(await original<typeof import("@/lib/crypto")>()), decryptString: () => "anna@enki.test" }));
 
 import { GET as adminGet, POST as adminPost } from "../../app/api/admin/route";
+import { GET as myFeedback } from "../../app/api/feedback/route";
 
 const FB1 = "aaaaaaaa-0000-4000-8000-000000000001";
 const FB2 = "aaaaaaaa-0000-4000-8000-000000000002";
@@ -206,5 +207,29 @@ describe("recording a payout", () => {
     // The fake answers every column; the live reads only those they name.
     expect(ADMIN_ROUTE).toMatch(/\.from\("feedback_submissions"\)\n\s+\.select\("[^"]*\bpayout_tx_hash, payout_chain_key\b[^"]*"\)/);
     expect(ADMIN_ROUTE).toContain('supabase.from("user_wallets").select("user_id, address").in("user_id", chunk).eq("chain_family", "solana").is("removed_at", null)');
+  });
+});
+
+describe("the sender's own reports", () => {
+  const mine = async (token: string) => {
+    const res = await myFeedback(new NextRequest("http://enki.test/api/feedback", { headers: { "X-Session-Token": token } }));
+    return { status: res.status, body: await res.json() };
+  };
+  const FB3 = "aaaaaaaa-0000-4000-8000-000000000003";
+
+  it("lists theirs alone, with the decision and the payment, never the reviewer", async () => {
+    const SIG = bs58.encode(new Uint8Array(64).fill(7));
+    db.current!.tables.feedback_submissions.push(row(FB3, { description: "A".repeat(200), status: FEEDBACK_STATUS.done, paid_at: "2026-10-08T12:00:00Z", payout_tx_hash: SIG, payout_chain_key: "solana", reviewer_id: "admin-1", reviewer_notes: "internal" }));
+    expect(await mine("anna-tok")).toEqual({ status: 200, body: { items: [
+      { id: FB1, at: "2026-10-08T10:00:00Z", preview: "The save button does nothing at all.", state: "open", paid: false, payoutCents: 10000, txUrl: null },
+      { id: FB3, at: "2026-10-08T10:00:00Z", preview: "A".repeat(80), state: "done", paid: true, payoutCents: 10000, txUrl: `https://explorer.solana.com/tx/${SIG}` },
+    ] } });
+    // The fake answers every column; the live read only those it names.
+    const route = readSource(join(__dirname, "..", "..", "app", "api", "feedback", "route.ts"));
+    expect(route).toContain('.select("id, description, status, paid_at, payout_cents, payout_tx_hash, payout_chain_key, created_at")');
+  });
+
+  it("asks for a session", async () => {
+    expect((await mine("")).status).toBe(401);
   });
 });

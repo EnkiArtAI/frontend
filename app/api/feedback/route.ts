@@ -5,6 +5,7 @@
  * files[] (image/video, at most 5, 4 MB together). Requires a session — the payout needs
  * an account to land in. Rows go to feedback_submissions (+ attachments in
  * the PRIVATE "feedback" bucket) and surface in the admin panel's queue.
+ * GET → the session's own reports: the decision, and the payment once made.
  * Columns verified live 2026-07-20.
  */
 import { NextRequest, NextResponse, after } from "next/server";
@@ -16,7 +17,8 @@ import { encryptString } from "@/lib/crypto";
 import { checkImageBytes, NOT_AN_IMAGE } from "@/lib/moderation/image-check-bytes";
 import { recordImageCase } from "@/lib/moderation/image-case";
 import { notifyAdmins } from "@/lib/admin-notify";
-import { FEEDBACK_BUCKET, FEEDBACK_FILE_EXT, FEEDBACK_MAX_BYTES, FEEDBACK_MAX_FILES } from "@/lib/feedback";
+import { FEEDBACK_BUCKET, FEEDBACK_FILE_EXT, FEEDBACK_MAX_BYTES, FEEDBACK_MAX_FILES, feedbackDecision } from "@/lib/feedback";
+import { explorerTxUrl } from "@/lib/send-usdc";
 
 /** A video container by its own first bytes: MP4 and MOV (ftyp), WebM (EBML). */
 const isVideo = (b: Buffer) => b.toString("latin1", 4, 8) === "ftyp" || b.subarray(0, 4).toString("hex") === "1a45dfa3";
@@ -28,6 +30,28 @@ const SEV_MAP: Record<string, { severity: string; category: string }> = {
   annoying: { severity: "medium", category: "other" },
   minor: { severity: "low", category: "other" },
 };
+
+export async function GET(req: NextRequest) {
+  const supabase = getSupabaseServerClient();
+  const userId = await resolveSessionUserId(supabase, req.headers.get("X-Session-Token"));
+  if (!userId) return NextResponse.json({ error: "Sign in first" }, { status: 401 });
+  const { data, error } = await supabase.from("feedback_submissions")
+    .select("id, description, status, paid_at, payout_cents, payout_tx_hash, payout_chain_key, created_at")
+    .eq("user_id", userId).order("created_at", { ascending: false }).limit(20);
+  if (error) return NextResponse.json({ error: "Could not load your feedback" }, { status: 503 });
+  return NextResponse.json({
+    items: (data ?? []).map((r) => ({
+      id: String(r.id),
+      at: String(r.created_at),
+      // The start is enough to recognise one's own report.
+      preview: String(r.description ?? "").slice(0, 80),
+      state: feedbackDecision(r.status),
+      paid: !!r.paid_at,
+      payoutCents: Number(r.payout_cents),
+      txUrl: r.paid_at && r.payout_tx_hash ? explorerTxUrl(r.payout_chain_key, String(r.payout_tx_hash)) : null,
+    })),
+  });
+}
 
 export async function POST(req: NextRequest) {
   const supabase = getSupabaseServerClient();
