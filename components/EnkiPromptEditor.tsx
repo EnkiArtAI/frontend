@@ -737,13 +737,12 @@ export default function EnkiPromptEditor() {
     pendingVarSync: false,
   });
 
-  // Per-model reference-image cap from the models table: the user-adjustable
-  // maxImages can never exceed what the selected generator supports.
+  // Per-model reference-image cap from the models table: the images allowed
+  // are the author's number within what the selected generator supports. It
+  // is never written over the author's number, which survives a model that
+  // takes fewer (Flux takes none) and comes back on one that takes more.
   const modelLimits = useModelLimits(models.selected[0]);
-  useEffect(() => {
-    setUi((p) => (p.maxImages > modelLimits.maxRefs ? { ...p, maxImages: modelLimits.maxRefs } : p));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelLimits.maxRefs]);
+  const maxImages = Math.min(ui.maxImages, modelLimits.maxRefs);
 
   /* Controls the single-select Category dropdown so it closes on pick. */
   const [catOpen, setCatOpen] = useState(false);
@@ -1355,10 +1354,10 @@ export default function EnkiPromptEditor() {
   }, [router]);
 
   const addReferenceImage = (file: File) => {
-    if (referenceImages.length >= ui.maxImages) {
+    if (referenceImages.length >= maxImages) {
       toast({
         title: "Limit reached",
-        description: `You can add up to ${ui.maxImages} reference image(s).`,
+        description: `You can add up to ${maxImages} reference image(s).`,
         variant: "destructive",
       });
       return;
@@ -3693,7 +3692,7 @@ export default function EnkiPromptEditor() {
                     className="enk-ref-add"
                     aria-label="Add reference images"
                     title="Click or drag images here for reference"
-                    disabled={referenceImages.length >= ui.maxImages}
+                    disabled={referenceImages.length >= maxImages}
                     onClick={(e) => {
                       e.stopPropagation();
                       pickReferenceImages();
@@ -3904,7 +3903,7 @@ export default function EnkiPromptEditor() {
                 })()}
               </div>
               <p className="enk-hint-text" style={{ margin: 0 }}>
-                Buyers can upload an image — or pick an NFT from their wallet — up to {ui.maxImages} per render.
+                Buyers can upload an image — or pick an NFT from their wallet — up to {maxImages} per render.
               </p>
             </div>
             </div>
