@@ -84,7 +84,7 @@ describe("the Reports tab", () => {
   const PAGE = readSource(join(__dirname, "..", "..", "app", "admin", "page.tsx"));
 
   it("reads every urgent report besides the newest, so none drowns below the hundred newest", () => {
-    expect(ROUTE).toContain('return (urgent ? q.in("severity", ["critical", "high"]) : q).order("created_at", { ascending: false }).limit(100);');
+    expect(ROUTE).toContain('return (urgent ? q.in("severity", ["critical", "high"]) : q).order("created_at", { ascending: false }).limit(urgent ? 1000 : 100);');
     expect(ROUTE).toContain('.eq("status", "pending");');
   });
 
