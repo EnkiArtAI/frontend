@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { shrinkImage } from "@/lib/shrink-image";
 
 /** A picked image file as a data URL; null when the browser cannot read it, so nothing waits forever. */
 export function readImageFile(file: Blob): Promise<string | null> {
@@ -15,14 +16,15 @@ export function readImageFile(file: Blob): Promise<string | null> {
 /**
  * A reference as a data URL: a file is read in place, a link (a wallet NFT's
  * image) is fetched first. The server judges every reference by its bytes and
- * never fetches an address a user names.
+ * never fetches an address a user names. Either is made smaller first, so
+ * every reference fits a request (lib/shrink-image).
  */
 export async function readReference(src: Blob | string): Promise<string | null> {
   // A host that never answers would hold Generate for good: 20 s at most.
   const blob = typeof src === "string"
     ? await fetch(src, { signal: AbortSignal.timeout(20_000) }).then((r) => (r.ok ? r.blob() : null)).catch(() => null)
     : src;
-  return blob ? readImageFile(blob) : null;
+  return blob ? readImageFile(await shrinkImage(blob)) : null;
 }
 
 /** Each link read is its own pending entry: two NFTs often share one image address. */
