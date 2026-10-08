@@ -13,6 +13,18 @@ import type { MessageSignerWalletAdapter } from "@solana/wallet-adapter-base";
 import { linkWalletMessage } from "@/lib/link-wallet-message";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 
+const CHANGED_KEY = "enki-wallets-changed";
+
+/** A wallet was linked or unlinked: the NFT list the browser keeps for a minute is out of date. */
+export function markWalletsChanged() {
+  try { localStorage.setItem(CHANGED_KEY, String(Date.now())); } catch { /* no storage: the minute runs out by itself */ }
+}
+
+/** Whether the browser's one-minute copy of the NFT list may predate a link or unlink. */
+export function walletsChangedRecently(): boolean {
+  try { return Date.now() - Number(localStorage.getItem(CHANGED_KEY) ?? 0) < 60_000; } catch { return false; }
+}
+
 export async function linkWallet(adapter: MessageSignerWalletAdapter, domain = window.location.host): Promise<string> {
   const wasConnected = adapter.connected;
   try {
@@ -34,6 +46,7 @@ export async function linkWallet(adapter: MessageSignerWalletAdapter, domain = w
     });
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     if (!res.ok) throw new Error(body.error || "The wallet could not be linked. Try again.");
+    markWalletsChanged();
     return address;
   } finally {
     if (!wasConnected) await adapter.disconnect().catch(() => { /* already gone */ });

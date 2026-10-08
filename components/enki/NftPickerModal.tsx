@@ -11,6 +11,7 @@ import { sessionAuthHeaders } from "@/lib/session-headers";
 import type { NftPick } from "@/hooks/useReferenceReads";
 import { useEmailAuth } from "@/hooks/useEmailAuth";
 import LinkWalletButtons from "@/components/settings/LinkWalletButtons";
+import { walletsChangedRecently } from "@/components/settings/link-wallet";
 // Shared popup chrome (spinner, CTA button) + its own styles live here.
 import "@/components/enki/bookmarks.css";
 
@@ -30,11 +31,12 @@ export default function NftPickerModal({ max, onPick, onClose }: {
   const [marked, setMarked] = useState<Set<string>>(new Set());
   // An email account can link a wallet right here (Settings → Profile has the list).
   const { isAuthed: emailAuthed } = useEmailAuth();
-  // Bumped after a link: read again, past the browser's one-minute copy of the list.
+  // Bumped after a link here: read again, past the browser's one-minute copy of the list
+  // (a link or unlink in Settings asks for the same through walletsChangedRecently).
   const [round, setRound] = useState(0);
 
   useEffect(() => {
-    fetch("/api/wallet/nfts", { headers: { ...sessionAuthHeaders() }, cache: round ? "reload" : "default" })
+    fetch("/api/wallet/nfts", { headers: { ...sessionAuthHeaders() }, cache: round || walletsChangedRecently() ? "reload" : "default" })
       .then(async (r) => {
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.error || "NFTs unavailable");

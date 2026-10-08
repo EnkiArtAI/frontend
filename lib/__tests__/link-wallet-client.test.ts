@@ -19,7 +19,7 @@ const db = vi.hoisted(() => ({ current: null as ReturnType<typeof import("./_fak
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => db.current!.client }));
 vi.mock("@/lib/session-headers", () => ({ sessionAuthHeaders: () => ({ "X-Session-Token": "me" }) }));
 
-import { linkWallet } from "@/components/settings/link-wallet";
+import { linkWallet, walletsChangedRecently } from "@/components/settings/link-wallet";
 import { POST as nonceRoute } from "../../app/api/auth/nonce/route";
 import { POST as linkRoute } from "../../app/api/wallet/linked/route";
 
@@ -79,6 +79,22 @@ describe("linking a wallet from the browser", () => {
     expect(a.disconnect).toHaveBeenCalledTimes(1);
   });
 
+  it("marks the browser's copy of the NFT list out of date after a link, and only after one", async () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) });
+    expect(walletsChangedRecently()).toBe(false);
+    browser(() => Response.json({ error: "no" }, { status: 409 }));
+    await expect(linkWallet(wallet().adapter, "enki.test")).rejects.toThrow();
+    expect(walletsChangedRecently()).toBe(false);
+    browser();
+    await linkWallet(wallet().adapter, "enki.test");
+    expect(walletsChangedRecently()).toBe(true);
+    // A minute later the browser's copy has expired by itself.
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
+    expect(walletsChangedRecently()).toBe(false);
+    vi.restoreAllMocks();
+  });
+
   it("says the server's reason when it refuses, and lets the wallet go", async () => {
     const { a, adapter } = wallet();
     browser(() => Response.json({ error: "You can link up to 3 wallets. Unlink one first." }, { status: 409 }));
@@ -124,6 +140,11 @@ describe("where a wallet is linked", () => {
 
   it("an unlink that finds the wallet gone already reads as unlinked, not as a failure", () => {
     const linked = src("components", "settings", "LinkedWallets.tsx");
-    expect(linked).toContain("if (res?.ok || res?.status === 404) setWallets((w) => (w ?? []).filter((a) => a !== address));");
+    expect(linked).toMatch(/if \(res\?\.ok \|\| res\?\.status === 404\) \{\n\s+markWalletsChanged\(\);\n\s+setWallets\(\(w\) => \(w \?\? \[\]\)\.filter\(\(a\) => a !== address\)\);\n\s+\}/);
+  });
+
+  it("after an unlink in Settings the picker reads past the browser's copy too", () => {
+    expect(src("components", "settings", "LinkedWallets.tsx")).toMatch(/if \(res\?\.ok \|\| res\?\.status === 404\) \{\n\s+markWalletsChanged\(\);/);
+    expect(src("components", "enki", "NftPickerModal.tsx")).toContain('cache: round || walletsChangedRecently() ? "reload" : "default" })');
   });
 });

@@ -62,7 +62,7 @@ describe("quick create's NFT button", () => {
 describe("the empty NFT picker", () => {
   it("offers an email account to link a wallet, then reads the list again past the browser's copy", () => {
     expect(PICKER).toContain('{emailAuthed && <LinkWalletButtons buttonClass="enki-bmp-go" onLinked={() => { setNfts(null); setRound((r) => r + 1); }} />}');
-    expect(PICKER).toContain('cache: round ? "reload" : "default" })');
+    expect(PICKER).toContain('cache: round || walletsChangedRecently() ? "reload" : "default" })');
     expect(PICKER).toMatch(/\.catch\(\(e: Error\) => \{ setNfts\(\[\]\); setProblem\(e\.message\); \}\);\n\s+\}, \[round\]\);/);
   });
 });

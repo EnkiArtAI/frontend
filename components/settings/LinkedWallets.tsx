@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import SettingsSection from "@/components/settings/SettingsSection";
 import LinkWalletButtons from "@/components/settings/LinkWalletButtons";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { markWalletsChanged } from "@/components/settings/link-wallet";
 
 const ROUTE = "/api/wallet/linked";
 
@@ -37,7 +38,10 @@ export default function LinkedWallets({ num }: { num: string }) {
       body: JSON.stringify({ address }),
     }).catch(() => null);
     // 404: no such link on this account (a double click, another tab): it is unlinked either way.
-    if (res?.ok || res?.status === 404) setWallets((w) => (w ?? []).filter((a) => a !== address));
+    if (res?.ok || res?.status === 404) {
+      markWalletsChanged();
+      setWallets((w) => (w ?? []).filter((a) => a !== address));
+    }
     else toast({ title: "Couldn't unlink", variant: "destructive" });
   };
 
