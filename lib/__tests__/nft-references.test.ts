@@ -38,4 +38,14 @@ describe("the buyer page's references", () => {
     expect(BUYER).toMatch(/className="pgv-ref-add"\n\s+onClick=\{\(\) => fileRef\.current\?\.click\(\)\}\n\s+disabled=\{refsTaken >= maxRefs\}/);
     expect(BUYER).not.toMatch(/\b10 - refs\.length|>= 10\b|\/10</);
   });
+
+  it("offer + NFT only for a model that takes references, and read a pick like quick create", () => {
+    expect(BUYER).toMatch(/\{maxRefs > 0 && \(\n\s+<button type="button" className="pgv-ref-nft" onClick=\{\(\) => setNftPickerOpen\(true\)\}\n\s+disabled=\{refsTaken >= maxRefs\}/);
+    expect(BUYER).toContain("{nftPickerOpen && <NftPickerModal max={Math.max(0, maxRefs - refsTaken)} onPick={addNfts} onClose={() => setNftPickerOpen(false)} />}");
+    const add = BUYER.slice(BUYER.indexOf("const addNfts = useCallback((picks: NftPick[]) => {"), BUYER.indexOf("const removeRef = "));
+    expect(add).toContain("picks.forEach(p => void readRef(p).then(url => {");
+    expect(add).toMatch(/if \(!url\) \{\n\s+toast\(\{ title: "NFT image unavailable"[^\n]*variant: "destructive" \}\);\n\s+return;/);
+    expect(add).toContain("setRefs(prev => prev.length >= maxRefs ? prev : [...prev, url]);");
+    expect(add).toContain("}, [maxRefs, readRef, toast]);");
+  });
 });

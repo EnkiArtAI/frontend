@@ -489,6 +489,21 @@ html.dark .pgv-field select {
   margin-bottom: 8px;
 }
 .pgv-ref-count { font-size: 10px; color: var(--pgv-text-muted); }
+/* "+ NFT" sits beside the count, so the deck row keeps its whole width. */
+.pgv-ref-nft {
+  margin-left: auto;
+  margin-right: 8px;
+  padding: 2px 7px;
+  font: inherit;
+  font-size: 10px;
+  color: var(--pgv-text-muted);
+  background: var(--pgv-input-bg);
+  border: 1px dashed var(--surface-2, var(--pgv-border));
+  border-radius: 6px;
+  cursor: pointer;
+}
+.pgv-ref-nft:hover:not(:disabled) { border-color: var(--pgv-accent); color: var(--pgv-accent); }
+.pgv-ref-nft:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* Cascading numbered card-deck, mirroring the prompt editor's reference
    row (.enk-ref-* in app/editor/enki-editor.css). Same idea, separate

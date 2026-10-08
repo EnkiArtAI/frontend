@@ -46,7 +46,8 @@ import DiceButton from "@/components/DiceButton";
 import { DICE_LIMITS, type DiceValue, type DiceVariable } from "@/lib/generation/variable-dice";
 import { type ResolutionTier } from "@/lib/generation/resolution";
 import { useGenerationCore } from "@/hooks/useGenerationCore";
-import { useReferenceReads, REFS_LOADING } from "@/hooks/useReferenceReads";
+import { useReferenceReads, REFS_LOADING, type NftPick } from "@/hooks/useReferenceReads";
+import NftPickerModal from "@/components/enki/NftPickerModal";
 import QualitySelect, { type Quality } from "@/components/generation/QualitySelect";
 import { variableRange } from "@/lib/editor/selection-variable";
 import RatioSelect from "@/components/generation/RatioSelect";
@@ -186,6 +187,7 @@ export default function PromptGeneratorView({
   const guest = !(access === "ok" && role !== "team");
   const [generating, setGenerating] = useState(false);
   const { loading: refsLoading, pending: refsPending, read: readRef } = useReferenceReads();
+  const [nftPickerOpen, setNftPickerOpen] = useState(false);
   // Same model on a priority host — faster, dearer, identical image.
   const [boost, setBoost] = useState(false);
   /* Only consulted below the 960px breakpoint, where the history is an
@@ -754,6 +756,17 @@ export default function PromptGeneratorView({
     });
     if (fileRef.current) fileRef.current.value = "";
   }, [maxRefs, refsTaken, readRef]);
+
+  // A picked NFT joins the deck like an upload: read through our own route, held to the model's limit.
+  const addNfts = useCallback((picks: NftPick[]) => {
+    picks.forEach(p => void readRef(p).then(url => {
+      if (!url) {
+        toast({ title: "NFT image unavailable", description: "This NFT's image could not be loaded, so it was not added.", variant: "destructive" });
+        return;
+      }
+      setRefs(prev => prev.length >= maxRefs ? prev : [...prev, url]);
+    }));
+  }, [maxRefs, readRef, toast]);
 
   const removeRef = useCallback((i: number) => setRefs(prev => prev.filter((_, idx) => idx !== i)), []);
 
@@ -1562,6 +1575,10 @@ export default function PromptGeneratorView({
           <div className="pgv-block">
             <div className="pgv-ref-header">
               <span className="pgv-section-label" style={{ marginBottom: 0 }}>Reference Images</span>
+              {maxRefs > 0 && (
+                <button type="button" className="pgv-ref-nft" onClick={() => setNftPickerOpen(true)}
+                  disabled={refsTaken >= maxRefs} title="Pick an NFT from your wallet">+ NFT</button>
+              )}
               <span className="pgv-ref-count">{refs.length}/{maxRefs}</span>
             </div>
             {/* Cascading numbered card-deck, the same shape the prompt
@@ -2126,6 +2143,8 @@ export default function PromptGeneratorView({
         )}
       </aside>
       )}
+
+      {nftPickerOpen && <NftPickerModal max={Math.max(0, maxRefs - refsTaken)} onPick={addNfts} onClose={() => setNftPickerOpen(false)} />}
 
       {/* Lightbox */}
       {lightbox && (
