@@ -189,7 +189,10 @@ function toDbVarName(name: unknown, position: number, taken: Set<string>): strin
    options; a text, number, yes/no or one flat list of those as its default.
    The prompt check reads exactly these, one level deep, so anything nested
    would be stored, shown and generated from without ever being judged. */
-const plain = (x: unknown) => x == null || ["string", "number", "boolean"].includes(typeof x);
+// Never an image in text's clothes: a data: default would be shown publicly,
+// around both the showcase rule and the image check.
+const plain = (x: unknown) =>
+  x == null || ["number", "boolean"].includes(typeof x) || (typeof x === "string" && !/^\s*data:/i.test(x));
 const text = (x: unknown) => x == null || typeof x === "string";
 function isPlainVariable(v: VariablePayload): boolean {
   return (

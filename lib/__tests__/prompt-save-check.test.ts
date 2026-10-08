@@ -503,6 +503,17 @@ describe("releasing a prompt", () => {
   });
 });
 
+describe("a variable's default", () => {
+  it("is never an image: a data: default is refused, as it would be shown publicly unjudged", async () => {
+    const res = await save({ ...BASE, variables: [{ ...BASE.variables[0], defaultValue: "data:image/png;base64,iVBORw0KGgo=" }] });
+    expect(res.status).toBe(400);
+    expect(tables.prompts).toEqual([]);
+    expect((await save({ ...BASE, variables: [{ ...BASE.variables[0], defaultValue: ["a coat", " DATA:image/png;base64,AAAA"] }] })).status).toBe(400);
+    // Text that merely mentions the word is text.
+    expect((await save({ ...BASE, variables: [{ ...BASE.variables[0], defaultValue: "a coat with data: printed on it" }] })).status).toBe(200);
+  });
+});
+
 describe("a prompt's reference images (CUR-2)", () => {
   const REF = "data:image/png;base64,iVBORw0KGgo=";
   const OUR_REF = "https://abc.public.blob.vercel-storage.com/showcase/u1/ref-0.png";
