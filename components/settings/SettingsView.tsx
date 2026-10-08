@@ -11,6 +11,8 @@ import SettingsSection from "@/components/settings/SettingsSection";
 import SettingsToggle from "@/components/settings/SettingsToggle";
 import PaymentPanel from "@/components/settings/PaymentPanel";
 import RecoveryPanel from "@/components/settings/RecoveryPanel";
+import LinkedWallets from "@/components/settings/LinkedWallets";
+import { useEmailAuth } from "@/hooks/useEmailAuth";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import { REFERRAL_PLATFORM_NAME, type ReferralPlatform } from "@/lib/referral-link";
 import { useBetaAccess } from "@/components/BetaGate";
@@ -72,6 +74,11 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
 
   // Red warning while the account has no confirmed recovery guardian.
   const recovery = useRecoveryStatus();
+  /* Linked wallets are for an email account (Kev, 2026-10-08): a wallet
+     account's own wallet would lose its remembered connection when the
+     adapter disconnects after linking. The sections after it count on. */
+  const { isAuthed: emailAuthed } = useEmailAuth();
+  const no = (n: number) => String(n + (emailAuthed ? 1 : 0)).padStart(2, "0");
 
   // Leaderboard visibility — real flag (users.hide_from_leaderboard).
   const [hideLb, setHideLb] = useState<boolean | null>(null);
@@ -250,7 +257,7 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
   };
 
   const descMap: Record<string, string> = {
-    profile: "Manage your connected social accounts and visibility settings.",
+    profile: "Manage your connected social accounts, linked wallets and visibility settings.",
     payment: "Your balance, your earnings, and the ways money moves in and out — always into your own wallet.",
     referrals: "Found great art on social media? Send the post in. A moderator may rebuild it as a prompt.",
     recovery: "Keep more than one way back in — a passkey on another device, plus guardians you trust.",
@@ -361,7 +368,9 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
                 </div>
               </SettingsSection>
 
-              <SettingsSection num="02" title="Hall of Fame">
+              {emailAuthed && <LinkedWallets num="02" />}
+
+              <SettingsSection num={no(2)} title="Hall of Fame">
                 <div className="set-list-item">
                   <div className="set-item-content">
                     <div className="set-item-title">Show me on the Hall of Fame</div>
@@ -375,7 +384,7 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
                 </div>
               </SettingsSection>
 
-              <SettingsSection num="03" title="18+ content">
+              <SettingsSection num={no(3)} title="18+ content">
                 <div className="set-list-item">
                   <div className="set-item-content">
                     <div className="set-item-title">I am 18 or older</div>
@@ -389,7 +398,7 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
                 </div>
               </SettingsSection>
 
-              <SettingsSection num="04" title="Danger Zone">
+              <SettingsSection num={no(4)} title="Danger Zone">
                 <div className="set-list-item">
                   <div className="set-item-icon" style={{ color: '#e23b3b', background: '#ffebeb' }}><AlertCircle size={14} /></div>
                   <div className="set-item-content">
@@ -405,7 +414,7 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
               </SettingsSection>
 
               {IS_ADMIN && (
-                <SettingsSection num="05" title="Admin">
+                <SettingsSection num={no(5)} title="Admin">
                   <div className="set-list-item">
                     <div className="set-item-icon" style={{ color: '#f5c542', background: '#fffaeb' }}>⚙</div>
                     <div className="set-item-content">
