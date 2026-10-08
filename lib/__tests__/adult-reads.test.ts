@@ -89,7 +89,9 @@ describe("the routes", () => {
     const one = src("app", "api", "prompts", "[id]", "route.ts");
     expect(one).toMatch(/,is_adult"/);
     // Its creator, recognised like a save recognises them, still sees it.
-    expect(one).toMatch(/if \(!prompt \|\| \(prompt\.is_adult && !mayShowAdult\(await viewer\(supabase, req\), prompt\.creator_id\) && !\(await owns\(prompt\.creator_id\)\)\)\) \{/);
+    expect(one).toContain("const isOwner = prompt ? await owns(prompt.creator_id) : false;");
+    expect(one).toContain("(!isListed(prompt) && !isOwner) ||");
+    expect(one).toContain("(prompt.is_adult && !mayShowAdult(await viewer(supabase, req), prompt.creator_id) && !isOwner)");
     expect(one).toMatch(/const owns = async \(creatorId: unknown\) => \(\(await resolveOwnerIds\(supabase, token\)\) \?\? \[\]\)\.includes\(String\(creatorId\)\);/);
   });
 

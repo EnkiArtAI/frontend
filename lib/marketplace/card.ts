@@ -14,7 +14,7 @@ import { isPublicText } from "@/lib/prompt-visibility";
  * creator's description, never the words of the prompt.
  */
 export const PROMPT_CARD_SELECT =
-  "id,title,description,public_prompt_text,price_usd_cents,category,tags,ai_model,created_at,creator_id,showcase_images,showcase_before_images,aspect_ratio,resolution,is_free_showcase,prompt_type";
+  "id,title,description,public_prompt_text,price_usd_cents,category,tags,ai_model,created_at,creator_id,showcase_images,aspect_ratio,resolution,is_free_showcase,prompt_type";
 
 export type PromptCardRow = {
   id: string;
@@ -28,7 +28,6 @@ export type PromptCardRow = {
   created_at: string | null;
   creator_id: string | null;
   showcase_images: unknown;
-  showcase_before_images: unknown;
   aspect_ratio: string | null;
   resolution: string | null;
   is_free_showcase: boolean | null;
@@ -61,8 +60,6 @@ export function mapPromptRow(p: PromptCardRow) {
     userId: p.creator_id,
     previewImages: images(p.showcase_images),
     showcaseImages: images(p.showcase_images),
-    // The images the prompt starts from, shown beside the showcase (CUR-2).
-    beforeImages: images(p.showcase_before_images),
     aiModel: p.ai_model,
     model: p.ai_model,
     aspectRatio: p.aspect_ratio,
@@ -122,7 +119,6 @@ function card(prompt: PromptListing, creator: Creator | null, variables: Variabl
     creator,
     previewImages: prompt.previewImages || prompt.showcaseImages || [],
     showcaseImages: prompt.showcaseImages || prompt.previewImages || [],
-    beforeImages: prompt.beforeImages || [],
     model: prompt.model || prompt.aiModel,
     aspectRatio: prompt.aspectRatio,
     resolution: prompt.resolution,
