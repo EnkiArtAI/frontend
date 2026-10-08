@@ -20,4 +20,9 @@ describe("saving a mock-up workflow to the library", () => {
     expect(EDITOR).toContain('output: "EnkiOutputImage"');
     expect(save).toContain('body: JSON.stringify({ name, kind: "workflow", graph, promptText: stRef.current.body }),');
   });
+
+  it("names the model, never its id, when the reference limit is reached", () => {
+    expect(EDITOR).toContain('onToast(`${selectedModel?.name ?? "This model"} allows at most ${modelLimits.maxRefs} reference images`);');
+    expect(EDITOR).not.toContain("onToast(`${st.models[0]} allows at most");
+  });
 });

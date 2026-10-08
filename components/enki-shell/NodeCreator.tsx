@@ -1852,7 +1852,7 @@ export default function NodeCreator({ onClose, onToast, userKey, sidebarW = 78, 
     // Per-model cap from the models table (max_reference_images).
     const current = stRef.current.nodes.filter((n) => n.type === "ref").length;
     const room = Math.max(0, modelLimits.maxRefs - current);
-    if (room <= 0) { onToast(`${st.models[0]} allows at most ${modelLimits.maxRefs} reference images`); return; }
+    if (room <= 0) { onToast(`${selectedModel?.name ?? "This model"} allows at most ${modelLimits.maxRefs} reference images`); return; }
     if (urls.length > room) onToast(`Only ${room} more reference image${room === 1 ? "" : "s"} fit (${modelLimits.maxRefs} max for this model)`);
     const take = urls.slice(0, room);
     commit((p) => {
