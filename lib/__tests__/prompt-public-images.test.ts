@@ -96,9 +96,27 @@ describe("the image UI", () => {
 
   it("offers the Public switch on your own image in the large view, and makes it public or private", () => {
     expect(VIEW).toMatch(/for \(const url of \[g\.image_url, \.\.\.\(g\.image_urls \?\? \[\]\)\]\)/);
-    expect(VIEW).toContain("const own = ownImages.get(lightbox.urls[lightbox.at]);");
+    expect(VIEW).toContain("const own = history.includes(url) ? ownImages.get(url) : undefined;");
     expect(VIEW).toContain('body: JSON.stringify({ visibility: isPublic ? "public" : "private" })');
     expect(VIEW).toContain("onChange={(e) => void setImagePublic(own.id, e.target.checked)}");
     expect(VIEW).toContain("queryClient.invalidateQueries({ queryKey: publicQueryKey });");
+  });
+
+  it("offers no switch on an upload, which never goes public", () => {
+    expect(VIEW).toMatch(/for \(const g of genData\?\.data\?\.generations \?\? genData\?\.generations \?\? \[\]\) \{\n\s+if \(g\.isUploaded\) continue;/);
+  });
+
+  it("says where a public image shows: under this prompt only when it was made with it, and on the profile", () => {
+    expect(VIEW).toContain('{!own.isPublic ? "Only you see it" : own.promptId === promptId ? "Shown under this prompt and on your profile" : "Shown on your profile"}');
+    const list = readSource(join(__dirname, "..", "..", "app", "api", "generations", "route.ts"));
+    expect(list).toContain("prompt_id: row.prompt_id ?? null,");
+    expect(list).toMatch(/\.select\("id, prompt_id, storage_url/);
+  });
+
+  it("checks back while a fresh render is not recorded yet, every 3 s for 60 s at most", () => {
+    expect(VIEW).toContain("return waiting && Date.now() - lastRunAt.current < 60_000 ? 3000 : false;");
+    expect(VIEW).toContain("const waiting = localHistoryRef.current.some((url) => !known.has(url));");
+    expect(VIEW).toMatch(/lastRunAt\.current = Date\.now\(\);\n\s+if \(userKey\) queryClient\.invalidateQueries\(\{ queryKey: genQueryKey \}\);/);
+    expect(VIEW).toContain("localHistoryRef.current = localHistory;");
   });
 });

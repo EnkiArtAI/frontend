@@ -55,7 +55,7 @@ export async function GET(req: Request) {
     const v = await viewer(supabase, req);
     let gallery = supabase
       .from("generated_images")
-      .select("id, storage_url, preview_url, thumbnail_url, description, is_uploaded, visibility, created_at", { count: 'exact' })
+      .select("id, prompt_id, storage_url, preview_url, thumbnail_url, description, is_uploaded, visibility, created_at", { count: 'exact' })
       .eq("user_id", ownerId)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
@@ -85,6 +85,8 @@ export async function GET(req: Request) {
       isUploaded: row.is_uploaded === true,
       // The owner's gallery shows it beside the publish switch (SHR-1).
       visibility: row.visibility === "public" ? "public" : "private",
+      // Which prompt it was made with: the image UI says where a public one shows.
+      prompt_id: row.prompt_id ?? null,
       created_at: row.created_at,
     }));
 
