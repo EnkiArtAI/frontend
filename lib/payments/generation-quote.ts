@@ -11,10 +11,9 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  PRICING_POLICY,
   UnknownModelError,
   computeGenerationSplit,
-  getModelCostMicro,
+  modelLegMicro,
   usdToMicro,
   type GenerationSplit,
 } from "@/lib/payments/generation-pricing";
@@ -37,6 +36,8 @@ export interface QuoteInput {
   boost?: boolean;
   /** gpt quality lever — feeds the boost route's price where the model has one. */
   quality?: "low" | "medium" | "high";
+  /** Reference images sent along: each one is image-checked, and the buyer pays it. */
+  referenceImageCount?: number;
   /** requireAuth's userId (wallet or users.id) — enables DB pricing rules. */
   buyer?: string;
   /** The buyer's session: lets a creator through to their own prompt that is not live. */
@@ -103,7 +104,7 @@ export async function computeQuote(supabase: SupabaseClient, input: QuoteInput):
 
 async function quote(
   supabase: SupabaseClient,
-  { promptId, modelFamily, resolution, boost, quality, buyer, sessionToken }: QuoteInput,
+  { promptId, modelFamily, resolution, boost, quality, referenceImageCount, buyer, sessionToken }: QuoteInput,
 ): Promise<QuoteResult> {
   // 1. Prompt price comes from the DB — never from the client.
   //    Live schema (verified 2026-07-12): prompts has creator_id +
@@ -156,9 +157,8 @@ async function quote(
   // 2. Model cost comes from server-side pricing — never from the client.
   let modelCostMicro: number;
   try {
-    modelCostMicro = getModelCostMicro(modelFamily, resolution, { boost, quality });
-    // Every paid prompt is checked before generating; the buyer pays the check.
-    modelCostMicro += PRICING_POLICY.extractionCheckMicro;
+    // The host's price plus the checks every paid render runs, which the buyer pays.
+    modelCostMicro = modelLegMicro(modelFamily, resolution, { boost, quality, references: referenceImageCount ?? 0 });
   } catch (error) {
     if (error instanceof UnknownModelError) {
       return { ok: false, status: 400, error: error.message };

@@ -73,6 +73,7 @@ export async function POST(req: NextRequest) {
     resolution: settings.resolution,
     boost: settings.boost,
     quality: settings.quality ?? undefined,
+    referenceImageCount: settings.referenceImageCount,
     buyer: authUser.userId,
     sessionToken: req.headers.get("X-Session-Token"),
   });

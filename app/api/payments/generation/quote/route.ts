@@ -58,6 +58,7 @@ async function quoteOne(
     resolution: settings.resolution,
     boost: settings.boost,
     quality: settings.quality ?? undefined,
+    referenceImageCount: settings.referenceImageCount,
     buyer: user.userId,
     sessionToken: user.sessionToken,
   });

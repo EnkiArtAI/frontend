@@ -37,7 +37,7 @@ describe("an intent for the buyer's own prompt", () => {
     if (!q.ok) return;
     expect(q.artistWallet).toBeNull();
     // The model leg includes the prompt check every paid generation carries.
-    expect(q.split).toEqual(computeGenerationSplit(0, getModelCostMicro("gpt-image-2", "2K") + PRICING_POLICY.extractionCheckMicro));
+    expect(q.split).toEqual(computeGenerationSplit(0, getModelCostMicro("gpt-image-2", "2K") + PRICING_POLICY.extractionCheckMicro + PRICING_POLICY.imageCheckMicro));
     expect(read).not.toContain("prompts");
     expect(read).not.toContain("user_wallets");
   });
