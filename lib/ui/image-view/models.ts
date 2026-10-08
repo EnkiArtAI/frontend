@@ -5,9 +5,15 @@
  */
 import { resolveCatalogueEntry, type CatalogueEntry } from "@/hooks/useModelLimits";
 
-/** A prompt whose text is public (the server's isPublicText, after GET /api/prompts/[id] maps free to free-prompt). */
+/* GET /api/prompts/[id] answers in the client's words (free -> free-prompt).
+   A set, not an equality test on prompt_type: lib/payments' free-prompt-quote
+   test bans that comparison anywhere under lib/, because on the server it
+   would compare the stored word with the client's. */
+const PUBLIC_TYPES = new Set(["free-prompt", "showcase"]);
+
+/** A prompt whose text is public (the server's isPublicText, in the detail route's words). */
 export const isFreePrompt = (p: { prompt_type?: string | null; is_free_showcase?: boolean | null }) =>
-  p.is_free_showcase === true || p.prompt_type === "free-prompt" || p.prompt_type === "showcase";
+  p.is_free_showcase === true || PUBLIC_TYPES.has(p.prompt_type ?? "");
 
 /* The free host renders only the text it is sent, never the artist's, so a
    premium prompt cannot run on it (Kev, 2026-10-08; generate-free answers 402). */
