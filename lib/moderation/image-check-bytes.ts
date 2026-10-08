@@ -34,6 +34,9 @@ export const REFERENCE_UNCHECKED = "Your reference images could not be checked r
 export const UPLOAD_REFUSED = "This image can't be uploaded to Enki.";
 export const UPLOAD_UNCHECKED = "Your image could not be checked right now, so it was not uploaded. Please try again.";
 
+/** A profile image is public everywhere and has no 18+ mark: only a clear one is taken. */
+export const PROFILE_IMAGE_ADULT = "A profile picture or cover can't be 18+ on Enki.";
+
 /** Refused or not judged: such an image is neither shown nor used. */
 export const heldBack = (v: { verdict: string }) => v.verdict === "blocked" || v.verdict === "child_safety" || v.verdict === "unavailable";
 
