@@ -606,9 +606,14 @@ export default function PromptGeneratorView({
 
   /* Fetch user's generations — API returns { data: { generations, total } } via createSuccessResponse */
   const genQueryKey = ["user-generations", userKey, promptId];
+  /* A render is recorded after its answer, so the history checks back every
+     3 s while one of this page's renders is not in it yet, for 60 s at most.
+     useQuery evaluates refetchInterval while rendering: it reads only state
+     and the query's own fetch time, no refs and no clock. */
+  const [lastRunAt, setLastRunAt] = useState(0);
   const { data: genData } = useQuery<{
-    data?: { generations?: Array<{ id: string; image_url?: string; image_urls?: string[]; created_at: string; prompt_id?: string }> };
-    generations?: Array<{ id: string; image_url?: string; image_urls?: string[]; created_at: string; prompt_id?: string }>;
+    data?: { generations?: Array<{ id: string; image_url?: string; image_urls?: string[]; visibility?: string; isUploaded?: boolean; created_at: string; prompt_id?: string | null }> };
+    generations?: Array<{ id: string; image_url?: string; image_urls?: string[]; visibility?: string; isUploaded?: boolean; created_at: string; prompt_id?: string | null }>;
   }>({
     queryKey: genQueryKey,
     queryFn: async () => {
@@ -618,6 +623,11 @@ export default function PromptGeneratorView({
     },
     enabled: !!userKey,
     staleTime: 30_000,
+    refetchInterval: (query) => {
+      const known = serverUrls(query.state.data?.data?.generations ?? query.state.data?.generations ?? []);
+      const waiting = localHistory.some((url) => !known.has(url));
+      return waiting && query.state.dataUpdatedAt - lastRunAt < 60_000 ? 3000 : false;
+    },
   });
 
   const dbHistory = useMemo(() => {
@@ -626,6 +636,50 @@ export default function PromptGeneratorView({
       .filter(g => g.image_urls?.length)
       .flatMap(g => g.image_urls as string[]);
   }, [genData]);
+
+  /* Your recorded renders by every URL they answer to (original and preview),
+     so the large view can offer the Public switch on them. Uploads never go
+     public, so they get no switch. */
+  const ownImages = useMemo(() => {
+    const byUrl = new Map<string, { id: string; isPublic: boolean; promptId: string | null }>();
+    for (const g of genData?.data?.generations ?? genData?.generations ?? []) {
+      if (g.isUploaded) continue;
+      for (const url of [g.image_url, ...(g.image_urls ?? [])]) {
+        if (url) byUrl.set(url, { id: g.id, isPublic: g.visibility === "public", promptId: g.prompt_id ?? null });
+      }
+    }
+    return byUrl;
+  }, [genData]);
+
+  /* What people made with this prompt and chose to show (Kev, 2026-10-08):
+     every generation is private until its owner makes it public. */
+  const publicQueryKey = ["prompt-public-images", promptId];
+  const { data: publicImages = [] } = useQuery<Array<{ id: string; url: string; thumbnailUrl: string }>>({
+    queryKey: publicQueryKey,
+    queryFn: async () => {
+      const res = await fetch(`/api/prompts/${encodeURIComponent(promptId)}/images`, { headers: viewerHeaders() });
+      return res.ok ? ((await res.json()).images ?? []) : [];
+    },
+    enabled: !!promptId,
+    staleTime: 30_000,
+  });
+
+  /* Shows one of your images to others, or hides it again; both rows follow. */
+  const setImagePublic = async (id: string, isPublic: boolean) => {
+    const res = await fetch(`/api/images/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
+      body: JSON.stringify({ visibility: isPublic ? "public" : "private" }),
+    }).catch(() => null);
+    if (!res?.ok) {
+      const d = await res?.json().catch(() => null);
+      toast({ title: "Couldn't change who sees this image", description: d?.error, variant: "destructive" });
+      return;
+    }
+    // Prefix keys: every history and every row this switch can change.
+    queryClient.invalidateQueries({ queryKey: ["user-generations"] });
+    queryClient.invalidateQueries({ queryKey: ["prompt-public-images"] });
+  };
 
   /* Merge local (immediate) + DB history, deduplicate, cap at 20. A local
      render the server recorded is that row (kept as the original, shown as
@@ -963,6 +1017,7 @@ export default function PromptGeneratorView({
       }
 
       /* 4. The generate route records the image itself; refetch the history panel. */
+      setLastRunAt(Date.now());
       if (userKey) queryClient.invalidateQueries({ queryKey: genQueryKey });
 
       toast({ title: "Image Generated!", description: `Generated using ${data.provider || "AI"}` });
@@ -1961,6 +2016,26 @@ export default function PromptGeneratorView({
           </button>
         </div>
 
+        {/* Made with this prompt: images their owners chose to make public. */}
+        {publicImages.length > 0 && (
+          <section className="pgv-made-with" aria-label="Made with this prompt">
+            <div className="pgv-made-with__title">Made with this prompt</div>
+            <div className="pgv-made-with__strip">
+              {publicImages.map((im, i) => (
+                <button
+                  key={im.id}
+                  type="button"
+                  className="pgv-made-with__item"
+                  onClick={() => openLightbox(publicImages.map((p) => p.url), i)}
+                  aria-label={`Made with this prompt, image ${i + 1}`}
+                >
+                  <img src={im.thumbnailUrl} alt="" loading="lazy" draggable={false} />
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* Comments / Reviews tabs */}
         <div className="pgv-center-tabs">
           <button
@@ -2057,6 +2132,24 @@ export default function PromptGeneratorView({
               ))}
             </div>
           )}
+          {/* Your own render, opened from your history: private until you make it public. */}
+          {(() => {
+            const url = lightbox.urls[lightbox.at];
+            const own = history.includes(url) ? ownImages.get(url) : undefined;
+            return own ? (
+              <label className="pgv-lb-public pgv-lb-chrome" onClick={e => e.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  checked={own.isPublic}
+                  onChange={(e) => void setImagePublic(own.id, e.target.checked)}
+                />
+                Public
+                <span className="pgv-lb-public__hint">
+                  {!own.isPublic ? "Only you see it" : own.promptId === promptId ? "Shown under this prompt and on your profile" : "Shown on your profile"}
+                </span>
+              </label>
+            ) : null;
+          })()}
           {/* The generation history rides along on the right, as on the page
               — picking one switches the lightbox to browsing the history. */}
           {history.length > 0 && (
