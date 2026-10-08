@@ -10,6 +10,8 @@ import { resolveOwnerIds, resolveSessionUserId, resolveSessionUserWithBan } from
 import { isPublicText } from "@/lib/prompt-visibility";
 import { keepableImage, ownShowcaseImages } from "@/lib/generation/derivative-store";
 import { ownRenders } from "@/lib/generation/own-renders";
+import { checkImageBytes, dataUrlBytes, heldBack } from "@/lib/moderation/image-check-bytes";
+import { recordImageCase } from "@/lib/moderation/image-case";
 import { extractTags, storedTags } from "@/lib/search/tags";
 import { artistPayoutWallet } from "@/lib/payments/generation-quote";
 import { DEFAULT_PROMPT_PRICE_USD } from "@/shared/revenue-config";
@@ -528,7 +530,25 @@ export async function POST(req: Request) {
     if (shownAdult === null) {
       return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 });
     }
-    const adult = check.adult === true || shownAdult;
+    // A new reference image is judged like any image (Kev, 2026-10-08),
+    // before anything is stored: one refused or not judged saves nothing, a
+    // child-safety one becomes a case an admin decides, an 18+ one marks the
+    // prompt 18+. Saved ones and our own renders were judged already.
+    const freshBefore = (referenceImages ?? []).filter((url) => url.startsWith("data:") && !savedBefore.includes(url));
+    const freshBytes = freshBefore.map((url) => dataUrlBytes(url));
+    const beforeSeen = await Promise.all(freshBytes.map((b) => (b ? checkImageBytes(b, { signal: req.signal }) : Promise.resolve({ verdict: "unavailable" as const, reason: "not base64" }))));
+    if (beforeSeen.some(heldBack)) {
+      beforeSeen.forEach((v, i) => {
+        const bytes = freshBytes[i];
+        if (v.verdict === "child_safety" && bytes) {
+          after(recordImageCase(supabase, { surface: "prompt-save", request: req, bytes, scores: v.scores, about: `Reference image of the prompt "${body.title}" being saved.` }));
+        }
+      });
+      return beforeSeen.some((v) => v.verdict === "blocked" || v.verdict === "child_safety")
+        ? NextResponse.json({ error: "One of your reference images can't be used on Enki. Nothing was saved." }, { status: 422 })
+        : NextResponse.json({ error: "Your reference images could not be checked right now. Nothing was saved." }, { status: 503 });
+    }
+    const adult = check.adult === true || shownAdult || beforeSeen.some((v) => v.verdict === "adult");
 
     // Moderation. This route had none: a listed prompt is the one piece of
     // user text we hand to a model on someone else's behalf AND show publicly

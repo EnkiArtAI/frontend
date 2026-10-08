@@ -89,7 +89,14 @@ const fake = { from: (t: string) => new Query(t) };
 
 const check = vi.fn();
 const warn = vi.fn(async () => ({ total: 1, suspendedUntil: null, nextStepAt: 10 }));
-vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), after: () => {} }));
+vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), after: (p: unknown) => p }));
+// The image check's verdict for each new reference image, as a test sets it (its own tests: image-check*.test.ts).
+const imageCheck = vi.hoisted(() => ({ verdicts: [] as string[], calls: 0, cases: [] as unknown[] }));
+vi.mock("@/lib/moderation/image-check-bytes", async (original) => ({
+  ...(await original<typeof import("@/lib/moderation/image-check-bytes")>()),
+  checkImageBytes: async () => ({ verdict: imageCheck.verdicts[imageCheck.calls++] ?? "clear" }),
+}));
+vi.mock("@/lib/moderation/image-case", () => ({ recordImageCase: async (_s: unknown, c: unknown) => { imageCheck.cases.push(c); } }));
 // Our store: a data URL comes back as our copy, BROKEN fails it, the rest goes through the real helper.
 const stored = vi.hoisted(() => ({ calls: [] as string[][], max: [] as (number | undefined)[] }));
 vi.mock("@/lib/generation/derivative-store", async (original) => {
@@ -500,6 +507,48 @@ describe("releasing a prompt", () => {
     const row = owned({ creator_id: "u2", is_listed: false });
     expect((await save({ ...BASE, id: ID, release: true })).status).toBe(404);
     expect(row.is_listed).toBe(false);
+  });
+});
+
+describe("a prompt's new reference images and the image check (2026-10-08)", () => {
+  const REF = "data:image/png;base64,iVBORw0KGgo=";
+  const OUR_REF = "https://abc.public.blob.vercel-storage.com/showcase/u1/ref-0.png";
+  beforeEach(() => Object.assign(imageCheck, { verdicts: [], calls: 0, cases: [] }));
+
+  it("refused: nothing is stored or saved", async () => {
+    imageCheck.verdicts = ["clear", "blocked"];
+    const storesBefore = stored.calls.length;
+    const res = await save({ ...BASE, referenceImages: [REF, REF.replace("=", "A=")] });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: "One of your reference images can't be used on Enki. Nothing was saved." });
+    expect(tables.prompts).toEqual([]);
+    expect(stored.calls.length).toBe(storesBefore);
+  });
+
+  it("not judged: nothing saved, try again", async () => {
+    imageCheck.verdicts = ["unavailable"];
+    const res = await save({ ...BASE, referenceImages: [REF] });
+    expect(res.status).toBe(503);
+    expect(tables.prompts).toEqual([]);
+  });
+
+  it("child safety: refused like any refusal, and a case with the bytes", async () => {
+    imageCheck.verdicts = ["child_safety"];
+    expect((await save({ ...BASE, referenceImages: [REF] })).status).toBe(422);
+    expect(imageCheck.cases).toEqual([expect.objectContaining({ surface: "prompt-save", bytes: Buffer.from("iVBORw0KGgo=", "base64") })]);
+  });
+
+  it("18+: saved, and the prompt is 18+", async () => {
+    imageCheck.verdicts = ["adult"];
+    expect((await save({ ...BASE, referenceImages: [REF] })).status).toBe(200);
+    expect(tables.prompts[0].is_adult).toBe(true);
+  });
+
+  it("judges only what is new: a saved one or our own copy costs no check", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    tables.prompts.push({ id, creator_id: "u1", is_adult: false, showcase_before_images: [OUR_REF] });
+    expect((await save({ ...BASE, id, referenceImages: [OUR_REF] })).status).toBe(200);
+    expect(imageCheck.calls).toBe(0);
   });
 });
 
