@@ -24,7 +24,7 @@ import { type FeedbackDecision } from "@/lib/feedback";
 /* ── data shapes (from /api/admin) ── */
 type Imp = { id: string; name: string; url: string | null; hunter: string; tags: string[]; at: string };
 type Rep = { id: string; target: string; type: "prompt" | "image" | "profile"; href: string | null; reason: string; details: string | null; reporter: string; severity: string | null; at: string };
-type Fb = { id: string; name: string; email: string | null; desc: string; images: number; paid: boolean; payoutCents: number | null; at: string; state: FeedbackDecision };
+type Fb = { id: string; name: string; email: string | null; desc: string; images: number; paid: boolean; payoutCents: number | null; at: string; state: FeedbackDecision; wallet: string | null; txUrl: string | null };
 type FbFile = { url: string | null; mime: string };
 type Hunter = { handle: string; total: number; approved: number; denied: number; earningsCents: number };
 type StrikeRow = { userId: string; handle: string; strikes: { id: string; reason: string | null }[]; banned: boolean; permanent: boolean; note: string | null; appeal: { id: string; note: string | null; against: { reason: string | null; until: string | null } | null } | null };
@@ -157,6 +157,8 @@ export default function AdminPage() {
   const [impReason, setImpReason] = useState(REJECT_REASONS[0]);
   const [fbOpen, setFbOpen] = useState<string | null>(null);
   const [fbFiles, setFbFiles] = useState<Record<string, FbFile[]>>({});
+  const [fbPayId, setFbPayId] = useState<string | null>(null);
+  const [fbSig, setFbSig] = useState("");
   const [invEmail, setInvEmail] = useState("");
   const [invWallet, setInvWallet] = useState("");
   const [granting, setGranting] = useState(false);
@@ -265,6 +267,16 @@ export default function AdminPage() {
     state === "open" ? "Reopened." : `${state === "done" ? "Marked done" : "Rejected"}: ${r.name} sees it.`,
     (cur) => ({ ...cur, feedback: cur.feedback.map((x) => (x.id === r.id ? { ...x, state } : x)) }),
   );
+
+  /* Kev sends the $100 from his own wallet, then records the transfer here:
+     its signature is what the sender's link opens. */
+  const recordPayout = async (r: Fb) => {
+    if (await post({ resource: "feedback", action: "markPaid", id: r.id, signature: fbSig.trim() }, `Payout to ${r.name} recorded.`, (cur) => cur)) {
+      setFbPayId(null);
+      setFbSig("");
+      await reload();
+    }
+  };
 
   /** Grants access (approve, invite an email or a wallet) and says what
       happened to whom. One at a time: a double click must not mail twice. */
@@ -682,22 +694,28 @@ export default function AdminPage() {
                         <span style={{ width: 42, fontFamily: MONO, fontSize: 9, color: "var(--enki-ink-3)" }}>{timeAgo(r.at)}</span>
                         <Badge pal={r.paid ? PILL.green : FB_STATE[r.state].pal} label={r.paid ? "Paid" : FB_STATE[r.state].label} />
                         <span style={{ display: "flex", gap: 5, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
-                          {/* Done promises the $100: an admin's word. A mod may reject or reopen. */}
-                          {r.state === "open" && <>
-                            {role === "admin" && <Pill kind="green" label="Done" title="We build it: the $100 follows" onClick={() => decideFb(r, "done")} />}
-                            <Pill kind="red" label="Reject" onClick={() => decideFb(r, "rejected")} />
+                          {fbPayId === r.id ? <>
+                            <input autoFocus placeholder="Transaction signature" value={fbSig} onChange={(e) => setFbSig(e.target.value)} style={{ width: 210, height: 26, border: "1px solid var(--enki-rule)", borderRadius: 7, background: "var(--enki-paper)", color: "var(--enki-ink)", fontSize: 10.5, fontFamily: MONO, padding: "0 7px", outline: "none" }} />
+                            <Pill kind="green" label="Confirm" onClick={() => void recordPayout(r)} />
+                            <Pill kind="plain" label="Cancel" onClick={() => setFbPayId(null)} />
+                          </> : <>
+                            {/* Done promises the $100: an admin's word. A mod may reject or reopen. */}
+                            {r.state === "open" && <>
+                              {role === "admin" && <Pill kind="green" label="Done" title="We build it: the $100 follows" onClick={() => decideFb(r, "done")} />}
+                              <Pill kind="red" label="Reject" onClick={() => decideFb(r, "rejected")} />
+                            </>}
+                            {r.state !== "open" && !r.paid && <Pill kind="plain" label="Reopen" onClick={() => decideFb(r, "open")} />}
+                            {r.state === "done" && !r.paid && role === "admin" && <Pill kind="green" label="Mark paid" title="After sending the $100: paste the transaction" onClick={() => { setFbSig(""); setFbPayId(r.id); }} />}
+                            {r.paid && r.txUrl && <a href={r.txUrl} target="_blank" rel="noopener noreferrer" style={{ fontFamily: MONO, fontSize: 9.5, color: "var(--enki-ember)" }}>Payment ↗</a>}
                           </>}
-                          {r.state !== "open" && !r.paid && <Pill kind="plain" label="Reopen" onClick={() => decideFb(r, "open")} />}
                         </span>
-                        {!r.paid && (
-                          <span onClick={(e) => e.stopPropagation()}>
-                            <Pill kind="green" label="Mark paid" onClick={() => void post({ resource: "feedback", action: "markPaid", id: r.id }, `$100 payout marked as paid to ${r.name}.`, (cur) => ({ ...cur, feedback: cur.feedback.map((x) => (x.id === r.id ? { ...x, paid: true } : x)) }))} />
-                          </span>
-                        )}
                       </div>
                       {fbOpen === r.id && (
                         <div style={{ padding: "2px 0 12px 10px", borderLeft: `3px solid ${PILL.amber.border}`, margin: "0 0 8px 4px" }}>
                           <p style={{ margin: 0, fontSize: 12, color: "var(--enki-ink-2)", lineHeight: 1.65, maxWidth: 640 }}>{r.desc}</p>
+                          <p style={{ margin: "8px 0 0", fontSize: 11, color: "var(--enki-ink-3)" }}>
+                            Pay to <span style={{ fontFamily: MONO, color: "var(--enki-ink-2)", userSelect: "all" }}>{r.wallet ?? "no payable Solana wallet (must re-link)"}</span>
+                          </p>
                           {(fbFiles[r.id] ?? []).length > 0 && (
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
                               {fbFiles[r.id].map((f, i) => f.url && (f.mime.startsWith("video/")

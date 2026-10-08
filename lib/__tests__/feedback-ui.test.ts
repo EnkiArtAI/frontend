@@ -48,4 +48,17 @@ describe("the admin panel's Feedback tab", () => {
     expect(ADMIN).toContain('{ label: "Feedback to act on", value: counts.feedback,');
     expect(ADMIN).toContain('label={`Done, unpaid ${d.feedback.filter((f) => f.state === "done" && !f.paid).length}`}');
   });
+
+  it("records a payout by its transaction, an admin's alone, once a report is done", () => {
+    expect(ADMIN).toContain('{r.state === "done" && !r.paid && role === "admin" && <Pill kind="green" label="Mark paid"');
+    expect(ADMIN).toContain('{ resource: "feedback", action: "markPaid", id: r.id, signature: fbSig.trim() }');
+    expect(ADMIN).toMatch(/signature: fbSig\.trim\(\) \}[^\n]*\) \{\n\s+setFbPayId\(null\);\n\s+setFbSig\(""\);\n\s+await reload\(\);/);
+    // The old one-click Mark paid sent no signature: the route refuses that.
+    expect(ADMIN).not.toContain('action: "markPaid", id: r.id }');
+  });
+
+  it("names where the $100 goes and links the transfer once sent", () => {
+    expect(ADMIN).toContain('{r.wallet ?? "no payable Solana wallet (must re-link)"}');
+    expect(ADMIN).toContain('{r.paid && r.txUrl && <a href={r.txUrl} target="_blank" rel="noopener noreferrer"');
+  });
 });
