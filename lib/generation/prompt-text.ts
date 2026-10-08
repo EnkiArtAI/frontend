@@ -11,6 +11,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decryptPrompt } from "@/backend/encryption";
 import { isPublicText } from "@/lib/prompt-visibility";
+import { dbOutage, isDbUnreachable, type DbOutage } from "@/lib/db-error";
 
 /** A stored variable, by the name app/api/prompt saved it under. */
 export interface StoredVariable {
@@ -19,7 +20,8 @@ export interface StoredVariable {
 
 export type PromptTextResult =
   | { ok: true; text: string; variables: StoredVariable[]; adult: boolean }
-  | { ok: false; status: 422 | 500; error: string };
+  | { ok: false; status: 422 | 500; error: string }
+  | DbOutage;
 
 export async function loadPromptText(supabase: SupabaseClient, promptId: string): Promise<PromptTextResult> {
   const { data: row, error } = await supabase
@@ -27,6 +29,7 @@ export async function loadPromptText(supabase: SupabaseClient, promptId: string)
     .select("public_prompt_text, encrypted_content, encrypted_content_iv, encrypted_content_tag, encrypted_content_kid, price_usd_cents, prompt_type, is_free_showcase, is_adult")
     .eq("id", promptId)
     .maybeSingle();
+  if (isDbUnreachable(error)) return dbOutage();
   if (error || !row) return { ok: false, status: 500, error: "Failed to load prompt" };
 
   let text = "";

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { DB_UNAVAILABLE_MESSAGE } from "@/lib/db-error";
 // Banned or deleted owners are hidden-owners.test.ts's subject; here nobody is.
 vi.mock("@/lib/hidden-owners", () => ({ hiddenOwners: async () => new Set<string>() }));
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -12,6 +13,8 @@ import { artistPayoutWallet, computeQuote } from "@/lib/payments/generation-quot
 type Row = Record<string, unknown>;
 let db: Record<string, Row[]>;
 let failing: string | null;
+/** How a failing table fails: a dead host by default, any other error when a test says so. */
+let failWith: string;
 
 /** A reader that applies its filters and returns only the selected columns, as PostgREST does. */
 class Query implements PromiseLike<{ data: unknown; error: unknown }> {
@@ -25,7 +28,7 @@ class Query implements PromiseLike<{ data: unknown; error: unknown }> {
   limit() { return this; }
   maybeSingle() { this.one = true; return this; }
   then<A, B = never>(ok?: ((v: { data: unknown; error: unknown }) => A | PromiseLike<A>) | null, ko?: ((e: unknown) => B | PromiseLike<B>) | null) {
-    if (failing === this.table) return Promise.resolve({ data: null, error: { message: "TypeError: fetch failed" } }).then(ok, ko);
+    if (failing === this.table) return Promise.resolve({ data: null, error: { message: failWith } }).then(ok, ko);
     const cols = this.cols;
     const rows = (db[this.table] ?? []).filter((r) => this.filters.every((f) => f(r)))
       .map((r) => (cols ? Object.fromEntries(cols.map((c) => [c, r[c]])) : r));
@@ -40,6 +43,7 @@ const wallet = (extra: Row = {}) => ({ user_id: ARTIST, address: SOLANA, chain_f
 
 beforeEach(() => {
   failing = null;
+  failWith = "TypeError: fetch failed";
   vi.spyOn(console, "error").mockImplementation(() => {});
   db = {
     user_wallets: [wallet()],
@@ -77,8 +81,10 @@ describe("an artist's payout wallet", () => {
     expect(await artistPayoutWallet(fake, ARTIST)).toEqual({ ok: false, status: 422, error: "Artist payout wallet must be re-linked before this prompt can sell" });
   });
 
-  it("is unknown, not missing, while the lookup fails", async () => {
+  it("is unknown, not missing, while the lookup fails: an outage when the database is down", async () => {
     failing = "user_wallets";
+    expect(await artistPayoutWallet(fake, ARTIST)).toEqual({ ok: false, status: 503, error: DB_UNAVAILABLE_MESSAGE, code: "DB_UNAVAILABLE" });
+    failWith = "permission denied for table user_wallets";
     expect(await artistPayoutWallet(fake, ARTIST)).toEqual({ ok: false, status: 500, error: "Failed to load creator" });
   });
 });
@@ -96,6 +102,8 @@ describe("the quote of a paid prompt", () => {
     db.user_wallets = [wallet({ address: SOLANA.toLowerCase() })];
     expect(await quote()).toEqual({ ok: false, status: 422, error: "Artist payout wallet must be re-linked before this prompt can sell" });
     failing = "user_wallets";
+    expect(await quote()).toEqual({ ok: false, status: 503, error: DB_UNAVAILABLE_MESSAGE, code: "DB_UNAVAILABLE" });
+    failWith = "permission denied for table user_wallets";
     expect(await quote()).toEqual({ ok: false, status: 500, error: "Failed to load creator" });
   });
 

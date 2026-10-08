@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { DB_UNAVAILABLE_MESSAGE } from "@/lib/db-error";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -16,6 +17,8 @@ type Row = Record<string, unknown>;
 let db: Record<string, Row[]>;
 let reads: string[];
 let failing: string | null;
+/** How a failing table fails: a dead host by default, any other error when a test says so. */
+let failWith: string;
 
 /** A reader that applies its filters and returns only the selected columns, as PostgREST does. */
 class Query implements PromiseLike<{ data: unknown; error: unknown }> {
@@ -41,7 +44,7 @@ class Query implements PromiseLike<{ data: unknown; error: unknown }> {
   maybeSingle() { this.one = true; return this; }
   then<A, B = never>(ok?: ((v: { data: unknown; error: unknown }) => A | PromiseLike<A>) | null, ko?: ((e: unknown) => B | PromiseLike<B>) | null) {
     reads.push(this.table);
-    if (failing === this.table) return Promise.resolve({ data: null, error: { message: "TypeError: fetch failed" } }).then(ok, ko);
+    if (failing === this.table) return Promise.resolve({ data: null, error: { message: failWith } }).then(ok, ko);
     const cols = this.cols;
     const rows = (db[this.table] ?? []).filter((r) => this.filters.every((f) => f(r)))
       .map((r) => (cols ? Object.fromEntries(cols.map((c) => [c, r[c]])) : r));
@@ -72,6 +75,7 @@ const prompt = (state: Row, creator = ARTIST) => {
 beforeEach(() => {
   reads = [];
   failing = null;
+  failWith = "TypeError: fetch failed";
   db = {
     prompts: [],
     auth_sessions: [
@@ -139,9 +143,16 @@ describe("a live prompt of a banned or deleted creator", () => {
     expect(await quote("buyer")).toEqual({ ok: false, status: 404, error: "Prompt not found" });
   });
 
-  it("is not sold blind while the creators cannot be read", async () => {
+  it("is not sold blind while the creators cannot be read: an outage when the database is down", async () => {
     failing = "bans";
+    expect(await quote("buyer")).toEqual({ ok: false, status: 503, error: DB_UNAVAILABLE_MESSAGE, code: "DB_UNAVAILABLE" });
+    failWith = "permission denied for table bans";
     expect(await quote("buyer")).toEqual({ ok: false, status: 500, error: "Failed to load prompt" });
+  });
+
+  it("answers an outage while reading the prompt itself with 503, not 'failed to load'", async () => {
+    failing = "prompts";
+    expect(await quote("buyer")).toEqual({ ok: false, status: 503, error: DB_UNAVAILABLE_MESSAGE, code: "DB_UNAVAILABLE" });
   });
 });
 

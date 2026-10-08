@@ -61,7 +61,7 @@ export async function GET(req: NextRequest) {
 
   // A banned or deleted account leaves the board; a lookup that fails shows none.
   const all = (data ?? []) as (GenRow & EarnRow)[];
-  const offBoard = await hiddenOwners(supabase, all.map((r) => String(r.creator_id)));
+  const offBoard = await hiddenOwners(supabase, all.map((r) => String(r.creator_id))).catch(() => null);
   if (!offBoard) return NextResponse.json({ rows: [] });
   const raw = all.filter((r) => !offBoard.has(String(r.creator_id)));
   const ids = raw.map((r) => r.creator_id);
@@ -122,7 +122,7 @@ export async function GET(req: NextRequest) {
   }
   // Not an image of a banned or deleted account; none when that cannot be read.
   const renders = (genImgRes.data ?? []) as { prompt_id: string; user_id: string; thumbnail_url: string | null; storage_url: string | null }[];
-  const renderOwners = await hiddenOwners(supabase, renders.map((g) => String(g.user_id ?? "")));
+  const renderOwners = await hiddenOwners(supabase, renders.map((g) => String(g.user_id ?? ""))).catch(() => null);
   for (const g of renderOwners ? renders.filter((g) => !renderOwners.has(String(g.user_id))) : []) {
     const u = g.thumbnail_url || g.storage_url;
     if (u && !images.has(g.prompt_id)) images.set(g.prompt_id, u);

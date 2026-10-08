@@ -38,7 +38,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({ comments: [], stats: { count: 0, avgRating: null } });
   }
   // A banned or deleted account's comments and ratings leave the page.
-  const hidden = await hiddenOwners(supabase, (all ?? []).map((r) => String(r.user_id)));
+  // An outage shows no comments, as a failed read above does.
+  const hidden = await hiddenOwners(supabase, (all ?? []).map((r) => String(r.user_id))).catch(() => null);
   if (!hidden) return NextResponse.json({ comments: [], stats: { count: 0, avgRating: null } });
   const rows = (all ?? []).filter((r) => !hidden.has(String(r.user_id)));
 

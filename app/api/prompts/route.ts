@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { hiddenOwners } from "@/lib/hidden-owners";
+import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
 
 type VariableSummary = {
   id: string;
@@ -212,6 +213,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ items, nextCursor });
   } catch (e: unknown) {
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
     const message = e instanceof Error ? e.message : String(e);
     console.error("Error in /api/prompts:", message);
     return NextResponse.json({ items: [], nextCursor: null }, { status: 200 });

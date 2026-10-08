@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse, after } from "next/server";
-import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
+import { isDbUnreachable, dbUnavailableResponse, refusalBody } from "@/lib/db-error";
 import { generateImagesWithWaveSpeed } from "@/backend/services/wavespeed-image-generation";
 import { generateImagesWithOpenAI } from "@/backend/services/openai-image-generation";
 import { generateImagesWithGemini } from "@/backend/services/gemini-image-generation";
@@ -255,7 +255,7 @@ export async function POST(request: NextRequest) {
     let promptAdult = false;
     if (fromArtist) {
       const text = await loadPromptText(getSupabaseServerClient(), paid.prompt_id as string);
-      if (!text.ok) return NextResponse.json({ error: text.error }, { status: text.status });
+      if (!text.ok) return NextResponse.json(refusalBody(text), { status: text.status });
       if (overLong(body.variableValues)) {
         return NextResponse.json(
           { error: `Each input can be at most ${VALUE_MAX} characters. Nothing was generated and nothing was charged.` },

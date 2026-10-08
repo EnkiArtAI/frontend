@@ -28,6 +28,7 @@ import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/ra
 import { PRICING_POLICY, splitToBreakdown } from "@/lib/payments/generation-pricing";
 import { computeQuote } from "@/lib/payments/generation-quote";
 import { settingsSchema, resolvePaidSettings } from "@/lib/payments/generation-settings";
+import { refusalBody } from "@/lib/db-error";
 
 export async function POST(req: NextRequest) {
   // 60 payments/min per user (Kev, 2026-07-08 — dApp-friendly). The IP cap
@@ -62,7 +63,7 @@ export async function POST(req: NextRequest) {
   }
   const supabase = getSupabaseServerClient();
   const resolved = await resolvePaidSettings(supabase, parsed.data);
-  if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status });
+  if (!resolved.ok) return NextResponse.json(refusalBody(resolved), { status: resolved.status });
   const { settings } = resolved;
   const promptId = parsed.data.promptId;
 
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
     sessionToken: req.headers.get("X-Session-Token"),
   });
   if (!quote.ok) {
-    return NextResponse.json({ error: quote.error }, { status: quote.status });
+    return NextResponse.json(refusalBody(quote), { status: quote.status });
   }
   const { artistWallet, split, appliedRule } = quote;
 

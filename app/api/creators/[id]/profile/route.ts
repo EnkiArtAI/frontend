@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { hideAdult, viewer } from "@/lib/adult-content";
 import { hiddenOwners } from "@/lib/hidden-owners";
+import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -110,6 +111,7 @@ export async function GET(
       recentSales: [],
     });
   } catch (error) {
+    if (isDbUnreachable(error)) return dbUnavailableResponse();
     console.error("Error fetching creator profile:", error);
     return NextResponse.json(
       { success: false, error: "Internal server error" },

@@ -26,6 +26,7 @@ import {
 import { isListed, isPublicText } from "@/lib/prompt-visibility";
 import { resolveOwnerIds } from "@/lib/session-user";
 import { hiddenOwners } from "@/lib/hidden-owners";
+import { dbOutage, isDbUnreachable, type DbOutage } from "@/lib/db-error";
 
 export interface QuoteInput {
   /** Absent for the buyer's own prompt: no artist, so no artist leg. */
@@ -51,9 +52,10 @@ export type QuoteResult =
       /** DB pricing rule that discounted this quote, if any. */
       appliedRule: AppliedRule | null;
     }
-  | { ok: false; status: 400 | 404 | 422 | 500; error: string };
+  | { ok: false; status: 400 | 404 | 422 | 500; error: string }
+  | DbOutage;
 
-export type PayoutWallet = { ok: true; wallet: string } | { ok: false; status: 422 | 500; error: string };
+export type PayoutWallet = { ok: true; wallet: string } | { ok: false; status: 422 | 500; error: string } | DbOutage;
 
 /**
  * The wallet a creator's artist share is paid to — from the DB, never from
@@ -71,6 +73,7 @@ export async function artistPayoutWallet(supabase: SupabaseClient, creatorId: st
     .is("removed_at", null)
     .limit(1);
   if (error) {
+    if (isDbUnreachable(error)) return dbOutage();
     console.error("[payments/quote] creator wallet lookup failed:", error.message);
     return { ok: false, status: 500, error: "Failed to load creator" };
   }
@@ -88,7 +91,17 @@ export async function artistPayoutWallet(supabase: SupabaseClient, creatorId: st
   return { ok: true, wallet };
 }
 
-export async function computeQuote(
+/** A database that cannot be reached is an outage (503), never a price, a 404 or a 500. */
+export async function computeQuote(supabase: SupabaseClient, input: QuoteInput): Promise<QuoteResult> {
+  try {
+    return await quote(supabase, input);
+  } catch (e) {
+    if (isDbUnreachable(e)) return dbOutage();
+    throw e;
+  }
+}
+
+async function quote(
   supabase: SupabaseClient,
   { promptId, modelFamily, resolution, boost, quality, buyer, sessionToken }: QuoteInput,
 ): Promise<QuoteResult> {
@@ -109,6 +122,7 @@ export async function computeQuote(
       .eq("id", promptId)
       .maybeSingle();
     if (promptError) {
+      if (isDbUnreachable(promptError)) return dbOutage();
       console.error("[payments/quote] prompt lookup failed:", promptError.message);
       return { ok: false, status: 500, error: "Failed to load prompt" };
     }

@@ -2,6 +2,7 @@
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { hideAdult, viewer } from "@/lib/adult-content";
 import { hiddenOwners } from "@/lib/hidden-owners";
+import { dbUnavailableResponse, isDbUnreachable } from "@/lib/db-error";
 import {
   getGenerationsQuerySchema,
   validateQuery,
@@ -106,6 +107,7 @@ export async function GET(req: Request) {
       offset
     });
   } catch (e: unknown) {
+    if (isDbUnreachable(e)) return dbUnavailableResponse();
     const message = e instanceof Error ? e.message : String(e);
     console.error('Error fetching generations:', message);
     return createErrorResponse('Internal server error', 500);

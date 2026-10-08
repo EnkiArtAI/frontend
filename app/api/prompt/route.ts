@@ -460,9 +460,9 @@ export async function POST(req: Request) {
       if (!publicText) {
         const payout = await artistPayoutWallet(supabase, payee);
         if (!payout.ok) {
-          return payout.status === 500
-            ? NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 })
-            : NextResponse.json({ error: "A paid prompt for sale needs a Solana wallet on your account to be paid to: connect one, or link yours again. Nothing was saved." }, { status: 422 });
+          return payout.status === 422
+            ? NextResponse.json({ error: "A paid prompt for sale needs a Solana wallet on your account to be paid to: connect one, or link yours again. Nothing was saved." }, { status: 422 })
+            : NextResponse.json({ error: "This prompt could not be checked right now. Nothing was saved." }, { status: 503 });
         }
       }
     }
