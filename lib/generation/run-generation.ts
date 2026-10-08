@@ -17,6 +17,7 @@
  */
 import { ensureCdpWallet } from "@/lib/cdp-bridge";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { tooLargeToSend, REFS_TOO_LARGE } from "@/lib/request-size";
 import { authorizePaidGeneration, type PaymentSigner } from "@/lib/generation-checkout";
 import type { CatalogueEntry } from "@/hooks/useModelLimits";
 
@@ -44,6 +45,9 @@ export type GenerationOutcome =
 export async function runGeneration(req: GenerationRequest, sign: PaymentSigner): Promise<GenerationOutcome> {
   const { model } = req;
   if (!model) return { ok: false, error: "Pick a model first. Nothing was generated and nothing was charged." };
+  // Vercel turns away a body this large before our route runs: a paid one
+  // only after its payment was signed. Measured here, before anything is.
+  if (tooLargeToSend(req)) return { ok: false, error: REFS_TOO_LARGE };
 
   try {
     let res: Response;
