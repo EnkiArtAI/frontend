@@ -1199,7 +1199,7 @@ export default function AdminPage() {
                   <div style={{ ...cardStyle, padding: "14px 16px", marginBottom: 10, maxWidth: 560 }}>
                     <div style={{ fontFamily: SERIF, fontStyle: "italic", fontSize: 17, color: "var(--enki-ink)", marginBottom: 4 }}>Council notifications.</div>
                     <p style={{ margin: "0 0 10px", fontSize: 11.5, color: "var(--enki-ink-3)", lineHeight: 1.55 }}>
-                      Council vote requests are mailed here. Stored encrypted — leave empty to opt out of emails (you still vote in this panel).
+                      Council vote requests and new feedback are mailed here. Stored encrypted — leave empty to opt out of emails (you still vote in this panel).
                     </p>
                     <div style={{ display: "flex", gap: 7 }}>
                       <input placeholder="you@example.com" value={seEmail} onChange={(e) => setSeEmail(e.target.value)} style={{ flex: 1, height: 30, border: "1px solid var(--enki-rule)", borderRadius: 8, background: "var(--enki-paper-2)", color: "var(--enki-ink)", fontSize: 11.5, padding: "0 9px", fontFamily: MONO, outline: "none" }} />
