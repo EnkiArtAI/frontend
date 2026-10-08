@@ -287,7 +287,11 @@ describe("revealing an artist's withheld text", () => {
     expect(await (await post("owner-tok", { resource: "automod", action: "reveal", id: "e-1", reason: WHY, what: "image" })).json())
       .toEqual({ text: null, source: "record", image: "data:image/png;base64,AAAA" });
     expect(JSON.stringify(notified.mock.calls.at(-1)?.[1])).toContain("revealed the withheld image of moderation record e-1");
-    expect(tables.artist_text_reveals).toHaveLength(2);
+    // The log tells them apart: the prompt is named only where its text was shown.
+    expect(tables.artist_text_reveals).toEqual([
+      expect.objectContaining({ event_id: "e-1", prompt_id: "p1" }),
+      expect.objectContaining({ event_id: "e-1", prompt_id: null }),
+    ]);
   });
 
   it("reads no image for a record that is no image case, and logs no reveal of one", async () => {

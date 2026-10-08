@@ -623,7 +623,9 @@ export async function POST(req: NextRequest) {
       ? await readImageEvidence(supabase, String(ev.id))
       : null;
     if (text === null && image === null) return NextResponse.json({ error: `This record holds no ${what === "image" ? "image" : "artist text"} that can be read.` }, { status: 404 });
-    const { error } = await supabase.from("artist_text_reveals").insert({ event_id: ev.id, prompt_id: part.promptId, revealed_by: userId, reason });
+    // prompt_id names the prompt whose text was shown, and only that: an
+    // image case's reveal without one was a reveal of its image.
+    const { error } = await supabase.from("artist_text_reveals").insert({ event_id: ev.id, prompt_id: fromPrompt ? part.promptId : null, revealed_by: userId, reason });
     if (error) return NextResponse.json({ error: "The reveal could not be logged, so nothing is shown." }, { status: 503 });
     const { data: me } = await supabase.from("users").select("handle").eq("id", userId).maybeSingle();
     await notifyAdmins(supabase, {
