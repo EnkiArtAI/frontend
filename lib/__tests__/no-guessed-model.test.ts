@@ -25,11 +25,10 @@ describe("the agent route sends the routed model", () => {
     const hosts = X402.search(/if \(!\["gemini", "wavespeed", "openai"\]\.includes\(route\.provider\)\) \{/);
     const guard = X402.search(/if \(!route\.providerModel\) \{/);
     // Money first moves when the fee payer fronts a missing token account,
-    // then at settlement, after the work and its image check (2026-10-08).
-    // Reading the payment header moves nothing; it runs before the routing on
-    // purpose (Kev, 2026-10-06).
+    // then at settlement. Reading the payment header moves nothing; it runs
+    // before the routing on purpose (Kev, 2026-10-06).
     const fronting = X402.search(/await broadcastAndConfirm\(conn, fronted\.serialize\(\)/);
-    const settle = X402.search(/await submitAndConfirm\(solanaConnection\(\), parsed\.tx, /);
+    const settle = X402.search(/await submitAndConfirm\(solanaConnection\(\), parsed\.tx\)/);
     expect(hosts).toBeGreaterThan(-1);
     expect(guard).toBeGreaterThan(hosts);
     expect(fronting).toBeGreaterThan(guard);

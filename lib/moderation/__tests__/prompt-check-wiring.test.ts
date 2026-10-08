@@ -193,7 +193,7 @@ describe("the agent rail", () => {
   it("answers a real failure with a fixed sentence, never the provider's", () => {
     // The failure record keeps the provider's text; only the answer must not.
     expect(AGENT).not.toMatch(/error: result\.error \|\| "Image generation failed/);
-    expect(AGENT).toContain('return NextResponse.json({ error: "Image generation failed. Nothing was charged.", transaction: signature }, { status: 502 });');
+    expect(AGENT).toMatch(/error: "Image generation failed after your payment settled\.",/);
   });
 
   it("verifies the payment offline before anything is judged", () => {
