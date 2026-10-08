@@ -27,6 +27,7 @@ vi.mock("@/lib/supabaseServer", () => ({
 }));
 
 import { GET as list } from "../../app/api/wallet/nfts/route";
+import { GET as image } from "../../app/api/wallet/nfts/image/route";
 
 const RPC = "https://rpc.test/?api-key=k";
 const CDN = "https://cdn.helius-rpc.com/cdn-cgi/image";
@@ -203,5 +204,86 @@ describe("the NFT list costs", () => {
     expect(eleventh.headers.get("Retry-After")).toEqual(expect.any(String));
     expect(rpcCalls).toHaveLength(10);
     expect((await list(ask("/api/wallet/nfts", "someone-else"))).status).toBe(200);
+  });
+});
+
+describe("a picked NFT's image", () => {
+  const REF = "width=1024,height=1024,fit=scale-down,format=webp,quality=85,anim=false";
+  const CAP = 3 * 1024 * 1024;
+  let cdnCalls: { url: string; init?: RequestInit }[] = [];
+  const webp = (bytes = 10) => new Response(new Uint8Array(bytes), { headers: { "Content-Type": "image/webp" } });
+  const cdn = (answer: (url: string) => Response | Promise<Response> = () => webp()) => {
+    cdnCalls = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      cdnCalls.push({ url, init });
+      return answer(url);
+    }));
+  };
+  const pick = (src: string, user?: string) => image(ask(`/api/wallet/nfts/image?src=${encodeURIComponent(src)}`, user));
+
+  it("is the CDN's 1024 px still of the named image, read here and handed on as bytes", async () => {
+    cdn(() => webp(1234));
+    const res = await pick("https://files.test/a.png");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("image/webp");
+    expect((await res.arrayBuffer()).byteLength).toBe(1234);
+    expect(cdnCalls.map((c) => c.url)).toEqual([`${CDN}/${REF}/https://files.test/a.png`]);
+  });
+
+  it("reads an IPFS image through a gateway that answers", async () => {
+    cdn();
+    await pick("ipfs://bafyabc/1.png");
+    expect(cdnCalls.map((c) => c.url)).toEqual([`${CDN}/${REF}/https://ipfs.filebase.io/ipfs/bafyabc/1.png`]);
+  });
+
+  it("fetches nothing for a source that is no web address", async () => {
+    cdn();
+    for (const src of ["javascript:alert(1)", "data:image/png;base64,AAAA", "file:///etc/passwd", ""]) {
+      expect((await pick(src)).status).toBe(400);
+    }
+    expect((await image(ask("/api/wallet/nfts/image"))).status).toBe(400);
+    expect(cdnCalls).toEqual([]);
+  });
+
+  it("refuses a redirect and gives the read a deadline", async () => {
+    cdn();
+    await pick("https://files.test/a.png");
+    expect(cdnCalls[0].init?.redirect).toBe("error");
+    expect(cdnCalls[0].init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("refuses an image past the cap rather than cut it", async () => {
+    const stream = (size: number) => new ReadableStream({ start(c) { c.enqueue(new Uint8Array(size)); c.close(); } });
+    cdn(() => new Response(stream(CAP + 1), { headers: { "Content-Type": "image/webp" } }));
+    expect((await pick("https://files.test/a.png")).status).toBe(502);
+    cdn(() => new Response(new Uint8Array(1), { headers: { "Content-Type": "image/webp", "Content-Length": String(CAP + 1) } }));
+    expect((await pick("https://files.test/a.png")).status).toBe(502);
+    cdn(() => new Response(stream(CAP), { headers: { "Content-Type": "image/webp" } }));
+    expect((await pick("https://files.test/a.png")).status).toBe(200);
+  });
+
+  it.each([
+    ["an SVG", () => new Response("<svg/>", { headers: { "Content-Type": "image/svg+xml" } })],
+    ["an error page", () => new Response("<html>", { headers: { "Content-Type": "text/html" } })],
+    ["a refusal", () => new Response("no", { status: 415, headers: { "Content-Type": "image/webp" } })],
+    ["no answer in time", () => { throw new DOMException("timed out", "TimeoutError"); }],
+  ])("is no image when the CDN answers %s", async (_n, answer) => {
+    cdn(answer);
+    const res = await pick("https://files.test/a.png");
+    expect([res.status, ((await res.json()) as { error: string }).error]).toEqual([502, "This NFT's image could not be loaded"]);
+  });
+
+  it("holds one account to forty images a minute", async () => {
+    cdn();
+    for (let i = 0; i < 40; i++) expect((await pick("https://files.test/a.png", "picker")).status).toBe(200);
+    expect((await pick("https://files.test/a.png", "picker")).status).toBe(429);
+    expect(cdnCalls).toHaveLength(40);
+  });
+
+  it("answers 401 to nobody, and fetches nothing", async () => {
+    cdn();
+    s.user = null;
+    expect((await image(new NextRequest("http://enki.test/api/wallet/nfts/image?src=https%3A%2F%2Ffiles.test%2Fa.png"))).status).toBe(401);
+    expect(cdnCalls).toEqual([]);
   });
 });

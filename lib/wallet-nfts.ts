@@ -118,3 +118,28 @@ export async function askDas<T>(
   if (d?.error?.code === -32601) return { failure: "no-das" };
   return res?.ok && d?.result ? { result: d.result as T } : { failure: "down" };
 }
+
+/**
+ * A reference image: at most 1024 px, the edge the image check judges at, as
+ * one still WebP, the format every reference travels in (lib/shrink-image).
+ * One that size stays far below the 4.5 MB a function may answer.
+ */
+export const FULL = "width=1024,height=1024,fit=scale-down,format=webp,quality=85,anim=false";
+
+/** A response body of at most `cap` bytes, or null: a larger one is refused, never cut short. */
+export async function readCapped(res: Response, cap: number): Promise<Blob | null> {
+  if (Number(res.headers.get("content-length")) > cap) return null;
+  const reader = res.body?.getReader();
+  if (!reader) return null;
+  const parts: Uint8Array<ArrayBuffer>[] = [];
+  for (let size = 0; ; ) {
+    const { done, value } = await reader.read();
+    if (done) return new Blob(parts);
+    size += value.byteLength;
+    if (size > cap) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    parts.push(value);
+  }
+}
