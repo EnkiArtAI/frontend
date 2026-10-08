@@ -19,11 +19,13 @@ import { useBetaAccess } from "@/components/BetaGate";
 import { useTheme } from "../../providers/ThemeProvider";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import { REPORT_REASONS } from "@/lib/report-reasons";
+import { type FeedbackDecision } from "@/lib/feedback";
 
 /* ── data shapes (from /api/admin) ── */
 type Imp = { id: string; name: string; url: string | null; hunter: string; tags: string[]; at: string };
 type Rep = { id: string; target: string; type: "prompt" | "image" | "profile"; href: string | null; reason: string; details: string | null; reporter: string; severity: string | null; at: string };
-type Fb = { id: string; name: string; email: string | null; desc: string; images: number; paid: boolean; payoutCents: number | null; at: string };
+type Fb = { id: string; name: string; email: string | null; desc: string; images: number; paid: boolean; payoutCents: number | null; at: string; state: FeedbackDecision; wallet: string | null; txUrl: string | null };
+type FbFile = { url: string | null; mime: string };
 type Hunter = { handle: string; total: number; approved: number; denied: number; earningsCents: number };
 type StrikeRow = { userId: string; handle: string; strikes: { id: string; reason: string | null }[]; banned: boolean; permanent: boolean; note: string | null; appeal: { id: string; note: string | null; against: { reason: string | null; until: string | null } | null } | null };
 type Rec = { id: string; handle: string; wallet: string | null; contact: string | null; explanation: string | null; evidence: { kind: string; matched: boolean | null }[]; status: string; at: string };
@@ -76,6 +78,8 @@ const PILL = {
   purple: { bg: "#F3E8FD", ink: "#4A2E6E", border: "#C4A0E8" },
   blue: { bg: "#E8F4FD", ink: "#1E4A6E", border: "#9CCAE8" },
 };
+/* A report's decision: open to decide, done (the $100 follows) or rejected. */
+const FB_STATE = { open: { label: "Open", pal: PILL.amber }, done: { label: "Done", pal: PILL.blue }, rejected: { label: "Rejected", pal: PILL.red } } as const;
 const THEME_OPTS = [
   { id: "light" as const, name: "Bright", sw: "linear-gradient(135deg,#faf8f4,#e8e2d6)" },
   { id: "dark" as const, name: "Dark", sw: "linear-gradient(135deg,#0a1825,#16303f)" },
@@ -152,6 +156,9 @@ export default function AdminPage() {
   const [impRejectId, setImpRejectId] = useState<string | null>(null);
   const [impReason, setImpReason] = useState(REJECT_REASONS[0]);
   const [fbOpen, setFbOpen] = useState<string | null>(null);
+  const [fbFiles, setFbFiles] = useState<Record<string, FbFile[]>>({});
+  const [fbPayId, setFbPayId] = useState<string | null>(null);
+  const [fbSig, setFbSig] = useState("");
   const [invEmail, setInvEmail] = useState("");
   const [invWallet, setInvWallet] = useState("");
   const [granting, setGranting] = useState(false);
@@ -222,6 +229,21 @@ export default function AdminPage() {
     setGenLimit(g.maxConcurrentPerUser === null ? "" : String(g.maxConcurrentPerUser));
   }, [data?.generation]);
 
+  /* A report's attachments are signed each time its row opens: the links
+     expire within minutes, so none outlives the look. */
+  const openFeedback = async (r: Fb) => {
+    if (fbOpen === r.id) { setFbOpen(null); return; }
+    setFbOpen(r.id);
+    if (!r.images) return;
+    try {
+      const res = await fetch(`/api/admin?feedback=${encodeURIComponent(r.id)}`, { headers: sessionAuthHeaders() });
+      if (res.ok) {
+        const { files } = (await res.json()) as { files: FbFile[] };
+        setFbFiles((cur) => ({ ...cur, [r.id]: files }));
+      }
+    } catch { /* the text still shows */ }
+  };
+
   const post = async (payload: Record<string, unknown>, okMsg: string, apply: (d: AdminData) => AdminData) => {
     try {
       const res = await fetch("/api/admin", {
@@ -237,6 +259,22 @@ export default function AdminPage() {
     } catch {
       say("Network hiccup — nothing was changed.");
       return false;
+    }
+  };
+
+  const decideFb = (r: Fb, state: FeedbackDecision) => void post(
+    { resource: "feedback", action: "setStatus", id: r.id, status: state },
+    state === "open" ? "Reopened." : `${state === "done" ? "Marked done" : "Rejected"}: ${r.name} sees it.`,
+    (cur) => ({ ...cur, feedback: cur.feedback.map((x) => (x.id === r.id ? { ...x, state } : x)) }),
+  );
+
+  /* Kev sends the $100 from his own wallet, then records the transfer here:
+     its signature is what the sender's link opens. */
+  const recordPayout = async (r: Fb) => {
+    if (await post({ resource: "feedback", action: "markPaid", id: r.id, signature: fbSig.trim() }, `Payout to ${r.name} recorded.`, (cur) => cur)) {
+      setFbPayId(null);
+      setFbSig("");
+      await reload();
     }
   };
 
@@ -353,7 +391,8 @@ export default function AdminPage() {
     access: data?.access?.requests.length ?? 0,
     imports: data?.imports.length ?? 0,
     reports: data?.reports.length ?? 0,
-    feedback: data?.feedback.filter((f) => !f.paid).length ?? 0,
+    // Open reports to decide and done ones to pay: both wait on staff.
+    feedback: data?.feedback.filter((f) => f.state === "open" || (f.state === "done" && !f.paid)).length ?? 0,
     hunters: 0,
     strikes: data?.strikes.filter((s) => s.appeal).length ?? 0,
     // Only the never-looked-at ones nag. A block that has been judged is
@@ -414,7 +453,7 @@ export default function AdminPage() {
   const stats: { label: string; value: number; dot: string; go: Tab }[] = [
     { label: "Pending imports", value: d.imports.length, dot: "var(--enki-ember)", go: "imports" },
     { label: "Open reports", value: d.reports.length, dot: "var(--enki-danger)", go: "reports" },
-    { label: "Unpaid feedback", value: d.feedback.filter((f) => !f.paid).length, dot: "var(--enki-ember)", go: "feedback" },
+    { label: "Feedback to act on", value: counts.feedback, dot: "var(--enki-ember)", go: "feedback" },
     { label: "Active strikes", value: d.strikes.reduce((n, s) => n + s.strikes.length, 0), dot: "var(--enki-danger)", go: "strikes" },
     { label: "Open appeals", value: d.strikes.filter((s) => s.appeal).length, dot: "var(--enki-turq)", go: "strikes" },
     { label: "Recovery pending", value: d.recovery.filter((r) => r.status === "pending").length, dot: "var(--enki-turq)", go: "recovery" },
@@ -638,25 +677,57 @@ export default function AdminPage() {
               {/* ── FEEDBACK ── */}
               {tab === "feedback" && (
                 <div style={cardStyle}>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "9px 0 7px" }}>
+                    <Badge pal={PILL.amber} label={`Open ${d.feedback.filter((f) => f.state === "open").length}`} />
+                    <Badge pal={PILL.blue} label={`Done, unpaid ${d.feedback.filter((f) => f.state === "done" && !f.paid).length}`} />
+                    <Badge pal={PILL.green} label={`Paid ${d.feedback.filter((f) => f.paid).length}`} />
+                    <Badge pal={PILL.red} label={`Rejected ${d.feedback.filter((f) => f.state === "rejected").length}`} />
+                  </div>
                   {filteredFeedback.length === 0 && <div style={{ padding: 30, textAlign: "center", fontSize: 12, color: "var(--enki-ink-3)" }}>No feedback yet.</div>}
                   {filteredFeedback.map((r) => (
                     <div key={r.id}>
-                      <div style={{ ...rowStyle, cursor: "pointer" }} onClick={() => setFbOpen((v) => (v === r.id ? null : r.id))}>
+                      <div style={{ ...rowStyle, cursor: "pointer" }} onClick={() => void openFeedback(r)}>
                         <span style={{ width: 116, fontSize: 12, fontWeight: 600, color: "var(--enki-ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
                         <span style={{ width: 132, fontFamily: MONO, fontSize: 9.5, color: "var(--enki-ink-3)", overflow: "hidden", textOverflow: "ellipsis" }}>{r.email ?? "—"}</span>
                         <span style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: "var(--enki-ink-3)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.desc}</span>
                         <span style={{ width: 34, textAlign: "center", fontFamily: MONO, fontSize: 9, color: "var(--enki-ink-3)" }}>{r.images > 0 ? `${r.images} img` : "—"}</span>
                         <span style={{ width: 42, fontFamily: MONO, fontSize: 9, color: "var(--enki-ink-3)" }}>{timeAgo(r.at)}</span>
-                        <Badge pal={r.paid ? PILL.green : PILL.amber} label={r.paid ? "Paid" : "Unpaid"} />
-                        {!r.paid && (
-                          <span onClick={(e) => e.stopPropagation()}>
-                            <Pill kind="green" label="Mark paid" onClick={() => void post({ resource: "feedback", action: "markPaid", id: r.id }, `$100 payout marked as paid to ${r.name}.`, (cur) => ({ ...cur, feedback: cur.feedback.map((x) => (x.id === r.id ? { ...x, paid: true } : x)) }))} />
-                          </span>
-                        )}
+                        <Badge pal={r.paid ? PILL.green : FB_STATE[r.state].pal} label={r.paid ? "Paid" : FB_STATE[r.state].label} />
+                        <span style={{ display: "flex", gap: 5, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
+                          {fbPayId === r.id ? <>
+                            <input autoFocus placeholder="Transaction signature" value={fbSig} onChange={(e) => setFbSig(e.target.value)} style={{ width: 210, height: 26, border: "1px solid var(--enki-rule)", borderRadius: 7, background: "var(--enki-paper)", color: "var(--enki-ink)", fontSize: 10.5, fontFamily: MONO, padding: "0 7px", outline: "none" }} />
+                            <Pill kind="green" label="Confirm" onClick={() => void recordPayout(r)} />
+                            <Pill kind="plain" label="Cancel" onClick={() => setFbPayId(null)} />
+                          </> : <>
+                            {/* Done promises the $100: an admin's word. A mod may reject or reopen. */}
+                            {r.state === "open" && <>
+                              {role === "admin" && <Pill kind="green" label="Done" title="We build it: the $100 follows" onClick={() => decideFb(r, "done")} />}
+                              <Pill kind="red" label="Reject" onClick={() => decideFb(r, "rejected")} />
+                            </>}
+                            {r.state !== "open" && !r.paid && <Pill kind="plain" label="Reopen" onClick={() => decideFb(r, "open")} />}
+                            {r.state === "done" && !r.paid && role === "admin" && <Pill kind="green" label="Mark paid" title="After sending the $100: paste the transaction" onClick={() => { setFbSig(""); setFbPayId(r.id); }} />}
+                            {r.paid && r.txUrl && <a href={r.txUrl} target="_blank" rel="noopener noreferrer" style={{ fontFamily: MONO, fontSize: 9.5, color: "var(--enki-ember)" }}>Payment ↗</a>}
+                          </>}
+                        </span>
                       </div>
                       {fbOpen === r.id && (
                         <div style={{ padding: "2px 0 12px 10px", borderLeft: `3px solid ${PILL.amber.border}`, margin: "0 0 8px 4px" }}>
                           <p style={{ margin: 0, fontSize: 12, color: "var(--enki-ink-2)", lineHeight: 1.65, maxWidth: 640 }}>{r.desc}</p>
+                          <p style={{ margin: "8px 0 0", fontSize: 11, color: "var(--enki-ink-3)" }}>
+                            Pay to <span style={{ fontFamily: MONO, color: "var(--enki-ink-2)", userSelect: "all" }}>{r.wallet ?? "no payable Solana wallet (must re-link)"}</span>
+                          </p>
+                          {(fbFiles[r.id] ?? []).length > 0 && (
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                              {fbFiles[r.id].map((f, i) => f.url && (f.mime.startsWith("video/")
+                                ? <video key={i} src={f.url} controls preload="metadata" style={{ maxWidth: 320, maxHeight: 220, borderRadius: 6, background: "#000" }} />
+                                : (
+                                  <a key={i} href={f.url} target="_blank" rel="noopener noreferrer">
+                                    {/* eslint-disable-next-line @next/next/no-img-element -- a private attachment by a link that expires in minutes; next/image would fetch and cache it on our server */}
+                                    <img src={f.url} alt={`Attachment ${i + 1} of the report`} style={{ display: "block", maxWidth: 220, maxHeight: 160, objectFit: "contain", borderRadius: 6, border: "1px solid var(--enki-rule)" }} />
+                                  </a>
+                                )))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1128,7 +1199,7 @@ export default function AdminPage() {
                   <div style={{ ...cardStyle, padding: "14px 16px", marginBottom: 10, maxWidth: 560 }}>
                     <div style={{ fontFamily: SERIF, fontStyle: "italic", fontSize: 17, color: "var(--enki-ink)", marginBottom: 4 }}>Council notifications.</div>
                     <p style={{ margin: "0 0 10px", fontSize: 11.5, color: "var(--enki-ink-3)", lineHeight: 1.55 }}>
-                      Council vote requests are mailed here. Stored encrypted — leave empty to opt out of emails (you still vote in this panel).
+                      Council vote requests and new feedback are mailed here. Stored encrypted — leave empty to opt out of emails (you still vote in this panel).
                     </p>
                     <div style={{ display: "flex", gap: 7 }}>
                       <input placeholder="you@example.com" value={seEmail} onChange={(e) => setSeEmail(e.target.value)} style={{ flex: 1, height: 30, border: "1px solid var(--enki-rule)", borderRadius: 8, background: "var(--enki-paper-2)", color: "var(--enki-ink)", fontSize: 11.5, padding: "0 9px", fontFamily: MONO, outline: "none" }} />

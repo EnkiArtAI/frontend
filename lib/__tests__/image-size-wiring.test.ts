@@ -49,4 +49,15 @@ describe("an upload", () => {
     expect(profile).toContain("const blob = await encodeCanvas(canvas, 0.85);");
     expect(profile).toContain('return blob ? new File([blob], `image.${blob.type.split("/")[1]}`, { type: blob.type }) : null;');
   });
+
+  it("to a feedback report is a still image made smaller before it counts, a GIF or video as it is", () => {
+    const modal = src("components", "enki-shell", "FeedbackModal.tsx");
+    expect(modal).toContain('const STILLS = ["image/png", "image/jpeg", "image/webp"];');
+    expect(modal).toContain("const picked = await Promise.all(Array.from(list).map(async (f) => (STILLS.includes(f.type) ? ((await fitUpload(f)) ?? f) : f)));");
+    expect(modal).toContain("const { files: next, refused } = addFeedbackFiles(files, picked);");
+    // Nothing changes the list while it is being redrawn, and nothing is sent half-attached.
+    expect(modal).toMatch(/setAttaching\(true\);\n\s+try \{[\s\S]+\} finally \{\n\s+setAttaching\(false\);/);
+    expect(modal).toContain("const canSend = !!sev && text.trim().length >= 10 && !busy && !attaching;");
+    expect(modal.match(/disabled=\{attaching\}/g)).toHaveLength(2);
+  });
 });

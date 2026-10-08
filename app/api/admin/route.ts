@@ -13,9 +13,11 @@
  *   strikes.severity ∈ {1,2,3} · bans.scope ∈ {full} · appeals.status ∈
  *   {pending,approved,denied,withdrawn} · appeals.target_type ∈ {strike,ban} ·
  *   reports.status ∈ {pending,actioned,dismissed,duplicate} · reports.reason ∈
- *   {spam,copyright,hate,impersonation,other}
+ *   {spam,copyright,hate,impersonation,other} · feedback_submissions.status ∈
+ *   {pending,reviewed,accepted,rejected,paid,duplicate,spam} (2026-10-08)
  */
 import { NextRequest, NextResponse } from "next/server";
+import bs58 from "bs58";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { decryptString, encryptString, type EncryptedPayload } from "@/lib/crypto";
@@ -26,13 +28,24 @@ import { loadPromptText } from "@/lib/generation/prompt-text";
 import { banUntil } from "@/lib/moderation/bans";
 import { AccessError, accessFor, approveRequest, inviteEmail, inviteWallet, rejectRequest } from "@/lib/access-invite";
 import { inChunks } from "@/lib/in-chunks";
+import { explorerTxUrl } from "@/lib/send-usdc";
 import { readImageEvidence } from "@/lib/moderation/image-case";
+import { FEEDBACK_BUCKET, FEEDBACK_STATUS, feedbackDecision, type FeedbackDecision } from "@/lib/feedback";
 
 /** A ban counts while it is not lifted and has not run out, as activeBanFor reads it. */
 const unexpired = () => `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`;
 
 type Supabase = ReturnType<typeof getSupabaseServerClient>;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const FEEDBACK_SIGN_TTL = 600; // seconds
+
+/** A Solana transaction signature: 64 bytes in base58. Its shape only; nothing asks the chain. */
+function isTxSignature(s: string): boolean {
+  try { return bs58.decode(s).length === 64; } catch { return false; }
+}
+/** Kev pays the $100 by hand, real USDC from his own wallet: on Solana mainnet,
+    whatever chain this deployment settles on (chains.key, a foreign key, verified live 2026-10-08). */
+const PAYOUT_CHAIN = "solana";
 
 // The role comes back too: mods and admins share this panel, but not every
 // control in it. Throttling generation is an admin decision — a mod moderates
@@ -230,13 +243,28 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(await personDetail(supabase, who, (ct, iv, tag, kid) => tryDecrypt(ct, iv, tag, kid, [undefined])));
   }
 
+  // One report's attachments, signed as its row opens (Kev, 2026-10-08). The
+  // bucket is private: a link that lives for minutes cannot outlive the look.
+  const feedbackId = req.nextUrl.searchParams.get("feedback");
+  if (feedbackId !== null) {
+    if (!UUID_RE.test(feedbackId)) return NextResponse.json({ error: "Bad feedback id" }, { status: 400 });
+    const { data: att } = await supabase.from("feedback_attachments")
+      .select("storage_key, mime_type").eq("feedback_id", feedbackId).order("sort_order", { ascending: true });
+    const rows = (att ?? []).filter((a) => a.storage_key);
+    const signed = rows.length
+      ? (await supabase.storage.from(FEEDBACK_BUCKET).createSignedUrls(rows.map((a) => String(a.storage_key)), FEEDBACK_SIGN_TTL)).data ?? []
+      : [];
+    const url = new Map(signed.map((f) => [f.path, f.signedUrl]));
+    return NextResponse.json({ files: rows.map((a) => ({ url: url.get(String(a.storage_key)) ?? null, mime: String(a.mime_type ?? "") })) });
+  }
+
   const [imp, rep, fb, hu, st, ba, ap, rec, council, genPolicy, automod, people, access] = await Promise.all([
     supabase.from("hunt_submissions")
       .select("id, hunter_user_id, source_url, suggested_title, suggested_tags, submitted_at")
       .eq("status", "pending").order("submitted_at", { ascending: false }).limit(100),
     pendingReports(supabase),
     supabase.from("feedback_submissions")
-      .select("id, user_id, submitter_name, submitter_email_ct, submitter_email_iv, submitter_email_tag, submitter_email_kid, description, category, severity, payout_cents, paid_at, created_at")
+      .select("id, user_id, submitter_name, submitter_email_ct, submitter_email_iv, submitter_email_tag, submitter_email_kid, description, category, severity, status, payout_cents, payout_tx_hash, payout_chain_key, paid_at, created_at")
       .order("created_at", { ascending: false }).limit(100),
     supabase.from("hunter_stats")
       .select("user_id, total_submissions, approved_count, rejected_count, duplicate_count, earnings_cents")
@@ -272,10 +300,20 @@ export async function GET(req: NextRequest) {
   // attachments per feedback + evidence per recovery request
   const fbIds = (fb.data ?? []).map((r) => String(r.id));
   const recIds = (rec.data ?? []).map((r) => String(r.id));
-  const [att, evi] = await Promise.all([
+  // Where a report's $100 goes: the account's live Solana wallet, as artist payouts read it.
+  const fbUsers = (fb.data ?? []).filter((r) => r.user_id).map((r) => String(r.user_id));
+  const [att, evi, wallets] = await Promise.all([
     fbIds.length ? supabase.from("feedback_attachments").select("feedback_id").in("feedback_id", fbIds) : Promise.resolve({ data: [] }),
     recIds.length ? supabase.from("recovery_request_evidence").select("request_id, kind, matched, value_url").in("request_id", recIds) : Promise.resolve({ data: [] }),
+    inChunks(fbUsers, (chunk) => supabase.from("user_wallets").select("user_id, address").in("user_id", chunk).eq("chain_family", "solana").is("removed_at", null)),
   ]);
+  const payTo = new Map<string, string>();
+  for (const w of wallets) {
+    const address = String(w.address);
+    // All lowercase is a legacy row that decodes to a key nobody holds: it must
+    // be re-linked before anything is sent to it (artistPayoutWallet).
+    if (address !== address.toLowerCase()) payTo.set(String(w.user_id), address);
+  }
   const attCount = new Map<string, number>();
   for (const a of (att.data ?? []) as { feedback_id: string }[]) {
     attCount.set(String(a.feedback_id), (attCount.get(String(a.feedback_id)) ?? 0) + 1);
@@ -380,11 +418,17 @@ export async function GET(req: NextRequest) {
     feedback: (fb.data ?? []).map((r) => ({
       id: String(r.id),
       name: (r.submitter_name as string) || "Anonymous",
-      email: tryDecrypt(r.submitter_email_ct, r.submitter_email_iv, r.submitter_email_tag, r.submitter_email_kid,
-        [undefined, String(r.id), r.user_id ? String(r.user_id) : undefined]),
+      // The sender's email is an admin's to see, not a mod's (Kev, 2026-10-08).
+      email: role === "admin"
+        ? tryDecrypt(r.submitter_email_ct, r.submitter_email_iv, r.submitter_email_tag, r.submitter_email_kid,
+          [undefined, String(r.id), r.user_id ? String(r.user_id) : undefined])
+        : null,
       desc: (r.description as string) ?? "",
       images: attCount.get(String(r.id)) ?? 0,
       paid: r.paid_at !== null,
+      state: feedbackDecision(r.status),
+      wallet: r.user_id ? (payTo.get(String(r.user_id)) ?? null) : null,
+      txUrl: r.payout_tx_hash ? explorerTxUrl(r.payout_chain_key, String(r.payout_tx_hash)) : null,
       payoutCents: (r.payout_cents as number | null) ?? null,
       at: r.created_at,
     })),
@@ -470,7 +514,7 @@ export async function POST(req: NextRequest) {
     maxConcurrentPerUser?: number | null;
     handle?: string; kind?: string; violation?: string; vote?: string;
     email?: string; enabled?: boolean; quorum?: number; ttlDays?: number;
-    what?: string;
+    what?: string; signature?: string;
   };
   try {
     body = await req.json();
@@ -551,13 +595,39 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── feedback ──
-  if (body.resource === "feedback" && body.action === "markPaid" && body.id) {
-    const { data: cur } = await supabase.from("feedback_submissions").select("payout_cents").eq("id", body.id).maybeSingle();
+  // ── feedback ($100 program): staff decide; a paid report stays as it is ──
+  if (body.resource === "feedback" && body.action === "setStatus" && body.id) {
+    const to = body.status ?? "";
+    if (!Object.hasOwn(FEEDBACK_STATUS, to)) return NextResponse.json({ error: "Unknown status" }, { status: 400 });
+    // Done promises the $100: an admin's word. A mod may reject or reopen.
+    if (to === "done" && role !== "admin") return NextResponse.json({ error: "Only admins mark a report done" }, { status: 403 });
+    const { data: cur } = await supabase.from("feedback_submissions").select("paid_at").eq("id", body.id).maybeSingle();
+    if (!cur) return NextResponse.json({ error: "Feedback not found" }, { status: 404 });
+    if (cur.paid_at) return NextResponse.json({ error: "This report is paid already" }, { status: 409 });
     const { error } = await supabase.from("feedback_submissions")
-      .update({ paid_at: now, payout_cents: cur?.payout_cents ?? 10000, reviewer_id: userId })
+      .update({ status: FEEDBACK_STATUS[to as FeedbackDecision], reviewer_id: userId, reviewed_at: now })
       .eq("id", body.id).is("paid_at", null);
-    return error ? fail(error, "mark paid") : NextResponse.json({ ok: true });
+    return error ? fail(error, "decide the report") : NextResponse.json({ ok: true });
+  }
+
+  // The $100 moves by hand from Kev's wallet; this records it (Kev, 2026-10-08).
+  // Admins only: a mod decides on reports, never on money.
+  if (body.resource === "feedback" && body.action === "markPaid" && body.id) {
+    if (role !== "admin") return NextResponse.json({ error: "Only admins record a payout" }, { status: 403 });
+    const signature = String(body.signature ?? "").trim();
+    if (!isTxSignature(signature)) return NextResponse.json({ error: "Paste the payment's Solana transaction signature" }, { status: 400 });
+    const { data: cur } = await supabase.from("feedback_submissions").select("status, paid_at").eq("id", body.id).maybeSingle();
+    if (!cur) return NextResponse.json({ error: "Feedback not found" }, { status: 404 });
+    if (cur.paid_at) return NextResponse.json({ error: "This report is paid already" }, { status: 409 });
+    if (cur.status === FEEDBACK_STATUS.rejected) return NextResponse.json({ error: "This report was rejected: reopen it before paying" }, { status: 409 });
+    // One transfer pays one report: the same signature twice is a paste gone wrong.
+    const { data: twice } = await supabase.from("feedback_submissions").select("id").eq("payout_tx_hash", signature).limit(1);
+    if (twice?.length) return NextResponse.json({ error: "That transaction is recorded for another report already" }, { status: 409 });
+    const { error } = await supabase.from("feedback_submissions").update({
+      status: FEEDBACK_STATUS.done, paid_at: now, payout_tx_hash: signature, payout_chain_key: PAYOUT_CHAIN,
+      reviewer_id: userId, reviewed_at: now,
+    }).eq("id", body.id).is("paid_at", null);
+    return error ? fail(error, "record the payout") : NextResponse.json({ ok: true });
   }
 
   // ── private-beta access (Kev, 2026-10-07): approve or reject a request,
