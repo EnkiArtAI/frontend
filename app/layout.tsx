@@ -11,7 +11,14 @@ import { Providers } from "../providers";
 const geistSans = localFont({ src: "./fonts/geist-sans-variable.woff2", variable: "--font-geist-sans", weight: "100 900" });
 const inter = localFont({ src: "./fonts/inter-latin-wght-normal.woff2", variable: "--font-inter", weight: "100 900" });
 const jetbrainsMono = localFont({ src: "./fonts/jetbrains-mono-latin-wght-normal.woff2", variable: "--font-jetbrains-mono", weight: "100 800" });
-const instrumentSerif = localFont({ src: "./fonts/instrument-serif-latin-400-normal.woff2", variable: "--font-instrument-serif", weight: "400" });
+const instrumentSerif = localFont({
+  src: [
+    { path: "./fonts/instrument-serif-latin-400-normal.woff2", style: "normal" },
+    { path: "./fonts/instrument-serif-latin-400-italic.woff2", style: "italic" },
+  ],
+  variable: "--font-instrument-serif",
+  weight: "400",
+});
 const outfit = localFont({ src: "./fonts/outfit-latin-wght-normal.woff2", variable: "--font-outfit", weight: "100 900" });
 const cormorantGaramond = localFont({
   src: [
