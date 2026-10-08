@@ -65,7 +65,9 @@ export default function PromptEngagement({ promptId }: { promptId: string }) {
       setFailed(null);
       setComments(data.comments ?? []);
       setStats(data.stats ?? { count: 0, avgRating: null });
-    } catch { /* panel simply stays empty */ }
+    } catch {
+      setFailed("The feedback could not load. Check your connection and try again.");
+    }
   }, [promptId]);
 
   useEffect(() => { load(); }, [load]);
@@ -185,10 +187,16 @@ export default function PromptEngagement({ promptId }: { promptId: string }) {
 
           {/* List */}
           <div style={{ overflowY: "auto", padding: "6px 0" }}>
+            {/* A failed read says so, above whatever the last good read showed. */}
+            {failed && (
+              <p style={{ fontSize: 12.5, color: "var(--enki-ink-3, rgba(245,242,236,0.5))", padding: "10px 14px", margin: 0 }}>{failed}</p>
+            )}
             {comments.length === 0 ? (
-              <p style={{ fontSize: 12.5, color: "var(--enki-ink-3, rgba(245,242,236,0.5))", padding: "10px 14px", margin: 0 }}>
-                {failed ?? "No feedback yet. Be the first!"}
-              </p>
+              !failed && (
+                <p style={{ fontSize: 12.5, color: "var(--enki-ink-3, rgba(245,242,236,0.5))", padding: "10px 14px", margin: 0 }}>
+                  No feedback yet. Be the first!
+                </p>
+              )
             ) : (
               comments.map((c) => (
                 <div key={c.id} style={{ padding: "10px 14px", borderBottom: "1px solid var(--enki-rule, rgba(255,255,255,0.06))" }}>

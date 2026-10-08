@@ -138,7 +138,9 @@ describe("every route passes the outage on", () => {
     expect(board).toMatch(/\) : failed \? \(\n\s+<div[^>]*>\{failed\}<\/div>\n\s+\) : rows\.length === 0 \? \(/);
     const feedback = src("components", "PromptEngagement.tsx");
     expect(feedback).toContain('setFailed(await failureSentence(res, "The feedback could not load"));');
-    expect(feedback).toContain('{failed ?? "No feedback yet. Be the first!"}');
+    // A failed read shows above the last good list, a failed fetch too, and never as "No feedback yet".
+    expect(feedback).toMatch(/\{failed && \(\n\s+<p[^>]*>\{failed\}<\/p>\n\s+\)\}\n\s+\{comments\.length === 0 \? \(\n\s+!failed && \(/);
+    expect(feedback).toContain('setFailed("The feedback could not load. Check your connection and try again.");');
   });
 
   it("a profile, the intent and the quote's owner check answer an outage as one", () => {
