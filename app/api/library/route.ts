@@ -1,7 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
+import { checkRequestRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { stripWorkflowImages } from "@/lib/generation/workflow";
+import { checkImageBytes, dataUrlBytes, NOT_AN_IMAGE } from "@/lib/moderation/image-check-bytes";
+import { recordImageCase } from "@/lib/moderation/image-case";
 
 /**
  * Private prompt / workflow library (Kev, 2026-09-05). Every row belongs to
@@ -16,6 +20,8 @@ export const dynamic = "force-dynamic";
 const MAX_NAME = 120;
 const MAX_TEXT = 20_000;
 const MAX_GRAPH_BYTES = 400_000;
+/** The images a saved workflow may carry itself; ones already on Enki are links and do not count. */
+const MAX_IMAGES = 14;
 
 async function owner(request: NextRequest) {
   const supabase = getSupabaseServerClient();
@@ -56,6 +62,32 @@ export async function POST(request: NextRequest) {
   const graph = body.graph && typeof body.graph === "object" ? body.graph : null;
   if (graph && JSON.stringify(graph).length > MAX_GRAPH_BYTES) return NextResponse.json({ error: "Workflow too large to save" }, { status: 413 });
   if (!graph && !promptText) return NextResponse.json({ error: "Nothing to save" }, { status: 422 });
+
+  // Every image a workflow carries is judged before it is kept (Kev,
+  // 2026-10-08: every image). The library is private, so 18+ stays; one
+  // refused, or no image at all, saves nothing, and a child-safety one
+  // becomes a case. Each save pays for its checks, hence the limit.
+  const images = graph ? stripWorkflowImages(graph).images : [];
+  if (images.length > MAX_IMAGES) {
+    return NextResponse.json({ error: `A workflow can carry at most ${MAX_IMAGES} attached images to save. Nothing was saved.` }, { status: 422 });
+  }
+  if (images.length) {
+    const limit = checkRequestRateLimit(`library-save:${userId}`, 20, 60_000);
+    if (!limit.allowed) return rateLimitResponse(limit.retryAfterSeconds);
+    const bytes = images.map((img) => dataUrlBytes(img) ?? Buffer.from(img, "base64"));
+    const seen = await Promise.all(bytes.map((b) => checkImageBytes(b, { signal: request.signal })));
+    seen.forEach((v, i) => {
+      if (v.verdict === "child_safety") {
+        after(recordImageCase(supabase, { surface: "library", request, bytes: bytes[i], scores: v.scores, about: "An image in a workflow saved to the private library." }));
+      }
+    });
+    if (seen.some((v) => v.verdict === "blocked" || v.verdict === "child_safety" || (v.verdict === "unavailable" && v.reason === NOT_AN_IMAGE))) {
+      return NextResponse.json({ error: "One of this workflow's images can't be saved on Enki. Nothing was saved." }, { status: 422 });
+    }
+    if (seen.some((v) => v.verdict === "unavailable")) {
+      return NextResponse.json({ error: "This workflow's images could not be checked right now. Nothing was saved. Please try again." }, { status: 503 });
+    }
+  }
 
   const { data, error } = await supabase
     .from("saved_workflows")
