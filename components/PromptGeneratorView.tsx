@@ -442,9 +442,11 @@ export default function PromptGeneratorView({
     /* boost + quality are part of the key: toggling either MUST refetch, or
        the shown price is the old route's (Kev, 2026-08-23: boost = real cost
        everywhere). */
-    queryKey: ["generation-quote", promptId, core.entry?.id, quoteResolution, core.boostAt(quoteResolution) && boost, quality],
+    queryKey: ["generation-quote", promptId, core.entry?.id, quoteResolution, core.boostAt(quoteResolution) && boost, quality, refs.length],
+    /* The reference images are checked and charged per image: the shown price
+       counts them, or it is less than the charge (Kev: the shown price is charged). */
     queryFn: () =>
-      fetchGenerationQuote({ promptId: promptId!, modelId: core.entry!.id, resolution: quoteResolution, boost: core.boostAt(quoteResolution) && boost, quality }),
+      fetchGenerationQuote({ promptId: promptId!, modelId: core.entry!.id, resolution: quoteResolution, boost: core.boostAt(quoteResolution) && boost, quality, referenceImageCount: refs.length }),
     enabled: !noCharge && !!promptId && !loading && !!core.entry,
     // Quotes expire server-side after 5 minutes; refresh a little sooner.
     refetchInterval: 4 * 60 * 1000,

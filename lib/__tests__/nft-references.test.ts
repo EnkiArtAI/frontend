@@ -66,3 +66,10 @@ describe("the empty NFT picker", () => {
     expect(PICKER).toMatch(/\.catch\(\(e: Error\) => \{ setNfts\(\[\]\); setProblem\(e\.message\); \}\);\n\s+\}, \[round\]\);/);
   });
 });
+
+describe("the buyer page's price", () => {
+  it("counts the reference images it will charge for, and asks again when they change", () => {
+    expect(BUYER).toContain("quality, referenceImageCount: refs.length }),");
+    expect(BUYER).toContain('queryKey: ["generation-quote", promptId, core.entry?.id, quoteResolution, core.boostAt(quoteResolution) && boost, quality, refs.length],');
+  });
+});
