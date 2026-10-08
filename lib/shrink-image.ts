@@ -1,3 +1,5 @@
+import { REQUEST_MAX_BYTES } from "@/lib/request-size";
+
 /**
  * Images made smaller in the browser before they travel. Vercel turns away a
  * request body over 4.5 MB before any route of ours runs, and a reference
@@ -62,4 +64,33 @@ export async function shrinkImage(src: Blob, edge = REFERENCE_EDGE, quality = RE
   } catch {
     return src;
   }
+}
+
+/**
+ * Tried in order until a gallery or message image fits: quality before size,
+ * and size last for the one kind with no quality to give (Safari's PNG of a
+ * transparent image). Measured 2026-10-08 with libwebp: a 4K render (14.2 MB
+ * PNG) is 961 KB at the first step; pure noise, the worst case, fits at the third.
+ */
+const UPLOAD_STEPS = [
+  { edge: 2560, quality: 0.9 },
+  { edge: 2560, quality: 0.8 },
+  { edge: 2560, quality: 0.7 },
+  { edge: 2048, quality: 0.7 },
+  { edge: 1600, quality: 0.7 },
+];
+
+/**
+ * A showcase or message image as it is sent: the file itself when it fits,
+ * so a good one keeps every byte, else the first step that fits; null when
+ * none does or the browser cannot decode it. It travels alone in a multipart
+ * body, as bytes: no base64 here.
+ */
+export async function fitUpload(file: File): Promise<File | null> {
+  if (file.size <= REQUEST_MAX_BYTES) return file;
+  for (const { edge, quality } of UPLOAD_STEPS) {
+    const blob = await shrinkImage(file, edge, quality);
+    if (blob.size <= REQUEST_MAX_BYTES) return new File([blob], `${file.name.replace(/\.[^.]*$/, "")}.${blob.type.split("/")[1]}`, { type: blob.type });
+  }
+  return null;
 }

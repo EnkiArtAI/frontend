@@ -21,3 +21,11 @@ describe("the prompt editor's save", () => {
     expect(EDITOR).toContain("const savedPrompt: unknown = await response.json().catch(() => null);");
   });
 });
+
+describe("an upload", () => {
+  it("to the gallery is made smaller until it arrives, and the fitted file is sent", () => {
+    const zone = src("components", "ShowroomUploadZone.tsx");
+    expect(zone).toMatch(/const file = await fitUpload\(upload\.file\);\n\s+if \(!file\) throw new Error\(`\$\{upload\.file\.name\} is too large to upload, even made smaller\.`\);\n\s+const formData = new FormData\(\);\n\s+formData\.append\('file', file\);/);
+    expect(zone).not.toContain("formData.append('file', upload.file)");
+  });
+});

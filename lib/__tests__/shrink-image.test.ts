@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { fitWithin, shrinkImage } from "@/lib/shrink-image";
+import { fitWithin, shrinkImage, fitUpload } from "@/lib/shrink-image";
+import { REQUEST_MAX_BYTES } from "@/lib/request-size";
 import { readReference } from "@/hooks/useReferenceReads";
 
 /**
@@ -112,5 +113,38 @@ describe("a reference", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(new Blob(["x"], { type: "image/gif" }))));
     await expect(readReference(new Blob(["x"], { type: "image/png" }))).resolves.toBe("data:image/webp;base64,AA==");
     await expect(readReference("https://arweave.net/a.gif")).resolves.toBe("data:image/webp;base64,AA==");
+  });
+});
+
+describe("a gallery or message image", () => {
+  const file = (size: number, name = "a.png") => new File([new Uint8Array(size)], name, { type: "image/png" });
+
+  it("that already fits goes untouched, every byte", async () => {
+    const { decode } = fakeBrowser();
+    const f = file(REQUEST_MAX_BYTES);
+    await expect(fitUpload(f)).resolves.toBe(f);
+    expect(decode).not.toHaveBeenCalled();
+  });
+
+  it("too large is stepped down at 2560 px, quality first, until it fits", async () => {
+    const { canvases } = fakeBrowser({ bytes: (_c, q) => (q > 0.7 ? REQUEST_MAX_BYTES + 1 : REQUEST_MAX_BYTES) });
+    const out = await fitUpload(file(REQUEST_MAX_BYTES + 1, "render.png"));
+    expect(canvases.map((c) => [c.width, ...c.asked[0]])).toEqual([[2560, "image/webp", 0.9], [2560, "image/webp", 0.8], [2560, "image/webp", 0.7]]);
+    expect([out?.name, out?.type, out?.size]).toEqual(["render.webp", "image/webp", REQUEST_MAX_BYTES]);
+  });
+
+  it("with no quality to give (Safari's transparent PNG) is made smaller instead", async () => {
+    const { canvases } = fakeBrowser({ webpAs: "image/png", alpha: 0, bytes: (c) => (c.width > 2048 ? REQUEST_MAX_BYTES + 1 : REQUEST_MAX_BYTES) });
+    const out = await fitUpload(file(REQUEST_MAX_BYTES + 1));
+    expect(canvases.map((c) => c.width)).toEqual([2560, 2560, 2560, 2048]);
+    expect([out?.name, out?.type]).toEqual(["a.png", "image/png"]);
+  });
+
+  it("is refused (null) when no step fits, or when one too large cannot be decoded", async () => {
+    const { canvases } = fakeBrowser({ bytes: () => REQUEST_MAX_BYTES + 1 });
+    await expect(fitUpload(file(REQUEST_MAX_BYTES + 1))).resolves.toBeNull();
+    expect(canvases.map((c) => c.width)).toEqual([2560, 2560, 2560, 2048, 1600]);
+    fakeBrowser({ decodes: false });
+    await expect(fitUpload(file(REQUEST_MAX_BYTES + 1))).resolves.toBeNull();
   });
 });
