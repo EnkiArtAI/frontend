@@ -15,6 +15,15 @@
      cream and near-black. Both values were already in this file (recovery
      banner / refer error) — this only lets them switch with the theme. */
   --enki-danger: #b3271e;
+  /* The image UI's set, equal to globals.css (the shadows by hand). */
+  --enki-amber: #e0a35c; --enki-price-bg: #e0a35c; --enki-price-ink: #1a1715;
+  --enki-stage: #1a1715; --enki-on-stage: #faf8f4;
+  --enki-ref-a: #cfe3f2; --enki-ref-b: #cdeee3; --enki-ref-ink: #1e4b5a;
+  --enki-vary-1: #c96838; --enki-vary-2: #0d9488; --enki-vary-3: #a8822a;
+  --enki-vary-4: #3d3a36; --enki-vary-5: #8b5cf6; --enki-vary-6: #5b7a91;
+  --enki-shadow-pop: 0 18px 50px rgba(26, 23, 21, 0.12);
+  --enki-shadow-card: 0 8px 24px rgba(26, 23, 21, 0.1);
+  --enki-shadow-bar: 0 -16px 20px -12px rgba(26, 23, 21, 0.08);
   --header-bg: rgba(255, 255, 255, 0.92);
   --qc-bg: #1a1715; --qc-ink: #ffffff;
   --cta-bg: #1a1715; --cta-ink: #ffffff;
@@ -33,6 +42,14 @@
   --ember-rgb: 203, 162, 74;
   --enki-turq: #2dd4bf; --turq-rgb: 45, 212, 191;
   --enki-danger: #e0584f;
+  --enki-amber: #e0a35c; --enki-price-bg: #0a1825; --enki-price-ink: #e0a35c;
+  --enki-stage: #050c13; --enki-on-stage: #faf8f4;
+  --enki-ref-a: #cfe3f2; --enki-ref-b: #cdeee3; --enki-ref-ink: #1e4b5a;
+  --enki-vary-1: #cba24a; --enki-vary-2: #2dd4bf; --enki-vary-3: #e07a4f;
+  --enki-vary-4: #97aebb; --enki-vary-5: #c084fc; --enki-vary-6: #7fb3d5;
+  --enki-shadow-pop: 0 18px 50px rgba(0, 0, 0, 0.45);
+  --enki-shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --enki-shadow-bar: 0 -16px 20px -12px rgba(0, 0, 0, 0.35);
   --header-bg: rgba(10, 24, 37, 0.92);
   --qc-bg: #f0a868; --qc-ink: #3a2410;
   --cta-bg: linear-gradient(135deg, #cba24a 0%, #b8862f 100%); --cta-ink: #0a1825;
@@ -44,6 +61,14 @@
   --ember-rgb: 168, 85, 247;
   --enki-turq: #2dd4bf; --turq-rgb: 45, 212, 191;
   --enki-danger: #e0584f;
+  --enki-amber: #e0a35c; --enki-price-bg: #140e1f; --enki-price-ink: #e0a35c;
+  --enki-stage: #0b0713; --enki-on-stage: #faf8f4;
+  --enki-ref-a: #cfe3f2; --enki-ref-b: #cdeee3; --enki-ref-ink: #1e4b5a;
+  --enki-vary-1: #a855f7; --enki-vary-2: #2dd4bf; --enki-vary-3: #e0a35c;
+  --enki-vary-4: #a99fc0; --enki-vary-5: #f472b6; --enki-vary-6: #7fb3d5;
+  --enki-shadow-pop: 0 18px 50px rgba(0, 0, 0, 0.45);
+  --enki-shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --enki-shadow-bar: 0 -16px 20px -12px rgba(0, 0, 0, 0.35);
   --header-bg: rgba(20, 14, 32, 0.92);
   --qc-bg: #8b5cf6; --qc-ink: #ffffff;
   --cta-bg: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%); --cta-ink: #ffffff;
