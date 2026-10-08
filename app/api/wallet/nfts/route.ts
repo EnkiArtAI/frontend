@@ -20,16 +20,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
+import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { askDas, cdnImage, DAS_FAILURE, imageSource, solanaWallets, THUMB, type DasAsset } from "@/lib/wallet-nfts";
 
 export async function GET(req: NextRequest) {
   const supabase = getSupabaseServerClient();
   const userId = await resolveSessionUserId(supabase, req.headers.get("X-Session-Token"));
   if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  // Each wallet read is a paid index call, on the key the payments use too.
+  const limit = checkRequestRateLimit(rateLimitKey(req, "nfts:list", userId), 10, 60_000);
+  if (!limit.allowed) return rateLimitResponse(limit.retryAfterSeconds);
 
   const wallets = await solanaWallets(supabase, userId);
   if (!wallets) return NextResponse.json({ error: "Wallets unavailable" }, { status: 503 });
-  if (!wallets.length) return NextResponse.json({ nfts: [], wallets: 0 });
+  // A minute, in this browser, for this session only: one account's NFTs are nobody else's.
+  const headers = { "Cache-Control": "private, max-age=60", Vary: "X-Session-Token" };
+  if (!wallets.length) return NextResponse.json({ nfts: [], wallets: 0 }, { headers });
 
   const rpc = process.env.SOLANA_RPC_URL?.trim();
   if (!rpc) return NextResponse.json({ error: "NFT browsing isn't configured yet" }, { status: 503 });
@@ -59,5 +65,5 @@ export async function GET(req: NextRequest) {
         }]
       : [];
   });
-  return NextResponse.json({ nfts, wallets: wallets.length });
+  return NextResponse.json({ nfts, wallets: wallets.length }, { headers });
 }
