@@ -14,7 +14,7 @@
  *   POST /api/x402/generate                    → 402 without X-PAYMENT
  *        { prompt } or { promptId, variableValues? }, plus the model
  *        { modelFamily } and optional { resolution, aspectRatio, quality }
- *   POST + X-PAYMENT                           → settle, generate, 200
+ *   POST + X-PAYMENT                           → generate, check, settle, 200
  *
  * Prices are THE SAME ladders humans pay. Since 2026-08-24 (Kev: "i want
  * agents to purchase artists prompts") priced prompts settle too: the 402's
@@ -26,9 +26,12 @@
  * agent buys the generation, never the text.
  *
  * Order of operations is deliberate: model, route, prompt text and
- * moderation are all resolved BEFORE the payment settles — the only thing
- * standing between a settled payment and a delivered image is the provider
- * call itself. Payment first would take money for requests we then refuse.
+ * moderation are all resolved before anything is rendered, and the payment
+ * settles only after the image exists, is stored and passed the image check
+ * (Kev, 2026-10-08): what the check refuses or cannot judge is not delivered
+ * and not charged, and there is no refund rail, so settling last is the only
+ * way to keep that. Its cost: a render that outlasts the payment's blockhash
+ * can no longer be settled, and is withheld.
  */
 import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
@@ -61,7 +64,9 @@ import { moderate, screenFirst, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";
 import { resolveModelByFamily, chooseRoute } from "@/lib/generation/models";
 import { clampTier } from "@/lib/generation/resolution";
 import { reportSuccess, reportFailure } from "@/lib/generation/provider-health";
-import { INLINE_MAX_BYTES, storeDeadline, storeGeneratedImage } from "@/lib/generation/derivative-store";
+import { INLINE_MAX_BYTES, removeStored, storeDeadline, storeGeneratedImage } from "@/lib/generation/derivative-store";
+import { checkImageBytes, heldBack, IMAGE_REFUSED, IMAGE_UNCHECKED } from "@/lib/moderation/image-check-bytes";
+import { recordImageCase } from "@/lib/moderation/image-case";
 import { generateImagesWithWaveSpeed } from "@/backend/services/wavespeed-image-generation";
 import { generateImagesWithOpenAI } from "@/backend/services/openai-image-generation";
 import { generateImagesWithGemini } from "@/backend/services/gemini-image-generation";
@@ -424,45 +429,32 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   if (!simulated.ok) {
     return NextResponse.json({ error: simulated.error, transaction: signature }, { status: 402 });
   }
-  // Refused silently: nothing is settled. A real failure only happens after
-  // settlement, so a paying agent can still tell a failure from an image, as
-  // with any check; every caught probe is recorded and the third blocks the
-  // address (agentBlocked).
+  // Refused silently: nothing is settled, as with every failure before the
+  // settlement below; every caught probe is recorded and the third blocks
+  // the address (agentBlocked).
   if (silent) {
     if (!blocked && check.verdict === "extraction") {
       after(recordExtractionHit(supabase, { surface: "x402-generate", request: asker, values: checked, confidence: check.confidence, promptId: input.promptId }));
     }
     return silentFailure();
   }
+  // Recorded before the work: one X-PAYMENT buys one render, also in parallel.
   const replay = await checkAndRecordSolanaSignature(signature, chainKey, "x402-agent-generate");
   if (!replay.isNew) {
     return NextResponse.json(
-      { error: "This payment transaction was already settled", transaction: signature },
+      { error: "This payment transaction was already used", transaction: signature },
       { status: 409 },
     );
   }
-  const settled = await submitAndConfirm(solanaConnection(), parsed.tx);
-  if (!settled.ok) {
-    // A rejection (preflight, on chain, expired) means no funds moved; every
-    // other failure is pending, the payment may still land, so the signature
-    // travels with the error for the agent to check.
-    if (settled.pending) {
-      // The payment may still land with no image for it: recorded with its
-      // signature so support can make it right.
-      after(recordGenerationFailure(supabase, {
-        request, surface: "x402-generate", modelId: model.id, resolution: input.resolution, quality: effQuality, boost: false,
-        aspectRatio: input.aspectRatio ?? null, referenceImageCount: 0,
-        prompt: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
-        error: "Payment outcome unknown", txSignature: signature,
-      }));
-    }
-    return NextResponse.json(
-      { error: settled.error, transaction: signature },
-      { status: settled.pending ? 504 : 402 },
-    );
+  // A payment whose blockhash has already expired can no longer settle after
+  // the work: refused before anything is rendered. An RPC hiccup is no
+  // verdict, and the settlement below still decides.
+  const fresh = await solanaConnection().isBlockhashValid(parsed.tx.message.recentBlockhash).then((r) => r.value).catch(() => true);
+  if (!fresh) {
+    return NextResponse.json({ error: "This payment transaction has expired. Nothing was charged. Sign a new one.", transaction: signature }, { status: 402 });
   }
 
-  // ── Paid work: one provider call on the routed host ─────────────────────
+  // ── The work: one provider call on the routed host ──────────────────────
   const ratio = input.aspectRatio;
   const genRequest: ImageGenerationRequest = {
     prompt: promptText,
@@ -486,24 +478,16 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
     if (route.modelProviderId && route.providerId) {
       after(reportFailure(getSupabaseServerClient(), route.modelProviderId, route.providerId, result.error || "generation failed"));
     }
-    // The agent paid and got nothing: recorded with the signature so support can make it right.
+    // Nothing settled yet: the payment is never sent.
     after(recordGenerationFailure(supabase, {
       request, surface: "x402-generate", modelId: model.id, resolution: input.resolution, quality: effQuality, boost: false,
       aspectRatio: ratio, referenceImageCount: 0,
       // For a marketplace prompt only the agent's values: an artist's text is never stored with a failure.
       prompt: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
-      error: result.error || "generation failed", txSignature: signature,
+      error: result.error || "generation failed",
     }));
-    // The payment settled; hiding that would be worse than the failure.
-    return NextResponse.json(
-      {
-        // A fixed sentence: the provider's own text would differ from case to case.
-        error: "Image generation failed after your payment settled.",
-        transaction: signature,
-        note: "Keep this transaction signature — support will make it right.",
-      },
-      { status: 502 },
-    );
+    // A fixed sentence: the provider's own text would differ from case to case.
+    return NextResponse.json({ error: "Image generation failed. Nothing was charged.", transaction: signature }, { status: 502 });
   }
   if (route.modelProviderId && route.providerId) {
     after(reportSuccess(getSupabaseServerClient(), route.modelProviderId, route.providerId));
@@ -527,15 +511,55 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
       request, surface: "x402-generate", modelId: model.id, resolution: input.resolution, quality: effQuality, boost: false,
       aspectRatio: ratio, referenceImageCount: 0,
       prompt: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
-      error: "image could not be stored", txSignature: signature,
+      error: "image could not be stored",
     }));
+    return NextResponse.json({ error: "Your image was made but could not be delivered. Nothing was charged.", transaction: signature }, { status: 502 });
+  }
+
+  // The image check, after storage and before the money moves: refused or
+  // not judged, the copies come down and the payment is never sent. A
+  // child-safety verdict becomes a case an admin decides, by address.
+  const copies = [stored.imageUrl, stored.previewUrl, stored.thumbnailUrl];
+  const seen = await checkImageBytes(buffer, { signal: AbortSignal.timeout(Math.max(1, storeDeadline(startedAt) - Date.now())) });
+  if (heldBack(seen)) {
+    after(recordGenerationFailure(supabase, {
+      request, surface: "x402-generate", modelId: model.id, resolution: input.resolution, quality: effQuality, boost: false,
+      aspectRatio: ratio, referenceImageCount: 0,
+      prompt: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
+      error: `image check: ${seen.verdict}`,
+    }));
+    if (seen.verdict === "child_safety") {
+      after(recordImageCase(supabase, {
+        surface: "x402-generate", request, bytes: buffer, scores: seen.scores, byAddress: true, promptId: input.promptId,
+        about: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
+      }));
+    }
+    after(removeStored(copies));
+    return seen.verdict === "unavailable"
+      ? NextResponse.json({ error: IMAGE_UNCHECKED, transaction: signature }, { status: 503 })
+      : NextResponse.json({ error: IMAGE_REFUSED, transaction: signature }, { status: 422 });
+  }
+
+  // ── Settle: the image is made, stored and checked ───────────────────────
+  // Bounded by what is left of the function's 300 s.
+  const settled = await submitAndConfirm(solanaConnection(), parsed.tx, Math.max(1_000, startedAt + 295_000 - Date.now()));
+  if (!settled.ok) {
+    // Not paid, not delivered: the copies come down. A rejection (preflight,
+    // on chain, expired) means no funds moved; every other failure is
+    // pending, the payment may still land, so the signature travels with the
+    // error and is recorded for support.
+    after(removeStored(copies));
+    if (settled.pending) {
+      after(recordGenerationFailure(supabase, {
+        request, surface: "x402-generate", modelId: model.id, resolution: input.resolution, quality: effQuality, boost: false,
+        aspectRatio: input.aspectRatio ?? null, referenceImageCount: 0,
+        prompt: input.promptId ? JSON.stringify(textValues(input.variableValues)) : promptText,
+        error: "Payment outcome unknown", txSignature: signature,
+      }));
+    }
     return NextResponse.json(
-      {
-        error: "Your image was made but could not be delivered after your payment settled.",
-        transaction: signature,
-        note: "Keep this transaction signature — support will make it right.",
-      },
-      { status: 502 },
+      { error: settled.error, transaction: signature },
+      { status: settled.pending ? 504 : 402 },
     );
   }
 

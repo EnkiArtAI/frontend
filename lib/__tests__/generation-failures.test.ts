@@ -97,10 +97,12 @@ describe("every failure point records it", () => {
     expect(count(FREE)).toBe(3);
   });
 
-  it("the agent rail when a paid generation fails, when its image cannot be stored, and when its payment's confirmation times out, with the signature", () => {
-    expect(count(AGENT)).toBe(3);
-    expect(AGENT).toMatch(/error: "image could not be stored", txSignature: signature,/);
-    expect(AGENT).toMatch(/error: result\.error \|\| "generation failed", txSignature: signature,/);
+  it("the agent rail when a generation fails, its image cannot be stored or is held back by the image check, all before the payment settles, and when the payment's confirmation times out, with the signature", () => {
+    expect(count(AGENT)).toBe(4);
+    // Before the settlement nothing moved: no signature to keep for support.
+    expect(AGENT).toMatch(/error: "image could not be stored",\n\s+\}\)\);/);
+    expect(AGENT).toMatch(/error: result\.error \|\| "generation failed",\n\s+\}\)\);/);
+    expect(AGENT).toMatch(/error: `image check: \$\{seen\.verdict\}`,\n\s+\}\)\);/);
     expect(AGENT).toMatch(/if \(settled\.pending\) \{\n(\s+\/\/[^\n]*\n)*\s+after\(recordGenerationFailure\([\s\S]{0,400}error: "Payment outcome unknown", txSignature: signature,/);
   });
 
