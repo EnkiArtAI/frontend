@@ -71,8 +71,12 @@ describe("checkImage", () => {
   });
   afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
-  it("shows both judges the image and answers their verdict", async () => {
-    expect(await checkImage(IMG)).toEqual({ verdict: "clear" });
+  it("shows both judges the image and answers their verdict, with the numbers behind it", async () => {
+    expect(await checkImage(IMG)).toEqual({
+      verdict: "clear",
+      // Numbers only: the admin panel sorts and formats them as numbers.
+      scores: { sexual: 0.01, "violence/graphic": 0, "self-harm": 0, minor: 0, minor_sexualised: 0 },
+    });
     const omni = calls.find((c) => c.url.endsWith("/moderations"))!.body;
     expect(omni).toEqual({ model: "omni-moderation-latest", input: [{ type: "image_url", image_url: { url: IMG } }] });
     const chat = calls.find((c) => c.url.endsWith("/chat/completions"))!.body as Record<string, unknown> & { messages: { role: string; content: unknown }[]; response_format: { json_schema: { strict: boolean } } };
@@ -90,7 +94,7 @@ describe("checkImage", () => {
 
   it("hears the classifier: explicit by omni alone is blocked", async () => {
     answers.omni = json({ results: [{ category_scores: { sexual: 0.95, "violence/graphic": 0, "self-harm": 0 } }] });
-    expect(await checkImage(IMG)).toEqual({ verdict: "blocked", reason: "explicit" });
+    expect(await checkImage(IMG)).toMatchObject({ verdict: "blocked", reason: "explicit" });
   });
 
   it("is unavailable when the caller gives up, and passes its signal to the judges", async () => {
@@ -102,12 +106,12 @@ describe("checkImage", () => {
     }));
     expect((await checkImage(IMG, { signal: stop.signal })).verdict).toBe("unavailable");
     // The same judges answer when nobody gave up: the signal, not the answers, made it unavailable.
-    expect(await checkImage(IMG)).toEqual({ verdict: "clear" });
+    expect(await checkImage(IMG)).toMatchObject({ verdict: "clear" });
   });
 
   it("takes the stricter judge", async () => {
     answers.luna = json({ choices: [{ message: { content: JSON.stringify(luna({ minor: 0.8, sexual: "suggestive" })) } }] });
-    expect(await checkImage(IMG)).toEqual({ verdict: "child_safety" });
+    expect(await checkImage(IMG)).toMatchObject({ verdict: "child_safety", scores: { minor: 0.8 } });
   });
 
   it.each([

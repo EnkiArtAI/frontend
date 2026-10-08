@@ -53,6 +53,9 @@ export type ImageVerdict =
   | { verdict: "child_safety" }
   | { verdict: "unavailable"; reason: string };
 
+/** A verdict with the judges' numbers behind it, for the record an admin weighs (numbers only). */
+export type CheckedImage = ImageVerdict & { scores?: Record<string, number> };
+
 /**
  * At or above these the judges' scores count. Calibrated 2026-10-08 on 115
  * of Enki's own renders, labelled twice by hand (300 calls): no false
@@ -159,10 +162,11 @@ export async function judgeWithLuna(
 }
 
 /** Both judges, then the verdict; any failure is "unavailable". */
-export async function checkImage(imageUrl: string, opts: { detail?: "low" | "high"; signal?: AbortSignal } = {}): Promise<ImageVerdict> {
+export async function checkImage(imageUrl: string, opts: { detail?: "low" | "high"; signal?: AbortSignal } = {}): Promise<CheckedImage> {
   try {
     const [omni, luna] = await Promise.all([judgeWithOmni(imageUrl, opts.signal), judgeWithLuna(imageUrl, opts)]);
-    return verdictOf({ omni, luna: luna.judgement });
+    const scores = { ...omni, minor: luna.judgement.minor, minor_sexualised: luna.judgement.minor_sexualised };
+    return { ...verdictOf({ omni, luna: luna.judgement }), scores };
   } catch (e) {
     return { verdict: "unavailable", reason: e instanceof Error ? e.message : "error" };
   }
