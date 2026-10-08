@@ -132,9 +132,11 @@ async function board(req: NextRequest) {
     const u = firstShowcase(p.showcase_images);
     if (u && podiumIds.includes(p.id)) images.set(p.id, u);
   }
-  // Not an image of a banned or deleted account; none when that cannot be read.
+  // Not an image of a banned or deleted account; none when that cannot be
+  // read. A best-effort extra like the others: even an outage here drops only
+  // these fallback images, never the board.
   const renders = (genImgRes.data ?? []) as { prompt_id: string; user_id: string; thumbnail_url: string | null; storage_url: string | null }[];
-  const renderOwners = await hiddenOwners(supabase, renders.map((g) => String(g.user_id ?? "")));
+  const renderOwners = await hiddenOwners(supabase, renders.map((g) => String(g.user_id ?? ""))).catch(() => null);
   for (const g of renderOwners ? renders.filter((g) => !renderOwners.has(String(g.user_id))) : []) {
     const u = g.thumbnail_url || g.storage_url;
     if (u && !images.has(g.prompt_id)) images.set(g.prompt_id, u);

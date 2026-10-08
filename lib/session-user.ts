@@ -91,20 +91,22 @@ export async function resolveOwnerIds(
   // session owns nothing it may read or change.
   const { userId, ban } = await resolveSessionUserWithBan(supabase, token);
   if (ban) return null;
-  const { data: session } = await supabase
+  const { data: session, error: sessionErr } = await supabase
     .from("auth_sessions")
     .select("wallet_address")
     .eq("token", token)
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();
+  if (isDbUnreachable(sessionErr)) throw new DbUnreachableError();
   if (!session) return null;
   const owners = new Set<string>(userId ? [userId] : []);
-  const { data: walletRow } = await supabase
+  const { data: walletRow, error: walletErr } = await supabase
     .from("user_wallets")
     .select("user_id")
     .eq("address", session.wallet_address)
     .is("removed_at", null)
     .maybeSingle();
+  if (isDbUnreachable(walletErr)) throw new DbUnreachableError();
   if (walletRow?.user_id) owners.add(String(walletRow.user_id));
   return [...owners];
 }

@@ -58,7 +58,8 @@ async function readComments({ params }: { params: Promise<{ id: string }> }) {
   const userIds = [...new Set((rows ?? []).map((r) => r.user_id))];
   const handleById = new Map<string, string | null>();
   if (userIds.length) {
-    const { data: users } = await supabase.from("users").select("id, handle").in("id", userIds);
+    const { data: users, error: usersError } = await supabase.from("users").select("id, handle").in("id", userIds);
+    if (isDbUnreachable(usersError)) return dbUnavailableResponse();
     for (const u of users ?? []) handleById.set(u.id, u.handle ?? null);
   }
 

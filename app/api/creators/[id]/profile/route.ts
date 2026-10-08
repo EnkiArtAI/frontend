@@ -63,6 +63,7 @@ export async function GET(
       userData.id,
     );
 
+    if (isDbUnreachable(promptsError)) return dbUnavailableResponse();
     if (promptsError) console.error("[API] Error fetching creator prompts:", promptsError.message);
 
     const listedPrompts = (promptRows || []).map((p) => ({
@@ -78,13 +79,15 @@ export async function GET(
     // The payout wallet is already public on-chain the moment anyone buys
     // (it rides every 402's legs) — here it keys the foreign profile's
     // gallery, which reads generations by wallet.
-    const { data: wallets } = await supabase
+    const { data: wallets, error: walletsError } = await supabase
       .from("user_wallets")
       .select("address")
       .eq("user_id", userData.id)
       .eq("chain_family", "solana")
       .is("removed_at", null)
       .limit(1);
+    // The foreign gallery reads by this wallet: none would show an empty gallery.
+    if (isDbUnreachable(walletsError)) return dbUnavailableResponse();
 
     return NextResponse.json({
       creator: {

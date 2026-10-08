@@ -1,6 +1,17 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-// Banned or deleted owners are hidden-owners.test.ts's subject; here nobody is.
-vi.mock("@/lib/hidden-owners", () => ({ hiddenOwners: async () => new Set<string>() }));
+// Banned or deleted owners are hidden-owners.test.ts's subject; here nobody is,
+// unless a test makes the n-th lookup meet a dead database.
+const owners = vi.hoisted(() => ({ calls: 0, failOn: 0 }));
+vi.mock("@/lib/hidden-owners", async () => {
+  const { DbUnreachableError } = await import("@/lib/db-error");
+  return {
+    hiddenOwners: async () => {
+      owners.calls += 1;
+      if (owners.calls === owners.failOn) throw new DbUnreachableError();
+      return new Set<string>();
+    },
+  };
+});
 import { NextRequest } from "next/server";
 
 /**
@@ -55,6 +66,7 @@ beforeEach(() => {
   prompts = ["p1", "p2", "p3", "p4", "p5"].map((id) => ({ id, is_adult: false, is_listed: true, listing_status: "active", deleted_at: null, showcase_images: [`https://img/${id}.png`] }));
   renders = [];
   promptsFail = false;
+  Object.assign(owners, { calls: 0, failOn: 0 });
 });
 
 describe("the Hall of Fame", () => {
@@ -103,6 +115,22 @@ describe("the Hall of Fame", () => {
 
   it("shows images on the podium only", async () => {
     expect((await rows())[3].image).toBeNull();
+  });
+});
+
+describe("when the database dies during the read", () => {
+  const status = async () => (await GET(new NextRequest("http://enki.test/api/leaderboard?metric=generations&period=week"))).status;
+
+  it("answers 503 when the creators cannot be checked, never an empty board", async () => {
+    owners.failOn = 1;
+    expect(await status()).toBe(503);
+  });
+
+  it("still shows the board when only the podium renders' owners cannot be checked", async () => {
+    owners.failOn = 2;
+    expect(await status()).toBe(200);
+    owners.calls = 0;
+    expect(await rows()).toHaveLength(5);
   });
 });
 
