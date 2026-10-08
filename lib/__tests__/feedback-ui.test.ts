@@ -57,6 +57,13 @@ describe("the admin panel's Feedback tab", () => {
     expect(ADMIN).not.toContain('action: "markPaid", id: r.id }');
   });
 
+  it("records one payout per Confirm: a second click while saving posts nothing", () => {
+    const rec = ADMIN.slice(ADMIN.indexOf("const recordPayout = async (r: Fb) => {"), ADMIN.indexOf("/** Grants access"));
+    expect(rec).toMatch(/if \(fbPaying\) return;\n\s+setFbPaying\(true\);\n\s+try \{/);
+    expect(rec).toMatch(/\} finally \{\n\s+setFbPaying\(false\);/);
+    expect(ADMIN).toContain('<Pill kind="green" label={fbPaying ? "Saving…" : "Confirm"} onClick={fbPaying ? undefined : () => void recordPayout(r)} />');
+  });
+
   it("names where the $100 goes and links the transfer once sent", () => {
     expect(ADMIN).toContain('{r.wallet ?? "no payable Solana wallet (must re-link)"}');
     expect(ADMIN).toContain('{r.paid && r.txUrl && <a href={r.txUrl} target="_blank" rel="noopener noreferrer"');

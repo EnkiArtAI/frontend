@@ -159,6 +159,8 @@ export default function AdminPage() {
   const [fbFiles, setFbFiles] = useState<Record<string, FbFile[]>>({});
   const [fbPayId, setFbPayId] = useState<string | null>(null);
   const [fbSig, setFbSig] = useState("");
+  // One record at a time: a double click must not post twice and end on a false error.
+  const [fbPaying, setFbPaying] = useState(false);
   const [invEmail, setInvEmail] = useState("");
   const [invWallet, setInvWallet] = useState("");
   const [granting, setGranting] = useState(false);
@@ -271,10 +273,16 @@ export default function AdminPage() {
   /* Kev sends the $100 from his own wallet, then records the transfer here:
      its signature is what the sender's link opens. */
   const recordPayout = async (r: Fb) => {
-    if (await post({ resource: "feedback", action: "markPaid", id: r.id, signature: fbSig.trim() }, `Payout to ${r.name} recorded.`, (cur) => cur)) {
-      setFbPayId(null);
-      setFbSig("");
-      await reload();
+    if (fbPaying) return;
+    setFbPaying(true);
+    try {
+      if (await post({ resource: "feedback", action: "markPaid", id: r.id, signature: fbSig.trim() }, `Payout to ${r.name} recorded.`, (cur) => cur)) {
+        setFbPayId(null);
+        setFbSig("");
+        await reload();
+      }
+    } finally {
+      setFbPaying(false);
     }
   };
 
@@ -696,7 +704,7 @@ export default function AdminPage() {
                         <span style={{ display: "flex", gap: 5, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
                           {fbPayId === r.id ? <>
                             <input autoFocus placeholder="Transaction signature" value={fbSig} onChange={(e) => setFbSig(e.target.value)} style={{ width: 210, height: 26, border: "1px solid var(--enki-rule)", borderRadius: 7, background: "var(--enki-paper)", color: "var(--enki-ink)", fontSize: 10.5, fontFamily: MONO, padding: "0 7px", outline: "none" }} />
-                            <Pill kind="green" label="Confirm" onClick={() => void recordPayout(r)} />
+                            <Pill kind="green" label={fbPaying ? "Saving…" : "Confirm"} onClick={fbPaying ? undefined : () => void recordPayout(r)} />
                             <Pill kind="plain" label="Cancel" onClick={() => setFbPayId(null)} />
                           </> : <>
                             {/* Done promises the $100: an admin's word. A mod may reject or reopen. */}
