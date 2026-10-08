@@ -132,6 +132,26 @@ describe("checkImage", () => {
     expect((await checkImage(IMG)).verdict).toBe("unavailable");
   });
 
+  it("lets one judge's refusal stand while the other gives no answer", async () => {
+    answers.luna = json({ error: "x" }, 400);
+    answers.omni = json({ results: [{ category_scores: { sexual: 0.95, "violence/graphic": 0, "self-harm": 0 } }] });
+    expect(await checkImage(IMG)).toEqual({ verdict: "blocked", reason: "explicit", scores: { sexual: 0.95, "violence/graphic": 0, "self-harm": 0 } });
+    answers.omni = new Error("fetch failed");
+    answers.luna = json({ choices: [{ message: { content: JSON.stringify(luna({ minor: 0.9, minor_sexualised: 0.7 })) } }] });
+    expect(await checkImage(IMG)).toEqual({ verdict: "child_safety", scores: { minor: 0.9, minor_sexualised: 0.7 } });
+    answers.luna = json({ choices: [{ message: { content: JSON.stringify(luna({ sexual: "explicit" })) } }] });
+    expect(await checkImage(IMG)).toMatchObject({ verdict: "blocked", reason: "explicit" });
+  });
+
+  it("never delivers on one judge: 18+ from one while the other is down is unavailable", async () => {
+    answers.luna = new Error("fetch failed");
+    answers.omni = json({ results: [{ category_scores: { sexual: 0.6, "violence/graphic": 0, "self-harm": 0 } }] });
+    expect(await checkImage(IMG)).toEqual({ verdict: "unavailable", reason: "fetch failed" });
+    answers.omni = json({ error: "x" }, 429);
+    answers.luna = json({ choices: [{ message: { content: JSON.stringify(luna({ sexual: "suggestive", gore: "strong" })) } }] });
+    expect(await checkImage(IMG)).toEqual({ verdict: "unavailable", reason: "moderation api 429" });
+  });
+
   it("is unavailable without a key, and asks nobody", async () => {
     vi.stubEnv("OPENAI_API_KEYS", "");
     vi.stubEnv("OPENAI_API_KEY", "");

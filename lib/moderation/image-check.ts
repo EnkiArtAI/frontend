@@ -161,13 +161,21 @@ export async function judgeWithLuna(
   return { judgement: a as LunaJudgement, usage: data.usage ?? null };
 }
 
-/** Both judges, then the verdict; any failure is "unavailable". */
+/** What a judge that gave no answer adds to the verdict: nothing. */
+const UNHEARD: LunaJudgement = { minor: 0, minor_sexualised: 0, sexual: "none", gore: "none" };
+
+/**
+ * Both judges, then the verdict. A judge that fails can only have added to
+ * a refusal, so the other's refusal (child_safety, blocked) stands alone;
+ * anything milder needs both, and is otherwise "unavailable".
+ */
 export async function checkImage(imageUrl: string, opts: { detail?: "low" | "high"; signal?: AbortSignal } = {}): Promise<CheckedImage> {
-  try {
-    const [omni, luna] = await Promise.all([judgeWithOmni(imageUrl, opts.signal), judgeWithLuna(imageUrl, opts)]);
-    const scores = { ...omni, minor: luna.judgement.minor, minor_sexualised: luna.judgement.minor_sexualised };
-    return { ...verdictOf({ omni, luna: luna.judgement }), scores };
-  } catch (e) {
-    return { verdict: "unavailable", reason: e instanceof Error ? e.message : "error" };
-  }
+  const [o, l] = await Promise.allSettled([judgeWithOmni(imageUrl, opts.signal), judgeWithLuna(imageUrl, opts)]);
+  const omni = o.status === "fulfilled" ? o.value : {};
+  const luna = l.status === "fulfilled" ? l.value.judgement : UNHEARD;
+  const scores = { ...omni, ...(l.status === "fulfilled" && { minor: luna.minor, minor_sexualised: luna.minor_sexualised }) };
+  const seen = verdictOf({ omni, luna });
+  const failed = o.status === "rejected" ? o.reason : l.status === "rejected" ? l.reason : null;
+  if (failed === null || seen.verdict === "child_safety" || seen.verdict === "blocked") return { ...seen, scores };
+  return { verdict: "unavailable", reason: failed instanceof Error ? failed.message : "error" };
 }
