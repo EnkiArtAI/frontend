@@ -32,4 +32,11 @@ describe("an upload", () => {
   it("to the gallery that fails says why", () => {
     expect(src("components", "ShowroomUploadZone.tsx")).toContain("description: results.find((r) => !r.success)?.error ??");
   });
+
+  it("in a message is made smaller until it arrives, and the fitted file is sent", () => {
+    const panel = src("components", "enki-shell", "MessagesPanel.tsx");
+    expect(panel).toMatch(/const fit = await fitUpload\(f\);\n\s+if \(!fit\) \{ toast\?\.\(`\$\{f\.name\} is too large to send, even made smaller\.`\); continue; \}/);
+    expect(panel).toContain('fd.append("file", fit);');
+    expect(panel).not.toContain('fd.append("file", f);');
+  });
 });

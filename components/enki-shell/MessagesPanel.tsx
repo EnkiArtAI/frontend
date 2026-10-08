@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./icons";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { fitUpload } from "@/lib/shrink-image";
 import {
   markThreadRead,
   refreshMessages,
@@ -252,11 +253,13 @@ export default function MessagesPanel({ toast }: { toast?: (msg: string) => void
     setUploading(true);
     try {
       for (const f of files) {
-        if (f.size > 8 * 1024 * 1024) { toast?.("Images can be up to 8 MB."); continue; }
+        // Made smaller until it arrives: Vercel turns away a body over 4.5 MB (lib/shrink-image).
+        const fit = await fitUpload(f);
+        if (!fit) { toast?.(`${f.name} is too large to send, even made smaller.`); continue; }
         try {
           const fd = new FormData();
           fd.append("threadId", activeId);
-          fd.append("file", f);
+          fd.append("file", fit);
           const res = await fetch("/api/messages/image", { method: "POST", headers: sessionAuthHeaders(), body: fd });
           const data = await res.json().catch(() => ({} as { message?: Msg; error?: string }));
           if (!res.ok) { toast?.(data.error || "Could not send the image."); continue; }
