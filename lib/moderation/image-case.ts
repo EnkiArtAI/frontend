@@ -82,9 +82,11 @@ export async function recordImageCase(
       subject: `Child-safety image held for review: ${who}`,
       text: [
         `The image check judged an image on ${ctx.surface} from ${who} as possible child sexual content.`,
-        "It was not delivered or published, nothing was charged, and no sanction was applied: an admin decides.",
-        kept ? "A private, encrypted copy is kept with the case for the moderation owner's logged reveal." : "The private copy could NOT be kept; the case is recorded without it.",
-        `Case ${eventId} waits in the admin People list, flagged child safety.`,
+        "It was not delivered or published, and no sanction was applied: an admin decides.",
+        kept ? "A private, encrypted copy is kept with the case for the moderation owner's logged reveal." : "The private copy could NOT be kept.",
+        error
+          ? `The case could NOT be recorded (see the server log), so it is not in the admin People list.${kept ? ` Its copy is ${EVIDENCE_BUCKET}/${path(eventId)}.` : ""}`
+          : `Case ${eventId} waits in the admin People list, flagged child safety.`,
       ].join("\n"),
     });
   } catch {
