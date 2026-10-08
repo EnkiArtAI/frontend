@@ -271,7 +271,8 @@ export async function POST(request: NextRequest) {
     // child-safety verdict becomes a case an admin decides. Bounded so the
     // store below keeps its 30 s.
     const seen = await checkImageBytes(buffer, {
-      signal: AbortSignal.any([request.signal, AbortSignal.timeout(Math.max(1, storeDeadline(startedAt) - 30_000 - Date.now()))]),
+      // Not the request's signal: a closed tab still keeps the render.
+      signal: AbortSignal.timeout(Math.max(1, storeDeadline(startedAt) - 30_000 - Date.now())),
     });
     if (heldBack(seen)) {
       if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: `image check: ${seen.verdict}` }));

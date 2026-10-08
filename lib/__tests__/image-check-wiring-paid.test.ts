@@ -66,7 +66,10 @@ describe("the result", () => {
     const judged = at("const seen = await checkImageBytes(generatedImageBuffer, {");
     expect(judged).toBeGreaterThan(stored);
     expect(judged).toBeLessThan(at("const captured = await captureAndBroadcast(settled.supabase, settled.id);"));
-    at("signal: AbortSignal.any([request.signal, AbortSignal.timeout(Math.max(1, storeDeadline(startedAt) - Date.now()))]),");
+    // A closed tab never cancels it: the buyer still gets the paid render.
+    const call = HUMAN.slice(judged, HUMAN.indexOf("});", judged));
+    expect(call).toContain("signal: AbortSignal.timeout(Math.max(1, storeDeadline(startedAt) - Date.now())),");
+    expect(call).not.toContain("request.signal");
   });
 
   it("refused or not judged: no capture, no delivery, the stored copy taken down from both stores", () => {

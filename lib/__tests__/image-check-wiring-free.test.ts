@@ -21,7 +21,10 @@ describe("a free render", () => {
     const judged = at("const seen = await checkImageBytes(buffer, {");
     expect(judged).toBeLessThan(at("const quick = await storeGeneratedImage("));
     expect(judged).toBeLessThan(at("return NextResponse.json({\n      imageUrl: delivered,"));
-    at("signal: AbortSignal.any([request.signal, AbortSignal.timeout(Math.max(1, storeDeadline(startedAt) - 30_000 - Date.now()))]),");
+    // A closed tab never cancels it: the render is kept.
+    const call = FREE.slice(judged, FREE.indexOf("});", judged));
+    expect(call).toContain("signal: AbortSignal.timeout(Math.max(1, storeDeadline(startedAt) - 30_000 - Date.now())),");
+    expect(call).not.toContain("request.signal");
   });
 
   it("held back: recorded as a failure, a case when it is child safety, the claim given back, never delivered", () => {

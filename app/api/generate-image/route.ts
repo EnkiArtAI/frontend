@@ -792,7 +792,9 @@ export async function POST(request: NextRequest) {
     // Blob turn may still have landed one). Bounded by the store deadline, so
     // the capture keeps its reserve.
     const seen = await checkImageBytes(generatedImageBuffer, {
-      signal: AbortSignal.any([request.signal, AbortSignal.timeout(Math.max(1, storeDeadline(startedAt) - Date.now()))]),
+      // Not the request's signal: a buyer who closes the tab still gets the
+      // render they paid for in the gallery.
+      signal: AbortSignal.timeout(Math.max(1, storeDeadline(startedAt) - Date.now())),
     });
     if (heldBack(seen)) {
       if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: `image check: ${seen.verdict}` }));
