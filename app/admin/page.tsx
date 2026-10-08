@@ -19,11 +19,12 @@ import { useBetaAccess } from "@/components/BetaGate";
 import { useTheme } from "../../providers/ThemeProvider";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import { REPORT_REASONS } from "@/lib/report-reasons";
+import { type FeedbackDecision } from "@/lib/feedback";
 
 /* ── data shapes (from /api/admin) ── */
 type Imp = { id: string; name: string; url: string | null; hunter: string; tags: string[]; at: string };
 type Rep = { id: string; target: string; type: "prompt" | "image" | "profile"; href: string | null; reason: string; details: string | null; reporter: string; severity: string | null; at: string };
-type Fb = { id: string; name: string; email: string | null; desc: string; images: number; paid: boolean; payoutCents: number | null; at: string };
+type Fb = { id: string; name: string; email: string | null; desc: string; images: number; paid: boolean; payoutCents: number | null; at: string; state: FeedbackDecision };
 type FbFile = { url: string | null; mime: string };
 type Hunter = { handle: string; total: number; approved: number; denied: number; earningsCents: number };
 type StrikeRow = { userId: string; handle: string; strikes: { id: string; reason: string | null }[]; banned: boolean; permanent: boolean; note: string | null; appeal: { id: string; note: string | null; against: { reason: string | null; until: string | null } | null } | null };
@@ -77,6 +78,8 @@ const PILL = {
   purple: { bg: "#F3E8FD", ink: "#4A2E6E", border: "#C4A0E8" },
   blue: { bg: "#E8F4FD", ink: "#1E4A6E", border: "#9CCAE8" },
 };
+/* A report's decision: open to decide, done (the $100 follows) or rejected. */
+const FB_STATE = { open: { label: "Open", pal: PILL.amber }, done: { label: "Done", pal: PILL.blue }, rejected: { label: "Rejected", pal: PILL.red } } as const;
 const THEME_OPTS = [
   { id: "light" as const, name: "Bright", sw: "linear-gradient(135deg,#faf8f4,#e8e2d6)" },
   { id: "dark" as const, name: "Dark", sw: "linear-gradient(135deg,#0a1825,#16303f)" },
@@ -257,6 +260,12 @@ export default function AdminPage() {
     }
   };
 
+  const decideFb = (r: Fb, state: FeedbackDecision) => void post(
+    { resource: "feedback", action: "setStatus", id: r.id, status: state },
+    state === "open" ? "Reopened." : `${state === "done" ? "Marked done" : "Rejected"}: ${r.name} sees it.`,
+    (cur) => ({ ...cur, feedback: cur.feedback.map((x) => (x.id === r.id ? { ...x, state } : x)) }),
+  );
+
   /** Grants access (approve, invite an email or a wallet) and says what
       happened to whom. One at a time: a double click must not mail twice. */
   const grant = async (payload: Record<string, unknown>, who: string) => {
@@ -370,7 +379,8 @@ export default function AdminPage() {
     access: data?.access?.requests.length ?? 0,
     imports: data?.imports.length ?? 0,
     reports: data?.reports.length ?? 0,
-    feedback: data?.feedback.filter((f) => !f.paid).length ?? 0,
+    // Open reports to decide and done ones to pay: both wait on staff.
+    feedback: data?.feedback.filter((f) => f.state === "open" || (f.state === "done" && !f.paid)).length ?? 0,
     hunters: 0,
     strikes: data?.strikes.filter((s) => s.appeal).length ?? 0,
     // Only the never-looked-at ones nag. A block that has been judged is
@@ -431,7 +441,7 @@ export default function AdminPage() {
   const stats: { label: string; value: number; dot: string; go: Tab }[] = [
     { label: "Pending imports", value: d.imports.length, dot: "var(--enki-ember)", go: "imports" },
     { label: "Open reports", value: d.reports.length, dot: "var(--enki-danger)", go: "reports" },
-    { label: "Unpaid feedback", value: d.feedback.filter((f) => !f.paid).length, dot: "var(--enki-ember)", go: "feedback" },
+    { label: "Feedback to act on", value: counts.feedback, dot: "var(--enki-ember)", go: "feedback" },
     { label: "Active strikes", value: d.strikes.reduce((n, s) => n + s.strikes.length, 0), dot: "var(--enki-danger)", go: "strikes" },
     { label: "Open appeals", value: d.strikes.filter((s) => s.appeal).length, dot: "var(--enki-turq)", go: "strikes" },
     { label: "Recovery pending", value: d.recovery.filter((r) => r.status === "pending").length, dot: "var(--enki-turq)", go: "recovery" },
@@ -655,6 +665,12 @@ export default function AdminPage() {
               {/* ── FEEDBACK ── */}
               {tab === "feedback" && (
                 <div style={cardStyle}>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "9px 0 7px" }}>
+                    <Badge pal={PILL.amber} label={`Open ${d.feedback.filter((f) => f.state === "open").length}`} />
+                    <Badge pal={PILL.blue} label={`Done, unpaid ${d.feedback.filter((f) => f.state === "done" && !f.paid).length}`} />
+                    <Badge pal={PILL.green} label={`Paid ${d.feedback.filter((f) => f.paid).length}`} />
+                    <Badge pal={PILL.red} label={`Rejected ${d.feedback.filter((f) => f.state === "rejected").length}`} />
+                  </div>
                   {filteredFeedback.length === 0 && <div style={{ padding: 30, textAlign: "center", fontSize: 12, color: "var(--enki-ink-3)" }}>No feedback yet.</div>}
                   {filteredFeedback.map((r) => (
                     <div key={r.id}>
@@ -664,7 +680,15 @@ export default function AdminPage() {
                         <span style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: "var(--enki-ink-3)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.desc}</span>
                         <span style={{ width: 34, textAlign: "center", fontFamily: MONO, fontSize: 9, color: "var(--enki-ink-3)" }}>{r.images > 0 ? `${r.images} img` : "—"}</span>
                         <span style={{ width: 42, fontFamily: MONO, fontSize: 9, color: "var(--enki-ink-3)" }}>{timeAgo(r.at)}</span>
-                        <Badge pal={r.paid ? PILL.green : PILL.amber} label={r.paid ? "Paid" : "Unpaid"} />
+                        <Badge pal={r.paid ? PILL.green : FB_STATE[r.state].pal} label={r.paid ? "Paid" : FB_STATE[r.state].label} />
+                        <span style={{ display: "flex", gap: 5, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
+                          {/* Done promises the $100: an admin's word. A mod may reject or reopen. */}
+                          {r.state === "open" && <>
+                            {role === "admin" && <Pill kind="green" label="Done" title="We build it: the $100 follows" onClick={() => decideFb(r, "done")} />}
+                            <Pill kind="red" label="Reject" onClick={() => decideFb(r, "rejected")} />
+                          </>}
+                          {r.state !== "open" && !r.paid && <Pill kind="plain" label="Reopen" onClick={() => decideFb(r, "open")} />}
+                        </span>
                         {!r.paid && (
                           <span onClick={(e) => e.stopPropagation()}>
                             <Pill kind="green" label="Mark paid" onClick={() => void post({ resource: "feedback", action: "markPaid", id: r.id }, `$100 payout marked as paid to ${r.name}.`, (cur) => ({ ...cur, feedback: cur.feedback.map((x) => (x.id === r.id ? { ...x, paid: true } : x)) }))} />
