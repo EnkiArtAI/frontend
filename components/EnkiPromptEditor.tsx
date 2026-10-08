@@ -2907,14 +2907,13 @@ export default function EnkiPromptEditor() {
         referenceImages,
         // Ship the completed verify-card renders as the prompt's showcase
         // images (the API stores these as uploaded_photos, which the buyer
-        // generator reads as showcaseImages). Only durable URLs — blob: object
-        // URLs die on reload; https (Vercel Blob) is preferred over heavy
-        // base64 data: URLs. Capped so a data:-URL deployment can't bloat the
-        // row. Without this the buyer gallery is always empty.
+        // generator reads as showcaseImages). Only stored renders (https): the
+        // server takes a showcase image only when it is one of the creator's
+        // recorded renders (2026-10-08), and an inline data: render (the store
+        // missed its deadline) cannot be matched, so it would refuse the save.
         uploadedPhotos: versions
-          .filter((v) => v.status === "complete" && v.sourceUrl && !v.sourceUrl.startsWith("blob:"))
+          .filter((v) => v.status === "complete" && v.sourceUrl?.startsWith("https://"))
           .map((v) => v.sourceUrl as string)
-          .sort((a, b) => (a.startsWith("data:") ? 1 : 0) - (b.startsWith("data:") ? 1 : 0))
           .slice(0, 4),
         price: promptData.type === "premium-prompt" ? promptPrice : 0,
       };
