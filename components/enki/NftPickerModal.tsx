@@ -9,6 +9,8 @@ import { useEffect, useState } from "react";
 import { X, Check, Loader2, ImageOff } from "lucide-react";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import type { NftPick } from "@/hooks/useReferenceReads";
+import { useEmailAuth } from "@/hooks/useEmailAuth";
+import LinkWalletButtons from "@/components/settings/LinkWalletButtons";
 // Shared popup chrome (spinner, CTA button) + its own styles live here.
 import "@/components/enki/bookmarks.css";
 
@@ -26,9 +28,13 @@ export default function NftPickerModal({ max, onPick, onClose }: {
   // No wallet is not no NFTs: the empty list says which.
   const [wallets, setWallets] = useState(0);
   const [marked, setMarked] = useState<Set<string>>(new Set());
+  // An email account can link a wallet right here (Settings → Profile has the list).
+  const { isAuthed: emailAuthed } = useEmailAuth();
+  // Bumped after a link: read again, past the browser's one-minute copy of the list.
+  const [round, setRound] = useState(0);
 
   useEffect(() => {
-    fetch("/api/wallet/nfts", { headers: { ...sessionAuthHeaders() } })
+    fetch("/api/wallet/nfts", { headers: { ...sessionAuthHeaders() }, cache: round ? "reload" : "default" })
       .then(async (r) => {
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.error || "NFTs unavailable");
@@ -36,7 +42,7 @@ export default function NftPickerModal({ max, onPick, onClose }: {
         setNfts(d.nfts);
       })
       .catch((e: Error) => { setNfts([]); setProblem(e.message); });
-  }, []);
+  }, [round]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
@@ -66,7 +72,12 @@ export default function NftPickerModal({ max, onPick, onClose }: {
         </div>
         {nfts === null && <div className="enki-nftp-note"><Loader2 size={14} className="enki-bmp-spin" /> Loading your wallets…</div>}
         {problem && <div className="enki-nftp-note"><ImageOff size={14} /> {problem}</div>}
-        {nfts?.length === 0 && !problem && <div className="enki-nftp-note">{wallets ? `No NFTs in your ${wallets === 1 ? "wallet" : "wallets"}.` : "No Solana wallet is linked to this account yet."}</div>}
+        {nfts?.length === 0 && !problem && (
+          <div className="enki-nftp-note" style={{ flexDirection: "column", alignItems: "flex-start" }}>
+            {wallets ? `No NFTs in your ${wallets === 1 ? "wallet" : "wallets"}.` : "No Solana wallet is linked to this account yet."}
+            {emailAuthed && <LinkWalletButtons buttonClass="enki-bmp-go" onLinked={() => { setNfts(null); setRound((r) => r + 1); }} />}
+          </div>
+        )}
         {max <= 0 && <div className="enki-nftp-note">All image slots are full — remove one first.</div>}
         {!!nfts?.length && (
           <div className="enki-nftp-grid">

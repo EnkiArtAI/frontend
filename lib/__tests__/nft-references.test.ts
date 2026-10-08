@@ -24,7 +24,7 @@ describe("the NFT picker", () => {
 
   it("tells no wallet from no NFTs, by the count of wallets the list read", () => {
     expect(PICKER).toMatch(/setWallets\(d\.wallets \?\? 0\);\n\s+setNfts\(d\.nfts\);/);
-    expect(PICKER).toContain('{nfts?.length === 0 && !problem && <div className="enki-nftp-note">{wallets ? `No NFTs in your ${wallets === 1 ? "wallet" : "wallets"}.` : "No Solana wallet is linked to this account yet."}</div>}');
+    expect(PICKER).toMatch(/\{nfts\?\.length === 0 && !problem && \(\n\s+<div className="enki-nftp-note"[^\n]*>\n\s+\{wallets \? `No NFTs in your \$\{wallets === 1 \? "wallet" : "wallets"\}\.` : "No Solana wallet is linked to this account yet\."\}/);
   });
 });
 
@@ -56,5 +56,13 @@ describe("quick create's NFT button", () => {
     expect(LAUNCHER).toContain("onPickNFT={modelLimits.maxRefs > 0 ? pickNFT : undefined}");
     expect(LAUNCHER).toContain("max={Math.max(0, modelLimits.maxRefs - refCount - refsPending.length)}");
     expect(LAUNCHER).toContain("const refCount = referenceImages.length + nftImages.length;");
+  });
+});
+
+describe("the empty NFT picker", () => {
+  it("offers an email account to link a wallet, then reads the list again past the browser's copy", () => {
+    expect(PICKER).toContain('{emailAuthed && <LinkWalletButtons buttonClass="enki-bmp-go" onLinked={() => { setNfts(null); setRound((r) => r + 1); }} />}');
+    expect(PICKER).toContain('cache: round ? "reload" : "default" })');
+    expect(PICKER).toMatch(/\.catch\(\(e: Error\) => \{ setNfts\(\[\]\); setProblem\(e\.message\); \}\);\n\s+\}, \[round\]\);/);
   });
 });
