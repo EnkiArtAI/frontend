@@ -9,7 +9,8 @@
  * CDN's tile of it: the picker shows the tile and reads a pick's image
  * through /api/wallet/nfts/image, never from its host.
  *
- * Up to three Solana wallets of the account are read at once through the
+ * The account's Solana wallets, up to three of its own and up to three it
+ * linked for their NFTs (app/api/wallet/linked), are read at once through the
  * RPC's index (getAssetsByOwner, up to 1000 assets a wallet); `wallets` says
  * how many, so the picker tells "no wallet" from "no NFTs". When none could
  * be read, the answer names the real problem:

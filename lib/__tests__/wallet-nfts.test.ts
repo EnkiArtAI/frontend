@@ -7,23 +7,26 @@ import { NextRequest } from "next/server";
  * host's CORS or downtime decides it.
  */
 
-const s = vi.hoisted(() => ({ user: null as string | null, wallets: [] as string[] | null, order: [] as unknown[][] }));
+const s = vi.hoisted(() => ({ user: null as string | null, wallets: [] as string[] | null, linked: [] as string[] | null, order: [] as unknown[][], limits: {} as Record<string, number> }));
 vi.mock("@/lib/session-user", () => ({ resolveSessionUserId: async () => s.user }));
-// user_wallets as PostgREST answers it: the order asked for is recorded, the limit applied.
+// user_wallets and linked_wallets as PostgREST answers them: the order asked for is recorded, the limit applied.
 vi.mock("@/lib/supabaseServer", () => ({
-  getSupabaseServerClient: () => {
-    let limit = Infinity;
-    const c: Record<string, unknown> = {
-      then: (ok: (v: unknown) => unknown) =>
-        Promise.resolve(
-          s.wallets ? { data: s.wallets.slice(0, limit).map((address) => ({ address })), error: null } : { data: null, error: { message: "down" } },
-        ).then(ok),
-      order: (...a: unknown[]) => { s.order.push(a); return c; },
-      limit: (n: number) => { limit = n; return c; },
-    };
-    for (const m of ["from", "select", "eq", "is"]) c[m] = () => c;
-    return { from: () => c };
-  },
+  getSupabaseServerClient: () => ({
+    from: (table: string) => {
+      const rows = table === "linked_wallets" ? s.linked : s.wallets;
+      let limit = Infinity;
+      const c: Record<string, unknown> = {
+        then: (ok: (v: unknown) => unknown) =>
+          Promise.resolve(
+            rows ? { data: rows.slice(0, limit).map((address) => ({ address })), error: null } : { data: null, error: { message: "down" } },
+          ).then(ok),
+        order: (...a: unknown[]) => { s.order.push(a); return c; },
+        limit: (n: number) => { limit = n; s.limits[table] = n; return c; },
+      };
+      for (const m of ["select", "eq", "is"]) c[m] = () => c;
+      return c;
+    },
+  }),
 }));
 
 import { GET as list } from "../../app/api/wallet/nfts/route";
@@ -62,6 +65,8 @@ const listOf = async (...assets: unknown[]) => {
 
 beforeEach(() => {
   s.wallets = [WALLET];
+  s.linked = [];
+  s.limits = {};
   s.order = [];
   rpcCalls = [];
   vi.stubEnv("SOLANA_RPC_URL", RPC);
@@ -136,6 +141,21 @@ describe("the NFT list reads the wallets", () => {
     expect(rpcCalls).toHaveLength(3);
     expect(body.wallets).toBe(3);
     expect(s.order).toEqual([["is_primary", { ascending: false }]]);
+  });
+
+  it("reads the wallets the account linked for their NFTs too, three at most, each wallet once", async () => {
+    const THIRD = "ThirdDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD";
+    s.linked = [OTHER, WALLET, THIRD, "FourthEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"];
+    const body = await listOf();
+    expect(rpcCalls.map((c) => c.params.ownerAddress)).toEqual([WALLET, OTHER, THIRD]);
+    expect(body.wallets).toBe(3);
+    expect(s.limits.linked_wallets).toBe(3);
+  });
+
+  it("says the wallets are unavailable when the linked ones cannot be read, rather than leave them out", async () => {
+    s.linked = null;
+    expect((await listOf()).error).toBe("Wallets unavailable");
+    expect(rpcCalls).toEqual([]);
   });
 
   it("a wallet that cannot be read costs only its own NFTs", async () => {

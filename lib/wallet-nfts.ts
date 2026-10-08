@@ -69,23 +69,32 @@ export function imageSource(a: DasAsset): string | null {
 const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 /** Each wallet read is one paid index call (10 Helius credits) every time the picker opens. */
 const WALLETS_READ = 3;
+/** Wallets an account may link for their NFTs (app/api/wallet/linked): each is one more such call. */
+export const MAX_LINKED = 3;
 
 /**
- * The account's Solana wallets to read, the account's own one first, or null
- * when the database cannot say. A stored value that is no Solana address can
- * hold nothing, so it costs no call: on 2026-10-08, 6 of the 15 live rows had
- * been lowercased before PR #69 and are not base58 any more.
+ * The Solana wallets to read for an account, its own one first, then those it
+ * linked for their NFTs, each once; or null when the database cannot say. A
+ * stored value that is no Solana address can hold nothing, so it costs no
+ * call: on 2026-10-08, 6 of the 15 live rows had been lowercased before PR #69
+ * and are not base58 any more.
  */
 export async function solanaWallets(supabase: SupabaseClient, userId: string): Promise<string[] | null> {
-  const { data, error } = await supabase
-    .from("user_wallets")
-    .select("address")
-    .eq("user_id", userId)
-    .eq("chain_family", "solana")
-    .is("removed_at", null)
-    .order("is_primary", { ascending: false })
-    .limit(WALLETS_READ);
-  return error ? null : (data ?? []).map((w) => String(w.address)).filter((a) => SOLANA_ADDRESS.test(a));
+  const [own, linked] = await Promise.all([
+    supabase
+      .from("user_wallets")
+      .select("address")
+      .eq("user_id", userId)
+      .eq("chain_family", "solana")
+      .is("removed_at", null)
+      .order("is_primary", { ascending: false })
+      .limit(WALLETS_READ),
+    // Read here and nowhere else: a linked wallet never signs in, pays or gets paid.
+    supabase.from("linked_wallets").select("address").eq("user_id", userId).limit(MAX_LINKED),
+  ]);
+  if (own.error || linked.error) return null;
+  const addresses = [...(own.data ?? []), ...(linked.data ?? [])].map((w) => String(w.address));
+  return [...new Set(addresses)].filter((a) => SOLANA_ADDRESS.test(a));
 }
 
 export type DasFailure = "busy" | "no-das" | "down";
