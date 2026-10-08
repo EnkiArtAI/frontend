@@ -1,8 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { DM_BUCKET, UUID_RE, loadThreadFor, readColFor, shapeMessages, type DmMessageRow } from "@/lib/dm";
+import { checkImageBytes, MESSAGE_IMAGE_ADULT, UPLOAD_REFUSED, UPLOAD_UNCHECKED } from "@/lib/moderation/image-check-bytes";
+import { recordImageCase } from "@/lib/moderation/image-case";
 
 const IMAGE_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
 const MAX_IMAGE = 8 * 1024 * 1024;
@@ -35,11 +37,25 @@ export async function POST(req: NextRequest) {
   const thread = await loadThreadFor(supabase, threadId, userId);
   if (!thread) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  // The image check before it is stored or reaches the other member (Kev,
+  // 2026-10-08: every image). A message has no 18+ mark and can reach
+  // anyone, so only a clear image is sent; a child-safety verdict becomes a
+  // case an admin decides.
+  const buf = Buffer.from(await file.arrayBuffer());
+  const seen = await checkImageBytes(buf, { signal: req.signal });
+  if (seen.verdict !== "clear") {
+    if (seen.verdict === "child_safety") {
+      after(recordImageCase(supabase, { surface: "dm", request: req, bytes: buf, scores: seen.scores, about: "An image sent in a direct message." }));
+    }
+    return seen.verdict === "unavailable"
+      ? NextResponse.json({ error: UPLOAD_UNCHECKED }, { status: 503 })
+      : NextResponse.json({ error: seen.verdict === "adult" ? MESSAGE_IMAGE_ADULT : UPLOAD_REFUSED }, { status: 422 });
+  }
+
   // Private bucket — DM images must never get a public URL. Tolerates "exists".
   await supabase.storage.createBucket(DM_BUCKET, { public: false }).catch(() => {});
 
   const path = `${threadId}/${userId}-${Date.now()}.${ext}`;
-  const buf = Buffer.from(await file.arrayBuffer());
   const up = await supabase.storage.from(DM_BUCKET).upload(path, buf, { contentType: file.type, upsert: false });
   if (up.error) return NextResponse.json({ error: "Could not upload the image" }, { status: 500 });
 

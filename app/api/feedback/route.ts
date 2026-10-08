@@ -7,15 +7,19 @@
  * the PRIVATE "feedback" bucket) and surface in the admin panel's queue.
  * Columns verified live 2026-07-20.
  */
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveSessionUserId } from "@/lib/session-user";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { createHash } from "crypto";
 import { decryptString, encryptString, type EncryptedPayload } from "@/lib/crypto";
+import { checkImageBytes } from "@/lib/moderation/image-check-bytes";
+import { recordImageCase } from "@/lib/moderation/image-case";
 
 const BUCKET = "feedback";
 const MAX_FILES = 5;
+/** The attachment types the image check can judge. */
+const STILL = new Set(["image/png", "image/jpeg", "image/webp"]);
 const MAX_BYTES = 20 * 1024 * 1024;
 // UI ids → live check-constraint values (probed 2026-07-21: severity ∈
 // {critical, high, medium, low}, category ∈ {bug, other, …})
@@ -103,6 +107,17 @@ export async function POST(req: NextRequest) {
       const f = files[i];
       const path = `${row.id}/${i}-${Date.now()}.${EXT[f.type]}`;
       const buf = Buffer.from(await f.arrayBuffer());
+      // A still image is checked before it is kept (Kev, 2026-10-08: every
+      // image). Admins alone see attachments, so 18+ stays; one refused or not
+      // judged is dropped while the report stands, and a child-safety one
+      // becomes a case. Video and animated GIF cannot be judged.
+      if (STILL.has(f.type)) {
+        const seen = await checkImageBytes(buf, { signal: req.signal });
+        if (seen.verdict === "child_safety") {
+          after(recordImageCase(supabase, { surface: "feedback", request: req, bytes: buf, scores: seen.scores, about: "An attachment to a feedback report." }));
+        }
+        if (seen.verdict !== "clear" && seen.verdict !== "adult") continue;
+      }
       const up = await supabase.storage.from(BUCKET).upload(path, buf, { contentType: f.type, upsert: false });
       if (up.error) continue;
       await supabase.from("feedback_attachments").insert({

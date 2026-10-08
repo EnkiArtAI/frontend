@@ -37,6 +37,9 @@ export const UPLOAD_UNCHECKED = "Your image could not be checked right now, so i
 /** A profile image is public everywhere and has no 18+ mark: only a clear one is taken. */
 export const PROFILE_IMAGE_ADULT = "A profile picture or cover can't be 18+ on Enki.";
 
+/** A message has no 18+ mark and can reach anyone: only a clear image is sent. */
+export const MESSAGE_IMAGE_ADULT = "18+ images can't be sent in messages.";
+
 /** Refused or not judged: such an image is neither shown nor used. */
 export const heldBack = (v: { verdict: string }) => v.verdict === "blocked" || v.verdict === "child_safety" || v.verdict === "unavailable";
 
