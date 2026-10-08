@@ -4,8 +4,9 @@
  * Per-model generation limits from the models table (max reference images +
  * allowed file types), fetched once via /api/models and cached module-wide.
  *
- * UI model ids are slugs ("nano-banana-pro") while the DB stores display
- * names ("Nano Banana Pro") — matching is slug-normalized both ways.
+ * A model is named by its catalogue id (the row's own id, as quick create
+ * picks it) or by a slug ("nano-banana-pro") of the display name the DB
+ * stores ("Nano Banana Pro"), matched slug-normalized both ways.
  * Fail-open to sane defaults so the UIs work before the migration ran.
  */
 import { useEffect, useState } from "react";
@@ -84,7 +85,7 @@ async function loadModels(): Promise<ModelRow[]> {
 export function limitsFor(rows: ModelRow[], model: string | null | undefined): ModelLimits {
   if (!model) return DEFAULTS;
   const wanted = slug(model);
-  const row = rows.find((r) => r.name && slug(r.name) === wanted);
+  const row = rows.find((r) => r.id === model) ?? rows.find((r) => r.name && slug(r.name) === wanted);
   if (!row) return DEFAULTS;
   const filetypes =
     Array.isArray(row.allowed_filetypes) && row.allowed_filetypes.length > 0
