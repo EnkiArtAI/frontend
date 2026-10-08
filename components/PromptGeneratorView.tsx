@@ -403,6 +403,10 @@ export default function PromptGeneratorView({
      what was actually measured. */
   const core = useGenerationCore(generator);
   const freeModel = core.free;
+  /* The selected model's own reference limit (Flux takes none, GPT-Image-2
+     sixteen), not a fixed ten. Images still being read count as taken. */
+  const maxRefs = core.entry?.maxRefs ?? 0;
+  const refsTaken = refs.length + refsPending.length;
 
   /* Free of charge ONLY when the chosen model costs nothing to run. A free
      PROMPT with a paid model still bills its model cost + fee (Kev,
@@ -745,12 +749,11 @@ export default function PromptGeneratorView({
   const onRefUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
-    const remaining = 10 - refs.length;
-    Array.from(files).slice(0, remaining).forEach(file => {
-      void readRef(file).then(url => { if (url) setRefs(prev => prev.length >= 10 ? prev : [...prev, url]); });
+    Array.from(files).slice(0, Math.max(0, maxRefs - refsTaken)).forEach(file => {
+      void readRef(file).then(url => { if (url) setRefs(prev => prev.length >= maxRefs ? prev : [...prev, url]); });
     });
     if (fileRef.current) fileRef.current.value = "";
-  }, [refs.length, readRef]);
+  }, [maxRefs, refsTaken, readRef]);
 
   const removeRef = useCallback((i: number) => setRefs(prev => prev.filter((_, idx) => idx !== i)), []);
 
@@ -1559,7 +1562,7 @@ export default function PromptGeneratorView({
           <div className="pgv-block">
             <div className="pgv-ref-header">
               <span className="pgv-section-label" style={{ marginBottom: 0 }}>Reference Images</span>
-              <span className="pgv-ref-count">{refs.length}/10</span>
+              <span className="pgv-ref-count">{refs.length}/{maxRefs}</span>
             </div>
             {/* Cascading numbered card-deck, the same shape the prompt
                 editor uses for the author's own reference row: one line,
@@ -1611,7 +1614,7 @@ export default function PromptGeneratorView({
                 type="button"
                 className="pgv-ref-add"
                 onClick={() => fileRef.current?.click()}
-                disabled={refs.length >= 10}
+                disabled={refsTaken >= maxRefs}
                 aria-label="Add reference images"
                 title="Add reference images"
               >
