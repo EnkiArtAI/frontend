@@ -104,10 +104,11 @@ export async function readImageEvidence(supabase: SupabaseClient, eventId: strin
   }
 }
 
-/** By the first bytes: the copy is whatever the route held, PNG, JPEG or WebP. */
+/** By the first bytes: the copy is whatever the route held, a still the check judges (PNG, JPEG, WebP or GIF). */
 function mediaType(b: Buffer): string {
   if (b.subarray(0, 4).toString("hex") === "89504e47") return "image/png";
   if (b.subarray(0, 3).toString("hex") === "ffd8ff") return "image/jpeg";
   if (b.subarray(0, 4).toString("latin1") === "RIFF" && b.subarray(8, 12).toString("latin1") === "WEBP") return "image/webp";
+  if (b.subarray(0, 4).toString("latin1") === "GIF8") return "image/gif";
   return "application/octet-stream";
 }

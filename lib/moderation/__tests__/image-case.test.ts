@@ -84,6 +84,15 @@ describe("a child-safety image", () => {
     expect(await readImageEvidence(client as never, id)).toBe(`data:image/png;base64,${png.toString("base64")}`);
   });
 
+  it("opens as the image it is, for every still the check judges", async () => {
+    for (const [format, type] of [["jpeg", "image/jpeg"], ["webp", "image/webp"], ["gif", "image/gif"]] as const) {
+      db.tables.automod_events = [];
+      const bytes = await sharp(png)[format]().toBuffer();
+      await record({ bytes });
+      expect(await readImageEvidence(client as never, String(db.tables.automod_events[0].id))).toBe(`data:${type};base64,${bytes.toString("base64")}`);
+    }
+  });
+
   it("does not open under another case's id", async () => {
     await record();
     const id = String(db.tables.automod_events[0].id);
