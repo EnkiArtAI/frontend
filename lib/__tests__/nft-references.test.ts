@@ -19,4 +19,9 @@ describe("the NFT picker", () => {
   it("hands over each marked NFT's picture and tile", () => {
     expect(PICKER).toContain(".filter((n) => marked.has(n.id)).map(({ image, thumb }) => ({ image, thumb }));");
   });
+
+  it("tells no wallet from no NFTs, by the count of wallets the list read", () => {
+    expect(PICKER).toMatch(/setWallets\(d\.wallets \?\? 0\);\n\s+setNfts\(d\.nfts\);/);
+    expect(PICKER).toContain('{nfts?.length === 0 && !problem && <div className="enki-nftp-note">{wallets ? `No NFTs in your ${wallets === 1 ? "wallet" : "wallets"}.` : "No Solana wallet is linked to this account yet."}</div>}');
+  });
 });

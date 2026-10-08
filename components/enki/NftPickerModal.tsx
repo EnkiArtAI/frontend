@@ -23,6 +23,8 @@ export default function NftPickerModal({ max, onPick, onClose }: {
 }) {
   const [nfts, setNfts] = useState<Nft[] | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  // No wallet is not no NFTs: the empty list says which.
+  const [wallets, setWallets] = useState(0);
   const [marked, setMarked] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -30,6 +32,7 @@ export default function NftPickerModal({ max, onPick, onClose }: {
       .then(async (r) => {
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.error || "NFTs unavailable");
+        setWallets(d.wallets ?? 0);
         setNfts(d.nfts);
       })
       .catch((e: Error) => { setNfts([]); setProblem(e.message); });
@@ -63,7 +66,7 @@ export default function NftPickerModal({ max, onPick, onClose }: {
         </div>
         {nfts === null && <div className="enki-nftp-note"><Loader2 size={14} className="enki-bmp-spin" /> Loading your wallets…</div>}
         {problem && <div className="enki-nftp-note"><ImageOff size={14} /> {problem}</div>}
-        {nfts?.length === 0 && !problem && <div className="enki-nftp-note">No NFTs found in your connected wallets.</div>}
+        {nfts?.length === 0 && !problem && <div className="enki-nftp-note">{wallets ? `No NFTs in your ${wallets === 1 ? "wallet" : "wallets"}.` : "No Solana wallet is linked to this account yet."}</div>}
         {max <= 0 && <div className="enki-nftp-note">All image slots are full — remove one first.</div>}
         {!!nfts?.length && (
           <div className="enki-nftp-grid">
