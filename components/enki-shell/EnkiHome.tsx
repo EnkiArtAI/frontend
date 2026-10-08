@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useTheme } from "../../providers/ThemeProvider";
 import { useHoldings } from "@/hooks/useHoldings";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useViewerWallets } from "@/hooks/useViewerWallets";
 import { useEmailAuth } from "@/hooks/useEmailAuth";
 import { useCdpAddress } from "@/hooks/useCdpAddress";
 import { useSolanaAuth } from "@/hooks/useSolanaAuth";
@@ -21,31 +23,25 @@ import { useMessages } from "@/hooks/useMessages";
 import EnkiFeedPage from "@/components/enki/EnkiFeedPage";
 import { openLogin } from "@/lib/openLogin";
 import { notify } from "@/components/kit/notify";
+import { RAIL } from "@/lib/ui/kit/breakpoints";
+import { balanceView } from "@/lib/ui/kit/price";
 import EnkiSidebar, { type NavItem } from "./EnkiSidebar";
 import BookmarksPanel from "./BookmarksPanel";
 import FeedbackModal from "./FeedbackModal";
-import NodeCreator from "./NodeCreator";
 import EnkiPanel from "./EnkiPanel";
 import LoginModal from "@/components/LoginModal";
-import { EDIT_PROMPT_EVENT, consumePromptEdit } from "./editorBridge";
+import { EDIT_PROMPT_EVENT } from "./editorBridge";
 import { Icon } from "./icons";
 import SettingsView from "@/components/settings/SettingsView";
 import ProfileView from "@/components/profile/ProfileView";
 import LeaderboardPage from "../../app/leaderboard/page";
 import "./enki-shell.css";
-import "./nodes.css";
 
 const PANEL_TITLES: Record<string, string> = {
   billing: "Payment", settings: "Settings", profile: "My Profile", creator: "Creator",
   leaderboard: "Hall of Fame", favorites: "Bookmarks", notifications: "Notifications", messages: "Messages",
-  color: "Color Setup", analytics: "Analytics",
+  analytics: "Analytics",
 };
-
-const THEME_OPTIONS = [
-  { key: "light", label: "Light", sub: "Bright paper look" },
-  { key: "dark", label: "Dark", sub: "Teal dark — the default" },
-  { key: "purple", label: "Purple", sub: "Purple-tinted dark" },
-] as const;
 
 const NAV: NavItem[] = [
   { id: "home", label: "Home", icon: "home" },
@@ -71,6 +67,13 @@ function useSafeActiveAccount() {
   try { return useActiveAccount(); } catch { return null; }
 }
 
+/* The user's own menu choice. Read during render through a store, so the
+   server and the hydrating client agree (false) and the stored answer
+   follows without an effect. */
+const MENU_KEY = "ek-menu-collapsed";
+const noSubscribe = () => () => {};
+const readMenuPref = () => { try { return localStorage.getItem(MENU_KEY) === "1"; } catch { return false; } };
+
 /** The shell. `children` take the feed's place, so a route can keep the
  *  shell (menu, login, billing panel) around its own page. */
 export default function EnkiHome({ children }: { children?: React.ReactNode }) {
@@ -84,7 +87,9 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
   const { isAuthenticated: solanaAuthed, walletAddress: solanaAddress, logout: solanaLogout } = useSolanaAuth();
   const { connected: adapterConnected, disconnect: adapterDisconnect } = useWallet();
   const walletAddress = account?.address ?? cdpAddress ?? (solanaAuthed ? solanaAddress : null);
-  const { balance } = useHoldings(walletAddress);
+  const { payer } = useViewerWallets();
+  const { balance, ready } = useHoldings(payer);
+  const balanceText = balanceView({ payer, ready, balance, free: false, quote: null })?.text ?? "Add funds";
 
   // Access + username come from the root BetaGate (it already verified the
   // session server-side before this shell could even mount).
@@ -105,21 +110,16 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
   const handle = myHandle ?? (walletAddress ? walletAddress.replace(/^0x/, "").slice(0, 8).toLowerCase() : emailName?.toLowerCase() ?? "guest");
   const name = myHandle ?? (walletAddress ? `${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}` : emailName ?? "Guest");
 
-  const [narrow, setNarrow] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
-  // The user's own menu preference survives editor round-trips (localStorage)
-  // and Create-Prompt-2 sessions (ref): opening the node creator force-collapses,
-  // closing it restores whatever the menu was before.
-  const MENU_KEY = "ek-menu-collapsed";
-  const prevCollapsedRef = useRef<boolean | null>(null);
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(MENU_KEY);
-      if (stored !== null && window.innerWidth >= 1100) setCollapsed(stored === "1");
-    } catch { /* storage unavailable */ }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  const [nodeOpen, setNodeOpen] = useState(false);
+  /* The menu is a 72 px rail below 1200 px and the full column above, where
+     the user's stored choice holds. A toggle wins until the window next
+     crosses 1200. A phone shows the full menu as its drawer. */
+  const narrow = useMediaQuery(RAIL);
+  const phone = useMediaQuery("(max-width: 767.98px)"); // the shell's phone edge, enki-shell.css
+  const storedRail = useSyncExternalStore(noSubscribe, readMenuPref, () => false);
+  const [pick, setPick] = useState<{ narrow: boolean; collapsed: boolean } | null>(null);
+  const collapsed = pick?.narrow === narrow ? pick.collapsed : narrow || storedRail;
+  const rail = collapsed && !phone;
+  const [panel, setPanel] = useState<string | null>(null); // which menu item shows in the right panel
   /* Which creator the "creator" panel shows. Opened via the cancelable
      "enki:open-creator" event: cards and artist links dispatch it, and a
      consumed event (preventDefault) tells them the shell took over — only
@@ -198,7 +198,7 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
   // Guardians get the focus only when the recovery banner asked; the 2FA bar
   // opens the same tab, whose top section is the 2FA itself.
   const [guardianFocus, setGuardianFocus] = useState(false);
-  const openRecoverySettings = () => { setGuardianFocus(true); setNodeOpen(false); setActiveNav("settings"); openPanel("settings", "recovery"); };
+  const openRecoverySettings = () => { setGuardianFocus(true); setActiveNav("settings"); openPanel("settings", "recovery"); };
 
   // Unread notifications → badge on Notifications. The shared store polls +
   // refreshes on focus (near-realtime) and clears optimistically on open, so
@@ -253,7 +253,6 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
     const onOpen2fa = (e: Event) => {
       e.preventDefault();
       setGuardianFocus(false);
-      setNodeOpen(false);
       setActiveNav("settings");
       openPanel("settings", "recovery");
     };
@@ -268,67 +267,28 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
     window.addEventListener("enki:open-billing", onOpenBilling);
     return () => window.removeEventListener("enki:open-billing", onOpenBilling);
   }, []);
-  const [panel, setPanel] = useState<string | null>(null); // which menu item shows in the right panel
-  const [editPrompt, setEditPrompt] = useState<unknown>(null); // prompt being edited in the node creator
 
-  // A prompt card's pencil → open Create Prompt 2 loaded with that prompt.
+  // A prompt card's pencil asks for the editor. The prompt waits in
+  // editorBridge for the editor to take.
   useEffect(() => {
-    const onEdit = () => { setEditPrompt(consumePromptEdit()); setPanel(null); setNodeOpen(true); setActiveNav("home"); };
+    const onEdit = () => router.push("/editor");
     window.addEventListener(EDIT_PROMPT_EVENT, onEdit);
-    /* A pending edit can predate this mount: "Open in editor" on the
-       standalone /generator page stashes the prompt and navigates here —
-       the event fired before anyone listened, so the mount drains the
-       stash too (Kev, 2026-08-24). */
-    const pending = consumePromptEdit();
-    if (pending) { setEditPrompt(pending); setNodeOpen(true); }
     return () => window.removeEventListener(EDIT_PROMPT_EVENT, onEdit);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // The node creator no longer forces the rail — the collapse toggle stays a
-  // pure menu open/close even while Create Prompt 2 is open.
-  // The collapse toggle is the single source of truth, so the ">" arrow always
-  // expands — narrow viewports only AUTO-collapse (and auto-expand) on crossing
-  // the threshold; the user can still override either way.
-  const rail = collapsed;
-
-  useEffect(() => {
-    const onResize = () => {
-      const n = window.innerWidth < 1100;
-      if (n !== narrow) { setNarrow(n); setCollapsed(n); }
-    };
-    onResize();
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [narrow]);
+  }, [router]);
 
   /* Ctrl/Cmd+K and the query itself live with the field, in SearchChip: it
      writes ?q=, EnkiFeedPage reads it and asks the server. */
 
   const showToast = (msg: string) => notify(msg);
 
-  // Manual menu toggle → remember the preference (also mid-node-session).
-  const toggleMenu = () => setCollapsed((c) => {
-    const n = !c;
-    try { localStorage.setItem(MENU_KEY, n ? "1" : "0"); } catch { /* noop */ }
-    if (nodeOpen) prevCollapsedRef.current = n;
-    return n;
-  });
-
-  // Closing Create Prompt 2 restores the menu to how it was before it opened.
-  const closeNode = () => {
-    setNodeOpen(false);
-    window.dispatchEvent(new CustomEvent("enki:show-detail")); // reveal what the editor covered
-
-    setEditPrompt(null);
-    if (prevCollapsedRef.current !== null && !narrow) setCollapsed(prevCollapsedRef.current);
-    prevCollapsedRef.current = null;
+  // Manual menu toggle → remember the preference.
+  const toggleMenu = () => {
+    setPick({ narrow, collapsed: !collapsed });
+    try { localStorage.setItem(MENU_KEY, collapsed ? "0" : "1"); } catch { /* noop */ }
   };
 
   const onNav = (id: string) => {
     setMobileDrawerOpen(false);
-    if (nodeOpen) closeNode();
     // Guests can browse, but personal areas need an account.
     if (!authed && AUTHED_ONLY.has(id)) { showToast("Sign in to use this."); return; }
     if (id === "home") {
@@ -346,7 +306,9 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
       }
       window.dispatchEvent(new CustomEvent("enki:close-detail"));
       if (detailEl) return;
+      // Nothing open: back to the whole feed (no search, All) at the top.
       router.push("/home");
+      window.dispatchEvent(new CustomEvent("enki:home"));
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
@@ -380,31 +342,6 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
 
   const renderPanel = (key: string) => {
     switch (key) {
-      case "color": return (
-        <>
-        <PanelHeadline title="Color Setup" sub="Pick how Enki Art looks on this device." />
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "12px 40px 40px" }}>
-          {THEME_OPTIONS.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setTheme(t.key)}
-              style={{
-                display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2,
-                padding: "14px 16px", borderRadius: 10, cursor: "pointer", textAlign: "left",
-                border: theme === t.key ? "2px solid var(--enki-ember, #c96838)" : "1px solid var(--enki-rule)",
-                background: theme === t.key ? "rgba(201, 104, 56, 0.08)" : "transparent",
-                color: "var(--enki-ink)",
-              }}
-            >
-              <span style={{ fontSize: 14, fontWeight: 600 }}>
-                {t.label} {theme === t.key && <span style={{ color: "var(--enki-ember, #c96838)" }}>✓</span>}
-              </span>
-              <span style={{ fontSize: 12, color: "var(--enki-ink-3)" }}>{t.sub}</span>
-            </button>
-          ))}
-        </div>
-        </>
-      );
       // Balance chip + billing entries render the EXACT Settings → Payment
       // view (same container, same scale), scrolled to "Add money".
       case "billing": return <SettingsView initialTab="payment" focusRamp={payFocus} />;
@@ -443,30 +380,11 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
     }
   };
 
-  const rootClass = "ek-app" + (rail ? " ek-root--rail" : "") + (nodeOpen ? " ek-node-open" : "")
+  const rootClass = "ek-app" + (rail ? " ek-root--rail" : "")
     + (showRecoveryBanner || needs2fa ? " ek-with-banner" : "");
 
-  /* The node editor converts screen coordinates into canvas coordinates by
-     subtracting the width of the column the shell reserves on its left. That
-     number lives in --ek-sw, and a media query may change it (phones give the
-     sidebar no column at all), so it is READ from the variable rather than
-     guessed from the rail state — a guess put every click 78px off. */
-  const rootRef = useRef<HTMLDivElement>(null);
-  const [shellOffset, setShellOffset] = useState(0);
-  useEffect(() => {
-    const read = () => {
-      const el = rootRef.current;
-      if (!el) return;
-      const px = parseFloat(getComputedStyle(el).getPropertyValue("--ek-sw"));
-      setShellOffset(Number.isFinite(px) ? px : (rail ? 78 : 256));
-    };
-    read();
-    window.addEventListener("resize", read);
-    return () => window.removeEventListener("resize", read);
-  }, [rail, nodeOpen]);
-
   return (
-    <div className={rootClass} ref={rootRef}>
+    <div className={rootClass}>
       {showRecoveryBanner && (
         <div className="ek-recovery-banner" role="alert">
           <button className="ek-recovery-banner-msg" onClick={openRecoverySettings}>
@@ -495,16 +413,15 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
             <button
               type="button"
               className="ek-mobile-balance"
-              onClick={() => { setNodeOpen(false); setPayFocus(true); openPanel("billing"); }}
+              onClick={() => { setPayFocus(true); openPanel("billing"); }}
               title="Add funds"
             >
-              <Icon name="dollar" size={12} stroke={2.4} />
-              {(balance ?? 0).toFixed(2)}
+              {balanceText}
             </button>
           )}
           <button
             type="button"
-            className="ek-mobile-burger-btn"
+            className="ek-mobile-burger-btn kit-hit"
             onClick={() => setMobileDrawerOpen((o) => !o)}
             aria-label="Open menu"
             aria-expanded={mobileDrawerOpen}
@@ -533,24 +450,14 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
           onNav={onNav}
           rail={rail}
           onCreate={() => { if (!authed) { setCreatorNotice("open"); return; } router.push("/editor"); }}
-          onCreate2={() => {
-            if (!authed) { setCreatorNotice("open"); return; }
-            prevCollapsedRef.current = collapsed;
-            // Close any open right-side panel first — the node creator (z 118)
-            // sits below the panel scrim (z 160) and would open invisibly.
-            closePanel();
-            window.dispatchEvent(new CustomEvent("enki:hide-detail")); // node editor (z 118) would open under the image view too
-            setNodeOpen(true); setActiveNav("home"); setCollapsed(true);
-          }}
-          nodeActive={nodeOpen}
           guest={!authed}
           onFeedback={() => setFeedbackOpen(true)}
           account={{ name, handle, initials, avatarUrl: myProfile?.avatarUrl ?? null }}
           collapsed={rail}
           onToggleCollapse={toggleMenu}
-          balance={balance ?? 0}
-          onProfile={() => { setNodeOpen(false); setActiveNav(""); openPanel("profile"); }}
-          onTopUp={() => { setNodeOpen(false); setPayFocus(true); openPanel("billing"); }}
+          balance={balanceText}
+          onProfile={() => { setActiveNav(""); openPanel("profile"); }}
+          onTopUp={() => { setPayFocus(true); openPanel("billing"); }}
           onLogoff={authed ? () => setLogoffOpen(true) : undefined}
           theme={theme}
           setTheme={setTheme}
@@ -610,7 +517,7 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
             aria-label="Bookmarks"
           >
             <Icon name="bookmark" size={20} stroke={panel === "favorites" ? 2.4 : 1.9} />
-            <span>Saved</span>
+            <span>Bookmarks</span>
           </button>
         )}
         <button
@@ -618,7 +525,7 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
           className={"ek-mobile-nav-btn" + (panel === "profile" ? " active" : "")}
           onClick={() => {
             if (!authed) { openLogin(); return; }
-            setNodeOpen(false); setActiveNav(""); openPanel("profile");
+            setActiveNav(""); openPanel("profile");
           }}
           aria-label={authed ? "Profile" : "Log in"}
         >
@@ -629,13 +536,12 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
             ) : authed ? initials : <Icon name="user" size={13} stroke={2} />}
           </span>
           <span>{authed ? "Profile" : "Log in"}</span>
-          {authed && unseen > 0 && <span className="ek-mobile-nav-badge">{unseen}</span>}
         </button>
       </nav>
 
       {panel && (
         <EnkiPanel title={PANEL_TITLES[panel] || panel} onClose={closePanel} full
-          hideClose={panel === "leaderboard"}>
+          hideClose={panel === "leaderboard" && !phone}>
           {/* The key remounts only the CONTENT (fresh state per menu click);
               the panel shell stays mounted, so its fade-in doesn't replay and
               the home feed never flashes through between panels. */}
@@ -643,10 +549,6 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
             {renderPanel(panel)}
           </div>
         </EnkiPanel>
-      )}
-
-      {nodeOpen && (
-        <NodeCreator onClose={closeNode} onToast={showToast} userKey={walletAddress} sidebarW={shellOffset} editPrompt={editPrompt} />
       )}
 
       {creatorNotice && (

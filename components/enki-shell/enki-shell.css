@@ -73,7 +73,7 @@
   --qc-bg: #8b5cf6; --qc-ink: #ffffff;
   --cta-bg: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%); --cta-ink: #ffffff;
 }
-.ek-app.ek-root--rail { --ek-sw: 78px; }
+.ek-app.ek-root--rail { --ek-sw: 72px; }
 
 .ek-app .serif { font-family: var(--font-serif), Georgia, serif; }
 .ek-app .mono { font-family: var(--font-mono), ui-monospace, monospace; }
@@ -91,9 +91,9 @@
   border-right: 1px solid var(--enki-rule);
   transition: width 0.26s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.ek-root--rail .ek-sidebar { width: 78px; align-items: center; padding-left: 0; padding-right: 0; }
+.ek-root--rail .ek-sidebar { width: 72px; align-items: center; padding-left: 0; padding-right: 0; }
 .ek-main { flex: 1; min-width: 0; margin-left: 256px; transition: margin-left 0.26s cubic-bezier(0.4, 0, 0.2, 1); position: relative; }
-.ek-root--rail .ek-main { margin-left: 78px; }
+.ek-root--rail .ek-main { margin-left: 72px; }
 
 /* ── Sidebar logo ── */
 .ek-logo {
@@ -124,6 +124,10 @@
 }
 .ek-sidebar:hover .ek-collapse-btn { opacity: 1; }
 .ek-collapse-btn:hover { color: var(--enki-ember); border-color: var(--enki-ember); transform: scale(1.08); }
+@media (pointer: coarse) {
+  .ek-collapse-btn { top: 4px; right: -18px; width: 36px; height: 36px; }
+  .ek-collapse-btn::before { content: ""; position: absolute; inset: -4px; }
+}
 
 /* ── Nav items ── */
 .ek-nav { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
@@ -142,7 +146,7 @@
 .ek-root--rail .ek-nav-label { display: none; }
 .ek-nav-badge {
   min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
-  background: var(--enki-ember); color: #fff; font-size: 11px; font-weight: 600;
+  background: var(--enki-ember); color: var(--cta-ink); font-size: 11px; font-weight: 600;
   display: flex; align-items: center; justify-content: center; font-family: var(--font-mono), monospace;
 }
 .ek-root--rail .ek-nav-badge { position: absolute; top: 4px; right: 4px; min-width: 16px; height: 16px; font-size: 9px; padding: 0 4px; }
@@ -156,12 +160,12 @@
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
 }
 .ek-nav-tip::before { content: ''; position: absolute; left: -4px; top: 50%; transform: translateY(-50%) rotate(45deg); width: 8px; height: 8px; background: var(--enki-ink); }
-.ek-root--rail .ek-nav-item:hover .ek-nav-tip { opacity: 1; transform: translateY(-50%) scale(1); }
+.ek-root--rail :is(.ek-nav-item, .ek-earn-row, .ek-create):is(:hover, :focus-visible) .ek-nav-tip { opacity: 1; transform: translateY(-50%) scale(1); }
 
 /* ── Create Prompt CTA ── */
 .ek-create {
   position: relative; display: flex; align-items: center; justify-content: center; gap: 9px;
-  height: 54px; margin: 16px 4px 0; border: none; border-radius: 999px;
+  height: 54px; margin: 28px 4px 0; border: none; border-radius: 999px;
   background: var(--cta-bg); color: var(--cta-ink);
   font-size: 16px; font-weight: 600; letter-spacing: 0.01em; width: calc(100% - 8px);
   box-shadow: 0 6px 18px rgba(var(--ember-rgb), 0.32);
@@ -170,18 +174,8 @@
 .ek-create:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(var(--ember-rgb), 0.42); filter: brightness(1.04); }
 .ek-create:active { transform: translateY(0) scale(0.98); }
 .ek-create-label { white-space: nowrap; }
-.ek-root--rail .ek-create:hover .ek-nav-tip { opacity: 1; transform: translateY(-50%) scale(1); }
-.ek-root--rail .ek-create { width: 54px; height: 54px; padding: 0; margin: 16px auto 0; }
+.ek-root--rail .ek-create { width: 54px; height: 54px; padding: 0; margin: 28px auto 0; }
 .ek-root--rail .ek-create .ek-create-label { display: none; }
-.ek-create2 { height: 46px; margin-top: 9px; background: transparent; color: var(--enki-ink); border: 1px solid var(--enki-rule); box-shadow: none; font-size: 14.5px; }
-.ek-create2:hover { background: color-mix(in oklab, var(--enki-ink) 6%, transparent); border-color: var(--enki-ink-3); box-shadow: none; filter: none; }
-.ek-create2 .ek-create-label { font-weight: 600; }
-/* node-editor open → highlight the Node Creator button as the selected menu */
-.ek-create2.active { background: var(--enki-ember); color: var(--cta-ink); border-color: var(--enki-ember); box-shadow: 0 8px 22px rgba(var(--ember-rgb), 0.4); }
-.ek-create2.active:hover { background: var(--enki-ember); border-color: var(--enki-ember); filter: brightness(1.04); }
-.ek-root--rail .ek-create2 { width: 54px; height: 48px; padding: 0; margin: 9px auto 0; }
-.ek-root--rail .ek-create2 .ek-create-label { display: none; }
-.ek-root--rail .ek-create2:hover .ek-nav-tip { opacity: 1; transform: translateY(-50%) scale(1); }
 
 .ek-side-spacer { flex: 1; }
 
@@ -225,7 +219,7 @@
    `padding: 0 12px` and `width: 100%`: its icon sat 12px from the edge of a
    78px rail while every icon above it was centred at 39 (Kev, 2026-08-19).
    Height stays 36 — only the horizontal alignment was wrong. */
-.ek-root--rail .ek-earn-row { width: 50px; padding: 0; justify-content: center; gap: 0; border-radius: 50%; margin: 0 auto; }
+.ek-root--rail .ek-earn-row { width: 50px; height: 50px; padding: 0; justify-content: center; gap: 0; border-radius: 50%; margin: 0 auto; }
 .ek-earn-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ek-earn-chip { font-family: var(--font-mono), monospace; font-size: 9px; font-weight: 700; color: var(--enki-ember); background: rgba(var(--ember-rgb), 0.1); border: 1px solid rgba(var(--ember-rgb), 0.4); border-radius: 4px; padding: 1px 6px; flex-shrink: 0; }
 
@@ -277,7 +271,6 @@
 .ek-with-banner .ek-sidebar { top: var(--ek-banner-h); }
 .ek-with-banner .ek-topbar { top: var(--ek-banner-h); }
 .ek-with-banner .ek-panel-scrim { top: var(--ek-banner-h); }
-.ek-with-banner .nc { top: var(--ek-banner-h); }         /* node editor + its absolute toolbar/ribbon */
 
 /* ── small viewports: compress the sidebar so nothing ever overlaps ── */
 @media (max-height: 800px) {
@@ -348,9 +341,7 @@
   .ek-logo-mark, .ek-logo-mark-img { width: 32px; height: 32px; }
   .ek-collapse-btn { top: 58px; }
   .ek-create { height: 40px; margin-top: 8px; font-size: 14px; }
-  .ek-create2 { height: 36px; margin-top: 6px; font-size: 13px; }
   .ek-root--rail .ek-create { width: 40px; height: 40px; }
-  .ek-root--rail .ek-create2 { width: 40px; height: 36px; }
   .ek-avatar { width: 30px; height: 30px; font-size: 11px; }
   .ek-account { margin-top: 6px; }
 }
@@ -358,7 +349,6 @@
   /* Nothing left to fold: the popover itself scrolls and the rail is just
      the burger, one create button and the account. */
   .ek-burger { width: 34px; height: 34px; }
-  .ek-create2 { display: none; }
   .ek-logo { display: none; }
   .ek-collapse-btn { top: 14px; }
 }
@@ -382,18 +372,6 @@
 .ek-color-sw { width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0; border: 1px solid rgba(0, 0, 0, 0.1); }
 .ek-color-opt.active { font-weight: 600; }
 .ek-color-opt.active .ek-color-check { margin-left: auto; color: var(--enki-ember); }
-
-/* ════════════════ Feed harmonization ════════════════
-   The reused EnkiFeedPage (`.enki` + `.enki-catbar`) was laid out for the old
-   64px top navbar. In the shell there is no top navbar and the left rail owns
-   the left edge, so we slide the fixed catbar over by the sidebar width and
-   trim the feed's top padding. */
-/* No top bar any more — the category bar IS the top of the main area, so it
-   clears the recovery banner and nothing else, and the feed clears the
-   category bar plus a little air. Both read --ek-banner-h, so the dismissed
-   state needs no second rule. The 112/56 below were the old bar's budget. */
-.ek-main > .enki { padding-top: calc(62px + var(--ek-banner-h, 0px)); }
-.ek-main .enki-catbar { top: var(--ek-banner-h, 0px); left: var(--ek-sw); right: 0; width: auto; transition: left 0.26s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease, transform 0.3s ease, visibility 0.3s ease; }
 
 /* ── shell top bar (search) ── */
 .ek-topbar {
@@ -447,14 +425,10 @@
 .ek-refer-step { display: flex; align-items: center; gap: 11px; font-size: 12.5px; color: var(--enki-ink-2); padding: 5px 0; }
 .ek-refer-step-n { width: 22px; height: 22px; flex-shrink: 0; border-radius: 50%; background: var(--cta-bg); color: var(--cta-ink); font-family: var(--font-mono), monospace; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
 
-/* toast */
-.ek-toast { position: fixed; bottom: 26px; left: calc(50% + var(--ek-sw) / 2); transform: translateX(-50%); z-index: 320; background: var(--enki-ink); color: var(--enki-paper); padding: 12px 20px; border-radius: 12px; font-size: 14px; font-weight: 500; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.3); display: flex; align-items: center; gap: 9px; animation: ek-toast-in 0.3s ease; }
-
 /* keyframes */
 @keyframes ek-dd-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes ek-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes ek-pop { from { opacity: 0; transform: translateY(14px) scale(0.98); } to { opacity: 1; transform: none; } }
-@keyframes ek-toast-in { from { opacity: 0; transform: translateX(-50%) translateY(12px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 
 /* ════════════════ Right-side menu panel ════════════════
    Appears over the main area (left menu stays usable); fades in, no slide. */
@@ -489,14 +463,6 @@
 /* tame full-page layouts reused inside the panel */
 .ek-panel-body .set-page { min-height: auto; }
 .ek-panel-body .set-save-floater { position: sticky; bottom: 12px; }
-
-@media (max-width: 700px) {
-  .ek-main > .enki { padding-top: calc(58px + var(--ek-banner-h, 0px)); }
-}
-
-/* Hide the floating "Generate · new image" quick-create pill while the node
-   editor (Create Prompt 2) is open — it has its own Generate dock. */
-.ek-app.ek-node-open .ek-generate-launcher { display: none !important; }
 
 /* ════════════════ Messages (DMs) ════════════════ */
 /* fills the panel from the left — no centering gap, no stray side borders */
@@ -564,12 +530,12 @@
 /* Disabled earn rows stay readable, just clearly inactive. */
 .ek-earn-row:disabled { opacity: 0.55; cursor: default; }
 
-/* ════════════════ Mobile Shell (≤ 768px) ════════════════ */
+/* ════════════════ Mobile Shell (< 768px) ════════════════ */
 .ek-mobile-header { display: none; }
 .ek-mobile-bottom-nav { display: none; }
 .ek-sidebar-mobile-close { display: none; }
 
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
   /* The sidebar is an off-canvas drawer here, so it reserves NO column: every
      fixed element positioned off --ek-sw (the feed's category+filter bar, the
      top bar, the node editor, the panel scrim, the toast) would otherwise
@@ -647,7 +613,7 @@
     height: 16px;
     border-radius: 999px;
     background: var(--enki-ember);
-    color: #fff;
+    color: var(--cta-ink);
     font-size: 9px;
     font-weight: 700;
     display: flex;
@@ -700,11 +666,6 @@
     cursor: pointer;
   }
 
-  /* The category + filter row is fixed, so the header's 54px does not push
-     it down — without this it renders underneath the header (z155 over z45)
-     and the whole row, search included, is invisible on a phone. */
-  .ek-main .enki-catbar { top: calc(54px + var(--ek-banner-h, 0px)); }
-
   /* ── Mobile Main Content Bounds ── */
   .ek-main {
     margin-left: 0 !important;
@@ -755,22 +716,6 @@
   .ek-mobile-nav-btn.active svg {
     color: var(--enki-ember);
   }
-  .ek-mobile-nav-badge {
-    position: absolute;
-    top: 4px;
-    right: calc(50% - 16px);
-    min-width: 14px;
-    height: 14px;
-    border-radius: 999px;
-    background: var(--enki-ember);
-    color: #fff;
-    font-size: 8.5px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0 3px;
-  }
   .ek-mobile-nav-btn--create {
     position: relative;
   }
@@ -793,7 +738,8 @@
   /* ── Right-side Panels on Mobile ── */
   .ek-panel-scrim {
     left: 0 !important;
-    top: var(--ek-banner-h, 0px) !important;
+    top: calc(54px + var(--ek-banner-h, 0px)) !important;
+    bottom: calc(58px + env(safe-area-inset-bottom, 0px)) !important;
     width: 100vw !important;
     z-index: 160 !important;
   }
@@ -813,7 +759,7 @@
     font-size: 13px !important;
   }
   .ek-panel-body {
-    padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)) !important;
+    padding-bottom: 24px !important;
     -webkit-overflow-scrolling: touch;
   }
   .ek-panel-x--float {
@@ -825,17 +771,6 @@
   /* ── Generate Launcher on Mobile: lift above bottom bar ── */
   .ek-generate-launcher {
     bottom: calc(70px + env(safe-area-inset-bottom, 0px)) !important;
-  }
-
-  /* ── Toast on Mobile: lift above bottom bar ── */
-  .ek-toast {
-    left: 50% !important;
-    bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
-    transform: translateX(-50%) !important;
-    width: max-content;
-    max-width: calc(100vw - 32px);
-    font-size: 13px;
-    padding: 10px 16px;
   }
 
   /* ── Leaderboard (Hall of Fame) on Mobile ── */
