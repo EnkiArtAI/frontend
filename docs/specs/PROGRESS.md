@@ -19,15 +19,21 @@ and the mission statement (never rebuild work that already exists).
       `viewerPermission: WRITE`, `viewerCanAdminister: false` for the active
       account (rainman456). Setting repo-level Actions secrets normally requires
       admin. Flagged to the human; not attempted.
-- [ ] Task reconciliation vs current main: in progress (background agent).
-- [ ] Wave 1 agent assignments: pending reconciliation result (some Batch 05/
-      ENV-01 items may already be done by the 137 commits, which would shrink or
-      drop tasks before agents are briefed on them).
+- [x] Task reconciliation vs current main: done, see `docs/specs/batches/batch-00-reconcile.md`.
+      BAN marketplace lock dropped (already shipped in commits `ef009c5`/`49cf8d3`).
+      REC-7 narrowed to stale-comment deletion + human CRON_SECRET confirmation.
+      REC-1 narrowed to call-site wiring + payment_intent_id + imageId.
+      ENV-01 narrowed to forgot-password honesty + generic provider 503 + tests.
+      Everything else (REC-3, REC-8, BAN-8, MFA-1, MFA-3, MFA-4, all SOC, CDP-1)
+      confirmed still fully open.
+- [ ] Wave 1 agent assignments: updated, 3 agents not 4 (D dropped, its one
+      remaining item folded into Agent B who already owns the file).
 
 ## Waves 1-4
-Not started. Waiting on reconciliation + human go-ahead (token cost of spawning
-multiple parallel implementation subagents).
+Wave plan updated per reconciliation (see batch-00 doc). Not yet spawned —
+waiting on human go-ahead given token cost of multiple parallel implementation
+subagents.
 
 ## Blocked on human
 1. Secret provisioning for CI (permission + which keys, see above).
-2. Final go-ahead to spawn wave 1 subagents once reconciliation narrows scope.
+2. Final go-ahead to spawn wave 1 subagents (now 3: A, B, C) with the narrowed scope.
