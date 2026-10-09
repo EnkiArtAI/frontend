@@ -20,6 +20,22 @@ import AccessGate from "@/components/enki-shell/AccessGate";
 export const PUBLIC_PATHS = new Set(["/", "/landing", "/gate", "/guardian", "/reset-password", "/banned"]);
 const BETA_ROLES = new Set(["beta", "mod", "admin"]);
 
+/**
+ * SOC-8 (Kev, 2026-09-24): once the private-beta whitelist stage has ended
+ * (TEAM_ACCESS_CODE unset — GET /api/gate's whitelistActive goes false),
+ * every signed-in, non-banned account is admitted regardless of role; a
+ * role check is pointless once registration itself is open to everyone.
+ * During the stage the role/allowlist rules stay exactly as they were.
+ * `activeAccount` must only ever be true for a session /api/users/handle
+ * already confirmed is signed in and not banned — never for a plain
+ * visitor or a failed/absent session, which must still need the team
+ * cookie. Pure and exported so it has a real unit test, not just a
+ * source-regex one (this repo's tests don't render client components).
+ */
+export function admitsOnceWhitelistEnded(activeAccount: boolean, whitelistActive: boolean): boolean {
+  return activeAccount && !whitelistActive;
+}
+
 /** Profile bits the gate check already fetches — pages (profile) reuse them
     for an instant first paint instead of waiting on their own fetch. */
 export type GateProfile = {
@@ -122,13 +138,24 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
     /* No session (or a denied one): a valid TEAM-CODE cookie still opens the
        UI for browsing — team members enter with the code alone (Kev,
        2026-08-23). Server APIs keep requiring a real session for anything
-       user-bound; this wall is only the client half of the pair. */
-    const teamFallback = async () => {
+       user-bound; this wall is only the client half of the pair.
+       activeAccount (SOC-8): true only from the role-mismatch branch below,
+       where a real signed-in, non-banned account was already confirmed by
+       /api/users/handle — never from the signed-out or request-failed
+       branches, which call this with no argument (false). Once the
+       whitelist stage has ended, that confirmed account is admitted
+       regardless of role; a plain visitor still needs the team cookie. */
+    const teamFallback = async (activeAccount = false) => {
       try {
         const r = await fetch("/api/gate");
         const d = await r.json().catch(() => ({}));
         if (dead) return;
         if (d?.team === true) { setRole("team"); setAccess("ok"); return; }
+        // d?.whitelistActive defaults to "still active" (true) on a missing
+        // or malformed field — e.g. a network hiccup — so a stale answer
+        // never admits by accident; it only widens on an explicit false.
+        const whitelistActive = d?.whitelistActive !== false;
+        if (admitsOnceWhitelistEnded(activeAccount, whitelistActive)) { setAccess("ok"); return; }
       } catch { /* fall through to denied */ }
       if (!dead) setAccess("denied");
     };
@@ -172,8 +199,10 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
         setPillActive(confirmed && Boolean(stored));
         setAdultConfirmedState(confirmed);
         setAdultPillState(Boolean(stored));
+        // A confirmed, non-banned account reached this far — once the
+        // whitelist stage has ended, admit it regardless of role (SOC-8).
         if (BETA_ROLES.has(data.role ?? "user")) setAccess("ok");
-        else void teamFallback();
+        else void teamFallback(true);
       } catch {
         if (!dead) void teamFallback();
       }
