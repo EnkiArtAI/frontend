@@ -36,7 +36,13 @@ const DEFAULTS: Record<string, Row> = {
   reports: { status: "pending" },
 };
 // Unique keys the fake enforces on insert (23505), as the migrations declare them.
-const UNIQUE: Record<string, string[]> = { mfa_factors: ["user_id", "kind"], access_allowlist: ["kind", "value"], linked_wallets: ["user_id", "address"] };
+const UNIQUE: Record<string, string[]> = {
+  mfa_factors: ["user_id", "kind"],
+  access_allowlist: ["kind", "value"],
+  linked_wallets: ["user_id", "address"],
+  // MFA-1: a step-up token's jti is claimed once, like a primary key insert.
+  consumed_stepup_tokens: ["jti"],
+};
 
 export function fakePostgrest() {
   const tables: Record<string, Row[]> = {};
