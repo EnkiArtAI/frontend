@@ -1,19 +1,24 @@
 /**
  * Tiny bridge between the standalone CDP runtime tree (CdpWalletBridge, which
  * owns the @coinbase/cdp-hooks context) and the rest of the app, which mounts
- * outside that provider. Address flows out via a module store + event; key
- * export is request/response over window events — the private key itself only
- * ever passes through the promise below, nothing is stored.
+ * outside that provider. Addresses flow out via a module store + event.
+ * Signing is request/response over window events. Key EXPORT is different
+ * again (CDP-1): the key never passes through this module, or through any
+ * app JS, at all — a caller hands over a DOM node via
+ * setExportIframeContainer, CdpWalletBridge portals CDP's own secure iframe
+ * button into it (useSolanaKeyExportIframe), and the button copies the key
+ * straight to the clipboard inside that iframe. Only the iframe's status
+ * (idle/loading/success/error) relays back, via setExportIframeStatus.
  */
 import { sessionAuthHeaders } from "@/lib/session-headers";
 
 export const CDP_ADDRESS_EVENT = "enki-cdp-address";
-export const CDP_EXPORT_REQUEST = "enki-cdp-export-request";
-export const CDP_EXPORT_RESULT = "enki-cdp-export-result";
 export const CDP_SIGN_REQUEST = "enki-cdp-sign-request";
 export const CDP_SIGN_RESULT = "enki-cdp-sign-result";
+export const CDP_EXPORT_IFRAME_EVENT = "enki-cdp-export-iframe";
 
 let solanaAddress: string | null = null;
+let evmAddress: string | null = null;
 
 /* The wallet unlock (Kev, 2026-10-07). Once an account has a second factor,
    CDP may act only for a session that passed a wallet step-up: the JWT route
@@ -86,27 +91,46 @@ export function getCdpSolanaAddress(): string | null {
   return solanaAddress;
 }
 
-/** Ask the CDP runtime to export the Solana private key (resolves with it). */
-export async function requestCdpKeyExport(timeoutMs = 30_000): Promise<string> {
-  await ensureCdpWallet();
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error("The wallet didn't answer. Reload and try again."));
-    }, timeoutMs);
-    const onResult = (e: Event) => {
-      cleanup();
-      const d = (e as CustomEvent).detail as { privateKey?: string; error?: string } | undefined;
-      if (d?.privateKey) resolve(d.privateKey);
-      else reject(new Error(d?.error || "Export failed"));
-    };
-    const cleanup = () => {
-      clearTimeout(timer);
-      window.removeEventListener(CDP_EXPORT_RESULT, onResult);
-    };
-    window.addEventListener(CDP_EXPORT_RESULT, onResult);
-    window.dispatchEvent(new Event(CDP_EXPORT_REQUEST));
-  });
+/** The signed-in account's EVM address — informational only here (CDP
+    wallets are Solana-primary); same store/event pattern as the Solana one. */
+export function setCdpEvmAddress(addr: string | null) {
+  evmAddress = addr;
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(CDP_ADDRESS_EVENT));
+}
+
+export function getCdpEvmAddress(): string | null {
+  return evmAddress;
+}
+
+/**
+ * Key export (CDP-1): a caller outside the provider (KeyExport.tsx) hands
+ * over the DOM node that should host CDP's secure export button.
+ * CdpWalletBridge watches this and portals the iframe hook into it once an
+ * address is signed in; null unregisters (the dialog closed). The container
+ * is plain DOM state — no key material ever passes through this module.
+ */
+let exportContainer: HTMLElement | null = null;
+let exportStatus: { status: string | null; message?: string } = { status: null };
+
+export function setExportIframeContainer(container: HTMLElement | null) {
+  exportContainer = container;
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(CDP_EXPORT_IFRAME_EVENT));
+}
+
+export function getExportIframeContainer(): HTMLElement | null {
+  return exportContainer;
+}
+
+/** CdpWalletBridge publishes the iframe's live status here so the caller's
+    UI (a "preparing…"/error line) can reflect it without importing
+    @coinbase/cdp-hooks itself. */
+export function setExportIframeStatus(status: string | null, message?: string) {
+  exportStatus = { status, message };
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(CDP_EXPORT_IFRAME_EVENT));
+}
+
+export function getExportIframeStatus(): { status: string | null; message?: string } {
+  return exportStatus;
 }
 
 let signSeq = 0;

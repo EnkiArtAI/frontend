@@ -12,19 +12,26 @@
  * to call anywhere, at any time, signed in or not.
  */
 import { useEffect, useState } from "react";
-import { CDP_ADDRESS_EVENT, getCdpSolanaAddress } from "@/lib/cdp-bridge";
+import { CDP_ADDRESS_EVENT, getCdpSolanaAddress, getCdpEvmAddress } from "@/lib/cdp-bridge";
 
-export function useCdpAddress(): { address: string | null } {
+export function useCdpAddress(): { address: string | null; evmAddress: string | null } {
   const [address, setAddress] = useState<string | null>(null);
+  // The EVM EOA CDP provisions alongside the Solana account (CDP-1,
+  // multichain starting point) — informational only, read-only in the UI.
+  const [evmAddress, setEvmAddress] = useState<string | null>(null);
 
   useEffect(() => {
     // Read once on mount — the bridge may already hold an address from an
     // earlier render, in which case no event is coming.
     setAddress(getCdpSolanaAddress());
-    const onChange = () => setAddress(getCdpSolanaAddress());
+    setEvmAddress(getCdpEvmAddress());
+    const onChange = () => {
+      setAddress(getCdpSolanaAddress());
+      setEvmAddress(getCdpEvmAddress());
+    };
     window.addEventListener(CDP_ADDRESS_EVENT, onChange);
     return () => window.removeEventListener(CDP_ADDRESS_EVENT, onChange);
   }, []);
 
-  return { address };
+  return { address, evmAddress };
 }

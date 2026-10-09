@@ -88,7 +88,9 @@ const rt = vi.hoisted(() => {
 vi.mock("react", () => rt.react);
 
 type User = { solanaAccountObjects: { address: string }[]; evmAccountObjects: { address: string }[] };
-const wallet = (sol: string): User => ({ solanaAccountObjects: [{ address: sol }], evmAccountObjects: [{ address: `0x${"0".repeat(39)}1` }] });
+// The EVM address is derived from the Solana one (distinct per account) so
+// tests can tell "my own EVM address" from "the one CDP happens to hold".
+const wallet = (sol: string): User => ({ solanaAccountObjects: [{ address: sol }], evmAccountObjects: [{ address: `0xevm-${sol}` }] });
 
 // CDP: one user and one wallet secret in memory for the page.
 // authenticateWithJWT asks our JWT route (customAuth.getJwt) and replaces the
@@ -103,6 +105,12 @@ const cdp = vi.hoisted(() => ({
 }));
 vi.mock("@coinbase/cdp-hooks", () => ({
   useIsInitialized: () => ({ isInitialized: cdp.initialized }),
+  // Never actually called by this harness (ExportIframeHost, which calls it,
+  // is only ever referenced as a JSX element — never invoked — since nothing
+  // here exercises CdpWalletBridge's createPortal return path; see
+  // cdp-export-iframe-migration.test.ts for the static wiring checks that
+  // cover the portal itself). Present only so the module import resolves.
+  useSolanaKeyExportIframe: () => ({ status: null, message: undefined }),
 }));
 vi.mock("@coinbase/cdp-core", async () => {
   const { fetchWalletJwt } = await import("../cdp-bridge");
@@ -139,10 +147,6 @@ vi.mock("@coinbase/cdp-core", async () => {
       if (cdp.secret !== secret) throw new Error("wallet secret cleared while signing");
       events.push("sign");
       return { signedTransaction: `${transaction} signed by ${solanaAccount}` };
-    },
-    exportSolanaAccount: async ({ solanaAccount }: { solanaAccount: string }) => {
-      own(solanaAccount);
-      return { privateKey: `key of ${solanaAccount}` };
     },
   };
 });
@@ -202,8 +206,8 @@ vi.stubGlobal("sessionStorage", storage(session));
 
 import { CdpWalletBridge } from "@/components/CdpWalletBridge";
 import {
-  CDP_ADDRESS_EVENT, CDP_SIGN_REQUEST, ensureCdpWallet, getCdpSolanaAddress, rememberedCdpAddress,
-  requestCdpKeyExport, requestCdpSign,
+  CDP_ADDRESS_EVENT, CDP_SIGN_REQUEST, ensureCdpWallet, getCdpSolanaAddress, getCdpEvmAddress,
+  rememberedCdpAddress, requestCdpSign, setExportIframeContainer, getExportIframeContainer,
 } from "../cdp-bridge";
 
 const A = "AccountA1111111111111111111111111111111111";
@@ -232,6 +236,7 @@ beforeEach(async () => {
   local.clear();
   session.clear();
   local.set("enki_session_token", "session-of-b");
+  setExportIframeContainer(null); // module-level bridge state, shared across tests
 });
 
 const mountFor = async (email: string) => {
@@ -351,10 +356,10 @@ describe("a second tab, after another account's login", () => {
     expect(server.attached.map((a) => a.address)).not.toContain(A);
     await expect(requestCdpSign("tx")).resolves.toBe(`tx signed by ${B}`);
     expect(server.attached.map((a) => a.address)).not.toContain(A);
-    cdp.user = wallet(A); // and once more, right before an export
-    await expect(requestCdpKeyExport()).resolves.toBe(`key of ${B}`);
+    cdp.user = wallet(A); // and once more, right before an ensure
     await expect(ensureCdpWallet({ attached: true })).resolves.toBeUndefined();
     expect(server.attached.map((a) => a.address)).not.toContain(A);
+    expect(getCdpEvmAddress()).not.toBe(wallet(A).evmAccountObjects[0].address);
   });
 
   it("is one runtime per account: another account's login remounts it", () => {
@@ -368,7 +373,10 @@ describe("before a wallet action, the server decides", () => {
     server.jwt = "locked";
     await mountFor("b@example.com"); // the silent sign-in met the lock
     server.jwt = "open";
-    await expect(requestCdpKeyExport()).resolves.toBe(`key of ${B}`);
+    // requestCdpKeyExport is gone (CDP-1, export moved to the secure iframe);
+    // ensureCdpWallet is what every wallet action (export included) awaits
+    // first, and its gating is unchanged — this re-asserts it directly.
+    await expect(ensureCdpWallet()).resolves.toBeUndefined();
     expect(tokenFor).not.toHaveBeenCalled();
   });
 
@@ -411,12 +419,50 @@ describe("before a wallet action, the server decides", () => {
 });
 
 describe("a banned account", () => {
-  it("still signs and exports; only a paid generation needs the attach, and says why", async () => {
+  it("still signs; only a paid generation needs the attach, and says why", async () => {
     server.banned = true;
     await mountFor("b@example.com");
     await expect(requestCdpSign("tx")).resolves.toBe(`tx signed by ${B}`);
-    await expect(requestCdpKeyExport()).resolves.toBe(`key of ${B}`);
     await expect(ensureCdpWallet({ attached: true })).rejects.toThrow("This account is suspended.");
+  });
+
+  it("still publishes its EVM address — a ban never closes the wallet", async () => {
+    server.banned = true;
+    await mountFor("b@example.com");
+    expect(getCdpEvmAddress()).toBe(wallet(B).evmAccountObjects[0].address);
+  });
+});
+
+// Not nested under a mounted CdpWalletBridge: setExportIframeContainer has no
+// ban (or sign-in) awareness at all — it is a plain DOM-node store, and that
+// is the point. Asserted standalone rather than via mountFor so this never
+// flows into CdpWalletBridge's createPortal return path, which this
+// hand-rolled runtime (no real reconciler) isn't built to exercise — see
+// cdp-export-iframe-migration.test.ts for the static checks that cover it.
+describe("the export container registration (CDP-1)", () => {
+  it("accepts a container unconditionally — no ban, no session, nothing", () => {
+    const fakeContainer = { nodeType: 1 } as unknown as HTMLElement;
+    setExportIframeContainer(fakeContainer);
+    expect(getExportIframeContainer()).toBe(fakeContainer);
+    setExportIframeContainer(null);
+    expect(getExportIframeContainer()).toBeNull();
+  });
+});
+
+describe("the EVM address (CDP-1, multichain starting point)", () => {
+  it("publishes this mount's own EVM address once signed in, and clears it on unmount", async () => {
+    expect(getCdpEvmAddress()).toBeNull();
+    await mountFor("b@example.com");
+    expect(getCdpEvmAddress()).toBe(wallet(B).evmAccountObjects[0].address);
+    rt.unmount();
+    await settle();
+    expect(getCdpEvmAddress()).toBeNull();
+  });
+
+  it("is never set before this mount has signed in", async () => {
+    server.jwt = "locked";
+    await mountFor("b@example.com"); // the silent sign-in met the lock, never signed in
+    expect(getCdpEvmAddress()).toBeNull();
   });
 });
 

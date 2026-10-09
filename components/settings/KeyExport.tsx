@@ -1,15 +1,19 @@
 "use client";
 
-/* Self-custody key export for embedded (email) wallets: the user confirms with
-   their second factor if they set one up (step-up "export", which also mails
-   them a notice), the key
-   is shown once, and the dialog says what to do with it. Settings and /banned
-   share it: a ban locks the marketplace, never the wallet. Wallet logins
+/* Self-custody key export for embedded (email) wallets (CDP-1: migrated to
+   CDP's secure export iframe — the key copies straight to the clipboard
+   inside Coinbase's own iframe and never reaches this component's JS at all,
+   replacing the deprecated useExportSolanaAccount path that used to hand us
+   the raw string). The user confirms with their second factor first, when
+   they set one up (step-up "export", which also mails them a notice), then
+   this registers a container with the CDP bridge; CdpWalletBridge portals
+   the iframe's own button into it. Settings and /banned share this
+   component: a ban locks the marketplace, never the wallet. Wallet logins
    (Phantom & co) hold their keys themselves already. */
 
-import { useState } from "react";
-import { Check, Copy, KeyRound, Loader2, X } from "lucide-react";
-import { requestCdpKeyExport } from "@/lib/cdp-bridge";
+import { useEffect, useRef, useState } from "react";
+import { KeyRound, Loader2, X } from "lucide-react";
+import { ensureCdpWallet, setExportIframeContainer, getExportIframeStatus, CDP_EXPORT_IFRAME_EVENT } from "@/lib/cdp-bridge";
 import { useStepUp } from "@/components/StepUpProvider";
 
 export default function KeyExport({ ready }: { ready: boolean }) {
@@ -17,12 +21,31 @@ export default function KeyExport({ ready }: { ready: boolean }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [key, setKey] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // While the dialog is open, the container is registered with the bridge so
+  // CdpWalletBridge can portal CDP's own export button into it; closing (or
+  // unmounting) unregisters it. The bridge relays the iframe's live status
+  // back so this dialog can show a spinner/error line around CDP's button.
+  useEffect(() => {
+    if (!open) return;
+    setExportIframeContainer(containerRef.current);
+    const onChange = () => {
+      const s = getExportIframeStatus();
+      setStatus(s.status);
+      if (s.status === "error") setErr(s.message || "Export failed");
+    };
+    window.addEventListener(CDP_EXPORT_IFRAME_EVENT, onChange);
+    onChange();
+    return () => {
+      setExportIframeContainer(null);
+      window.removeEventListener(CDP_EXPORT_IFRAME_EVENT, onChange);
+    };
+  }, [open]);
 
   const close = () => {
-    // The key never outlives the dialog.
-    setOpen(false); setErr(null); setKey(null); setCopied(false);
+    setOpen(false); setErr(null); setStatus(null); setBusy(false);
   };
   const reveal = async () => {
     setBusy(true);
@@ -30,25 +53,16 @@ export default function KeyExport({ ready }: { ready: boolean }) {
     try {
       // The second factor first, when there is one: nobody walks up to an open
       // laptop and walks away with the key. Asked before the overlay opens,
-      // which would cover the step-up dialog.
+      // which would cover the step-up dialog. The lock check that used to run
+      // inside requestCdpKeyExport now runs here, since that function is gone.
       if (!(await confirm("export"))) return;
+      await ensureCdpWallet();
       setOpen(true);
-      setKey(await requestCdpKeyExport());
     } catch (e) {
       setOpen(true);
       setErr(e instanceof Error ? e.message : "Export failed");
     } finally {
       setBusy(false);
-    }
-  };
-  const copy = async () => {
-    if (!key) return;
-    try {
-      await navigator.clipboard.writeText(key);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
-    } catch {
-      setErr("Copy failed — select the key and copy it manually.");
     }
   };
 
@@ -76,50 +90,33 @@ export default function KeyExport({ ready }: { ready: boolean }) {
             <button className="set-pay-close" onClick={close} aria-label="Close" disabled={busy}>
               <X size={16} />
             </button>
-            {!key ? (
-              <div>
-                <div className="set-item-title" style={{ marginBottom: 6 }}>Your private key</div>
-                {err
-                  ? <p style={{ fontSize: 12.5, color: "#e0584f" }}>{err}</p>
-                  : <Loader2 size={16} className="set-spin" />}
-              </div>
-            ) : (
-              <div>
-                <div className="set-item-title" style={{ marginBottom: 6 }}>Your private key</div>
-                <p className="set-item-sub" style={{ marginBottom: 12 }}>
-                  Store it somewhere safe (a password manager). It disappears when you close this window.
-                  We never see or keep it.
-                </p>
-                <code style={{
-                  display: "block", padding: 12, borderRadius: 8, fontSize: 12, lineHeight: 1.5,
-                  border: "1px solid var(--enki-rule)", background: "var(--enki-paper-2)",
-                  color: "var(--enki-ink)", wordBreak: "break-all", userSelect: "all",
-                }}>
-                  {key}
-                </code>
-                <button className="set-btn set-btn-dark" style={{ width: "100%", justifyContent: "center", marginTop: 12 }} onClick={() => void copy()}>
-                  {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? "Copied" : "Copy key"}
-                </button>
-                {err && <p style={{ fontSize: 12.5, color: "#e0584f", marginTop: 8 }}>{err}</p>}
-                <div className="set-item-title" style={{ margin: "16px 0 6px" }}>What to do with it</div>
-                <ol className="set-item-sub" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
-                  <li>Install a Solana wallet app: Phantom or Solflare, on your phone or as a browser extension.</li>
-                  <li>Choose to import an existing wallet with a private key, and paste this key.</li>
-                  <li>The wallet opens with the same address and the same USDC (on Solana) you had here.</li>
-                  <li>From that app you can send the USDC anywhere: to another wallet, or to an exchange that accepts USDC on Solana, to cash it out.</li>
-                </ol>
-                <p className="set-item-sub" style={{ margin: "10px 0 0" }}>
-                  Whoever holds this key controls the money. Enki cannot undo a transfer or restore a lost key.
-                </p>
-                <button
-                  className="set-btn set-btn-outline"
-                  style={{ width: "100%", justifyContent: "center", marginTop: 12 }}
-                  onClick={close}
-                >
-                  Done, close
-                </button>
-              </div>
-            )}
+            <div>
+              <div className="set-item-title" style={{ marginBottom: 6 }}>Your private key</div>
+              <p className="set-item-sub" style={{ marginBottom: 12 }}>
+                Click the button below to copy your key straight to your clipboard — it goes through
+                Coinbase&apos;s own secure export, so we never see or keep it. Then paste it into a Solana
+                wallet app (Phantom or Solflare) to import this wallet there, with the same address and
+                the same USDC (on Solana) you have here.
+              </p>
+              {/* CDP's own secure iframe button renders here (CdpWalletBridge
+                  portals it in once this container is registered). Nothing
+                  in this component ever sees the key itself — this div is
+                  left empty on our side so the portal is the only thing that
+                  ever manages its children. */}
+              {status === null && <Loader2 size={16} className="set-spin" />}
+              <div ref={containerRef} style={{ minHeight: 40 }} />
+              {err && <p style={{ fontSize: 12.5, color: "#e0584f", marginTop: 8 }}>{err}</p>}
+              <p className="set-item-sub" style={{ margin: "10px 0 0" }}>
+                Whoever holds this key controls the money. Enki cannot undo a transfer or restore a lost key.
+              </p>
+              <button
+                className="set-btn set-btn-outline"
+                style={{ width: "100%", justifyContent: "center", marginTop: 12 }}
+                onClick={close}
+              >
+                Done, close
+              </button>
+            </div>
           </div>
         </div>
       )}

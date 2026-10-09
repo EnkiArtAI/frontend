@@ -1,23 +1,47 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useIsInitialized } from "@coinbase/cdp-hooks";
-import { authenticateWithJWT, exportSolanaAccount, getCurrentUser, getCurrentUserSync, isSignedIn, signOut, signSolanaTransaction, type User } from "@coinbase/cdp-core";
+import { createPortal } from "react-dom";
+import { useIsInitialized, useSolanaKeyExportIframe } from "@coinbase/cdp-hooks";
+import { authenticateWithJWT, getCurrentUser, getCurrentUserSync, isSignedIn, signOut, signSolanaTransaction, type User } from "@coinbase/cdp-core";
 import { useStepUp } from "@/components/StepUpProvider";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import {
   setCdpSolanaAddress,
+  setCdpEvmAddress,
   fetchWalletJwt,
   isCdpLocked,
   cdpClosedReason,
   registerCdpEnsure,
   rememberCdpAddress,
   rememberedCdpAddress,
-  CDP_EXPORT_REQUEST,
-  CDP_EXPORT_RESULT,
+  getExportIframeContainer,
+  setExportIframeStatus,
+  CDP_EXPORT_IFRAME_EVENT,
   CDP_SIGN_REQUEST,
   CDP_SIGN_RESULT,
 } from "@/lib/cdp-bridge";
+
+/**
+ * Renders CDP's own secure export button into whatever DOM node the caller
+ * (KeyExport.tsx) registered via setExportIframeContainer. Lives inside this
+ * file so the useSolanaKeyExportIframe call stays inside CDPHooksProvider —
+ * the same reason signing and the address read do. The private key never
+ * reaches this component: the iframe copies it straight to the clipboard.
+ */
+function ExportIframeHost({ address }: { address: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { status, message } = useSolanaKeyExportIframe({
+    address,
+    containerRef,
+    label: "Copy private key",
+    copiedLabel: "Copied",
+  });
+  useEffect(() => {
+    setExportIframeStatus(status ?? null, message);
+  }, [status, message]);
+  return <div ref={containerRef} />;
+}
 
 /**
  * Bridges our email+password session to CDP. Renders nothing — provisions the
@@ -40,8 +64,10 @@ import {
  *     timeout runs meanwhile. Right after an email login (a one-shot marker
  *     from the landing) it asks at once; without a factor never.
  *
- * Sign and export use the core functions: they read CDP's state when called,
- * where the hook versions keep the state of the render that created them.
+ * Sign uses the core function: it reads CDP's state when called, where the
+ * hook version keeps the state of the render that created it. Export is
+ * different (CDP-1): the key never passes through this component's JS at
+ * all — see ExportIframeHost above.
  */
 const solanaOf = (user: User | null | undefined) => user?.solanaAccountObjects?.[0]?.address;
 
@@ -141,24 +167,22 @@ export function CdpWalletBridge({ email }: { email: string }) {
     (askNow ? ensure() : signIn()).catch(() => { /* locked, cancelled or offline: the next wallet action asks */ });
   }, [isInitialized, ensure, signIn]);
 
-  // Self-custody: answer key-export requests (Payment → "Your private key").
-  // The requesting side confirms with the second factor and awaits ensure().
-  // Only this mount's address is ever asked for: CDP refuses it for anyone else.
+  // Publish the EVM address too (multichain starting point, CDP-1): same
+  // mount, same lifetime as the Solana one, informational-only for now.
   useEffect(() => {
-    const onRequest = async () => {
-      let detail: { privateKey?: string; error?: string };
-      try {
-        const solanaAccount = own.current;
-        if (!solanaAccount) throw new Error("Wallet isn't ready yet");
-        const { privateKey } = await exportSolanaAccount({ solanaAccount });
-        detail = { privateKey };
-      } catch (e) {
-        detail = { error: e instanceof Error ? e.message : "Export failed" };
-      }
-      window.dispatchEvent(new CustomEvent(CDP_EXPORT_RESULT, { detail }));
-    };
-    window.addEventListener(CDP_EXPORT_REQUEST, onRequest);
-    return () => window.removeEventListener(CDP_EXPORT_REQUEST, onRequest);
+    setCdpEvmAddress(mine ? getCurrentUserSync()?.evmAccountObjects?.[0]?.address ?? null : null);
+    return () => setCdpEvmAddress(null);
+  }, [mine]);
+
+  // Self-custody export (CDP-1): watch for a container a caller outside this
+  // provider (KeyExport.tsx) registered, and portal CDP's own secure export
+  // button into it once this mount has signed in. Only this mount's address
+  // is ever handed to the iframe — CDP refuses export for any other account.
+  const [exportContainer, setExportContainerState] = useState<HTMLElement | null>(getExportIframeContainer());
+  useEffect(() => {
+    const onChange = () => setExportContainerState(getExportIframeContainer());
+    window.addEventListener(CDP_EXPORT_IFRAME_EVENT, onChange);
+    return () => window.removeEventListener(CDP_EXPORT_IFRAME_EVENT, onChange);
   }, []);
 
   // Payments: sign here, inside the provider, and hand the result back out.
@@ -182,5 +206,5 @@ export function CdpWalletBridge({ email }: { email: string }) {
     return () => window.removeEventListener(CDP_SIGN_REQUEST, onRequest);
   }, []);
 
-  return null;
+  return exportContainer && mine ? createPortal(<ExportIframeHost address={mine} />, exportContainer) : null;
 }

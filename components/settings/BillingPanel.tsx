@@ -23,7 +23,7 @@ import SettingsSection from "@/components/settings/SettingsSection";
 export default function BillingPanel() {
   const account = useActiveAccount();
   const { connected: solanaConnected } = useWallet();
-  const { address: cdpAddress } = useCdpAddress();
+  const { address: cdpAddress, evmAddress: cdpEvmAddress } = useCdpAddress();
   // Session-backed Solana identity: the adapter is disconnected after a page
   // load (autoConnect off) but the signed session persists — without it,
   // logged-in wallet users saw no deposit section.
@@ -85,6 +85,21 @@ export default function BillingPanel() {
               </button>
             </div>
           </div>
+          {/* EVM address (CDP-1, multichain starting point): CDP provisions an
+              EVM EOA alongside the Solana account. Read-only / informational
+              only — this wallet is Solana-primary, no deposit/QR actions
+              against it yet. */}
+          {emailAuthed && cdpEvmAddress && (
+            <div className="set-list-item">
+              <div className="set-item-icon"><Wallet size={14} /></div>
+              <div className="set-item-content">
+                <div className="set-item-title">
+                  EVM address <span className="set-badge-muted">Informational</span>
+                </div>
+                <div className="set-item-sub" style={{ fontFamily: "monospace" }}>{cdpEvmAddress}</div>
+              </div>
+            </div>
+          )}
           {/* Self-custody: email wallets can export their private key. Wallet
               logins (Solflare & co) hold their keys themselves already. */}
           {emailAuthed && <KeyExport ready={!!cdpAddress} />}
