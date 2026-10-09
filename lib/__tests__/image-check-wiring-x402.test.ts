@@ -23,7 +23,9 @@ describe("the agent rail", () => {
   it("settles, renders, stores, and checks before it delivers", () => {
     const settle = at("const settled = await submitAndConfirm(solanaConnection(), parsed.tx);");
     const render = at('route.provider === "wavespeed" ? await generateImagesWithWaveSpeed(genRequest)');
-    const store = at('await storeGeneratedImage(dataUrl, "x402-agent", storeDeadline(startedAt))');
+    // REC-3: the storage namespace is the verified payer's own wallet now,
+    // never the pseudo-user "x402-agent".
+    const store = at('await storeGeneratedImage(dataUrl, payerWallet, storeDeadline(startedAt))');
     const check = at("const seen = await checkImageBytes(buffer, { signal: AbortSignal.timeout(Math.max(1, storeDeadline(startedAt) - Date.now())) });");
     const deliver = at("imageUrl: stored.imageUrl,");
     expect([settle, render, store, check, deliver]).toEqual([settle, render, store, check, deliver].slice().sort((a, b) => a - b));
@@ -35,8 +37,12 @@ describe("the agent rail", () => {
     expect(block).toMatch(/error: `image check: \$\{seen\.verdict\}`, txSignature: signature,/);
     expect(block).toMatch(/if \(seen\.verdict === "child_safety"\) \{\n\s+after\(recordImageCase\(supabase, \{\n\s+surface: "x402-generate", request, bytes: buffer, scores: seen\.scores, byAddress: true,/);
     expect(block).toContain("after(removeStored(stored.names));");
-    // The refusal returns before the delivery's own answer begins.
-    expect(block).toMatch(/\n\s+\);\n\s+\}\n\n\s+return NextResponse\.json\(\n\s+\{\n\s+$/);
+    // The refusal returns before the delivery's own answer begins. Since
+    // REC-3, the shared-pipeline recording (after(), fire-and-forget — it
+    // cannot delay or gate either return) sits between the two; tolerated
+    // here as "any content", not matched specifically, because this test's
+    // job is the heldBack branch's own early return, not that block's shape.
+    expect(block).toMatch(/\}\n\n[\s\S]*\n\n\s+return NextResponse\.json\(\n\s+\{\n\s+$/);
   });
 
   it("an image it could not store is never left public unjudged: every copy a cut upload may land comes down", () => {

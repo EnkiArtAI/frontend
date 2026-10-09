@@ -607,13 +607,18 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
   after(async () => {
     const recUserId = await resolveUserIdForWallet(supabase, payerWallet);
     if (!recUserId) return;
+    // Named apart from `stored.imageUrl` on purpose — this is the recorded
+    // copy, not the delivery, and the two must stay textually distinct so a
+    // source scan for "where does the response's own imageUrl come from"
+    // finds exactly one answer.
+    const { imageUrl: recordedUrl, previewUrl: recordedPreview, thumbnailUrl: recordedThumb } = stored;
     await recordGeneration(supabase, {
       adult: promptAdult || seen.verdict === "adult",
       userId: recUserId,
       promptId: input.promptId ?? null,
       finalPrompt: promptText,
-      // x402 sends promptText to the provider as-is — no rewrite stage to
-      // keep separate, unlike the human rail's gemini-1.5-flash pass.
+      // x402 sends promptText to the provider as-is — no separate rewrite
+      // stage to keep apart, unlike the human rail's prompt-enhancement pass.
       effectivePrompt: promptText,
       variableValues: input.variableValues ?? {},
       model,
@@ -624,9 +629,9 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
       seed: null,
       output: measured ? { width: measured.width, height: measured.height, bytes: buffer.length, format: measured.format } : null,
       mimeType: measured ? `image/${measured.format}` : null,
-      imageUrl: stored.imageUrl,
-      previewUrl: stored.previewUrl,
-      thumbnailUrl: stored.thumbnailUrl,
+      imageUrl: recordedUrl,
+      previewUrl: recordedPreview,
+      thumbnailUrl: recordedThumb,
       generationMs: result.generationTime ?? null,
       workflow: null,
       references: [],
