@@ -155,11 +155,6 @@ export async function POST(request: NextRequest) {
     }
   };
 
-  // Flush authorisations whose worker went quiet. Opportunistic because this
-  // deployment has no scheduler: every generation sweeps a few on its way in,
-  // so under load it runs constantly, and with no load there is also nobody
-  // whose held signature could be misused. after() so a slow sweep never
-  // delays a paying customer, and sweepAndFlush never throws.
   after(sweepAndFlush(getSupabaseServerClient()));
 
   // Held for the length of the generation. Declared out here so EVERY exit —
