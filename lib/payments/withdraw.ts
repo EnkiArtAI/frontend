@@ -47,6 +47,7 @@ import {
 import { USDC_DECIMALS } from "@/lib/payments/authorize-tx";
 import { priorityFeeMicroLamports } from "@/lib/payments/generation-pay";
 import { resolveSessionUserWithBan } from "@/lib/session-user";
+import { sendMail } from "@/lib/mailer";
 
 /**
  * A blockhash lives ~60 s (150 blocks), so the signing window is the same:
@@ -264,6 +265,31 @@ export async function buildWithdrawTx(
     transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64"),
     messageHash: messageHashOf(tx),
   };
+}
+
+/**
+ * Tells the owner by mail once a withdrawal is confirmed on chain (BAN-8).
+ * Best effort: a failed send never unwinds a transfer that already moved,
+ * and never blocks /submit's response — it is called after the signature is
+ * already in hand. Same "verified password-account email" lookup
+ * lib/webauthn.ts's export notice already uses; a wallet-only account with
+ * no password has the same gap there today, not introduced here.
+ */
+export async function notifyWithdrawalConfirmed(
+  supabase: SupabaseClient,
+  userId: string,
+  details: { amountMicro: number; to: string; signature: string },
+): Promise<void> {
+  const { data } = await supabase.from("password_credentials").select("email, email_verified_at").eq("user_id", userId).maybeSingle();
+  if (!data?.email || !data.email_verified_at) return;
+  await sendMail({
+    to: data.email,
+    subject: "Your Enki withdrawal was sent",
+    text:
+      `A withdrawal of ${(details.amountMicro / 1_000_000).toFixed(6)} USDC to ${details.to} was confirmed on chain ` +
+      `(signature ${details.signature}).\n\n` +
+      `If that was not you, move your remaining funds to a new wallet right away, sign out on every device and change your password.`,
+  }).catch(() => { /* best effort: the withdrawal already confirmed */ });
 }
 
 export function isExpired(createdAt: string, now = Date.now()): boolean {

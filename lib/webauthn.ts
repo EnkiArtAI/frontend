@@ -56,8 +56,12 @@ function stepUpKey(): Uint8Array {
 }
 
 /* What a step-up can be for. A scope names one action, and where the action
-   has a target, that target: one tap deletes one image, never another. */
-const SCOPE = /^(wallet|export|add-factor|guardians|delete-work:[0-9a-f-]{36}|remove-factor:([0-9a-f-]{36}|totp|email)|withdraw:[1-9A-HJ-NP-Za-km-z]{32,44})$/;
+   has a target, that target: one tap deletes one image, never another.
+   withdraw: is bound to the server-issued withdrawal REQUEST id (the
+   withdrawals row's own uuid, BAN-8) rather than the destination address —
+   a token for one request can never authorize a different one, and it is
+   single-use (lib/webauthn.ts requireStepUp's money-scope consumption). */
+const SCOPE = /^(wallet|export|add-factor|guardians|delete-work:[0-9a-f-]{36}|remove-factor:([0-9a-f-]{36}|totp|email)|withdraw:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 export function isStepUpScope(scope: unknown): scope is string {
   return typeof scope === "string" && SCOPE.test(scope);
 }

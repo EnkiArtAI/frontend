@@ -2,7 +2,10 @@
  * POST /api/wallet/withdraw/build — { from, to, amountMicro? | all? }
  * → { requestId, transaction (base64, fee payer signed), amountMicro, to,
  *    from, chain, expiresInSec }. The client signs `transaction` in the wallet and
- * posts it to /submit. Nothing moves here.
+ * posts it to /submit. Nothing moves here, so no step-up is asked here
+ * either (BAN-8): the step-up is bound to this request's own id, which this
+ * route is what mints, and it is checked where it matters — immediately
+ * before /submit claims the row and broadcasts.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
@@ -10,7 +13,6 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { getClientIp, hashIp } from "@/lib/ip-hash";
 import { getUsdcBalance } from "@/lib/usdc-balance";
-import { requireStepUp } from "@/lib/webauthn";
 import { feePayerKeypair, solanaChainKey, solanaConnection, usdcMint } from "@/lib/payments/solana";
 import {
   WITHDRAW_TTL_MS,
@@ -55,13 +57,6 @@ export async function POST(req: NextRequest) {
       to, from, fromClaimed: body.from, feePayer: feePayer.publicKey, amountMicro, balanceMicro,
     });
     if (refusal) return refuse(refusal);
-
-    // Here, not at /submit: the transaction leaves this route signed by our
-    // fee payer, and once the wallet signs it anyone can broadcast it without
-    // /submit. The scope names the destination, so a token for one address
-    // never builds a transfer to another (BAN-8).
-    const blocked = await requireStepUp(req, who.userId, `withdraw:${to!.toBase58()}`);
-    if (blocked) return blocked;
 
     const limited = withdrawLimited(await recentWithdrawalCount(supabase, who.userId));
     if (limited) return refuse(limited);

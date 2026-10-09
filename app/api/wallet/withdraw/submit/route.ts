@@ -4,17 +4,28 @@
  *
  * The fee payer signature from /build stays as it is: nothing is re-signed
  * here, so a transaction the client altered arrives already invalid.
+ *
+ * Once a factor is enrolled, this is also where step-up is required
+ * (BAN-8): the scope is bound to THIS request's own id, so a token can
+ * authorize only this one withdrawal, and it is single-use (MFA-1), so not
+ * even this one twice. Checked before the row is claimed or anything is
+ * broadcast — a refusal here leaves the row untouched, retryable with a
+ * fresh token. Ban tolerant throughout: resolveWithdrawer never looks at a
+ * ban, and this adds no step-up requirement a good-standing user would not
+ * also face.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
+import { requireStepUp } from "@/lib/webauthn";
 import { feePayerKeypair, solanaConnection } from "@/lib/payments/solana";
 import { submitAndConfirm } from "@/lib/payments/x402-settle";
 import {
   NOT_MIGRATED,
   isExpired,
   isNotMigrated,
+  notifyWithdrawalConfirmed,
   resolveWithdrawer,
   transactionDead,
   verifySignedWithdrawal,
@@ -43,7 +54,7 @@ export async function POST(req: NextRequest) {
 
     const { data: row, error } = await supabase
       .from("withdrawals")
-      .select("id, status, created_at, from_address, message_hash")
+      .select("id, status, created_at, from_address, to_address, amount_micro, message_hash")
       .eq("id", requestId)
       .eq("user_id", who.userId)
       .maybeSingle();
@@ -56,6 +67,13 @@ export async function POST(req: NextRequest) {
       await supabase.from("withdrawals").update({ status: "expired" }).eq("id", row.id).eq("status", "pending");
       return NextResponse.json({ error: "Signing window expired, build a new withdrawal", code: "EXPIRED" }, { status: 409 });
     }
+
+    // Bound to THIS request's own id, not the destination: a token cannot
+    // authorize a different withdrawal, and it is single-use (MFA-1), so not
+    // even this one twice. Nothing has been claimed or broadcast yet — a
+    // refusal here leaves the row pending, retryable with a fresh token.
+    const blocked = await requireStepUp(req, who.userId, `withdraw:${row.id}`);
+    if (blocked) return blocked;
 
     const verified = verifySignedWithdrawal(signedTransaction, {
       messageHash: row.message_hash,
@@ -101,6 +119,9 @@ export async function POST(req: NextRequest) {
       .from("withdrawals")
       .update({ status: "confirmed", tx_signature: outcome.signature, confirmed_at: new Date().toISOString() })
       .eq("id", row.id);
+    await notifyWithdrawalConfirmed(supabase, who.userId, {
+      amountMicro: row.amount_micro, to: row.to_address, signature: outcome.signature,
+    });
     return NextResponse.json({ signature: outcome.signature });
   } catch (e) {
     if (isNotMigrated(e)) return NextResponse.json({ error: NOT_MIGRATED.error, code: NOT_MIGRATED.code }, { status: NOT_MIGRATED.status });
