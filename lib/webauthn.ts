@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createHmac, hkdfSync, timingSafeEqual } from "crypto";
+import { createHmac, hkdfSync, randomUUID, timingSafeEqual } from "crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { enrolledFactors, type Factor } from "@/lib/mfa";
@@ -113,18 +113,50 @@ export async function mintStepUpToken(userId: string, scope: string): Promise<st
   return new SignJWT({ scope })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(userId)
+    .setJti(randomUUID())
     .setIssuedAt()
     .setExpirationTime(`${STEPUP_TTL_S}s`)
     .sign(stepUpKey());
 }
 
-async function verifyStepUpToken(token: string, userId: string, scope: string): Promise<boolean> {
+async function verifyStepUpToken(token: string, userId: string, scope: string): Promise<{ jti: string | null } | null> {
   try {
     const { payload } = await jwtVerify(token, stepUpKey());
-    return payload.sub === userId && payload.scope === scope;
+    if (payload.sub !== userId || payload.scope !== scope) return null;
+    return { jti: typeof payload.jti === "string" ? payload.jti : null };
   } catch {
-    return false;
+    return null;
   }
+}
+
+/* Scopes that move money or hand out a private key (MFA-1: "withdraw, key
+   export"). A token for one of these is claimed in consumed_stepup_tokens
+   the first time it passes, so the SAME human approval cannot authorize a
+   second payout or a second export within the token's 5 minute TTL. Every
+   other scope (delete-work, add-factor, guardians, remove-factor, wallet)
+   is unchanged: reusable for any number of calls until it expires, as
+   before this task — none of those is a repeatable money action. */
+function isMoneyScope(scope: string): boolean {
+  return scope === "export" || scope.startsWith("withdraw:");
+}
+
+/**
+ * Claims a money-scope token's jti so it cannot authorize a second action.
+ * DB-backed, not in-memory: Vercel runs many instances and a single process
+ * could never see another's claims. Returns false when the jti was already
+ * claimed (a replay) and throws on a genuine store failure — the caller
+ * (requireStepUp) must treat that throw as a refusal, never a silent pass.
+ */
+async function consumeStepUpToken(
+  supabase: ReturnType<typeof getSupabaseServerClient>,
+  jti: string,
+  userId: string,
+  scope: string,
+): Promise<boolean> {
+  const { error } = await supabase.from("consumed_stepup_tokens").insert({ jti, user_id: userId, scope });
+  if (!error) return true;
+  if (error.code === "23505") return false; // already claimed: a replay
+  throw error;
 }
 
 // How old a session may be to set up a user's FIRST factor. A factor someone
@@ -175,18 +207,34 @@ export async function requireStepUp(
   { mandatory = false }: { mandatory?: boolean } = {},
 ): Promise<NextResponse | null> {
   if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  const supabase = getSupabaseServerClient();
   let factors: Factor[];
   try {
-    factors = await enrolledFactors(getSupabaseServerClient(), userId);
+    factors = await enrolledFactors(supabase, userId);
   } catch {
     return NextResponse.json({ error: "Could not verify security settings" }, { status: 503 });
   }
   if (factors.length === 0) {
     return mandatory ? NextResponse.json({ error: "Set up a second factor first", scope, enroll: true }, { status: 403 }) : null;
   }
+  const refusal = () => NextResponse.json({ error: "Step-up verification required", scope, stepUp: true, factors }, { status: 401 });
   const token = req.headers.get("X-StepUp-Token");
-  if (token && (await verifyStepUpToken(token, userId, scope))) return null;
-  return NextResponse.json({ error: "Step-up verification required", scope, stepUp: true, factors }, { status: 401 });
+  const verified = token ? await verifyStepUpToken(token, userId, scope) : null;
+  if (!verified) return refusal();
+  if (!isMoneyScope(scope)) return null;
+  // A money scope's token is good for exactly one action: claim its jti now,
+  // before the caller does anything irreversible. No jti (a token minted
+  // before this change, or malformed) cannot be claimed, so it cannot pass —
+  // fail closed rather than treat an unclaimable token as single-use-exempt.
+  if (!verified.jti) return refusal();
+  let claimed: boolean;
+  try {
+    claimed = await consumeStepUpToken(supabase, verified.jti, userId, scope);
+  } catch (e) {
+    console.error("[webauthn] consumed-token store failed:", e instanceof Error ? e.message : e);
+    return NextResponse.json({ error: "Could not verify security settings" }, { status: 503 });
+  }
+  return claimed ? null : refusal();
 }
 
 // ── challenge cookie (httpOnly; no DB row needed) ───────────────────────────
