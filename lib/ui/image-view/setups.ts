@@ -7,7 +7,10 @@
  */
 import { boostAt, type CatalogueEntry } from "@/hooks/useModelLimits";
 import type { ComposerQuoteRequest } from "@/hooks/useComposerQuote";
+import type { GenerationQuote } from "@/lib/generation-checkout";
 import type { GenerationRequest } from "@/lib/generation/run-generation";
+import { balanceView } from "@/lib/ui/kit/price";
+import type { Job } from "@/lib/ui/kit/render-queue";
 import { buildGenerationPrompt } from "./assemble";
 import { parseSegments, type PromptVariable } from "./segments";
 import { fieldsFor, toServerValues, valueRows, type ValueRow } from "./variables";
@@ -100,3 +103,26 @@ export const quoteOf = (s: ImageSetup): ComposerQuoteRequest => ({
   boost: s.boost,
   referenceImageCount: s.refs.length,
 });
+
+/** A job's own server price, as useComposerQuote reports it. */
+export type JobPrice = { quote: GenerationQuote | null; pending: boolean; unavailable: boolean };
+
+/**
+ * What Regenerate or Retry may do with a job (spec-imageview-mobile D10, plan
+ * R29). The job passed Generate's checks when it ran; what can stop it now is
+ * its own price, never the chip's, which prices the composer as it stands:
+ * no price yet, or the prompt gone. A price above the balance asks the
+ * low-balance question first. `{}` runs it.
+ */
+export function againStep(setup: ImageSetup, price: JobPrice, wallet: { payer: string | null; ready: boolean; balance: number }): { why?: string; funds?: GenerationQuote } {
+  if (setup.model.free) return {};
+  if (price.unavailable) return { why: "This prompt is no longer available" };
+  if (!price.quote) return { why: price.pending ? "The price is on its way" : "Price unavailable right now" };
+  return balanceView({ ...wallet, free: false, quote: price.quote })?.short ? { funds: price.quote } : {};
+}
+
+/** A render as a screen reader hears it (the strip): "not charged" only where nothing can have been charged (render-queue `settle`). */
+export function jobSaid({ status, error }: Pick<Job<unknown>, "status" | "error">): string {
+  if (status !== "failed") return status;
+  return error?.charged === "no" ? "failed, not charged" : "failed, charged only if it reached your gallery";
+}

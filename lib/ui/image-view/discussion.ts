@@ -64,3 +64,15 @@ export async function loadDiscussion(promptId: string, get: typeof fetch = fetch
   if (!res.ok) throw new Error(await failureSentence(res, "The feedback could not load"));
   return readDiscussion(await res.json().catch(() => null));
 }
+
+/**
+ * The prompt's likes (GET /api/prompts/[id]/likes). A failed read throws: the
+ * query is then an error and asks again on the next open, where a cached
+ * "nothing" would keep the heart disabled.
+ */
+export async function loadLikes(promptId: string, headers: HeadersInit, get: typeof fetch = fetch): Promise<{ count: number; mine: boolean }> {
+  const res = await get(`/api/prompts/${encodeURIComponent(promptId)}/likes`, { headers });
+  if (!res.ok) throw new Error(`The likes could not load (HTTP ${res.status})`);
+  const d = (await res.json()) as { count?: unknown; mine?: unknown } | null;
+  return { count: Number(d?.count) || 0, mine: !!d?.mine };
+}

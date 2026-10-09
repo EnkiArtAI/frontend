@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import type { CatalogueEntry } from "@/hooks/useModelLimits";
+import type { GenerationQuote } from "@/lib/generation-checkout";
 import type { PromptVariable } from "../segments";
-import { makeSetup, quoteOf, toRequest, type Composer } from "../setups";
+import { againStep, jobSaid, makeSetup, quoteOf, toRequest, type Composer, type JobPrice } from "../setups";
 
 const variable = (name: string, over: Partial<PromptVariable> = {}): PromptVariable => ({
   id: name, name, label: null, description: "", type: "text", defaultValue: null,
@@ -99,5 +100,62 @@ describe("quoteOf", () => {
   it("prices the job's own settings and counts its references", () => {
     const s = makeSetup(composer({ boost: true, refs: ["data:a", "data:b"], model: model({ supportsQuality: true }) }))!;
     expect(quoteOf(s)).toEqual({ promptId: "p1", entry: s.model, resolution: "2K", quality: "high", boost: true, referenceImageCount: 2 });
+  });
+});
+
+describe("againStep (Regenerate, Retry)", () => {
+  const quote = (usd: string): GenerationQuote => ({
+    totalMicro: Math.round(Number(usd) * 1_000_000), totalUsd: usd, networkFeeUsd: "0", artistUsd: "0", expiresAt: "", appliedRule: null,
+  });
+  const priced = (q: GenerationQuote | null, over: Partial<JobPrice> = {}): JobPrice => ({ quote: q, pending: false, unavailable: false, ...over });
+  const wallet = { payer: "So1anaPayer", ready: true, balance: 1 };
+  const paid = makeSetup(composer({ resolution: "4K" }))!;
+
+  it("runs a job whose own price the balance covers", () => {
+    expect(againStep(paid, priced(quote("0.30")), wallet)).toEqual({});
+  });
+
+  it("asks the low-balance question first when the job's own price is above the balance", () => {
+    const q = quote("0.30");
+    expect(againStep(paid, priced(q), { ...wallet, balance: 0.29 })).toEqual({ funds: q });
+    // Exactly enough is enough (integer micro-USDC, not a float sum).
+    expect(againStep(paid, priced(q), { ...wallet, balance: 0.3 })).toEqual({});
+  });
+
+  it("never asks it where the balance cannot be read: still loading, no payer, or an EVM address", () => {
+    const q = quote("0.30");
+    expect(againStep(paid, priced(q), { ...wallet, balance: 0, ready: false })).toEqual({});
+    expect(againStep(paid, priced(q), { ...wallet, balance: 0, payer: null })).toEqual({});
+    expect(againStep(paid, priced(q), { ...wallet, balance: 0, payer: "0xabc" })).toEqual({});
+  });
+
+  it("does not run a paid job without its price, and says why", () => {
+    expect(againStep(paid, priced(null, { pending: true }), wallet)).toEqual({ why: "The price is on its way" });
+    expect(againStep(paid, priced(null), wallet)).toEqual({ why: "Price unavailable right now" });
+  });
+
+  it("does not run it once the prompt is gone", () => {
+    expect(againStep(paid, priced(null, { unavailable: true }), wallet)).toEqual({ why: "This prompt is no longer available" });
+  });
+
+  it("runs a job on the free host, which has no price and charges nothing", () => {
+    const free = makeSetup(composer({ model: model({ free: true }) }))!;
+    expect(againStep(free, priced(null), { ...wallet, balance: 0 })).toEqual({});
+  });
+});
+
+describe("jobSaid", () => {
+  it("says a render that failed before anything was signed was not charged", () => {
+    expect(jobSaid({ status: "failed", error: { message: "Render failed · not charged · x", charged: "no" } })).toBe("failed, not charged");
+  });
+
+  it("never says \"not charged\" when the charge is unknown, or not said at all", () => {
+    expect(jobSaid({ status: "failed", error: { message: "Connection lost", charged: "unknown" } })).toBe("failed, charged only if it reached your gallery");
+    expect(jobSaid({ status: "failed" })).toBe("failed, charged only if it reached your gallery");
+  });
+
+  it("says rendering and ready as they are", () => {
+    expect(jobSaid({ status: "rendering" })).toBe("rendering");
+    expect(jobSaid({ status: "ready" })).toBe("ready");
   });
 });

@@ -1072,8 +1072,6 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
         <EnkiDetailPanel
           seed={seedFromEnkiPrompt(open)}
           onClose={() => setOpen(null)}
-          faved={Boolean(favs[open.id])}
-          toggleFav={toggleFav}
         />
       )}
     </div>

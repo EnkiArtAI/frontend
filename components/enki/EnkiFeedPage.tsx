@@ -296,10 +296,9 @@ export default function EnkiFeedPage() {
 
       {/* Clicking a card opens the canonical image view — the same one the
           /generator route and the profile grid open. EnkiDetailPanel is the
-          frame that already knows to start where the shell's menu ends.
-          (faved/toggleFav are still required by its props, and unused.) */}
+          frame that already knows to start where the shell's menu ends. */}
       {open && (
-        <EnkiDetailPanel seed={seedFromFeedCard(open)} onClose={closeCard} faved={false} toggleFav={() => {}} />
+        <EnkiDetailPanel seed={seedFromFeedCard(open)} onClose={closeCard} />
       )}
     </>
   );
