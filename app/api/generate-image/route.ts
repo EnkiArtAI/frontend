@@ -27,7 +27,7 @@ import { solanaChainKey } from "@/lib/payments/solana";
 import type { VoidReason } from "@/lib/payments/authorization";
 import { reportSuccess, reportFailure } from "@/lib/generation/provider-health";
 import { childSafetyScore, recordModerationEvent } from "@/lib/moderation-enforcement";
-import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
+import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, attachImageDerivatives, type GenerationFailure } from "@/lib/generation/record";
 import { storeReferenceImages } from "@/lib/generation/reference-images";
 import { INLINE_MAX_BYTES, putDurably, removeStored, storeDeadline } from "@/lib/generation/derivative-store";
 import { checkImageBytes, dataUrlBytes, heldBack, isLink, IMAGE_REFUSED, IMAGE_UNCHECKED, REFERENCE_LINK, REFERENCE_REFUSED, REFERENCE_UNCHECKED } from "@/lib/moderation/image-check-bytes";
@@ -232,12 +232,25 @@ export async function POST(request: NextRequest) {
        body says instead. */
     const { data: intentRow, error: intentError } = await (getSupabaseServerClientSafe()
       ?.from("generation_payment_intents")
-      .select("model_id, model_family, resolution, quality, boost, reference_image_count, prompt_id, artist_amount_micro")
+      .select(
+        "model_id, model_family, resolution, quality, boost, reference_image_count, prompt_id, artist_amount_micro, total_micro, tx_signature",
+      )
       .eq("id", intentId)
       .maybeSingle() ?? Promise.resolve({ data: null, error: null }));
     if (isDbUnreachable(intentError)) return dbUnavailableResponse();
     const paid = intentRow as
-      | (StoredSettings & { model_family: string; prompt_id: string | null; artist_amount_micro: number })
+      | (StoredSettings & {
+          model_family: string;
+          prompt_id: string | null;
+          artist_amount_micro: number;
+          // What the buyer paid in total (micro-USDC) and, for an intent
+          // already settled before generation (the legacy "prepaid" claim
+          // mode), the signature that settled it — read here because
+          // claimForGeneration's two modes don't hand either back, and both
+          // are needed below for the payment link (REC-1).
+          total_micro: number | null;
+          tx_signature: string | null;
+        })
       | null;
     if (!paid) {
       return NextResponse.json(
@@ -828,15 +841,27 @@ export async function POST(request: NextRequest) {
     //
     // For a prepaid intent there is nothing to capture — the transfer settled
     // before the generation started — so this marks it delivered and stops.
+    //
+    // The RAW signature for the payment link (REC-1): prepaid starts from
+    // whatever tx_signature the intent already carried when it was confirmed,
+    // before this request ever ran; a successful capture below overwrites it
+    // with the one just broadcast. Never the redacted/truncated form the
+    // legacy branch used to store — this is exactly what generation_payment_intents
+    // itself gets written with.
+    let transactionHash: string | null = paid.tx_signature ?? null;
     if (consumedIntent) {
       const settled = consumedIntent;
       if (settled.mode === "authorized") {
         const captured = await captureAndBroadcast(settled.supabase, settled.id);
-        if (!captured) {
+        if (captured) {
+          transactionHash = captured.signature;
+        } else {
           // The claim was lost (swept as abandoned) or the broadcast failed.
           // Either way the buyer keeps the image: a durable-nonce transaction
           // does not expire, so a failed broadcast stays rebroadcastable, and
-          // only we can invalidate that nonce.
+          // only we can invalidate that nonce. No signature to record yet —
+          // leaving transactionHash at whatever it already was (null here,
+          // since authorized intents have none until capture) is correct.
           console.error("[generate] delivered but not captured:", settled.id);
         }
       }
@@ -846,13 +871,18 @@ export async function POST(request: NextRequest) {
       consumedIntent = null;
     }
 
-    // Write the generation down. after() rather than await: the record must
-    // not delay the image the user is waiting on, and a floating promise can be
-    // frozen with the lambda before the insert lands.
+    // Write the generation down — AWAITED, not after(): the response must
+    // carry imageId (REC-1), and an id from a row that has not been inserted
+    // yet does not exist. Bounded by what it actually does: three single-row
+    // PostgREST inserts, not a call to a provider or to Blob/R2 — the WebP
+    // preview/thumbnail, which IS a fetch-and-reupload, is deliberately kept
+    // out of this (attachImageDerivatives, scheduled in after() below), so
+    // nothing unbounded sits between a captured payment and the answer.
     //
     // Nothing recorded a generation before this — POST /api/generations wrote
     // columns that do not exist and its callers swallowed the failure, so every
     // generation vanished when the tab closed.
+    let imageId: string | null = null;
     {
       const recSupabase = getSupabaseServerClientSafe();
       // Paid and delivered: the buyer gets the image whatever this read does.
@@ -874,52 +904,62 @@ export async function POST(request: NextRequest) {
         // references as data URLs, and its own draft save already breaks on
         // the 5MB cap because of it.
         const stripped = stripWorkflowImages(body.workflow ?? {});
-        // The reference uploads run in after() too: an upload stuck on a
-        // failing store must not hold the answer to a buyer who has paid.
-        after(async () =>
-          recordGeneration(recSupabase, {
-            // Judged 18+ by the image check: delivered, and marked.
-            adult: adult || seen.verdict === "adult",
-            userId: recUserId,
-            promptId: paid.prompt_id ?? null,
-            finalPrompt: prompt,
-            // What actually reached the model, not what the user typed: the
-            // rewrite runs at temperature 0.7, so replaying the original
-            // produces a different request every time.
-            effectivePrompt: enhancedPrompt,
-            variableValues: body.variableValues ?? {},
-            model: preflightModel,
-            route: preflightRoute,
-            boost: paid.boost,
-            aspectRatio: body.aspectRatio || body.ratio || null,
-            resolution: paidTier,
-            // Only Pollinations exposes one, and it currently discards it.
-            seed: null,
-            output:
-              dims.length === 2 && m?.bytes
-                ? {
-                    width: Number(dims[0]) || 0,
-                    height: Number(dims[1]) || 0,
-                    bytes: m.bytes,
-                    format: m.format ?? '',
-                  }
-                : null,
-            imageUrl,
-            generationMs: geminiResult.generationTime ?? null,
-            workflow: stripped.workflow,
-            workflowTexts: stripped.texts,
-            // Uploaded once and referenced, rather than inlined into the
-            // workflow blob: the same reference across twenty generations is
-            // one object and twenty rows, not twenty copies of the base64.
-            // Only what the image check judged: a graph image that never went
-            // to the model keeps its position as an empty slot.
-            references: await storeReferenceImages(
-              stripped.images.length ? stripped.images.map((img) => (refs.includes(img) ? img : "")) : refs,
-              recUserId,
-            ),
-            chainKey: solanaChainKey(),
-          }),
-        );
+        const recorded = await recordGeneration(recSupabase, {
+          // Judged 18+ by the image check: delivered, and marked.
+          adult: adult || seen.verdict === "adult",
+          userId: recUserId,
+          promptId: paid.prompt_id ?? null,
+          finalPrompt: prompt,
+          // What actually reached the model, not what the user typed: the
+          // rewrite runs at temperature 0.7, so replaying the original
+          // produces a different request every time.
+          effectivePrompt: enhancedPrompt,
+          variableValues: body.variableValues ?? {},
+          model: preflightModel,
+          route: preflightRoute,
+          boost: paid.boost,
+          aspectRatio: body.aspectRatio || body.ratio || null,
+          resolution: paidTier,
+          // Only Pollinations exposes one, and it currently discards it.
+          seed: null,
+          output:
+            dims.length === 2 && m?.bytes
+              ? {
+                  width: Number(dims[0]) || 0,
+                  height: Number(dims[1]) || 0,
+                  bytes: m.bytes,
+                  format: m.format ?? '',
+                }
+              : null,
+          imageUrl,
+          // Explicitly null, not omitted: the already-tested "caller brought
+          // none, stays none" branch in recordGeneration, so the derivative
+          // fetch-and-reupload never runs on this (synchronous, pre-response)
+          // call. attachImageDerivatives fills these in from after().
+          previewUrl: null,
+          thumbnailUrl: null,
+          generationMs: geminiResult.generationTime ?? null,
+          workflow: stripped.workflow,
+          workflowTexts: stripped.texts,
+          // Uploaded once and referenced, rather than inlined into the
+          // workflow blob: the same reference across twenty generations is
+          // one object and twenty rows, not twenty copies of the base64.
+          // Only what the image check judged: a graph image that never went
+          // to the model keeps its position as an empty slot.
+          references: await storeReferenceImages(
+            stripped.images.length ? stripped.images.map((img) => (refs.includes(img) ? img : "")) : refs,
+            recUserId,
+          ),
+          chainKey: solanaChainKey(),
+          transactionHash,
+          amountPaidCents:
+            typeof paid.total_micro === "number" ? Math.round(paid.total_micro / 10_000) : null,
+          paymentIntentId: intentId,
+        });
+        imageId = recorded?.imageId ?? null;
+        if (recorded?.imageId) {
+          after(attachImageDerivatives(recSupabase, recorded.imageId, imageUrl, recUserId, storeDeadline(startedAt)));
+        }
       }
     }
 
@@ -929,6 +969,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         imageUrl,
+        imageId,
         prompt: fromArtist ? undefined : enhancedPrompt,
         provider: preflightRoute.provider,
         model: geminiResult.metadata?.model || preflightRoute.providerModel,

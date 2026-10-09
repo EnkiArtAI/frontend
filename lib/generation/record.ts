@@ -71,6 +71,22 @@ export interface GenerationRecord {
   transactionHash?: string | null;
   chainKey?: string | null;
   amountPaidCents?: number | null;
+  /** The generation_payment_intents row this was bought with; null for free generations. */
+  paymentIntentId?: string | null;
+}
+
+/**
+ * What recordGeneration hands back: the generations row always (when
+ * anything was written at all), the generated_images row's id only when that
+ * second insert also landed. A route that needs to answer with "imageId"
+ * reads this, not the bare string the old contract returned — checked
+ * against every caller (generate-image, generate-free) before this changed:
+ * both call recordGeneration from inside a floating/after() promise and read
+ * nothing back, so widening the return shape breaks neither.
+ */
+export interface RecordedGeneration {
+  generationId: string;
+  imageId: string | null;
 }
 
 /** Encrypt into the four columns this schema uses everywhere. */
@@ -136,18 +152,53 @@ async function ensurePromptRow(
   return data?.id ?? null;
 }
 
+/** Whether this record carries real money — gates the admin alert below. */
+function isPaid(rec: GenerationRecord): boolean {
+  return rec.paymentIntentId != null || rec.amountPaidCents != null;
+}
+
+/**
+ * Losing a free generation's record is a shrug — console.warn and move on,
+ * as this always has. Losing a PAID one is a different severity: the buyer
+ * was charged, the image was handed over, and now nothing says so. The image
+ * is never withheld for it (that is decided before this is ever called), but
+ * someone has to go reconcile the row by hand, and a warning only this
+ * process ever sees is not how they find out.
+ */
+async function alertLostRecording(supabase: SupabaseClient, rec: GenerationRecord, reason: string): Promise<void> {
+  console.error("[generation] PAID generation recording problem:", {
+    userId: rec.userId,
+    paymentIntentId: rec.paymentIntentId ?? null,
+    reason,
+  });
+  const { notifyAdmins } = await import("@/lib/admin-notify");
+  await notifyAdmins(supabase, {
+    subject: "Paid generation not recorded",
+    text:
+      `A paid generation for user ${rec.userId} (payment intent ${rec.paymentIntentId ?? "unknown"}) ` +
+      `was delivered to the buyer, but ${reason}. The image was NOT lost — it was already returned ` +
+      `to the payer — but its generations/generated_images row is missing or incomplete and needs a ` +
+      `manual look.`,
+  }).catch((e) => console.error("[generation] admin alert failed:", e instanceof Error ? e.message : e));
+}
+
 /**
  * Best-effort by design: losing the record must never lose the user their
- * image. Returns the generation id, or null if nothing could be written.
+ * image. Returns the generations row id and, when that second insert also
+ * landed, the generated_images row id a caller can answer with as imageId —
+ * null when nothing could be written at all.
  */
 export async function recordGeneration(
   supabase: SupabaseClient,
   rec: GenerationRecord,
-): Promise<string | null> {
+): Promise<RecordedGeneration | null> {
   try {
     const promptId =
       rec.promptId ?? (await ensurePromptRow(supabase, rec.userId, rec.finalPrompt, rec.model, rec.adult === true));
-    if (!promptId) return null;
+    if (!promptId) {
+      if (isPaid(rec)) await alertLostRecording(supabase, rec, "no prompt row could be created for it");
+      return null;
+    }
 
     const { data, error } = await supabase
       .from("generations")
@@ -176,12 +227,14 @@ export async function recordGeneration(
         transaction_hash: rec.transactionHash ?? null,
         chain_key: rec.chainKey ?? null,
         amount_paid_cents: rec.amountPaidCents ?? null,
+        payment_intent_id: rec.paymentIntentId ?? null,
       })
       .select("id")
       .single();
 
     if (error) {
       console.warn("[generation] could not record:", error.message);
+      if (isPaid(rec)) await alertLostRecording(supabase, rec, "the generations insert failed");
       return null;
     }
     const generationId = data.id as string;
@@ -211,7 +264,9 @@ export async function recordGeneration(
     // is what the gallery reads, and nothing was ever writing a row there for a
     // generation — so a delivered image was invisible to its owner. "Ordered
     // means delivered" (Kev, 2026-08-06) is a durability requirement, and this
-    // is where it is met.
+    // is where it is met. Its id is also what a caller answers "imageId" with
+    // (REC-1) — selected back below, never derived from anything else.
+    let imageId: string | null = null;
     if (rec.imageUrl) {
       /* Our copy + WebP renditions. Token-graceful (no BLOB token = the
          provider URL passes through) and never throwing — the paid image
@@ -221,34 +276,81 @@ export async function recordGeneration(
       const stored = rec.previewUrl !== undefined
         ? { imageUrl: rec.imageUrl, previewUrl: rec.previewUrl, thumbnailUrl: rec.thumbnailUrl ?? null }
         : await storeGeneratedImage(rec.imageUrl, rec.userId);
-      const { error: imgErr } = await supabase.from("generated_images").insert({
-        user_id: rec.userId,
-        generation_id: generationId,
-        prompt_id: promptId,
-        sequence_index: 0,
-        storage_provider: "vercel_blob",
-        storage_url: stored.imageUrl,
-        preview_url: stored.previewUrl,
-        thumbnail_url: stored.thumbnailUrl,
-        width: rec.output?.width ?? null,
-        height: rec.output?.height ?? null,
-        file_size_bytes: rec.output?.bytes ?? null,
-        mime_type: rec.mimeType ?? (rec.output?.format ? `image/${rec.output.format}` : "image/png"),
-        // Generated, not uploaded — the flag the gallery filters on, and the
-        // one chk_upload_consistency checks against generation_id.
-        is_uploaded: false,
-        is_adult: rec.adult === true,
-        is_watermarked: false,
-        visibility: "private",
-        accepted: true,
-      });
-      if (imgErr) console.warn("[generation] could not record the image:", imgErr.message);
+      const { data: imgRow, error: imgErr } = await supabase
+        .from("generated_images")
+        .insert({
+          user_id: rec.userId,
+          generation_id: generationId,
+          prompt_id: promptId,
+          sequence_index: 0,
+          storage_provider: "vercel_blob",
+          storage_url: stored.imageUrl,
+          preview_url: stored.previewUrl,
+          thumbnail_url: stored.thumbnailUrl,
+          width: rec.output?.width ?? null,
+          height: rec.output?.height ?? null,
+          file_size_bytes: rec.output?.bytes ?? null,
+          mime_type: rec.mimeType ?? (rec.output?.format ? `image/${rec.output.format}` : "image/png"),
+          // Generated, not uploaded — the flag the gallery filters on, and the
+          // one chk_upload_consistency checks against generation_id.
+          is_uploaded: false,
+          is_adult: rec.adult === true,
+          is_watermarked: false,
+          visibility: "private",
+          accepted: true,
+        })
+        .select("id")
+        .single();
+      if (imgErr) {
+        // The generations row above is real and stays: the caller still gets
+        // a generationId. What it loses is imageId — the gallery/share-preview
+        // row simply does not exist for this one.
+        console.warn("[generation] could not record the image:", imgErr.message);
+        if (isPaid(rec)) await alertLostRecording(supabase, rec, "the generated_images insert failed (the generation row was written; the gallery row was not)");
+      } else {
+        imageId = (imgRow?.id as string | undefined) ?? null;
+      }
     }
 
-    return generationId;
+    return { generationId, imageId };
   } catch (e) {
     console.warn("[generation] record failed:", e instanceof Error ? e.message : e);
+    if (isPaid(rec)) await alertLostRecording(supabase, rec, "recording threw an exception").catch(() => {});
     return null;
+  }
+}
+
+/**
+ * The WebP preview/thumbnail a core write deliberately left for later
+ * (REC-1): the generations/generated_images rows are written before the
+ * response so it can carry imageId, and deriving the renditions is not worth
+ * making a buyer who already paid wait for — it runs from `after()` instead.
+ *
+ * `storeGeneratedImage` already skips re-uploading the original when it
+ * recognises the URL as already one of our own stores, so this costs two
+ * small WebP uploads, not a second copy of the original.
+ *
+ * Best-effort, like everything else here: a failed derivative pass leaves
+ * the row exactly as the core write left it (preview/thumbnail null, the
+ * original URL doing both jobs) and never throws into its caller's after().
+ */
+export async function attachImageDerivatives(
+  supabase: SupabaseClient,
+  imageId: string,
+  imageUrl: string,
+  userId: string,
+  deadline?: number,
+): Promise<void> {
+  try {
+    const derived = await storeGeneratedImage(imageUrl, userId, deadline);
+    if (!derived.previewUrl && !derived.thumbnailUrl) return;
+    const { error } = await supabase
+      .from("generated_images")
+      .update({ preview_url: derived.previewUrl, thumbnail_url: derived.thumbnailUrl })
+      .eq("id", imageId);
+    if (error) console.warn("[generation] could not attach derivatives:", error.message);
+  } catch (e) {
+    console.warn("[generation] derivative pass failed:", e instanceof Error ? e.message : e);
   }
 }
 
