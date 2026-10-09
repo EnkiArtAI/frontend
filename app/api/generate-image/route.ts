@@ -27,7 +27,7 @@ import { solanaChainKey } from "@/lib/payments/solana";
 import type { VoidReason } from "@/lib/payments/authorization";
 import { reportSuccess, reportFailure } from "@/lib/generation/provider-health";
 import { childSafetyScore, recordModerationEvent } from "@/lib/moderation-enforcement";
-import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, attachImageDerivatives, type GenerationFailure } from "@/lib/generation/record";
+import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, attachImageDerivatives, attachReferenceImages, type GenerationFailure } from "@/lib/generation/record";
 import { storeReferenceImages } from "@/lib/generation/reference-images";
 import { INLINE_MAX_BYTES, putDurably, removeStored, storeDeadline } from "@/lib/generation/derivative-store";
 import { checkImageBytes, dataUrlBytes, heldBack, isLink, IMAGE_REFUSED, IMAGE_UNCHECKED, REFERENCE_LINK, REFERENCE_REFUSED, REFERENCE_UNCHECKED } from "@/lib/moderation/image-check-bytes";
@@ -232,9 +232,7 @@ export async function POST(request: NextRequest) {
        body says instead. */
     const { data: intentRow, error: intentError } = await (getSupabaseServerClientSafe()
       ?.from("generation_payment_intents")
-      .select(
-        "model_id, model_family, resolution, quality, boost, reference_image_count, prompt_id, artist_amount_micro, total_micro, tx_signature",
-      )
+      .select("model_id, model_family, resolution, quality, boost, reference_image_count, prompt_id, artist_amount_micro, total_micro, tx_signature")
       .eq("id", intentId)
       .maybeSingle() ?? Promise.resolve({ data: null, error: null }));
     if (isDbUnreachable(intentError)) return dbUnavailableResponse();
@@ -946,10 +944,13 @@ export async function POST(request: NextRequest) {
           // one object and twenty rows, not twenty copies of the base64.
           // Only what the image check judged: a graph image that never went
           // to the model keeps its position as an empty slot.
-          references: await storeReferenceImages(
-            stripped.images.length ? stripped.images.map((img) => (refs.includes(img) ? img : "")) : refs,
-            recUserId,
-          ),
+          //
+          // Empty here on purpose: storeReferenceImages does one upload per
+          // reference with no deadline of its own, so — like the WebP
+          // derivatives above — it runs from after() too, via
+          // attachReferenceImages, never ahead of this (synchronous,
+          // pre-response, already-past-capture) call.
+          references: [],
           chainKey: solanaChainKey(),
           transactionHash,
           amountPaidCents:
@@ -957,8 +958,19 @@ export async function POST(request: NextRequest) {
           paymentIntentId: intentId,
         });
         imageId = recorded?.imageId ?? null;
-        if (recorded?.imageId) {
-          after(attachImageDerivatives(recSupabase, recorded.imageId, imageUrl, recUserId, storeDeadline(startedAt)));
+        if (recorded) {
+          if (recorded.imageId) {
+            after(attachImageDerivatives(recSupabase, recorded.imageId, imageUrl, recUserId, storeDeadline(startedAt)));
+          }
+          // The reference uploads run in after() too: an upload stuck on a
+          // failing store must not hold the answer to a buyer who has paid.
+          after(async () => {
+            const stored = await storeReferenceImages(
+              stripped.images.length ? stripped.images.map((img) => (refs.includes(img) ? img : "")) : refs,
+              recUserId,
+            );
+            await attachReferenceImages(recSupabase, recorded.generationId, stored);
+          });
         }
       }
     }

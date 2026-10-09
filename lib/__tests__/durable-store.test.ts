@@ -244,7 +244,15 @@ describe("the paid routes", () => {
   });
 
   it("the human route uploads references after the answer, not before it", () => {
-    expect(HUMAN).toMatch(/after\(async \(\) =>\s+recordGeneration\(recSupabase, \{[\s\S]{0,2500}references: await storeReferenceImages\(/);
+    // REC-1: recordGeneration itself is now awaited BEFORE the answer, so the
+    // response can carry imageId — but storeReferenceImages does one upload
+    // per reference with no deadline of its own, so it still runs from
+    // after(), via attachReferenceImages, never ahead of the response.
+    const recorded = HUMAN.indexOf("const recorded = await recordGeneration(recSupabase, {");
+    const deferred = HUMAN.search(/after\(async \(\) => \{\s+const stored = await storeReferenceImages\(/);
+    expect(recorded).toBeGreaterThan(-1);
+    expect(deferred).toBeGreaterThan(recorded);
+    expect(HUMAN).toMatch(/await attachReferenceImages\(recSupabase, recorded\.generationId, stored\)/);
   });
 
   it("the agent route stores durably and never answers with an inline image too big to arrive", () => {

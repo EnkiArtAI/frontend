@@ -355,6 +355,43 @@ export async function attachImageDerivatives(
 }
 
 /**
+ * The reference images fed INTO a generation — stored and linked after the
+ * response, same reasoning as attachImageDerivatives: storeReferenceImages
+ * does one upload per reference with no deadline of its own, so it must not
+ * sit between a captured payment and the answer either. Mirrors
+ * recordGeneration's own reference-row insert (sequence_index from the
+ * ORIGINAL position, a failed-to-store reference simply has no row) —
+ * duplicated rather than shared, because recordGeneration's version runs
+ * inside its own transaction-shaped try/catch and this one runs standalone,
+ * from after(), on a generation that has already been written.
+ */
+export async function attachReferenceImages(
+  supabase: SupabaseClient,
+  generationId: string,
+  images: (StoredReference | null)[],
+): Promise<void> {
+  try {
+    const rows = images
+      .map((ref, i) => (ref ? { ...ref, sequence_index: i } : null))
+      .filter((r): r is StoredReference & { sequence_index: number } => r !== null);
+    if (!rows.length) return;
+    const { error } = await supabase.from("generation_reference_images").insert(
+      rows.map((r) => ({
+        generation_id: generationId,
+        sequence_index: r.sequence_index,
+        storage_url: r.url,
+        mime_type: r.mimeType,
+        bytes: r.bytes,
+        content_hash: r.contentHash,
+      })),
+    );
+    if (error) console.warn("[generation] could not record references:", error.message);
+  } catch (e) {
+    console.warn("[generation] reference attach failed:", e instanceof Error ? e.message : e);
+  }
+}
+
+/**
  * Whose generation this is, resolved server-side.
  *
  * From the session token, never from a body field: PR #54 keyed enforcement on

@@ -74,7 +74,7 @@ describe("resolveModelByFamily", () => {
 
 describe("the route lets the purchase choose the model", () => {
   it("reads the intent's settings BEFORE resolving the model, and the model by its row id", () => {
-    const family = ROUTE.indexOf('.select("model_id, model_family, resolution, quality, boost, reference_image_count, prompt_id, artist_amount_micro")');
+    const family = ROUTE.indexOf('.select("model_id, model_family, resolution, quality, boost, reference_image_count, prompt_id, artist_amount_micro, total_micro, tx_signature")');
     const resolve = ROUTE.indexOf("resolveModel(getSupabaseServerClientSafe(), [paid.model_id])");
     const route = ROUTE.indexOf("const preflightRoute = await chooseRoute(");
     expect(family).toBeGreaterThan(-1);
