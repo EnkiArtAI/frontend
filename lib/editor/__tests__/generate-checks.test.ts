@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
-  generateBlock, editorSetup, editorRequest, readyRefs, renderSettings, nameIssue,
+  generateBlock, editorSetup, editorRequest, readyRefs, renderSettings, nameIssue, tooLargeToRender,
   type GenerateInput, type GenerateCheck, type RenderPicks,
 } from "../generate-checks";
 import type { CatalogueEntry } from "@/hooks/useModelLimits";
 import type { GenerationQuote } from "@/lib/generation-checkout";
 import { REFS_LOADING } from "@/hooks/useReferenceReads";
-import { REFS_TOO_LARGE } from "@/lib/request-size";
+import { REFS_TOO_LARGE, REQUEST_MAX_BYTES, tooLargeToSend } from "@/lib/request-size";
 
 const model = (o: Partial<CatalogueEntry> = {}): CatalogueEntry => ({
   id: "m-pro", name: "Nano Banana Pro", price: 0.1, mediaType: "image", supportsQuality: false, maxResolution: "4K",
@@ -37,6 +37,7 @@ const breaks: Array<[GenerateCheck, (i: GenerateInput) => GenerateInput]> = [
   ["generator", (i) => ({ ...i, entry: undefined })],
   ["names", (i) => ({ ...i, doc: { ...i.doc, prompt: `${i.doc.prompt} []` } })],
   ["values", (i) => ({ ...i, doc: { ...i.doc, vars: { ...i.doc.vars, subject: " " } } })],
+  ["prompt", (i) => ({ ...i, doc: { ...i.doc, prompt: `${i.doc.prompt} ${"x".repeat(4000)}` } })],
   ["refs-ready", (i) => ({ ...i, reading: true })],
   ["refs-missing", (i) => ({ ...i, doc: { ...i.doc, prompt: `${i.doc.prompt} [Reference image 2]` } })],
   ["refs-free", (i) => ({ ...i, entry: i.entry && { ...i.entry, free: true } })],
@@ -68,14 +69,26 @@ describe("generateBlock", () => {
     expect(run(2)).toEqual({ check: "generator", toast: "Pick a generator", open: "primary" });
     expect(run(3)).toEqual({ check: "names", toast: "Name every variable first", focus: { variable: "" } });
     expect(run(4)).toEqual({ check: "values", toast: "Fill in [subject] first", focus: { variable: "subject" } });
-    expect(run(5)).toEqual({ check: "refs-ready", toast: REFS_LOADING });
-    expect(run(6)).toEqual({ check: "refs-missing", toast: "[Reference image 2] has no image · upload it or remove the token" });
-    expect(run(7)).toEqual({ check: "refs-free", toast: "Nano Banana Pro takes no reference images · pick another generator or remove them" });
-    expect(run(8)).toEqual({ check: "refs-max", toast: "Nano Banana Pro takes up to 0 reference images" });
-    expect(run(9)).toEqual({ check: "price", toast: "Getting the price…" });
-    expect(run(10)).toEqual({ check: "wallet", open: "wallet" });
-    expect(run(11)).toEqual({ check: "funds", open: "add-funds" });
-    expect(run(12)).toEqual({ check: "size", toast: REFS_TOO_LARGE });
+    expect(run(5)).toEqual({ check: "prompt", toast: "The prompt is 4,027 characters; 4,000 is the most that can be sent" });
+    expect(run(6)).toEqual({ check: "refs-ready", toast: REFS_LOADING });
+    expect(run(7)).toEqual({ check: "refs-missing", toast: "[Reference image 2] has no image · upload it or remove the token" });
+    expect(run(8)).toEqual({ check: "refs-free", toast: "Nano Banana Pro takes no reference images · pick another generator or remove them" });
+    expect(run(9)).toEqual({ check: "refs-max", toast: "Nano Banana Pro takes up to 0 reference images" });
+    expect(run(10)).toEqual({ check: "price", toast: "Getting the price…" });
+    expect(run(11)).toEqual({ check: "wallet", open: "wallet" });
+    expect(run(12)).toEqual({ check: "funds", open: "add-funds" });
+    expect(run(13)).toEqual({ check: "size", toast: REFS_TOO_LARGE });
+  });
+
+  it("refuses the filled text the routes would refuse, before any wallet is asked", () => {
+    const filled = (subject: string, entry = model()) =>
+      generateBlock({ ...ok, entry, doc: { ...ok.doc, prompt: "a [subject]", vars: { subject }, refIds: [] } });
+    expect(filled("x".repeat(3998))).toBeNull();
+    expect(filled("x".repeat(3999))?.toast).toBe("The prompt is 4,001 characters; 4,000 is the most that can be sent");
+    expect(filled("x".repeat(3999), model({ free: true }))?.check).toBe("prompt");
+    // The paid route's bracket rule, on the values too; the free route has none.
+    expect(filled("[".repeat(21))).toEqual({ check: "prompt", toast: "A prompt for a paid generator can hold at most 20 [" });
+    expect(filled("[".repeat(21), model({ free: true }))).toBeNull();
   });
 
   it("blocks every name the save could not store (R19), and an empty checkbox text too", () => {
@@ -149,6 +162,21 @@ describe("the job and its request", () => {
     expect(r).not.toHaveProperty("promptId");
     expect(editorRequest(setup, [model({ id: "other" })], []).model).toBeUndefined();
     expect(editorRequest(setup, [model()], []).referenceImages).toBeUndefined();
+  });
+
+  it("measures a render as it travels, byte for byte, without copying its images", () => {
+    const request = editorRequest(editorSetup(ok.doc, model(), picks), [model()], ["data:image/webp;base64,AB", "data:image/png;base64,CDE"]);
+    const pad = REQUEST_MAX_BYTES - new Blob([JSON.stringify(request)]).size;
+    const at = { ...request, referenceImages: [`data:image/webp;base64,AB${"A".repeat(pad)}`, "data:image/png;base64,CDE"] };
+    expect([tooLargeToSend(at), tooLargeToRender(at)]).toEqual([false, false]);
+    const one = { ...at, referenceImages: [`${at.referenceImages[0]}A`, at.referenceImages[1]] };
+    expect([tooLargeToSend(one), tooLargeToRender(one)]).toEqual([true, true]);
+    // Without images, only the rest counts.
+    const bare = editorRequest(editorSetup(ok.doc, model(), picks), [model()], []);
+    const text = { ...bare, prompt: `${bare.prompt}${"a".repeat(REQUEST_MAX_BYTES - new Blob([JSON.stringify(bare)]).size)}` };
+    expect([tooLargeToSend(text), tooLargeToRender(text)]).toEqual([false, false]);
+    const more = { ...text, prompt: `${text.prompt}a` };
+    expect([tooLargeToSend(more), tooLargeToRender(more)]).toEqual([true, true]);
   });
 
   it("readyRefs: the data in order, or null while any is not read in", () => {

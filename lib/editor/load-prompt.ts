@@ -59,6 +59,13 @@ export interface LoadedPrompt {
   saved: Saved;
 }
 
+/**
+ * GET /api/prompt?id= answers a bad id (400), no session (401), or a prompt
+ * that is missing or another account's (404): none of these opens when asked
+ * again (create-desktop §3.13). Anything else, a 5xx or no answer, may.
+ */
+export const notYours = (status: number | undefined) => status === 400 || status === 401 || status === 404;
+
 /** The variable behind a [slot]. */
 export function slotVariable(slot: string, variables: ServerVariable[]): ServerVariable | undefined {
   const stored = storedName(slot);

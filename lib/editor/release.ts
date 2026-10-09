@@ -137,14 +137,17 @@ function variable(name: string, s: EditorSetup, position: number): SavedVariable
     : { name, label: name, description: "", type: "text", defaultValue: value, required: true, position };
 }
 
-/** The release from the starred renders (in star order), once releaseBlock lets it go. */
+/**
+ * The release from the starred renders (in star order), once releaseBlock
+ * lets it go, and the ids of the references it sends, in its order.
+ */
 export function releaseBody({ listing, primary, starred, refs, id }: {
   listing: Listing;
   primary: CatalogueEntry;
   starred: Job<EditorSetup>[];
   refs: RefStore;
   id?: string;
-}): { body: ReleaseBody } | { error: string } {
+}): { body: ReleaseBody; refIds: string[] } | { error: string } {
   const cover = starred[0].setup;
   // A loaded reference goes back as the stored URL the server keeps; a new one as its data.
   const referenceImages = cover.refIds.map((r) => refs[r]?.stored ?? refs[r]?.data);
@@ -165,16 +168,36 @@ export function releaseBody({ listing, primary, starred, refs, id }: {
     aspectRatio: cover.ratio,
     resolution: cover.resolution,
   };
-  return tooLargeToSend(body) ? { error: SAVE_TOO_LARGE } : { body };
+  return tooLargeToSend(body) ? { error: SAVE_TOO_LARGE } : { body, refIds: cover.refIds };
 }
 
-/** A loaded prompt untouched in text, values and references, with nothing starred: Release only updates its listing. */
-export function listingOnly(doc: EditorDoc, loaded: EditorDoc, starredCount: number): boolean {
+/**
+ * Where the server stored the references a release sent: its answer's
+ * referenceImages, in the order sent (app/api/prompt keeps it), by ref id.
+ * The next release sends these URLs, which the server keeps as they are,
+ * never the data again (Kev). Nothing when the answer does not line up.
+ */
+export function storedRefs(sent: string[], answered: unknown): Record<string, string> {
+  const urls = Array.isArray(answered) ? answered : [];
+  if (urls.length !== sent.length || !urls.every((u) => typeof u === "string" && u.startsWith("https://"))) return {};
+  return Object.fromEntries(sent.map((id, i) => [id, urls[i]]));
+}
+
+/**
+ * A loaded prompt untouched in text, values, references and generator, with
+ * nothing starred: Release only updates its listing. A new generator always
+ * needs new starred renders made with it (Kev), and a new mode needs as many
+ * live images as it shows.
+ */
+export function listingOnly(doc: EditorDoc, listing: Listing, loaded: { doc: EditorDoc; listing: Listing; saved: Saved }, starredCount: number): boolean {
   const print = (d: EditorDoc) => {
     const names = varNames(d.prompt);
     return JSON.stringify([d.prompt, names.map((n) => d.vars[n] ?? ""), names.map((n) => d.kinds[n] ?? "text"), d.refIds]);
   };
-  return starredCount === 0 && print(doc) === print(loaded);
+  return starredCount === 0
+    && listing.primaryId === loaded.listing.primaryId
+    && (listing.mode === loaded.listing.mode || loaded.saved.uploadedPhotos.length >= needFor(listing.mode))
+    && print(doc) === print(loaded.doc);
 }
 
 /** The listing-only update: the new listing over the prompt exactly as it was loaded (create-desktop §3.11). */

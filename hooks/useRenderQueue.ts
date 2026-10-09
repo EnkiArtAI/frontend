@@ -16,7 +16,11 @@ import { notify } from "@/components/kit/notify";
 import { queueReducer, settle, type FreeQuota, type Job } from "@/lib/ui/kit/render-queue";
 import { serialSigner, trackSigner } from "@/lib/ui/kit/serial-signer";
 
-/** Where the editor keeps its jobs across reloads. Pass a stable object. */
+/**
+ * Where the editor keeps its jobs across reloads. Pass a stable object; a new
+ * one takes the jobs along (the first release moves them to the prompt's id).
+ * Another account never reaches it: /editor remounts (lib/editor/editor-mount).
+ */
 export interface JobStore<S> {
   load(): Promise<Job<S>[]>;
   save(jobs: Job<S>[]): void;

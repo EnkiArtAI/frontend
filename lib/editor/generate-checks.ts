@@ -13,7 +13,8 @@ import { boostAt, type CatalogueEntry } from "@/hooks/useModelLimits";
 import { REFS_LOADING } from "@/hooks/useReferenceReads";
 import { tiersUpTo, type ResolutionTier } from "@/lib/generation/resolution";
 import { storedName } from "@/lib/generation/stored-name";
-import { tooLargeToSend, REFS_TOO_LARGE } from "@/lib/request-size";
+import { REQUEST_MAX_BYTES, REFS_TOO_LARGE } from "@/lib/request-size";
+import { promptRefusal } from "@/lib/ui/image-view/assemble";
 import { overBalance } from "@/lib/ui/kit/price";
 import { fillPrompt, parseTokens, varNames } from "./prompt-tokens";
 import type { EditorDoc, RefStore, VarKind } from "./undo";
@@ -116,6 +117,15 @@ export function nameIssue(names: string[]): { name: string; message: string } | 
 /** The first name whose value is blank. */
 export const emptyValue = (names: string[], vars: Record<string, string>) => names.find((n) => !(vars[n] ?? "").trim());
 
+/**
+ * lib/request-size tooLargeToSend for a render, without copying its images,
+ * since the cost line asks on every keystroke. A reference is a base64 data
+ * URL, which JSON leaves as it is: each adds its length to the rest.
+ */
+export const tooLargeToRender = (r: GenerationRequest) =>
+  new Blob([JSON.stringify({ ...r, referenceImages: r.referenceImages?.map(() => "") })]).size
+    + (r.referenceImages ?? []).reduce((n, d) => n + d.length, 0) > REQUEST_MAX_BYTES;
+
 export type GenerateCheck =
   | "prompt" | "login" | "generator" | "names" | "values" | "refs-ready" | "refs-missing"
   | "refs-free" | "refs-max" | "price" | "wallet" | "funds" | "size";
@@ -148,7 +158,7 @@ export interface GenerateInput {
   lowBalanceOk?: boolean;
 }
 
-/** The first of the thirteen checks that fails, in the plan's order; null when Generate may run. */
+/** The first of the checks that fails, in the plan's order; null when Generate may run. */
 export function generateBlock(i: GenerateInput): GenerateBlock | null {
   const { doc, entry } = i;
   if (!doc.prompt.trim()) return { check: "prompt", toast: "Write a prompt first" };
@@ -159,6 +169,9 @@ export function generateBlock(i: GenerateInput): GenerateBlock | null {
   if (bad) return { check: "names", toast: bad.message, focus: { variable: bad.name } };
   const empty = emptyValue(names, doc.vars);
   if (empty !== undefined) return { check: "values", toast: `Fill in [${empty}] first`, focus: { variable: empty } };
+  // The routes' own text rules, before a wallet is asked: the filled text is what they get.
+  const refusal = promptRefusal(fillPrompt(doc.prompt, doc.vars), !entry.free);
+  if (refusal) return { check: "prompt", toast: refusal };
   const states = doc.refIds.map((id) => i.refs[id]?.state);
   if (states.some((s) => s !== "ready" && s !== "loading")) {
     return { check: "refs-ready", toast: "A reference image couldn't be loaded · upload it again" };
@@ -178,6 +191,6 @@ export function generateBlock(i: GenerateInput): GenerateBlock | null {
     }
   }
   const request = editorRequest(editorSetup(doc, entry, i.picks), [entry], readyRefs(i.refs, doc.refIds) ?? []);
-  if (tooLargeToSend(request)) return { check: "size", toast: REFS_TOO_LARGE };
+  if (tooLargeToRender(request)) return { check: "size", toast: REFS_TOO_LARGE };
   return null;
 }

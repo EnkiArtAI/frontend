@@ -24,7 +24,7 @@ export interface EditorDoc {
 export interface RefImage {
   /** What a render sends: a data: URL. Null until a stored image has been read. */
   data: string | null;
-  /** The https URL a loaded prompt came with; a release sends it back unchanged. */
+  /** The https URL the server keeps it under (a loaded prompt's, or a release's answer); a release sends it back unchanged. */
   stored: string | null;
   state: "ready" | "loading" | "failed";
 }

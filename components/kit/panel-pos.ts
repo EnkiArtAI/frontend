@@ -22,7 +22,7 @@ export interface PanelPos {
  * rail — no child z-index can beat the rail from inside it, so the open
  * panel rendered behind the left menu (Kev, 2026-08-24, screenshot). The
  * panel scrolls internally only when the viewport cannot hold the full
- * list, and closes on any scroll so it can never sit detached.
+ * list, and closes on any other scroll so it can never sit detached.
  */
 export function usePanelPos(itemCount: number) {
   const [pos, setPos] = useState<PanelPos | null>(null);
@@ -44,14 +44,18 @@ export function usePanelPos(itemCount: number) {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") { e.stopPropagation(); close(); }
     };
+    // The capture sees the panel's own scroll too: that one is reading the list.
+    const onScroll = (e: Event) => {
+      if (!panelRef.current?.contains(e.target as Node)) close();
+    };
     window.addEventListener("pointerdown", onDown, true);
     window.addEventListener("keydown", onKey, true);
-    window.addEventListener("scroll", close, true);
+    window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", close);
     return () => {
       window.removeEventListener("pointerdown", onDown, true);
       window.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", close);
     };
   }, [open]);

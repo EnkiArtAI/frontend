@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { loadPrompt, slotVariable, type ServerPrompt, type ServerVariable } from "../load-prompt";
+import { loadPrompt, notYours, slotVariable, type ServerPrompt, type ServerVariable } from "../load-prompt";
 import { toServerText } from "../prompt-tokens";
 import type { CatalogueEntry } from "@/hooks/useModelLimits";
 import { DEFAULT_PROMPT_PRICE_USD } from "@/shared/revenue-config";
@@ -103,5 +103,12 @@ describe("loadPrompt", () => {
       aspectRatio: "3:2",
       resolution: "4K",
     });
+  });
+});
+
+describe("notYours", () => {
+  it("is a bad id, no session, or a prompt missing or not this account's; a 5xx or no answer may open when asked again", () => {
+    expect([400, 401, 404].map(notYours)).toEqual([true, true, true]);
+    expect([403, 409, 429, 500, 503, undefined].map(notYours)).toEqual([false, false, false, false, false, false]);
   });
 });

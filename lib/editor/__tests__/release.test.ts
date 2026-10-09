@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { releaseBlock, releaseBody, listingOnly, updateBody, type Listing, type ReleaseCheck, type Saved } from "../release";
+import { releaseBlock, releaseBody, listingOnly, storedRefs, updateBody, type Listing, type ReleaseCheck, type Saved } from "../release";
 import type { EditorSetup } from "../generate-checks";
 import type { EditorDoc, RefStore } from "../undo";
 import type { CatalogueEntry } from "@/hooks/useModelLimits";
@@ -125,6 +125,12 @@ describe("releaseBody", () => {
     });
   });
 
+  it("names the cover's references it sends, in its order", () => {
+    const r = releaseBody({ listing, primary, starred: [job("s1", setup({ subject: "fox", light: "dusk" }, { refIds: ["kept"] })), ...starred.slice(1)], refs });
+    expect(r).toMatchObject({ refIds: ["kept"], body: { referenceImages: ["https://blob/kept.webp"] } });
+    expect(releaseBody({ listing, primary, starred, refs })).toMatchObject({ refIds: ["new", "kept"] });
+  });
+
   it("names the prompt to update, and sends no id on the first release", () => {
     expect(body({ id: "0b5f6c1e-1111-4222-8333-944445555666" }).id).toBe("0b5f6c1e-1111-4222-8333-944445555666");
     expect(JSON.parse(JSON.stringify(body()))).not.toHaveProperty("id");
@@ -151,16 +157,66 @@ describe("releaseBody", () => {
   });
 });
 
+describe("storedRefs", () => {
+  it("is where the server stored each reference sent, by ref id, in the order sent", () => {
+    expect(storedRefs(["new", "kept"], ["https://blob/new.webp", "https://blob/kept.webp"])).toEqual({
+      new: "https://blob/new.webp", kept: "https://blob/kept.webp",
+    });
+  });
+
+  it("is nothing for an answer that does not line up with what was sent", () => {
+    expect(storedRefs(["a", "b"], ["https://blob/a.webp"])).toEqual({});
+    expect(storedRefs(["a"], ["https://blob/a.webp", "https://blob/b.webp"])).toEqual({});
+    expect(storedRefs(["a"], undefined)).toEqual({});
+    expect(storedRefs(["a"], { 0: "https://blob/a.webp", length: 1 })).toEqual({});
+    expect(storedRefs(["a", "b"], ["https://blob/a.webp", "data:image/webp;base64,AA"])).toEqual({});
+    expect(storedRefs(["a", "b"], [7, "https://blob/b.webp"])).toEqual({});
+  });
+});
+
 describe("listing-only update", () => {
   const doc: EditorDoc = { prompt: "a [subject]", vars: { subject: "fox", gone: "x" }, kinds: {}, aiNames: ["subject"], refIds: ["https://blob/r1.webp"] };
+  const live: Saved = { content: "a [subject]", variables: [], referenceImages: ["https://blob/r1.webp"], uploadedPhotos: ["https://blob/s1.webp"], aspectRatio: "4:5", resolution: "2K" };
+  /** A released Free prompt with its one live image, made with Nano Banana Pro. */
+  const loaded: { doc: EditorDoc; listing: Listing; saved: Saved } = { doc, listing: { ...listing, mode: "free" }, saved: live };
+  const only = (patch: Partial<Listing>, from = loaded, d = doc) => listingOnly(d, { ...from.listing, ...patch }, from, 0);
 
   it("is a loaded prompt untouched in text, values, kinds and references, with nothing starred", () => {
-    expect(listingOnly({ ...doc, vars: { subject: "fox" }, aiNames: [] }, doc, 0)).toBe(true);
-    expect(listingOnly(doc, doc, 1)).toBe(false);
-    expect(listingOnly({ ...doc, prompt: "a [subject]!" }, doc, 0)).toBe(false);
-    expect(listingOnly({ ...doc, vars: { subject: "owl" } }, doc, 0)).toBe(false);
-    expect(listingOnly({ ...doc, kinds: { subject: "checkbox" } }, doc, 0)).toBe(false);
-    expect(listingOnly({ ...doc, refIds: [] }, doc, 0)).toBe(false);
+    expect(listingOnly({ ...doc, vars: { subject: "fox" }, aiNames: [] }, loaded.listing, loaded, 0)).toBe(true);
+    expect(listingOnly(doc, loaded.listing, loaded, 1)).toBe(false);
+    expect(only({}, loaded, { ...doc, prompt: "a [subject]!" })).toBe(false);
+    expect(only({}, loaded, { ...doc, vars: { subject: "owl" } })).toBe(false);
+    expect(only({}, loaded, { ...doc, kinds: { subject: "checkbox" } })).toBe(false);
+    expect(only({}, loaded, { ...doc, refIds: [] })).toBe(false);
+    expect(only({ title: "Owl portrait", price: 0.9, category: "Animals" })).toBe(true);
+  });
+
+  it("is never a new generator: that takes new starred renders made with it (Kev)", () => {
+    expect(only({ primaryId: "m-gpt" })).toBe(false);
+    // A stored generator the catalogue did not know, picked now, is new too.
+    expect(only({ primaryId: "m-pro" }, { ...loaded, listing: { ...loaded.listing, primaryId: null } })).toBe(false);
+    // So Release asks for stars, and then for stars from the new generator.
+    const gpt = { ...primary, id: "m-gpt", name: "GPT Image" };
+    const changed = { ...loaded.listing, primaryId: "m-gpt" };
+    const verdict = (starredNow: J[]) => releaseBlock({
+      listing: changed, primary: gpt, starred: starredNow, busy: false,
+      loaded: listingOnly(doc, changed, loaded, starredNow.length) ? doc : null,
+    })?.check;
+    expect(verdict([])).toBe("stars");
+    expect(verdict(starred.slice(0, 1))).toBe("model");
+  });
+
+  it("switches mode only with as many live images as the new mode shows", () => {
+    expect(only({ mode: "premium" })).toBe(false);
+    const four = { ...loaded, saved: { ...live, uploadedPhotos: ["https://b/1", "https://b/2", "https://b/3", "https://b/4"] } };
+    expect(only({ mode: "premium" }, four)).toBe(true);
+    // Premium to Free keeps one of four; a mode left as it is stays as it was saved.
+    const premium = { ...loaded, listing: { ...loaded.listing, mode: "premium" as const } };
+    expect(only({ mode: "free" }, { ...four, listing: premium.listing })).toBe(true);
+    expect(only({ price: 0.5 }, premium)).toBe(true);
+    // And the release then asks for the missing stars.
+    expect(releaseBlock({ listing: { ...loaded.listing, mode: "premium" }, primary, starred: [], busy: false, loaded: null })?.message)
+      .toBe("Star 4 more images from one variation");
   });
 
   it("sends the prompt back exactly as it was loaded, under the new listing", () => {
