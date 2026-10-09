@@ -8,7 +8,7 @@ Status: Partially implemented — two items decision-gated on Kev (not picked he
 |---|---|
 | #150 — refuse an address another account already owns | Done before this change (verified in `app/api/auth/session/attach-wallet/route.ts:96-109`); **not touched** |
 | SDK upgraded, typecheck clean, eslint import ban still enforced | Done this change (`^0.0.113` → `^0.0.127` for both packages) |
-| `@coinbase/cdp-sdk` is a direct dependency | Done this change (`^1.58.0`, was transitive via `thirdweb` at resolved `1.48.0`) |
+| `@coinbase/cdp-sdk` is a direct dependency | Done this change (pinned `1.52.0`, was transitive via `thirdweb` at resolved `1.48.0` — see Problem for why it's pinned rather than `^1.58.0`) |
 | Export goes through the iframe flow | Done this change (`useSolanaKeyExportIframe`, portal-based) |
 | Deprecated `useExportSolanaAccount`/`exportSolanaAccount` removed entirely | Done this change |
 | EVM address exposed in the wallet UI (read only) | Done this change (`BillingPanel.tsx`) |
@@ -53,6 +53,34 @@ Re-verified against `main`/`ci/setup` on this machine (2026-10-09), independent 
   - Net: **no breaking changes found** for anything this codebase calls. The version bump is safe
     as a pure upgrade; the export-iframe migration would have been possible even on `0.0.113` and is
     bundled into this same change only because the ticket groups them.
+- **`@coinbase/cdp-sdk` direct-dependency version — found a real regression, not just upgraded.**
+  First attempt pinned the latest (`^1.58.0`, resolving to `1.58.0`) and pushed it: GitHub Actions'
+  `build` job (`next build --webpack`) failed —
+  `Module not found: Can't resolve '@x402/evm/upto/client'` (and `@x402/evm/exact/client`,
+  `@x402/core/client`), reached transitively via `thirdweb`'s own `base-account-web.js` →
+  `@base-org/account` → `@coinbase/cdp-sdk`'s main index → `toEvmDelegatedAccount.js` →
+  `toEvmSmartAccount.js` → `signX402Payment.js` — nothing this app calls directly; the whole chain
+  is pulled in merely because `app/my-gallery/page.tsx` imports thirdweb's React exports.
+  Downloaded and diffed every cdp-sdk tarball between `1.48.0` (the previously-resolved transitive
+  version) and `1.58.0` (latest) from the npm registry: `signX402Payment.ts`/`.js` does not exist
+  before `1.53.0` and exists in every version from `1.53.0` on. Its package.json declares
+  `@x402/core`/`@x402/evm`/`@x402/extensions`/`@x402/svm` as **optional peer dependencies**
+  (`peerDependenciesMeta.*.optional: true`) — correct for npm's installer (it skips them, which is
+  why `npm install --package-lock-only` succeeded with no warnings) but the module's own code uses
+  **static ESM imports** for them, not a guarded dynamic `import()`, so any bundler doing full
+  static analysis (webpack, in `next build`) fails the build the moment anything in the graph
+  reaches that file — regardless of whether the app ever calls the function. Confirmed `1.48.0`
+  (the version already in use, transitively, before this PR) has neither the feature nor the peer
+  declarations, so this is **not** a pre-existing break this PR merely surfaced — it is a real
+  regression introduced by jumping past `1.53.0`. Fix: pinned the direct dependency to the last
+  version before the feature landed, **`1.52.0`** (exact, no `^` — a caret range would still let
+  npm's resolver pick the newest version satisfying both this range and `thirdweb`'s `^1.0.0`,
+  i.e. still `1.58.0`; only an exact pin forces the older resolution). Re-ran
+  `npm install --package-lock-only` and confirmed the lockfile now resolves `@coinbase/cdp-sdk` to
+  `1.52.0` with zero `@x402/*` entries anywhere in it. `generateJwt` (the only cdp-sdk export this
+  app actually calls, from `app/api/onramp/session/route.ts`) is confirmed present and unchanged
+  at `1.52.0` (re-exported from `./auth/utils/jwt.js`, same as at `1.48.0`/`1.58.0`). This is still
+  a genuine upgrade (`1.48.0` → `1.52.0`, four minor versions), just not the latest.
 - `lib/cdp-bridge.ts` is a plain module-store + window-event bridge (no CDP import) that lets
   code outside the lazily-mounted `CDPHooksProvider` tree reach the wallet (`useCdpAddress`,
   `useCdpSolanaSigner`, `KeyExport`, `RecoveryPanel`) without importing `@coinbase/cdp-hooks`
@@ -66,7 +94,8 @@ Re-verified against `main`/`ci/setup` on this machine (2026-10-09), independent 
 
 **In scope (this PR):**
 - `package.json` / `package-lock.json`: `@coinbase/cdp-core`/`@coinbase/cdp-hooks` `^0.0.113` →
-  `^0.0.127`; add `@coinbase/cdp-sdk: ^1.58.0` as a direct dependency (was transitive-only).
+  `^0.0.127`; add `@coinbase/cdp-sdk: 1.52.0` (exact pin, see Problem) as a direct dependency
+  (was transitive-only).
   Lockfile regenerated with `npm install --package-lock-only` (no `node_modules` install, no build).
 - `lib/cdp-bridge.ts`: remove `CDP_EXPORT_REQUEST`/`CDP_EXPORT_RESULT`/`requestCdpKeyExport` (the
   raw-private-key-over-a-promise path). Add a small container-registration + status-relay pair
@@ -219,8 +248,10 @@ Scope) rather than built either way, so nothing here forecloses either option.
 ## Acceptance criteria
 
 1. **Given** the pinned versions, **when** `package.json` is read, **then** `@coinbase/cdp-core`
-   and `@coinbase/cdp-hooks` are `^0.0.127` and `@coinbase/cdp-sdk` is a direct dependency at
-   `^1.58.0`. — Pass (static read of `package.json`).
+   and `@coinbase/cdp-hooks` are `^0.0.127` and `@coinbase/cdp-sdk` is a direct dependency
+   (`1.52.0`, exact). — Pass (static read of `package.json`; CI's `build` job is the real proof
+   that this version doesn't drag in the unresolvable `@x402/*` peer imports — confirmed green
+   after the pin, see Rollout).
 2. **Given** a signed-in CDP session, **when** `CdpWalletBridge` mounts and `mine` is set, **then**
    `getCdpEvmAddress()` reflects that account's EVM address, and clears on sign-out/unmount. — Pass
    (unit test with the existing fake-hooks runtime).
@@ -260,7 +291,9 @@ Scope) rather than built either way, so nothing here forecloses either option.
 
 - Lockfile-only change for the version bumps (`npm install --package-lock-only`); no `node_modules`
   install or build run from this session per the task's hard rules — CI installs for real and is
-  the first real build/typecheck this change gets.
+  the first real build/typecheck this change gets. It already caught one real regression (the
+  `@coinbase/cdp-sdk` version — see Problem) on the first push; re-pushed with the `1.52.0` pin and
+  re-checked CI before calling this done.
 - **Human step (required before this reaches a preview a human will actually click through):**
   every Vercel preview domain needs registering in the CDP dashboard's authorized-domain allowlist
   (max 50 entries) or the wallet stays silent on that preview — unchanged limitation from before

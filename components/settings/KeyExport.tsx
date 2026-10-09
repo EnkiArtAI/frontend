@@ -94,9 +94,8 @@ export default function KeyExport({ ready }: { ready: boolean }) {
               <div className="set-item-title" style={{ marginBottom: 6 }}>Your private key</div>
               <p className="set-item-sub" style={{ marginBottom: 12 }}>
                 Click the button below to copy your key straight to your clipboard — it goes through
-                Coinbase&apos;s own secure export, so we never see or keep it. Then paste it into a Solana
-                wallet app (Phantom or Solflare) to import this wallet there, with the same address and
-                the same USDC (on Solana) you have here.
+                Coinbase&apos;s own secure export, so we never see or keep it, and it disappears from
+                your clipboard the moment you paste it somewhere.
               </p>
               {/* CDP's own secure iframe button renders here (CdpWalletBridge
                   portals it in once this container is registered). Nothing
@@ -106,6 +105,13 @@ export default function KeyExport({ ready }: { ready: boolean }) {
               {status === null && <Loader2 size={16} className="set-spin" />}
               <div ref={containerRef} style={{ minHeight: 40 }} />
               {err && <p style={{ fontSize: 12.5, color: "#e0584f", marginTop: 8 }}>{err}</p>}
+              <div className="set-item-title" style={{ margin: "16px 0 6px" }}>What to do with it</div>
+              <ol className="set-item-sub" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
+                <li>Install a Solana wallet app: Phantom or Solflare, on your phone or as a browser extension.</li>
+                <li>Choose to import an existing wallet with a private key, and paste this key.</li>
+                <li>The wallet opens with the same address and the same USDC (on Solana) you had here.</li>
+                <li>From that app you can send the USDC anywhere: to another wallet, or to an exchange that accepts USDC on Solana, to cash it out.</li>
+              </ol>
               <p className="set-item-sub" style={{ margin: "10px 0 0" }}>
                 Whoever holds this key controls the money. Enki cannot undo a transfer or restore a lost key.
               </p>
