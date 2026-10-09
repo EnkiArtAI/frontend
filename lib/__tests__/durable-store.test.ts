@@ -256,7 +256,10 @@ describe("the paid routes", () => {
   });
 
   it("the agent route stores durably and never answers with an inline image too big to arrive", () => {
-    expect(AGENT).toMatch(/await storeGeneratedImage\(dataUrl, "x402-agent", storeDeadline\(startedAt\)\)/);
+    // REC-3: the storage namespace is the verified payer's own wallet, never
+    // the pseudo-user "x402-agent".
+    expect(AGENT).toMatch(/await storeGeneratedImage\(dataUrl, payerWallet, storeDeadline\(startedAt\)\)/);
+    expect(AGENT).not.toContain('"x402-agent"');
     const guard = AGENT.search(/if \(stored\.imageUrl === dataUrl && buffer\.length > INLINE_MAX_BYTES\) \{/);
     const answer = AGENT.search(/imageUrl: stored\.imageUrl,/);
     expect(guard).toBeGreaterThan(-1);

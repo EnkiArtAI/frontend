@@ -28,7 +28,10 @@ describe("the x402 route never uses the pseudo-user string", () => {
   });
 
   it("uses the verified payer's wallet as the storage namespace", () => {
-    expect(AGENT).toMatch(/storeGeneratedImage\(\s*[\s\S]{0,200}verified\.payer\.toBase58\(\)/);
+    const payer = AGENT.indexOf("const payerWallet = verified.payer.toBase58();");
+    const store = AGENT.indexOf("storeGeneratedImage(dataUrl, payerWallet, storeDeadline(startedAt))");
+    expect(payer).toBeGreaterThan(-1);
+    expect(store).toBeGreaterThan(payer);
   });
 });
 
@@ -43,14 +46,21 @@ describe("the x402 route measures MIME from bytes", () => {
 });
 
 describe("the x402 route records through the shared pipeline exactly once, gated on a linked wallet", () => {
-  it("calls recordGeneration exactly once, from after()", () => {
-    const count = (AGENT.match(/after\(recordGeneration\(/g) ?? []).length;
+  it("calls recordGeneration exactly once, from after(), gated on resolveUserIdForWallet", () => {
+    const count = (AGENT.match(/await recordGeneration\(/g) ?? []).length;
     expect(count).toBe(1);
+    const after = AGENT.indexOf("after(async () => {\n    const recUserId = await resolveUserIdForWallet(supabase, payerWallet);");
+    const guard = AGENT.indexOf("if (!recUserId) return;");
+    const call = AGENT.indexOf("await recordGeneration(supabase, {");
+    expect(after).toBeGreaterThan(-1);
+    expect(guard).toBeGreaterThan(after);
+    expect(call).toBeGreaterThan(guard);
   });
 
   it("carries the settlement signature and chain key as the payment link, never a payment_intent_id", () => {
     expect(AGENT).toMatch(/transactionHash:\s*signature/);
     expect(AGENT).toMatch(/chainKey/);
+    expect(AGENT).toMatch(/paymentIntentId:\s*null/);
   });
 
   it("still calls recordGenerationFailure exactly 4 times, unchanged from before REC-3", () => {

@@ -56,7 +56,7 @@ import { checkAndRecordSolanaSignature } from "@/backend/solana-x402-verifier";
 import { isSolanaChain } from "@/shared/payment-config";
 import { loadPromptText, fillVariables, inputsUnmatched, VALUE_MAX } from "@/lib/generation/prompt-text";
 import { checkPrompt, NOT_CHECKED, textValues } from "@/lib/moderation/prompt-check";
-import { recordGenerationFailure } from "@/lib/generation/record";
+import { recordGenerationFailure, recordGeneration, resolveUserIdForWallet } from "@/lib/generation/record";
 import { addressWarnedOut, addressWarningMessage, byAddress, recordWarning } from "@/lib/moderation/warnings";
 import { childSafetyScore, recordModerationEvent } from "@/lib/moderation-enforcement";
 import { agentBlocked, recordExtractionHit, silentFailure } from "@/lib/moderation/extraction-hits";
@@ -72,7 +72,7 @@ import { checkImageBytes, heldBack } from "@/lib/moderation/image-check-bytes";
 import { recordImageCase } from "@/lib/moderation/image-case";
 import { generateImagesWithWaveSpeed } from "@/backend/services/wavespeed-image-generation";
 import { generateImagesWithOpenAI } from "@/backend/services/openai-image-generation";
-import { generateImagesWithGemini } from "@/backend/services/gemini-image-generation";
+import { generateImagesWithGemini, readImageDimensions } from "@/backend/services/gemini-image-generation";
 import type { ImageGenerationRequest } from "@/backend/services/types";
 import { PublicKey } from "@solana/web3.js";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
@@ -526,8 +526,18 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
     }));
   }
 
-  const dataUrl = `data:image/png;base64,${buffer.toString("base64")}`;
-  const stored = await storeGeneratedImage(dataUrl, "x402-agent", storeDeadline(startedAt));
+  // Measured from the bytes, never assumed: this said image/png
+  // unconditionally while WaveSpeed/Gemini/OpenAI do not all return PNG, so
+  // the stored (and recorded) content type silently mislabeled anything
+  // else (REC-3).
+  const measured = readImageDimensions(buffer);
+  const mediaType = measured ? `image/${measured.format}` : "application/octet-stream";
+  const dataUrl = `data:${mediaType};base64,${buffer.toString("base64")}`;
+  // The payer's own wallet, never the pseudo-user "x402-agent" (REC-3):
+  // verifyAgentPayment already resolved and trusted it above as the
+  // TransferChecked authority — this is that same value, not a new lookup.
+  const payerWallet = verified.payer.toBase58();
+  const stored = await storeGeneratedImage(dataUrl, payerWallet, storeDeadline(startedAt));
   // Not stored by the deadline: inline only while it fits the response cap,
   // or the agent that paid would get HTTP 413 instead of its image.
   if (stored.imageUrl === dataUrl && buffer.length > INLINE_MAX_BYTES) {
@@ -585,6 +595,49 @@ async function settleAndGenerate(input: Input, paymentHeader: string, request: N
       },
     );
   }
+
+  // Record through the same pipeline REC-1 uses — gated on the wallet
+  // already being linked to a real Enki account (REC-3; see the STOP section
+  // in docs/specs/REC-3.md for why an unlinked wallet, the common case for an
+  // x402 agent, is not recorded here: generations.user_id/generated_images.user_id
+  // are NOT NULL FKs to users.id, and minting one for a bare wallet address is
+  // a decision this route does not make for itself). after(), not awaited: a
+  // recording problem must never delay or withhold an already-settled,
+  // already-delivered image.
+  after(async () => {
+    const recUserId = await resolveUserIdForWallet(supabase, payerWallet);
+    if (!recUserId) return;
+    await recordGeneration(supabase, {
+      adult: promptAdult || seen.verdict === "adult",
+      userId: recUserId,
+      promptId: input.promptId ?? null,
+      finalPrompt: promptText,
+      // x402 sends promptText to the provider as-is — no rewrite stage to
+      // keep separate, unlike the human rail's gemini-1.5-flash pass.
+      effectivePrompt: promptText,
+      variableValues: input.variableValues ?? {},
+      model,
+      route,
+      boost: false,
+      aspectRatio: ratio,
+      resolution: input.resolution,
+      seed: null,
+      output: measured ? { width: measured.width, height: measured.height, bytes: buffer.length, format: measured.format } : null,
+      mimeType: measured ? `image/${measured.format}` : null,
+      imageUrl: stored.imageUrl,
+      previewUrl: stored.previewUrl,
+      thumbnailUrl: stored.thumbnailUrl,
+      generationMs: result.generationTime ?? null,
+      workflow: null,
+      references: [],
+      chainKey,
+      transactionHash: signature,
+      amountPaidCents: Math.round(reqs.amountMicro / 10_000),
+      // No generation_payment_intents row on this rail — that table belongs
+      // to the human authorize/capture flow.
+      paymentIntentId: null,
+    });
+  });
 
   return NextResponse.json(
     {
