@@ -414,6 +414,42 @@ export async function resolveRecordingUserId(
   });
 }
 
+/**
+ * The Enki account a wallet address is linked to, or null when it is not
+ * linked to one at all — the ordinary case for an x402 agent wallet, which
+ * pays through the protocol with no Enki account behind it.
+ *
+ * Same lookup already inlined in lib/session-user.ts and
+ * app/api/auth/wallet/jwt/route.ts (user_wallets.address, removed_at null);
+ * exact match, not case-insensitive — a Solana base58 address is
+ * case-sensitive, unlike the EVM-style hex addresses the other two callers
+ * also happen to handle.
+ *
+ * recordGeneration's user_id is a NOT NULL FK to users.id (verified live;
+ * see REC-1/ENG-07). There is no "record under the bare wallet" option
+ * without either minting a users row for an address nobody signed up with,
+ * or relaxing that constraint — both product/schema decisions, not this
+ * helper's to make. It returns null and the caller does not record, rather
+ * than guessing.
+ */
+export async function resolveUserIdForWallet(
+  supabase: SupabaseClient | null,
+  address: string,
+): Promise<string | null> {
+  if (!supabase || !address) return null;
+  const { data, error } = await supabase
+    .from("user_wallets")
+    .select("user_id")
+    .eq("address", address)
+    .is("removed_at", null)
+    .maybeSingle();
+  if (error) {
+    console.warn("[generation] wallet->user lookup failed:", error.message);
+    return null;
+  }
+  return (data?.user_id as string | undefined) ?? null;
+}
+
 /** What a failed generation asked for, so an admin can see what broke for whom (Kev, 2026-10-03). */
 export interface GenerationFailure {
   request: { headers: { get(name: string): string | null } };
