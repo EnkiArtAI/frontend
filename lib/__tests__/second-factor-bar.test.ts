@@ -89,7 +89,8 @@ describe("the page under the bar", () => {
     const history = [...pgv.matchAll(/\.pgv-history(-handle)? \{([^}]*)\}/g)].filter((m) => /\btop:/.test(m[2]));
     expect(history).toHaveLength(4);
     for (const m of history) expect(m[2]).toMatch(/top: (calc\(12px \+ )?var\(--ek-banner-h, 0px\)/);
-    expect(readSource(join(ROOT, "app", "editor", "page.tsx"))).toMatch(/position: "fixed", inset: "var\(--ek-banner-h, 0px\) 0 0 0"/);
+    // The Prompt Editor's fixed layer starts below it (plan R1).
+    expect(css("components", "prompt-editor", "prompt-editor.css")).toMatch(/\n\.pe-root \{[^}]*\n {2}top: var\(--ek-banner-h, 0px\);/);
     // Admin: .ek-app's min-height: 100vh would beat the subtracted height.
     const admin = readSource(join(ROOT, "app", "admin", "page.tsx"));
     const roots = [...admin.matchAll(/className="ek-app" style=\{\{([^}]*)\}\}/g)].map((m) => m[1]);

@@ -1,0 +1,498 @@
+/* The Prompt Editor (components/prompt-editor, plan §2.1): one tree for
+   every width. Two columns with a divider from 1024 px; Craft | Verify tabs
+   below 1024 (TABS); phone sizing below 768 (PHONE). The layer sits in the
+   shell, under its 2FA bar, beside its menu (R1); on a phone it covers the
+   shell's header and tab bar. Colours are tokens only (plan §1.1). Verify
+   and the release bar are in verify.css. */
+
+.pe-root {
+  position: fixed;
+  top: var(--ek-banner-h, 0px);
+  left: var(--ek-sw);
+  right: 0;
+  bottom: 0;
+  z-index: 140;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--enki-paper);
+  color: var(--enki-ink);
+  font-family: var(--font-sans), sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+/* Shown on one side of 1024 px only. */
+@media (min-width: 1024px) {
+  .pe-tabs-only { display: none !important; }
+}
+@media (max-width: 1023.98px) {
+  .pe-wide-only { display: none !important; }
+}
+
+/* ── Header: back, title, steps. */
+.pe-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+  min-width: 0;
+  min-height: 56px;
+  padding: 6px 24px 0;
+  border-bottom: 1px solid var(--enki-rule-2);
+  background: var(--enki-paper);
+}
+.pe-back {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px 0 9px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 999px;
+  background: var(--enki-paper);
+  color: var(--enki-ink-2);
+  font: 400 12.5px/1 var(--font-sans), sans-serif;
+  cursor: pointer;
+}
+.pe-back:hover { border-color: var(--enki-ink-3); color: var(--enki-ink); }
+.pe-title {
+  flex: 1 1 auto;
+  min-width: 110px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--enki-ink);
+  font: 400 26px/1.2 var(--font-serif), Georgia, serif;
+  letter-spacing: normal;
+}
+.pe-title::placeholder { color: var(--enki-ink-3); }
+/* These fields drop the kit ring for a line of their own. */
+.pe-title:focus-visible { box-shadow: inset 0 -2px 0 var(--enki-ember); }
+.pe-steps { display: flex; flex: 0 0 auto; align-self: flex-end; margin-left: auto; }
+.pe-tablist { display: flex; }
+/* From 1024 px the steps only show progress. */
+.pe-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--enki-ink-3);
+  font: 500 13px/1 var(--font-sans), sans-serif;
+  white-space: nowrap;
+}
+.pe-step-badge {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 50%;
+  color: var(--enki-ink-3);
+  font: 400 10.5px/1 var(--font-mono), monospace;
+}
+.pe-step[data-done] { color: var(--enki-ink-2); }
+.pe-step[data-done] .pe-step-badge { border-color: var(--enki-ember); background: var(--enki-ember); color: var(--enki-paper); }
+.pe-step[data-active] { border-bottom-color: var(--enki-ember); color: var(--enki-ink); font-weight: 600; }
+.pe-step[data-active] .pe-step-badge { border-color: var(--enki-ink); background: var(--enki-ink); color: var(--enki-paper); }
+.pe-notice {
+  flex: 1 1 100%;
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  color: var(--enki-ink-2);
+}
+.pe-notice button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--enki-ember);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* ── Body: Craft | divider | Verify. Each column scrolls on its own. */
+.pe-body {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--pe-split, 520px) minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+.pe-body:has(> .pe-split[data-dragging]) { user-select: none; }
+.pe-craft {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  min-height: 0;
+  padding: 16px 22px 0 24px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  border-right: 1px solid var(--enki-rule-2);
+}
+.pe-split {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--pe-split, 520px);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  transform: translateX(-7px);
+  cursor: col-resize;
+  touch-action: none;
+}
+.pe-split::before {
+  content: "";
+  width: 4px;
+  height: 44px;
+  border-radius: 2px;
+  background: var(--enki-rule);
+  transition: background 0.15s;
+}
+.pe-split:hover::before,
+.pe-split[data-dragging]::before { background: var(--enki-ember); }
+
+/* Loading a prompt, or one that cannot be opened here. */
+.pe-state {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px 24px;
+  color: var(--enki-ink-3);
+  font-size: 13.5px;
+  text-align: center;
+}
+.pe-state p { margin: 0; }
+.pe-skel { display: block; width: min(520px, 100%); height: 32px; border-radius: 12px; background: var(--enki-paper-2); }
+.pe-skel--tall { height: 260px; }
+
+/* ── Rows above the prompt. */
+.pe-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--enki-rule-2);
+}
+.pe-listing { --kit-pill-h: 32px; }
+.pe-gen-row { --kit-pill-h: 30px; gap: 8px; }
+.pe-primary .kit-pill:has(.kit-unset) { border-color: var(--enki-ember); }
+.pe-category,
+.pe-primary { display: contents; }
+.pe-unset { color: var(--enki-ink-3); }
+.pe-note,
+.pe-hint { font-size: 11.5px; color: var(--enki-ink-3); }
+.pe-diamond { width: 7px; height: 7px; background: currentColor; transform: rotate(45deg); }
+.pe-price {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  height: 32px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 999px;
+}
+.pe-price > button {
+  width: 28px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--enki-ink-2);
+  font-size: 15px;
+  cursor: pointer;
+}
+.pe-price > button:disabled { opacity: 0.3; cursor: default; }
+.pe-price:has(input:focus-visible) { border-color: var(--enki-ember); }
+.pe-price-val { display: inline-flex; align-items: center; color: var(--enki-ember); font: 600 12.5px/1 var(--font-mono), monospace; }
+.pe-price-val input {
+  width: 4.5ch;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+/* ── Prompt. The kit mirror takes its metrics from these variables. */
+.pe-prompt { display: flex; flex-direction: column; gap: 8px; }
+.pe-prompt-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.pe-prompt-head .pe-hint { margin-right: auto; }
+.pe-prompt-head .pe-add { margin-left: auto; }
+.pe-undo { display: flex; flex-shrink: 0; border: 1px solid var(--enki-rule); border-radius: 999px; }
+.pe-undo button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--enki-ink-2);
+  cursor: pointer;
+}
+.pe-undo button + button { border-left: 1px solid var(--enki-rule); border-radius: 0 999px 999px 0; }
+.pe-undo button:first-child { border-radius: 999px 0 0 999px; }
+.pe-undo button:hover:not([aria-disabled="true"]) { background: var(--enki-paper-2); }
+.pe-undo button[aria-disabled="true"] { opacity: 0.3; cursor: default; }
+.pe-field {
+  position: relative;
+  --kit-fs: 16.5px;
+  --kit-lh: 1.55;
+  --kit-pad: 16px 18px;
+  --kit-radius: 16px;
+}
+.pe-field .kit-tok--var,
+.pe-field .kit-tok--ref {
+  cursor: grab;
+  touch-action: pan-y;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.pe-field .kit-tok[data-dragged] { opacity: 0.35; }
+/* Where a dragged token lands: a bar with a cap, glowing ember. */
+.pe-marker {
+  position: absolute;
+  z-index: 3;
+  width: 3px;
+  margin-left: -1.5px;
+  border-radius: 2px;
+  background: var(--enki-ember);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--enki-ember) 22%, transparent);
+  pointer-events: none;
+}
+.pe-marker::before {
+  content: "";
+  position: absolute;
+  top: -3px;
+  left: -3.5px;
+  width: 10px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--enki-ember);
+}
+
+/* ── Variables. */
+.pe-vars { display: flex; flex-direction: column; gap: 6px; }
+.pe-vars-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.pe-vars-tools { display: flex; align-items: center; gap: 10px; }
+.pe-add {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--enki-ink-2);
+  font: 400 12px/1 var(--font-sans), sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pe-add:hover { border-color: var(--enki-ember); color: var(--enki-ember); }
+.pe-empty {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1.5px dashed var(--enki-rule);
+  border-radius: 12px;
+  color: var(--enki-ink-3);
+  font-size: 12.5px;
+  text-wrap: pretty;
+}
+.pe-var {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 10px 12px;
+  border: 1px solid color-mix(in oklab, var(--enki-ember) 30%, var(--enki-rule));
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--enki-ember) 5%, var(--enki-paper));
+}
+.pe-var-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pe-var-dot { flex-shrink: 0; width: 5px; height: 5px; border-radius: 50%; background: var(--enki-ember); }
+.pe-var-name {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 2px 0;
+  border: 0;
+  border-bottom: 1px dashed transparent;
+  outline: 0;
+  background: transparent;
+  color: var(--enki-ember);
+  font: 400 12px/1 var(--font-mono), monospace;
+}
+.pe-var-name:focus-visible { border-bottom-style: solid; border-bottom-color: var(--enki-ember); }
+.pe-var-name[data-state="unnamed"] { border-bottom-color: var(--enki-ember); }
+.pe-var-name[data-state="error"] { border-bottom-color: var(--enki-danger); }
+.pe-var-issue { margin: -2px 0 0; color: var(--enki-danger); font-size: 11px; }
+.pe-ai {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--enki-ember);
+  color: var(--enki-paper);
+  font: 600 10.5px/1 var(--font-sans), sans-serif;
+  white-space: nowrap;
+}
+.pe-var .kit-seg { flex-shrink: 0; --kit-seg-h: 24px; }
+.pe-var .kit-seg-btn { padding: 0 10px; font-size: 11.5px; font-weight: 400; }
+.pe-box { width: 10px; height: 10px; border: 1.5px solid currentColor; border-radius: 3px; }
+.pe-var-x {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--enki-ink-3);
+  cursor: pointer;
+}
+.pe-var-x:hover { background: var(--enki-paper-3); color: var(--enki-ink); }
+.pe-var-value {
+  --kit-fs: 13.5px;
+  display: block;
+  width: 100%;
+  padding: 8px 11px;
+  border: 1px solid var(--enki-rule-2);
+  border-radius: 9px;
+  outline: 0;
+  background: var(--enki-paper);
+  color: var(--enki-ink);
+  font: 400 var(--kit-fs)/1.5 var(--font-sans), sans-serif;
+}
+.pe-var-value::placeholder { color: var(--enki-ink-3); }
+.pe-var-value:focus { border-color: var(--enki-ink-3); }
+
+/* ── Generate bar: sticky at the bottom of Craft, the last thing in it. */
+.pe-bar {
+  --kit-pill-h: 36px;
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: auto;
+  padding: 12px 0 18px;
+  border-top: 1px solid var(--enki-rule-2);
+  background: var(--enki-paper);
+  box-shadow: var(--enki-shadow-bar);
+}
+.pe-bar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pe-vary { gap: 7px; font-weight: 500; }
+.pe-vary:hover:not(:disabled) { border-color: var(--enki-ember); color: var(--enki-ember); }
+.pe-vary[data-rolling] svg { animation: pe-wobble 0.8s ease-in-out infinite; }
+@keyframes pe-wobble {
+  25% { transform: rotate(-14deg); }
+  75% { transform: rotate(14deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pe-vary[data-rolling] svg { animation: none; }
+}
+.pe-live { display: flex; flex-direction: column; gap: 6px; margin: -2px 0 2px; }
+.pe-live-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pe-live-label {
+  color: var(--enki-ink-3);
+  font: 400 10.5px/1 var(--font-mono), monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.pe-live-strip { display: flex; gap: 8px; margin: 0 -2px; padding: 2px 2px 4px; overflow-x: auto; --kit-tile-radius: 10px; }
+
+/* ── Touch: 16 px fields (no iOS zoom), and the bar steps aside while the keyboard is up. */
+@media (pointer: coarse) {
+  .pe-var-name,
+  .pe-price-val input { font-size: 16px; }
+  .pe-var-name { height: 28px; }
+  .pe-undo button { width: 36px; }
+  .pe-root:has(:is(.pe-head, .pe-craft) :is(input, textarea):focus) .pe-bar {
+    visibility: hidden;
+    transform: translateY(100%);
+    transition: transform 0.18s ease, visibility 0s linear 0.18s;
+  }
+}
+
+/* ── Below 1024 px: Craft | Verify tabs. Both panes stay laid out in one
+   cell, so each keeps its scroll; the other one is hidden. */
+@media (max-width: 1023.98px) {
+  .pe-head { gap: 10px; padding: max(12px, env(safe-area-inset-top)) 16px 0; }
+  .pe-title { font-size: 24px; height: 36px; }
+  .pe-steps { flex: 1 1 100%; align-self: auto; margin-left: 0; }
+  /* Craft and Verify take two of the three thirds; Release is the last. */
+  .pe-tablist { flex: 2 1 0; }
+  .pe-step {
+    flex: 1;
+    justify-content: center;
+    gap: 7px;
+    height: 38px;
+    border-bottom-color: transparent;
+    color: var(--enki-ink-3);
+    font-weight: 500;
+  }
+  button.pe-step { cursor: pointer; }
+  .pe-step[data-done] { color: var(--enki-ink-2); }
+  .pe-step[data-active] { border-bottom-color: transparent; font-weight: 500; }
+  .pe-step[data-active]:not([data-done]) .pe-step-badge { border-color: var(--enki-rule); background: transparent; color: var(--enki-ink-3); }
+  .pe-step[aria-selected="true"] { border-bottom-color: var(--enki-ember); color: var(--enki-ink); font-weight: 600; }
+  .pe-step[aria-selected="true"] .pe-step-badge { border-color: var(--enki-ink); background: var(--enki-ink); color: var(--enki-paper); }
+  .pe-step-badge { width: 18px; height: 18px; font-size: 10px; }
+
+  .pe-body { grid-template-columns: minmax(0, 1fr); }
+  .pe-craft,
+  .pe-body > .pe-verify { grid-area: 1 / 1; }
+  .pe-craft { padding: 14px max(24px, calc((100% - 720px) / 2)) 0; border-right: 0; }
+  .pe-root[data-tab="craft"] .pe-body > .pe-verify,
+  .pe-root[data-tab="verify"] .pe-craft { visibility: hidden; }
+  .pe-split { display: none; }
+
+  .pe-bar {
+    --kit-pill-h: 34px;
+    gap: 8px;
+    margin-inline: calc(-1 * max(24px, calc((100% - 720px) / 2)));
+    padding: 10px max(24px, calc((100% - 720px) / 2)) calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+  .pe-bar-row .kit-gen { flex: 1 1 100%; }
+}
+
+/* ── Phone. */
+@media (max-width: 767.98px) {
+  .pe-root { left: 0; z-index: 158; }
+  /* A shell panel (Add funds opens Payment) sits between the shell's header and tab bar, which come back over the editor. */
+  .ek-app:has(.ek-panel-scrim) .pe-root { z-index: 140; }
+  .pe-back { width: 34px; height: 34px; justify-content: center; padding: 0; }
+  .pe-back-label { display: none; }
+  .pe-craft { padding-inline: 16px; }
+  .pe-bar { margin-inline: -16px; padding-inline: 16px; }
+  .pe-field { --kit-fs: 16px; --kit-pad: 14px 16px; }
+  .pe-gen-row .pe-note { flex: 1 1 100%; }
+  .pe-var-value { --kit-fs: 14px; padding: 9px 11px; }
+}
