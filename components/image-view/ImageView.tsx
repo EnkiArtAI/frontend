@@ -4,6 +4,9 @@ import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import type { ImageViewSeed } from "@/lib/ui/image-view/seed";
 import ImageViewDesktop from "./ImageViewDesktop";
+import ImageViewMobile from "./ImageViewMobile";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { PHONE } from "@/lib/ui/kit/breakpoints";
 import { useImageViewModel, type ImageViewModel } from "./useImageViewModel";
 import "./image-view.css";
 
@@ -20,9 +23,10 @@ export default function ImageView({ seed, onClose }: {
 }) {
   const router = useRouter();
   const model = useImageViewModel(seed);
+  const phone = useMediaQuery(PHONE);
   const leave = onClose ?? (() => (window.history.length > 1 ? window.history.back() : router.push("/home")));
-  // IV1c: phones get ImageViewMobile here, chosen by useMediaQuery(PHONE) (lib/ui/kit/breakpoints); until then they get the stacked tier.
-  return model.status === "ready" ? <ImageViewDesktop model={model} onClose={leave} /> : <PageState model={model} onBack={leave} />;
+  if (model.status !== "ready") return <PageState model={model} onBack={leave} />;
+  return phone ? <ImageViewMobile model={model} onClose={leave} /> : <ImageViewDesktop model={model} onClose={leave} />;
 }
 
 function PageState({ model: m, onBack }: { model: ImageViewModel; onBack: () => void }) {

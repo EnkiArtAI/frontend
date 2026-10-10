@@ -11,6 +11,7 @@ vi.mock("@/hooks/useViewerWallets", () => ({ useViewerWallets: () => ({ userKey:
 vi.mock("@/hooks/useRenderQueue", () => ({ useRenderQueue: () => ({}) }));
 vi.mock("@/components/image-view/ImageViewDesktop", () => ({ default: function ImageViewDesktop() { return null; } }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: () => {} }) }));
+vi.mock("@/hooks/useMediaQuery", () => ({ useMediaQuery: () => false }));
 const status = vi.hoisted(() => ({ now: "gone" }));
 vi.mock("@/components/image-view/useImageViewModel", async (importOriginal) => ({
   ...(await importOriginal<object>()),
