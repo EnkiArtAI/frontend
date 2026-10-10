@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { GET as gate } from "@/app/api/gate/route";
+import { GET as gate } from "../../app/api/gate/route";
 
 /**
  * SOC-8: GET /api/gate gains `whitelistActive`, the one piece of server
