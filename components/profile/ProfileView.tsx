@@ -615,13 +615,15 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
     });
   };
 
+  // Both profiles read one creator's shelf. Wait for the own handle rather
+  // than requesting the public feed; the cache follows the current creator.
+  const shelf = handle ?? gateProfile?.handle ?? null;
   const { data, isError } = useQuery({
-    queryKey: ["/api/marketplace/prompts", "profile", handle ?? "own"],
+    queryKey: ["/api/marketplace/prompts", "profile", shelf],
+    enabled: !!shelf,
     queryFn: async () => {
-      const params = new URLSearchParams({ limit: "20", sortBy: "newest" });
-      // Foreign: only this creator's shelf — same query and mapping as the
-      // feed, narrowed server-side by ?creator.
-      if (handle) params.set("creator", handle);
+      if (!shelf) return { prompts: [] };
+      const params = new URLSearchParams({ limit: "20", sortBy: "newest", creator: shelf });
       const res = await fetch(`/api/marketplace/prompts?${params.toString()}`, { headers: viewerHeaders(), credentials: "include" });
       if (!res.ok) throw new Error("Failed to load prompts");
       return res.json();
@@ -898,7 +900,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
                 key={prompt.id}
                 prompt={prompt}
                 onOpen={setOpen}
-                onEdit={own ? requestPromptEdit : undefined}
+                onEdit={own ? (p) => router.push(`/editor?id=${encodeURIComponent(p.id)}`) : undefined}
               />
             ))}
           </div>
