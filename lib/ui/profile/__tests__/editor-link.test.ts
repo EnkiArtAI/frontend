@@ -1,19 +1,19 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import type { EnkiPrompt } from "@/lib/enkiPromptAdapter";
-const edit = vi.hoisted(() => ({ push: vi.fn(), id: "22222222-2222-4222-8222-222222222222" }));
+const edit = vi.hoisted(() => ({ push: vi.fn(), id: "22222222-2222-4222-8222-222222222222", handle: "qa" as string | null, queries: [] as Array<{queryKey: unknown[]; enabled: boolean; queryFn: () => Promise<unknown>}> }));
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
   useState: <T>(v: T | (() => T)) => [typeof v === "function" ? (v as () => T)() : v, vi.fn()],
   useEffect: () => {}, useMemo: <T>(f: () => T) => f(), useRef: <T>(v: T) => ({ current: v }),
 }));
-vi.mock("@tanstack/react-query", () => ({ useQuery: () => ({ data: { prompts: [{ id: edit.id, title: "Portrait" }] }, isError: false }) }));
+vi.mock("@tanstack/react-query", () => ({ useQuery: (query: typeof edit.queries[number]) => { edit.queries.push(query); return { data: query.enabled ? { prompts: [{ id: edit.id, title: "Portrait" }] } : undefined, isError: false }; } }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: edit.push }), useSearchParams: () => new URLSearchParams() }));
 vi.mock("thirdweb/react", () => ({ useActiveAccount: () => null }));
 vi.mock("@solana/wallet-adapter-react", () => ({ useWallet: () => ({ publicKey: null }) }));
 vi.mock("@/hooks/useCdpAddress", () => ({ useCdpAddress: () => ({ address: null }) }));
 vi.mock("@/hooks/useSolanaAuth", () => ({ useSolanaAuth: () => ({ isAuthenticated: true, walletAddress: "local-fixture-wallet" }) }));
-vi.mock("@/components/BetaGate", () => ({ useBetaAccess: () => ({ profile: { handle: "qa", bio: null, avatarUrl: null, coverUrl: null } }) }));
+vi.mock("@/components/BetaGate", () => ({ useBetaAccess: () => ({ profile: { handle: edit.handle, bio: null, avatarUrl: null, coverUrl: null } }) }));
 vi.mock("@/components/enki/EnkiCard", () => ({ default: () => null }));
 vi.mock("@/components/enki/EnkiDetailPanel", () => ({ default: () => null }));
 vi.mock("@/components/ReportButton", () => ({ ReportButton: () => null }));
@@ -25,7 +25,8 @@ function* walk(node: ReactNode): Generator<ReactElement<Record<string, unknown>>
   else if (isValidElement<Record<string, unknown>>(node)) { yield node; yield* walk(node.props.children as ReactNode); }
 }
 const cards = (foreign = false) => [...walk(ProfileView(foreign ? { handle: "other", isOwnProfile: false } : {}))].filter((el) => el.type === EnkiCard);
-beforeEach(() => { edit.push.mockClear(); edit.id = "22222222-2222-4222-8222-222222222222"; });
+afterEach(() => vi.unstubAllGlobals());
+beforeEach(() => { edit.push.mockClear(); edit.queries = []; edit.handle = "qa"; edit.id = "22222222-2222-4222-8222-222222222222"; });
 describe("the profile's released-prompt pencil", () => {
   it("routes to the stored prompt id, so the editor loads fresh owner-authorized data", () => {
     const card = cards()[0];
@@ -44,5 +45,37 @@ describe("the profile's released-prompt pencil", () => {
     const foreign = cards(true);
     expect(foreign).toHaveLength(1); expect(foreign[0].props.onEdit).toBeUndefined();
     expect(edit.push).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("the Released shelf behind the pencil", () => {
+  it("reads only the own creator's prompts, never the public feed", async () => {
+    const fetcher = vi.fn(async (_url: string) => new Response(JSON.stringify({prompts: []})));
+    vi.stubGlobal("fetch", fetcher); cards();
+    await edit.queries.at(-1)!.queryFn();
+    const url = new URL(fetcher.mock.calls[0][0] as string, "https://local.example");
+    expect(url.searchParams.get("creator")).toBe("qa");
+  });
+  it("uses the viewed creator for a foreign profile", async () => {
+    const fetcher = vi.fn(async (_url: string) => new Response(JSON.stringify({prompts: []})));
+    vi.stubGlobal("fetch", fetcher); cards(true);
+    await edit.queries.at(-1)!.queryFn();
+    const url = new URL(fetcher.mock.calls[0][0] as string, "https://local.example");
+    expect(url.searchParams.get("creator")).toBe("other");
+  });
+  it("waits for the own handle and never falls back to the public feed", async () => {
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    edit.handle = null; expect(cards()).toHaveLength(0);
+    const query = edit.queries.at(-1)!;
+    expect(query.enabled).toBe(false);
+    expect(await query.queryFn()).toEqual({prompts: []});
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("keys the Released list by the current creator when accounts change", () => {
+    cards(); const first = edit.queries.at(-1)!.queryKey;
+    edit.handle = "second"; cards();
+    expect(edit.queries.at(-1)!.queryKey).not.toEqual(first);
+    expect(edit.queries.at(-1)!.queryKey.at(-1)).toBe("second");
   });
 });
