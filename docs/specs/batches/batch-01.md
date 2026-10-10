@@ -37,18 +37,48 @@ of Finding 1, not a separate root cause.
 fail-closed, scope-string collision/injection, banned-user funds-door-stays-open, and the
 mutation evidence for the unit-level checks all held up.
 
-## Verdict
-BAN-8 (#166) is **not ready to merge**. Sending back to Agent A: the step-up gate must be
-enforced before the server returns a co-signable transaction (i.e. before/at `/build`,
-not only at `/submit`), while still achieving single-use + request-id binding (mint the
-request id at build time, before `partialSign`, and consume the token there). MFA-1
-(#165) is unaffected by this finding and can proceed independently once a human reads
-back the consumed-token-store migration.
+## Revision (2026-10-10) — fix delivered, one scope reduction to flag
+
+Agent A moved the step-up check back to `app/api/wallet/withdraw/build/route.ts`,
+running right after `checkWithdrawRequest` and before `buildWithdrawTx` (which does the
+fee-payer co-sign via `partialSign`). A blocked step-up now means the co-signed
+transaction is never created, so there is nothing for a client to sign-and-broadcast
+around the check — the confirmed bypass is closed. `/submit` no longer checks step-up
+(nothing left to check there); it keeps the owner-confirmation email.
+
+**Scope reduction, deliberately flagged, not silent:** the fix reverted the step-up scope
+to the original **destination-bound** shape (`withdraw:<base58 address>`), not the
+**request-id-bound** shape BAN-8 originally asked for. Reason: true request-id binding
+at `/build` hits a chicken-and-egg problem — the withdrawal row's id doesn't exist before
+the call that would need to gate on it; solving that needs either persisting unsigned tx
+bytes for a later resume (a second migration) or a speculative row insert, neither
+attempted here. Single-use is still achieved via MFA-1's generic consumed-token store
+(any `withdraw:*` token's `jti` is consumed once, so a destination-bound token can't be
+replayed) — this closes the regression and the original replay concern without request-id
+binding. **Net effect: BAN-8 now ships "destination-bound, single-use" rather than the
+originally-specced "request-id-bound, single-use."** Documented in
+`docs/specs/BAN-8.md` ("Decisions" §2, "Revision history"). Worth the human's attention
+when reviewing #166 — this is a real, reasoned tradeoff, not a downgrade to avoid work,
+but it is a smaller delivery than the ticket asked for.
+
+**Bonus finding:** the frontend follow-up task filed earlier (task_4eda0378, "move
+withdraw step-up UI wrap from /build to /submit") is now stale and has been dismissed —
+`SendUsdcPanel.tsx` already wraps `/build` with the correct scope, since that's exactly
+where the check reverted to. No frontend PR needed after all.
+
+Red test: `lib/__tests__/withdraw-stepup.test.ts`, the "DECISIVE" test proving an
+externally-signed wallet can never obtain a co-signed transaction from `/build` without a
+valid, unconsumed, correctly-scoped step-up token. Red: CI run 38009447541 (4 failures,
+all in this file, 207 other files/2311 tests green). Green: runs 38009932654 + 38009935974
+(build/lint/tests/typecheck all pass). Mutation check was in progress as of this report;
+coordinator will record the result once it lands.
 
 ## Subagents used
-- Agent A (task agent): MFA-1 + BAN-8 implementation.
+- Agent A (task agent): MFA-1 + BAN-8 implementation and revision.
 - Independent reviewer (read-only, diff + spec only, no prior context from Agent A's
-  session): found the regression above.
+  session): found the original regression.
 
 ## Next
-Agent A revising BAN-8 per the verdict above. Not blocked otherwise.
+Waiting on Agent A's mutation-check confirmation for the revised fix. MFA-1 (#165)
+unaffected throughout, still green, ready for human merge once the consumed-token-store
+migration is applied and read back.
