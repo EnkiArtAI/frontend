@@ -1,96 +1,53 @@
-# Batch 06 · ENG-11 (delete 26 dead backend files) + ENC-6 (backend vitest suite)
+# Batch 06: CDP-1 + SOC-8
 
-Status: Delivered — two PRs open, CI red for pre-existing reasons unrelated to this batch.
+Baseline: main @ 470739a   PRs: #167 (CDP-1), #169 (SOC-8, stacked on #167)
 
-## Why this batch, out of order
+## Done / Remaining
+- #167 (CDP-1): SDK upgrade `^0.0.113`→`^0.0.127`, `@coinbase/cdp-sdk` promoted to a direct
+  dependency (pinned exact `1.52.0`, not `^1.58.0` — see below), key export migrated fully
+  to the secure iframe flow (deprecated `useExportSolanaAccount`/`exportSolanaAccount`
+  removed), EVM address shown read-only. ESLint import ban kept enforced. CI green
+  (coordinator-verified: build/lint/tests/typecheck all pass on both pushes).
+- #169 (SOC-8): fully implemented, all 4 code ACs pass, CI green (coordinator-verified).
+  `/auth/complete` correctly left out of `PUBLIC_PATHS` pending the separate KEV-SOC gate.
 
-Batch 02 (ENG-01/ENG-19) is blocked: both tasks need the root Next.js app's `node_modules` to
-write/run tests, which is off-limits per explicit instruction. Per `AGENT_INSTRUCTIONS.md` §2's own
-rule for a blocked batch, this was raised as a question rather than decided unilaterally; the human
-chose to jump to Batch 06, which is fully isolated to `frontend/backend/`'s own already-installed
-dependencies. See `docs/specs/batches/batch-02.md` for the Batch 02 blocker record.
+## Coordinator spot-check (not a required independent review — CDP-1/SOC-8 isn't a
+money/funds path per 4B.4 — but verified directly given the version-pin claim's
+complexity)
+Confirmed via `gh pr diff 167`: the first attempt pinned `cdp-sdk@1.58.0`, which broke the
+`next build --webpack` job with an unresolvable transitive import
+(`@x402/evm/upto/client` etc., pulled in via `thirdweb` → `@base-org/account` →
+`toEvmSmartAccount.js` → `signX402Payment.js` — nothing this app calls). The agent
+diffed every cdp-sdk release 1.48.0→1.58.0 off the npm registry, found `signX402Payment`
+first appears at 1.53.0, and pinned the exact last-clean version (`1.52.0`) rather than a
+caret range (a caret would still resolve to 1.58.0 given `thirdweb`'s own `^1.0.0`).
+Confirmed in the lockfile diff and CI run logs — this is a real regression caught and
+fixed, not a shortcut.
 
-## What was done
+## Decisions needed from the human
+1. **CDP-1 Decision 1 — attach-wallet pre-claim verification.** Option a: verify the
+   claimed address against CDP server-side (end-user lookup by `sub`) before writing —
+   closes the gap before #150's collision check fires, at the cost of a CDP API round
+   trip on every attach. Option b: keep the existing collision-only check, add a
+   detection/alert cron instead. **Agent's recommendation: option a** — the credential
+   plumbing already exists (`@coinbase/cdp-sdk` is now a direct dependency, already used
+   for `generateJwt`). Full writeup: `docs/specs/CDP-1.md` on branch `feat/cdp-1-upgrade-wallet`.
+2. **CDP-1 Decision 2 — recovery-file feature.** Option a: rewrite around the iframe
+   (user copies via CDP's button, pastes into Enki's passphrase field, format-checked).
+   Option b: drop the custom file, point users at the iframe export as the sole backup
+   story. **Agent's recommendation: option a**, because the existing shipped copy already
+   promises "even if Enki disappears entirely" — a stronger claim than option b supports.
+   Also flagged, not investigated: CDP 0.0.127 added a distinct "eject" action on the same
+   iframe hook (full custody exit, not just copy) that may be closer to what "recovery"
+   actually means than a clipboard copy — docs.cdp.coinbase.com was unreachable this
+   session to check further.
+3. Both decisions are written up in full in `docs/specs/CDP-1.md`; neither was implemented
+   (correctly — these are product/security calls, not engineering ones).
 
-- **PR [#112](https://github.com/EnkiArtAI/frontend/pull/112)** (base `trial-merge-110`) — ENG-11:
-  deletes the 26 dead backend files (never-deployed standalone Express server) plus the two test
-  files that only covered them, and the stale `tsconfig.json`/`eslint-suppressions.json` entries
-  pointing at them. Deletions only. Full import-graph re-verification in `docs/specs/ENG-11.md`.
-- **PR [#113](https://github.com/EnkiArtAI/frontend/pull/113)** (base: PR #112's branch, stacked) —
-  ENC-6: fixes `backend/vitest.config.ts`'s `@` alias (pointed at `backend/` itself instead of the
-  frontend root, breaking `encryption.ts`'s `@/lib/crypto` import inside backend's isolated
-  toolchain), adds real unmocked coverage for `encryption.ts` (previously zero), fixes
-  `setup.ts`'s missing `FIELD_ENCRYPTION_KEY_B64` stub, and rolls in the earlier
-  `variable-substitution.test.ts` mock fix. Details and the explicit CI-join decision gate in
-  `docs/specs/ENC-6.md`.
-- Both specs written before/with implementation per the lifecycle. Both PRs' local test evidence
-  (backend's own isolated `bunx vitest run`) is real and green: 32/32 passing, mutation-checked for
-  the alias fix (reverted it, confirmed the exact `Cannot find module '@/lib/crypto'` failure,
-  restored it, confirmed green again).
-
-## AC pass/pending
-
-| Task | AC | Status |
-|---|---|---|
-| ENG-11 | AC-1 (zero dangling imports outside flagged exception) | ✅ Verified |
-| ENG-11 | AC-2 (backend suite: 2 failed → 0 failed) | ✅ Verified |
-| ENG-11 | AC-3 (configs stay valid JSON) | ✅ Verified |
-| ENG-11 | AC-4 (root typecheck/build) | ⏸ Blocked — no root install |
-| ENC-6 | AC-1 (0 failed suites) | ✅ Verified |
-| ENC-6 | AC-2 (mutation-proof on the alias) | ✅ Verified |
-| ENC-6 | AC-3 (variable-substitution still green) | ✅ Verified |
-| ENC-6 | AC-4 (root `npm test`/CI join) | ⏸ Decision-gated + blocked on root install |
-
-## CI status (both PRs) — red, but not from this batch's changes
-
-Checked the actual failure logs rather than assuming:
-- `lint`/`build`/`tests`/`typecheck` (GitHub Actions): all fail identically on
-  `npm ci --no-audit --no-fund` → `npm error ... Missing: @emnapi/runtime@1.10.0 from lock file`.
-  This is **ENG-09's already-diagnosed root-lockfile drift**, fixed on a separate branch
-  (`fix/ENG-09-ci-green-on-main`, targeting `main`) that has not been merged into `trial-merge-110`.
-  Every PR based on `trial-merge-110` will show this same failure until that merge happens — not
-  something introduced by ENG-11/ENC-6.
-- 3 Vercel checks fail with "Cannot deploy from a private GitHub organization repository on the
-  Hobby plan" — an account/billing condition, unrelated to any code in this repo.
-- Not running Auto-fix: both causes are outside what a code fix can address from here (one needs
-  the root install this session isn't doing, the other needs a Vercel plan change).
-
-## Decisions needed
-
-- **ENC-6's CI-join decision** (Kev, per the task's own 2026-09-24 comment): does the backend
-  suite (now 2 files, would shrink to 1 once ENG-02 removes `variable-substitution.ts`) get merged
-  into the root `vitest.config.ts`/`npm test` and join CI this sprint? Recommendation in
-  `docs/specs/ENC-6.md`: merge, once ENG-02 lands — not applied.
-- **`backend/scripts/**` fate** (KG, ENG-11 comment): six scripts now have dangling imports to
-  files ENG-11 deleted (`migrate.ts`, `test-phase-2a-integration.ts`, `test-phase-2b-integration.ts`
-  import `../database/db`, `../services/index`, `../services/generation-processor`,
-  `../workers/generation-worker`). Harmless today (tsconfig-excluded, not run by anything), but
-  needs a decision before it's forgotten.
-- **`facilitator.ts`'s dummy-secret fallback** (KG, ENG-11 comment): recommend replacing
-  `'dummy_secret_key_for_build_time'` with a fail-fast. Not done here (behavior change, doesn't
-  belong in a deletions-only PR) — worth its own small task.
+## Found on the way (not fixed)
+- `docs/specs/CDP-1.md` / the ticket references a `DEC-01` doc that doesn't exist
+  anywhere in the repo under that name — flagged, not actionable without more context.
 
 ## Human steps needed
-
-- Review and merge PR #112, then PR #113 (stacked — #113's base is #112's branch, so merge order
-  matters).
-- Separately: get ENG-09's fix merged into `trial-merge-110` (or merge `trial-merge-110` into
-  `main` per ENG-15, whichever happens first) — until then, CI stays red on every PR against this
-  branch for a reason that predates this batch.
-- Decide the two open items above (CI-join, `backend/scripts/**`) whenever convenient — neither
-  blocks these two PRs from merging.
-
-## New findings (not previously documented)
-
-- The two dead test suites (`oracle-resolver.test.ts`, `payment-system.test.ts`) were already
-  failing to even load before this batch touched anything — confirmed by running the suite first,
-  unrelated to any change made here.
-- `backend/vitest.config.ts`'s alias bug affects two *live* adapters too
-  (`services/openai-image-generation.ts`, `services/wavespeed-image-generation.ts`, both import
-  `@/lib/generation/*`) — currently untested by anything that would hit real module resolution
-  (nothing imports them unmocked in a backend test), so this was latent risk beyond just
-  `encryption.ts`. The alias fix in PR #113 covers all of them, not just `encryption.ts`.
-- `backend/bun.lock` (created when this engagement bun-installed backend's isolated dependencies)
-  is now gitignored rather than committed, to avoid a second-lockfile-format drift alongside
-  `backend/package-lock.json` — same category of problem ENG-09 already had to fix once at the
-  root.
+- Register every Vercel preview domain in the CDP dashboard allowlist (pre-existing,
+  unrelated to this change, just restated as a reminder).
