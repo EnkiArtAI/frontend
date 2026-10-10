@@ -296,11 +296,11 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
       /* If the image view is open, Home means "back to where I was" — close it
          and leave the feed exactly as it was, rather than routing and scrolling
          to the top of a list the reader had already worked their way down. */
-      const detailEl = document.querySelector(".pgv-detail-panel");
+      const detailEl = document.querySelector(".iv-frame");
       /* A detail HIDDEN behind a menu panel is "where I was" — Home brings it
          back instead of closing it (Kev, 2026-08-22). A VISIBLE detail keeps
          the old meaning: Home closes it, back to the feed. */
-      if (detailEl?.classList.contains("pgv-detail-hidden")) {
+      if (detailEl?.classList.contains("is-hidden")) {
         window.dispatchEvent(new CustomEvent("enki:show-detail"));
         return;
       }
