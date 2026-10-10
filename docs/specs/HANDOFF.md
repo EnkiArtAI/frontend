@@ -6,6 +6,21 @@ run out before more work can be reviewed. This is the single entry point for who
 anything else — it links to everything else you need and explains the mistakes already
 made so you don't repeat them.
 
+## -1. STOP AND READ FIRST: GitHub Actions is billing-blocked (as of 2026-10-10 ~13:59 UTC)
+
+Every CI job on this repo (build/typecheck/lint/tests) now fails in 1-4 seconds with:
+*"The job was not started because recent account payments have failed or your spending
+limit needs to be increased. Please check the 'Billing & plans' section in your
+settings."* Confirmed this is new (earlier runs the same day succeeded) and repo-wide,
+not branch-specific. **Nothing will show a green CI run — for anyone, on any branch —
+until a human fixes this in GitHub → Settings → Billing & plans.** This almost certainly
+happened because wave 1's CI usage (8 PRs, many pushes, 2 independent-reviewer agents
+reading diffs via `gh pr diff`, several multi-hour fix cycles with repeated pushes) used
+up a spending limit or a payment method failed. There is nothing an agent can do about
+this — it needs a human with org billing access. PR #173 (below) has code that was
+proven red→green before this hit; don't assume its red CI status means the code is
+broken — check whether the failure is this billing message before debugging anything.
+
 ## 0. What this project is
 
 `EnkiArtAI/frontend` (GitHub, **private**) — a Next.js App Router app, TypeScript strict,
@@ -47,6 +62,7 @@ unrelated to any of this code).
 | [#167](https://github.com/EnkiArtAI/frontend/pull/167) | CDP-1 | `feat/cdp-1-upgrade-wallet` | `ci/setup` | 2 product decisions open, not implemented (correctly) |
 | [#168](https://github.com/EnkiArtAI/frontend/pull/168) | REC-3 (narrowed) | `feat/rec-3-x402-recording` | `feat/rec-1-payment-link-imageid` (stacked) | Reviewed. Deliberately partial, see below |
 | [#169](https://github.com/EnkiArtAI/frontend/pull/169) | SOC-8 | `feat/soc-8-betagate-whitelist` | `feat/cdp-1-upgrade-wallet` (stacked) | Fully done |
+| [#173](https://github.com/EnkiArtAI/frontend/pull/173) | ENV-01 (forgot-password honesty, narrowed) | `fix/env-01-forgot-password-honesty` | `ci/setup` | Proved red→green on CI, then billing blocked (see §-1). Done directly by the coordinator, no subagent, no independent review. |
 
 Full narrative detail, AC tables, and independent-review findings for each are in:
 - `docs/specs/batches/batch-00-reconcile.md` — why the ClickUp baseline (be6fe5e7) was

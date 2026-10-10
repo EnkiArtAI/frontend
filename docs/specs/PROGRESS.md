@@ -51,8 +51,26 @@ Full detail in docs/specs/batches/batch-01.md, batch-03.md, batch-06-cdp1-soc8.m
 | #167 | CDP-1 | Open, green |
 | #168 | REC-3 (narrowed) | Open, green, reviewed |
 | #169 | SOC-8 | Open, green |
+| #173 | ENV-01 (forgot-password honesty, narrowed) | Open, proved red->green before CI got billing-blocked; done directly by the coordinator (no subagent), not reviewed by anyone else |
+
+## CRITICAL — GitHub Actions is blocked repo-wide (2026-10-10, ~13:59 UTC)
+Every CI job (build/typecheck/lint/tests) now fails in ~1-4 seconds with:
+"The job was not started because recent account payments have failed or your
+spending limit needs to be increased. Please check the 'Billing & plans'
+section in your settings." Confirmed this is new (runs earlier today
+succeeded) and affects the whole repo, not one branch — nothing will show
+green, for anyone, until a human fixes this in GitHub → Settings → Billing &
+plans. **This likely means wave 1's CI usage (8 PRs, repeated pushes, 2
+independent-reviewer agents reading diffs, several multi-hour fix cycles)
+used up a spending limit or a payment method failed.** Not fixable from
+here — needs GitHub org billing access.
+
+PR #173 (ENV-01 forgot-password fix, see below) was opened with code that
+proved red->green on CI before this hit; it's correct but can't show a green
+run until billing is fixed.
 
 ## Blocked on human
+0. **Fix GitHub Actions billing (see above) — blocks literally everything else.**
 1. Secret provisioning for CI (permission + which keys) — still unresolved, rainman456 lacks admin.
 2. Apply + read back: consumed-stepup-tokens migration (MFA-1/BAN-8), generations.payment_intent_id migration (REC-1), confirm CRON_SECRET in Vercel Production (REC-7).
 3. Review BAN-8's destination-bound-vs-request-id-bound scope reduction (batch-01.md).
