@@ -15,6 +15,11 @@ const db = vi.hoisted(() => ({ current: null as ReturnType<typeof import("./_fak
 vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => db.current!.client }));
 const mails: unknown[] = [];
 vi.mock("@/lib/mailer", () => ({ sendMail: async (m: unknown) => { mails.push(m); return { ok: true }; } }));
+// password-reset.ts pulls in password-auth.ts, whose pepper() throws unless
+// AUTH_PEPPER is set — needed merely to import the route, before any test runs.
+vi.hoisted(() => {
+  process.env.AUTH_PEPPER = Buffer.alloc(32, 9).toString("base64");
+});
 
 import { POST as forgot } from "../../app/api/auth/password/forgot/route";
 
