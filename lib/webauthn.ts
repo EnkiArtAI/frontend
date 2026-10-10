@@ -57,11 +57,22 @@ function stepUpKey(): Uint8Array {
 
 /* What a step-up can be for. A scope names one action, and where the action
    has a target, that target: one tap deletes one image, never another.
-   withdraw: is bound to the server-issued withdrawal REQUEST id (the
-   withdrawals row's own uuid, BAN-8) rather than the destination address —
-   a token for one request can never authorize a different one, and it is
-   single-use (lib/webauthn.ts requireStepUp's money-scope consumption). */
-const SCOPE = /^(wallet|export|add-factor|guardians|delete-work:[0-9a-f-]{36}|remove-factor:([0-9a-f-]{36}|totp|email)|withdraw:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+   withdraw: is bound to the destination address. BAN-8 tried rebinding it to
+   a server-issued request id instead, checked at /submit — reverted per
+   independent review (2026-10-10): lib/payments/withdraw.ts's
+   buildWithdrawTx co-signs with the fee payer INSIDE /build, so a check that
+   lives only at /submit never runs before an externally-signed wallet's
+   client already holds a fully broadcastable transaction (walletUnlocked,
+   the gate the task agent cited as covering this, only reaches the CDP
+   bridge — adapterSign in SendUsdcPanel.tsx signs client-side and never
+   touches it). The gate is back at /build, before any co-sign, bound to the
+   destination as it always was; MFA-1's single-use consumption (below) now
+   makes the SAME token good for exactly one withdrawal regardless, which is
+   the property request-id binding was for — see docs/specs/BAN-8.md
+   "Decisions" for why binding to the id itself was not pursued (it cannot
+   exist before the very call it would gate, without a second migration to
+   persist the unsigned transaction for a later resume). */
+const SCOPE = /^(wallet|export|add-factor|guardians|delete-work:[0-9a-f-]{36}|remove-factor:([0-9a-f-]{36}|totp|email)|withdraw:[1-9A-HJ-NP-Za-km-z]{32,44})$/;
 export function isStepUpScope(scope: unknown): scope is string {
   return typeof scope === "string" && SCOPE.test(scope);
 }

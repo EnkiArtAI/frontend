@@ -5,20 +5,16 @@
  * The fee payer signature from /build stays as it is: nothing is re-signed
  * here, so a transaction the client altered arrives already invalid.
  *
- * Once a factor is enrolled, this is also where step-up is required
- * (BAN-8): the scope is bound to THIS request's own id, so a token can
- * authorize only this one withdrawal, and it is single-use (MFA-1), so not
- * even this one twice. Checked before the row is claimed or anything is
- * broadcast — a refusal here leaves the row untouched, retryable with a
- * fresh token. Ban tolerant throughout: resolveWithdrawer never looks at a
- * ban, and this adds no step-up requirement a good-standing user would not
- * also face.
+ * No step-up check here (BAN-8 tried that; see lib/webauthn.ts's SCOPE
+ * comment for why it moved back to /build, before the fee payer co-signs —
+ * by the time a transaction reaches /submit, the authorization decision has
+ * already been made). Mails the owner once a withdrawal is confirmed on
+ * chain. Ban tolerant throughout: resolveWithdrawer never looks at a ban.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
-import { requireStepUp } from "@/lib/webauthn";
 import { feePayerKeypair, solanaConnection } from "@/lib/payments/solana";
 import { submitAndConfirm } from "@/lib/payments/x402-settle";
 import {
@@ -67,13 +63,6 @@ export async function POST(req: NextRequest) {
       await supabase.from("withdrawals").update({ status: "expired" }).eq("id", row.id).eq("status", "pending");
       return NextResponse.json({ error: "Signing window expired, build a new withdrawal", code: "EXPIRED" }, { status: 409 });
     }
-
-    // Bound to THIS request's own id, not the destination: a token cannot
-    // authorize a different withdrawal, and it is single-use (MFA-1), so not
-    // even this one twice. Nothing has been claimed or broadcast yet — a
-    // refusal here leaves the row pending, retryable with a fresh token.
-    const blocked = await requireStepUp(req, who.userId, `withdraw:${row.id}`);
-    if (blocked) return blocked;
 
     const verified = verifySignedWithdrawal(signedTransaction, {
       messageHash: row.message_hash,

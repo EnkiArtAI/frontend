@@ -2,10 +2,19 @@
  * POST /api/wallet/withdraw/build — { from, to, amountMicro? | all? }
  * → { requestId, transaction (base64, fee payer signed), amountMicro, to,
  *    from, chain, expiresInSec }. The client signs `transaction` in the wallet and
- * posts it to /submit. Nothing moves here, so no step-up is asked here
- * either (BAN-8): the step-up is bound to this request's own id, which this
- * route is what mints, and it is checked where it matters — immediately
- * before /submit claims the row and broadcasts.
+ * posts it to /submit.
+ *
+ * Step-up is checked HERE, before buildWithdrawTx's co-sign, not at /submit
+ * (BAN-8, reverted 2026-10-10 per independent review — see lib/webauthn.ts's
+ * SCOPE comment for the full trace): once the fee payer has co-signed and
+ * the client's own wallet adds its signature, the bytes are a fully valid,
+ * broadcastable Solana transaction that needs no further round trip through
+ * US at all — for an externally-signed wallet (SendUsdcPanel.tsx's
+ * adapterSign), nothing server-side stands between that moment and the
+ * chain. A check living only at /submit never runs for a client that skips
+ * it. MFA-1's single-use consumption (for any `withdraw:*` scope) means the
+ * SAME token cannot authorize a second build either, which is what closes
+ * the replay this task was originally written against.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
@@ -13,6 +22,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { isDbUnreachable, dbUnavailableResponse } from "@/lib/db-error";
 import { getClientIp, hashIp } from "@/lib/ip-hash";
 import { getUsdcBalance } from "@/lib/usdc-balance";
+import { requireStepUp } from "@/lib/webauthn";
 import { feePayerKeypair, solanaChainKey, solanaConnection, usdcMint } from "@/lib/payments/solana";
 import {
   WITHDRAW_TTL_MS,
@@ -57,6 +67,11 @@ export async function POST(req: NextRequest) {
       to, from, fromClaimed: body.from, feePayer: feePayer.publicKey, amountMicro, balanceMicro,
     });
     if (refusal) return refuse(refusal);
+
+    // Before anything co-signs: once the fee payer signs below, the bytes
+    // need no further trip through us to become spendable.
+    const blocked = await requireStepUp(req, who.userId, `withdraw:${to!.toBase58()}`);
+    if (blocked) return blocked;
 
     const limited = withdrawLimited(await recentWithdrawalCount(supabase, who.userId));
     if (limited) return refuse(limited);
