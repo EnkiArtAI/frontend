@@ -898,7 +898,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
                 key={prompt.id}
                 prompt={prompt}
                 onOpen={setOpen}
-                onEdit={own ? requestPromptEdit : undefined}
+                onEdit={own ? (p) => router.push(`/editor?id=${encodeURIComponent(p.id)}`) : undefined}
               />
             ))}
           </div>
