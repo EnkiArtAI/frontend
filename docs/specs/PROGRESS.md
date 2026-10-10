@@ -37,6 +37,26 @@ and the mission statement (never rebuild work that already exists).
 - Each was given the batch-00 reconciliation evidence directly (file:line) to skip re-deriving Phase 0.
 - None of the three has real production credentials; all DB/schema evidence comes from `migrations/` and existing code, never a live probe — any live confirmation is a named human/coordinator step.
 
+## Wave 1 — COMPLETE (2026-10-10)
+All 8 PRs open, CI-green, independent review done on both money paths (batches 01, 03).
+Full detail in docs/specs/batches/batch-01.md, batch-03.md, batch-06-cdp1-soc8.md.
+
+| PR | Task | Status |
+|---|---|---|
+| #162 | ci/setup | Open, green |
+| #163 | REC-7 cleanup | Open, green |
+| #164 | REC-1 (narrowed) | Open, green, reviewed |
+| #165 | MFA-1 | Open, green |
+| #166 | BAN-8 | Open, green, reviewed, revised after a confirmed security regression was caught and fixed |
+| #167 | CDP-1 | Open, green |
+| #168 | REC-3 (narrowed) | Open, green, reviewed |
+| #169 | SOC-8 | Open, green |
+
 ## Blocked on human
-1. Secret provisioning for CI (permission + which keys, see above) — still unresolved.
-2. After Agent A and Agent B each reach Phase 4 (green) on their money-path tasks (MFA-1/BAN-8, REC-1/REC-3), the coordinator will spawn an independent reviewer subagent per section 4B.4 before those PRs are called ready — not yet needed.
+1. Secret provisioning for CI (permission + which keys) — still unresolved, rainman456 lacks admin.
+2. Apply + read back: consumed-stepup-tokens migration (MFA-1/BAN-8), generations.payment_intent_id migration (REC-1), confirm CRON_SECRET in Vercel Production (REC-7).
+3. Review BAN-8's destination-bound-vs-request-id-bound scope reduction (batch-01.md).
+4. Decision: x402 agent-wallet recording policy when unlinked (batch-03.md, low urgency).
+5. CDP-1 Decisions 1 and 2: attach-wallet pre-claim verification option a/b, recovery-file rewrite vs replace (batch-06-cdp1-soc8.md).
+6. Register Vercel preview domains in the CDP allowlist.
+7. Decide wave 2 go-ahead — weekly usage was at 73% mid-wave-1; recommend checking current usage before committing to another wave of parallel agents.

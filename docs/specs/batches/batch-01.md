@@ -70,15 +70,19 @@ Red test: `lib/__tests__/withdraw-stepup.test.ts`, the "DECISIVE" test proving a
 externally-signed wallet can never obtain a co-signed transaction from `/build` without a
 valid, unconsumed, correctly-scoped step-up token. Red: CI run 38009447541 (4 failures,
 all in this file, 207 other files/2311 tests green). Green: runs 38009932654 + 38009935974
-(build/lint/tests/typecheck all pass). Mutation check was in progress as of this report;
-coordinator will record the result once it lands.
+(build/lint/tests/typecheck all pass). Mutation: scratch branch `mut/BAN-8` reverted the
+restored guard line to a no-op, pushed, CI run 38010457242 failed exactly the decisive
+test plus its 3 siblings (single-use, consumed-store fail-closed, banned-user-parity) —
+4 failed, 2311 other tests and 207 other files green. Branch deleted after, never PR'd.
+
+## Verdict — Batch 01 done
+Both PRs ready for human review/merge. #165 (MFA-1): untouched by the revision, still
+green. #166 (BAN-8): revised, spec'd, red/green/mutation-evidenced, CI green. Human steps
+before merge: apply the consumed-token-store migration and read back the column list;
+review the destination-bound-vs-request-id-bound scope reduction above and confirm it's
+an acceptable tradeoff.
 
 ## Subagents used
 - Agent A (task agent): MFA-1 + BAN-8 implementation and revision.
 - Independent reviewer (read-only, diff + spec only, no prior context from Agent A's
-  session): found the original regression.
-
-## Next
-Waiting on Agent A's mutation-check confirmation for the revised fix. MFA-1 (#165)
-unaffected throughout, still green, ready for human merge once the consumed-token-store
-migration is applied and read back.
+  session): found the original regression that led to the revision above.
