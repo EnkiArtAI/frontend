@@ -12,6 +12,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { numericCode, sha256 } from "@/lib/password-reset";
 import { sendMail } from "@/lib/mailer";
+import { createErrorResponse } from "@/middleware/validation";
 
 const RESET_TTL_MS = 15 * 60 * 1000;
 const bodySchema = z.object({ email: z.string().email().max(320) });
@@ -19,6 +20,15 @@ const bodySchema = z.object({ email: z.string().email().max(320) });
 export async function POST(req: NextRequest) {
   const limit = checkRequestRateLimit(rateLimitKey(req, "auth:forgot:ip"), 10, 10 * 60 * 1000);
   if (!limit.allowed) return rateLimitResponse(limit.retryAfterSeconds);
+
+  // Checked before the email lookup, so this fires identically for every
+  // request regardless of whether the email exists — it answers "is the
+  // feature configured", never "does this email have an account" (the
+  // dev-mode console-log fallback below is an intentional exception, not a
+  // silent production failure).
+  if (process.env.NODE_ENV === "production" && !process.env.RESEND_API_KEY?.trim()) {
+    return createErrorResponse("Password reset email is not configured on this environment", 503);
+  }
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ ok: true });
