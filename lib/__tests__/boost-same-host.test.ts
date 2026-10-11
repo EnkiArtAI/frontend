@@ -46,7 +46,6 @@ describe("every generate surface", () => {
   const editor = src("components", "EnkiPromptEditor.tsx");
   const launcher = src("components", "GenerateLauncher.tsx");
   const viewer = src("components", "PromptGeneratorView.tsx");
-  const node = src("components", "enki-shell", "NodeCreator.tsx");
   const modal = src("components", "EnkiMobileGenerateModal.tsx");
 
   it("asks the core per size, from the sizes the catalogue answer carries", () => {
@@ -59,7 +58,6 @@ describe("every generate surface", () => {
   it("passes the size to the toggle", () => {
     expect(editor).toContain("sameHost={!boostAt(picked, genResolution)}");
     expect(viewer).toContain("sameHost={!core.boostAt(quoteResolution)}");
-    expect(node).toContain("sameHost={!!selectedModel && !boostAt(selectedModel, tierFor(selectedModel))}");
     expect(launcher).toContain("boostSameHost={!core.boostAt(resolution)}");
     expect(modal).toContain("sameHost={boostSameHost}");
   });
@@ -70,8 +68,6 @@ describe("every generate surface", () => {
     expect(launcher.split("core.boostAt(tier) && boost")).toHaveLength(3);
     expect(viewer.split("core.boostAt(quoteResolution) && boost")).toHaveLength(4);
     expect(viewer).toContain("resolution: t, boost: core.boostAt(t) && boost, quality, referenceImageCount: refs.length }))");
-    expect(node).toContain("boost: boostRef.current && boostAt(picked, tier),");
-    expect(node).toContain("boost: boost && boostAt(m, tier),");
-    for (const s of [editor, launcher, viewer, node]) expect(s).not.toMatch(/boostAvailable && boost|boost && !!m\\.boostAvailable/);
+    for (const s of [editor, launcher, viewer]) expect(s).not.toMatch(/boostAvailable && boost|boost && !!m\\.boostAvailable/);
   });
 });

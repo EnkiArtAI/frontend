@@ -181,11 +181,6 @@
       "count": 1
     }
   },
-  "components/enki-shell/DocView.tsx": {
-    "react-hooks/refs": {
-      "count": 11
-    }
-  },
   "components/enki-shell/EnkiHome.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 2
@@ -194,20 +189,6 @@
   "components/enki-shell/MessagesPanel.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 5
-    }
-  },
-  "components/enki-shell/NodeCreator.tsx": {
-    "react-hooks/globals": {
-      "count": 1
-    },
-    "react-hooks/immutability": {
-      "count": 19
-    },
-    "react-hooks/refs": {
-      "count": 26
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 2
     }
   },
   "components/profile/ProfileView.tsx": {

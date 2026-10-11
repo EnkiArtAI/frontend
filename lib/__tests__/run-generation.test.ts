@@ -54,12 +54,11 @@ describe("an artist's draft", () => {
     expect(calls[0].body.authoring).toBe(true);
   });
 
-  it("comes from both editors", async () => {
+  it("comes from the classic editor", async () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const ROOT = join(__dirname, "..", "..");
     expect(readFileSync(join(ROOT, "components", "EnkiPromptEditor.tsx"), "utf8")).toMatch(/referenceImages: cardRefs\.length \? cardRefs : undefined,\s*authoring: true,/);
-    expect(readFileSync(join(ROOT, "components", "enki-shell", "NodeCreator.tsx"), "utf8")).toMatch(/workflow: buildExportJSON\(\),\s*authoring: true,/);
   });
 });
 

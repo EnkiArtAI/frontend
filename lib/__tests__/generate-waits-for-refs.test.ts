@@ -15,7 +15,6 @@ const LAUNCHER = src("components", "GenerateLauncher.tsx");
 const MODAL = src("components", "EnkiMobileGenerateModal.tsx");
 const BUYER = src("components", "PromptGeneratorView.tsx");
 const EDITOR = src("components", "EnkiPromptEditor.tsx");
-const EDITOR2 = src("components", "enki-shell", "NodeCreator.tsx");
 
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
 
@@ -97,7 +96,7 @@ describe("readImageFile", () => {
 
 describe("every generate surface waits for its reference images", () => {
   it("reads them through the shared counter, never a bare FileReader", () => {
-    for (const s of [LAUNCHER, BUYER, EDITOR, EDITOR2]) {
+    for (const s of [LAUNCHER, BUYER, EDITOR]) {
       expect(s).toMatch(/const \{ loading: refsLoading, (pending: refsPending, )?read: readRef \} = useReferenceReads\(\);/);
       expect(s).not.toMatch(/new FileReader\(\)[\s\S]{0,200}readAsDataURL/);
     }
@@ -140,11 +139,6 @@ describe("every generate surface waits for its reference images", () => {
     expect(EDITOR).toMatch(/const handleRefillAndGenerate = \(\) => \{\n\s+if \(ui\.selectedCards\.length === 0\) return;\n\s+if \(refsStillLoading\(\)\) return;/);
     expect(EDITOR).toMatch(/onGenerate=\{\(count\) => \{\n\s+if \(refsStillLoading\(\)\) return;/);
     expect(EDITOR).toMatch(/generateBlocked=\{refsLoading\}/);
-  });
-
-  it("Editor 2 refuses on both generate paths while they load", () => {
-    expect(EDITOR2.split("if (refsLoading) { onToast(REFS_LOADING); return; }").length - 1).toBe(2);
-    expect(EDITOR2).toMatch(/return Promise\.all\(files\.map\(readRef\)\)/);
   });
 });
 
