@@ -21,10 +21,7 @@
   },
   "app/api/marketplace/prompts/route.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 8
-    },
-    "prefer-const": {
-      "count": 1
+      "count": 4
     }
   },
   "app/api/prompts/route.ts": {
@@ -40,11 +37,6 @@
   "app/gate/page.tsx": {
     "@next/next/no-html-link-for-pages": {
       "count": 1
-    }
-  },
-  "app/generator/[id]/GeneratorClient.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 3
     }
   },
   "app/guardian/page.tsx": {
@@ -135,7 +127,7 @@
       "count": 6
     },
     "react-hooks/set-state-in-effect": {
-      "count": 9
+      "count": 8
     }
   },
   "components/FilterBar.tsx": {
@@ -195,11 +187,8 @@
     }
   },
   "components/enki-shell/EnkiHome.tsx": {
-    "react-hooks/immutability": {
-      "count": 1
-    },
     "react-hooks/set-state-in-effect": {
-      "count": 4
+      "count": 2
     }
   },
   "components/enki-shell/MessagesPanel.tsx": {
@@ -221,16 +210,6 @@
       "count": 2
     }
   },
-  "components/enki/EnkiDetailPanel.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "components/enki/EnkiFeedPage.tsx": {
-    "react/no-unescaped-entities": {
-      "count": 1
-    }
-  },
   "components/profile/ProfileView.tsx": {
     "@next/next/no-html-link-for-pages": {
       "count": 1
@@ -250,7 +229,7 @@
   },
   "components/settings/RecoveryPanel.tsx": {
     "react-hooks/set-state-in-effect": {
-      "count": 2
+      "count": 1
     }
   },
   "components/settings/SettingsView.tsx": {
@@ -258,7 +237,7 @@
       "count": 1
     },
     "react-hooks/set-state-in-effect": {
-      "count": 4
+      "count": 3
     }
   },
   "hooks/useCdpAddress.ts": {

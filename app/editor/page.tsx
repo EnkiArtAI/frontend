@@ -8,6 +8,7 @@ import { useSearchParams } from "next/navigation";
 import EnkiHome from "@/components/enki-shell/EnkiHome";
 import PromptEditor from "@/components/prompt-editor/PromptEditor";
 import { useViewerWallets } from "@/hooks/useViewerWallets";
+import { useBetaAccess } from "@/components/BetaGate";
 import { editorMount, type EditorMount } from "@/lib/editor/editor-mount";
 
 /**
@@ -18,8 +19,10 @@ import { editorMount, type EditorMount } from "@/lib/editor/editor-mount";
 function EditorRoute() {
   const id = useSearchParams().get("id");
   const { userKey } = useViewerWallets();
-  const [mount, setMount] = useState<EditorMount>({ id, n: 0, own: null, user: userKey });
-  const next = editorMount(mount, id, userKey);
+  const { userId } = useBetaAccess();
+  const owner = userKey ?? (userId ? "account:" + userId : null);
+  const [mount, setMount] = useState<EditorMount>({ id, n: 0, own: null, user: owner });
+  const next = editorMount(mount, id, owner);
   if (next !== mount) setMount(next);
   return (
     <EnkiHome>

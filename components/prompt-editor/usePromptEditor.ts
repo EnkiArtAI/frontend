@@ -11,10 +11,12 @@
  * after the last change. A loaded prompt (E2) is seeded in unless a draft of
  * it was restored; the draft wins, and the editor offers to discard it.
  */
-import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useReducer, useRef } from "react";
 import { readReference } from "@/hooks/useReferenceReads";
 import { browserBackend, draftKey, draftStore, type Draft } from "@/lib/editor/draft-store";
 import type { RenderPicks } from "@/lib/editor/generate-checks";
+import { stashEditorSeed, takeEditorSeed } from "@/components/enki-shell/editorBridge";
+import { seedDoc, type EditorSeed } from "@/lib/editor/editor-seed";
 import type { LoadedPrompt } from "@/lib/editor/load-prompt";
 import { insertToken, varNames } from "@/lib/editor/prompt-tokens";
 import type { Listing } from "@/lib/editor/release";
@@ -38,6 +40,7 @@ export interface EditorState {
   restored: boolean;
   /** The id of the server prompt seeded in. */
   seeded: string | null;
+  pendingSeed: EditorSeed | null;
 }
 
 export type DocPatch = Partial<EditorDoc> | ((doc: EditorDoc) => Partial<EditorDoc>);
@@ -50,7 +53,9 @@ export type EditorAction =
   | { type: "set"; patch: Partial<Pick<EditorState, "listing" | "picks" | "stars">> }
   | { type: "generated"; variation: string }
   | { type: "ref"; id: string; ref: RefImage }
-  | { type: "restore"; key: string; draft: Draft | null; refs: RefStore }
+  | { type: "restore"; key: string; draft: Draft | null; refs: RefStore; seed?: EditorSeed | null }
+  | { type: "library"; seed: EditorSeed }
+  | { type: "dismiss-library" }
   | { type: "seed"; loaded: LoadedPrompt; discard?: boolean };
 
 const EMPTY: EditorDoc = { prompt: "", vars: {}, kinds: {}, aiNames: [], refIds: [] };
@@ -67,6 +72,7 @@ export const initialEditor = (): EditorState => ({
   key: null,
   restored: false,
   seeded: null,
+  pendingSeed: null,
 });
 
 /** Any edit, star, setting or Generate takes "✓ Released" away; only reading a reference in does not. */
@@ -92,11 +98,19 @@ export function editorReducer(s: EditorState, a: EditorAction): EditorState {
       return { ...s, order: withVariation(s.order, a.variation), released: false };
     case "ref":
       return { ...s, refs: { ...s.refs, [a.id]: a.ref } };
+    case "library":
+      return {
+        ...initialEditor(),
+        key: s.key,
+        history: startHistory(seedDoc(a.seed)),
+        listing: { ...initialEditor().listing, title: a.seed.title },
+      };
+    case "dismiss-library":
+      return { ...s, pendingSeed: null };
     case "restore": {
       const next = { ...s, key: a.key, refs: { ...s.refs, ...a.refs } };
       const d = a.draft;
-      if (!d) return next;
-      return {
+      const restored = !d ? next : {
         ...next,
         history: startHistory(d.doc),
         listing: { ...s.listing, ...d.listing },
@@ -105,6 +119,12 @@ export function editorReducer(s: EditorState, a: EditorAction): EditorState {
         order: d.order ?? [],
         restored: true,
       };
+      if (!a.seed) return restored;
+      const doc = restored.history.present;
+      const occupied = !!doc.prompt.trim() || !!restored.listing.title.trim()
+        || Object.values(doc.vars).some((v) => v.trim()) || !!doc.refIds.length
+        || !!restored.order.length || !!Object.keys(restored.stars).length;
+      return occupied ? { ...restored, pendingSeed: a.seed } : editorReducer(restored, { type: "library", seed: a.seed });
     }
     case "seed": {
       const l = a.loaded;
@@ -140,21 +160,42 @@ export const blankVariable: DocPatch = (d) =>
     ? {}
     : { prompt: insertToken(d.prompt, d.prompt.length, "[]").text, vars: { ...d.vars, "": "" }, kinds: { ...d.kinds, "": "text" } };
 
-export function usePromptEditor(userKey: string | null, promptId: string | null) {
+export function usePromptEditor(userKey: string | null, promptId: string | null, seedOwner: string | null = null) {
   const [state, dispatch] = useReducer(editorReducer, undefined, initialEditor);
-  const store = useMemo(() => draftStore(browserBackend(), userKey, promptId), [userKey, promptId]);
-  const key = userKey ? draftKey(userKey, promptId) : null;
+  const draftOwner = userKey ?? (seedOwner ? "account:" + seedOwner : null);
+  const store = useMemo(() => draftStore(browserBackend(), draftOwner, promptId), [draftOwner, promptId]);
+  const key = draftOwner ? draftKey(draftOwner, promptId) : null;
+
+  const draftOf = (s: EditorState): Draft => ({ doc: s.history.present, listing: s.listing, picks: s.picks, stars: s.stars, order: s.order });
+  const restore = useEffectEvent((action: Extract<EditorAction, { type: "restore" }>) => {
+    const next = editorReducer(state, action);
+    if (action.seed) {
+      if (next.pendingSeed) stashEditorSeed(action.seed, seedOwner);
+      else { store.save(draftOf(next)); store.saveRefs(next.refs); }
+    }
+    dispatch(action);
+  });
+  const decideSeed = (replace: boolean) => {
+    if (!state.pendingSeed) return;
+    takeEditorSeed(seedOwner);
+    if (replace) {
+      const next = editorReducer(state, { type: "library", seed: state.pendingSeed });
+      store.save(draftOf(next));
+      store.saveRefs(next.refs);
+      dispatch({ type: "library", seed: state.pendingSeed });
+    } else dispatch({ type: "dismiss-library" });
+  };
 
   useEffect(() => {
     if (!key) return;
     let live = true;
     void store.loadRefs().then((refs) => {
-      if (live) dispatch({ type: "restore", key, draft: store.load(), refs });
+      if (live) restore({ type: "restore", key, draft: store.load(), refs, seed: promptId === null ? takeEditorSeed(seedOwner) : null });
     });
     return () => {
       live = false;
     };
-  }, [store, key]);
+  }, [store, key, promptId, seedOwner]);
 
   const { history, listing, picks, stars, order, refs } = state;
   const ready = key !== null && state.key === key;
@@ -197,5 +238,5 @@ export function usePromptEditor(userKey: string | null, promptId: string | null)
 
   const edit = useCallback((patch: DocPatch, key?: string) => dispatch({ type: "commit", patch, at: Date.now(), key }), []);
 
-  return { state, doc: history.present, dispatch, commit: edit, store };
+  return { state, doc: history.present, dispatch, commit: edit, store, decideSeed };
 }

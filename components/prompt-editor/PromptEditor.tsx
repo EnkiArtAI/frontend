@@ -97,13 +97,13 @@ export default function PromptEditor({ promptId, onReleased }: {
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { access, role } = useBetaAccess();
+  const { access, role, userId } = useBetaAccess();
   // Team-cookie browsing is looking around, not an account (EnkiHome).
   const signedIn = access === "ok" && role !== "team";
   const { userKey, payer } = useViewerWallets();
   const [releasedId, setReleasedId] = useState<string | null>(null);
   const id = releasedId ?? promptId ?? null;
-  const { state, doc, dispatch, commit, store } = usePromptEditor(userKey, id);
+  const { state, doc, dispatch, commit, store, decideSeed } = usePromptEditor(userKey, id, signedIn ? userId : null);
   const { listing, picks, history } = state;
 
   const core = useGenerationCore(listing.testId ?? listing.primaryId ?? undefined);
@@ -554,6 +554,18 @@ export default function PromptEditor({ promptId, onReleased }: {
         <NftPickerModal max={Math.max(0, cap - refCount - reads.pending.length)} onClose={() => setNftOpen(false)}
           onPick={(nfts) => nfts.forEach(addRef)} />
       )}
+      <AlertDialog open={!!state.pendingSeed} onOpenChange={(open) => { if (!open) decideSeed(false); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Replace your unsaved draft?</AlertDialogTitle>
+            <AlertDialogDescription>The saved prompt text will replace this draft. Your library entry stays unchanged.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep my draft</AlertDialogCancel>
+            <AlertDialogAction onClick={() => decideSeed(true)}>Replace draft</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog open={!!ask} onOpenChange={(open) => { if (!open) setAsk(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
