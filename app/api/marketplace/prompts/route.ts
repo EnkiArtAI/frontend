@@ -190,7 +190,7 @@ export async function GET(request: NextRequest) {
 
       // Released prompts only. Without this a draft was on the marketplace the
       // moment it was saved — see app/api/prompts/route.ts for the same fix.
-      dbQuery = dbQuery.eq("is_listed", true);
+      dbQuery = dbQuery.eq("is_listed", true).eq("listing_status", "active").is("deleted_at", null);
 
       /* ?models=<alias>&models=… narrows to prompts made with the picked
          generators (Kev, 2026-08-24: filter the wall by launcher). The
