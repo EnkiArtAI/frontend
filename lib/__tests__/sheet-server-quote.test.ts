@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { readSource } from "@/lib/__tests__/_read-source";
 
 /**
- * The classic editor, its mobile sheet and Quick Create show server quotes
+ * The current editor, Image View and Quick Create show server quotes
  * only (Kev, 2026-10-02: "ich brauche safe überall den server-quote"), and
  * the count a sheet shows and prices is the count it generates. Before:
  * a catalogue price with a $0.10 fallback, a 5% fee against the server's 10%,
@@ -40,7 +40,7 @@ describe("the marketplace tiers and the shared helpers", () => {
   const PGV = readSource(join(ROOT, "components", "image-view", "useImageViewModel.ts"));
   const CORE = readSource(join(ROOT, "hooks", "useGenerationCore.ts"));
   const LIMITS = readSource(join(ROOT, "hooks", "useModelLimits.ts"));
-  const QUALITY = readSource(join(ROOT, "components", "generation", "QualitySelect.tsx"));
+  const SETTINGS = readSource(join(ROOT, "components", "kit", "SettingsPills.tsx"));
 
   it("each tier shows the server's quote for this prompt", () => {
     expect(PGV).toMatch(/const tierPrices = useServerQuotes\(/);
@@ -52,8 +52,10 @@ describe("the marketplace tiers and the shared helpers", () => {
     expect(LIMITS).not.toMatch(/export function tierPrice|export function tierScale/);
   });
 
-  it("the quality hints make no price claims", () => {
-    expect(QUALITY).not.toMatch(/\d+x the price/);
+  it("the quality and resolution options label their matching server quote", () => {
+    expect(SETTINGS).toContain("sub: quoteLabel(prices[i])");
+    expect(SETTINGS).toContain('core.tiers.map((_, i) => (core.free ? "$0.00" : quoteLabel(prices[i])))');
+    expect(SETTINGS).not.toMatch(/\d+x the price/);
   });
 });
 
