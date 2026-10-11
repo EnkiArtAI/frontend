@@ -14,7 +14,9 @@ import {
   mapMarketplacePromptToEnkiPrompt
 } from "@/lib/enkiPromptAdapter";
 import type { EnkiPrompt } from "@/lib/enkiPromptAdapter";
-import { requestPromptEdit } from "@/components/enki-shell/editorBridge";
+import { stashEditorSeed } from "@/components/enki-shell/editorBridge";
+import { librarySeed } from "@/lib/editor/editor-seed";
+import { notify } from "@/components/kit/notify";
 import { useBetaAccess } from "@/components/BetaGate";
 import { openLogin } from "@/lib/openLogin";
 import { listCreations, subscribeCreations, type StoredCreation } from "@/lib/creations";
@@ -503,13 +505,13 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
     (solanaSessionActive ? solanaSessionAddress : null) ??
     solanaPublicKey?.toBase58() ??
     cdpAddress ?? null;
-  const isAuthed = !!walletAddress;
 
   // The user's name, bio and images live in the DB. The gate check already
   // fetched them at app boot, so the profile paints instantly from that cache
   // and only the prompt count arrives with the background refresh — no more
   // blank header or default-bio flash.
-  const { setHandle: setSidebarHandle, profile: gateProfile, setProfile: setGateProfile } = useBetaAccess();
+  const { access, role, userId: seedOwner, setHandle: setSidebarHandle, profile: gateProfile, setProfile: setGateProfile } = useBetaAccess();
+  const isAuthed = !!walletAddress || (access === "ok" && role !== "team");
   const [me, setMe] = useState<Me | null>(!handle && gateProfile ? { ...gateProfile } : null);
   useEffect(() => {
     if (!handle && gateProfile) setMe((cur) => cur ?? { ...gateProfile });
@@ -981,24 +983,27 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
             <div style={{ padding: "80px 0", textAlign: "center" }}>
               <div className="serif" style={{ fontSize: 24, color: "var(--enki-ink-3)" }}>Your library is empty.</div>
               <p style={{ fontSize: 14, color: "var(--enki-ink-3)", maxWidth: 440, margin: "8px auto 0" }}>
-                Only you see this tab. In the prompt editor, choose “Save to my library” — saved prompts and workflows open here in one click and can be inserted into other prompts as workflow nodes.
+                Only you see this tab. Saved prompt text opens in the editor. Older workflows stay in your library.
               </p>
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12, padding: "18px 0" }}>
-              {library.map((it) => (
+              {library.map((it) => { const seed = librarySeed(it); return (
                 <div key={it.id} style={{ border: "1px solid var(--enki-rule)", borderRadius: 12, background: "var(--enki-paper-2)", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                     <span style={{ fontWeight: 700, fontSize: 14, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{it.name}</span>
                     <span className="mono" style={{ fontSize: 10.5, color: "var(--enki-ink-3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{it.kind}</span>
                   </div>
-                  <div style={{ fontSize: 12, color: "var(--enki-ink-3)", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{it.prompt_text || "—"}</div>
+                  <div style={{ fontSize: 12, color: "var(--enki-ink-3)", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{seed?.promptText ?? "This saved workflow can’t be opened in the new editor yet."}</div>
                   <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
-                    <button type="button" className="ek-btn" style={{ minHeight: 32, flex: 1 }} onClick={() => requestPromptEdit({ title: it.name, libraryGraph: it.graph })}>Open in editor</button>
+                    {seed && <button type="button" className="ek-btn" style={{ minHeight: 32, flex: 1 }} onClick={() => {
+                      if (stashEditorSeed(seed, seedOwner)) router.push("/editor");
+                      else notify("Couldn't open this prompt. Try again.", { tone: "error" });
+                    }}>Open in editor</button>}
                     <button type="button" style={{ minHeight: 32, padding: "0 10px", border: "1px solid var(--enki-rule)", borderRadius: 8, background: "transparent", color: "var(--enki-ink-3)", cursor: "pointer" }} title="Delete from library" onClick={() => void deleteLibraryItem(it.id)}>Delete</button>
                   </div>
                 </div>
-              ))}
+              ); })}
             </div>
           )
         ) : activeTab === "Likes" ? (

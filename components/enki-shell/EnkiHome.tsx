@@ -30,7 +30,6 @@ import BookmarksPanel from "./BookmarksPanel";
 import FeedbackModal from "./FeedbackModal";
 import EnkiPanel from "./EnkiPanel";
 import LoginModal from "@/components/LoginModal";
-import { EDIT_PROMPT_EVENT } from "./editorBridge";
 import { Icon } from "./icons";
 import SettingsView from "@/components/settings/SettingsView";
 import ProfileView from "@/components/profile/ProfileView";
@@ -267,14 +266,6 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
     window.addEventListener("enki:open-billing", onOpenBilling);
     return () => window.removeEventListener("enki:open-billing", onOpenBilling);
   }, []);
-
-  // A prompt card's pencil asks for the editor. The prompt waits in
-  // editorBridge for the editor to take.
-  useEffect(() => {
-    const onEdit = () => router.push("/editor");
-    window.addEventListener(EDIT_PROMPT_EVENT, onEdit);
-    return () => window.removeEventListener(EDIT_PROMPT_EVENT, onEdit);
-  }, [router]);
 
   /* Ctrl/Cmd+K and the query itself live with the field, in SearchChip: it
      writes ?q=, EnkiFeedPage reads it and asks the server. */

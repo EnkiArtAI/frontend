@@ -28,9 +28,10 @@ describe("the Prompt Editor's route", () => {
 
   it("keeps the editor when its own first release moves it to ?id=, and starts afresh for another id or account (R13, R15)", () => {
     const page = readSource(join(ROOT, "app", "editor", "page.tsx"));
-    expect(page).toMatch(
-      /const \{ userKey \} = useViewerWallets\(\);\n\s*const \[mount, setMount\] = useState<EditorMount>\(\{ id, n: 0, own: null, user: userKey \}\);\n\s*const next = editorMount\(mount, id, userKey\);\n\s*if \(next !== mount\) setMount\(next\);/,
-    );
+    expect(page).toContain('const owner = userKey ?? (userId ? "account:" + userId : null);');
+    expect(page).toContain('useState<EditorMount>({ id, n: 0, own: null, user: owner })');
+    expect(page).toContain('const next = editorMount(mount, id, owner);');
+    expect(page).toContain('if (next !== mount) setMount(next);');
     expect(page).toContain("onReleased={(own) => setMount((m) => ({ ...m, own }))}");
   });
 
