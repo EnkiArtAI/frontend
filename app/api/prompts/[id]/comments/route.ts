@@ -40,8 +40,14 @@ async function readComments({ params }: { params: Promise<{ id: string }> }) {
 
   const { data: all, error } = await supabase
     .from("prompt_comments")
-    .select("id, user_id, rating, body, created_at")
+    .select("id, user_id, rating, body, created_at, author:users!user_id!inner(active_bans:bans!user_id())")
     .eq("prompt_id", id)
+    // Filter accounts and current bans in SQL before the visible-comment cap.
+    .is("author.deleted_at", null)
+    .or("account_status.is.null,account_status.eq.active", { referencedTable: "author" })
+    .is("author.active_bans.lifted_at", null)
+    .or("expires_at.is.null,expires_at.gt." + new Date().toISOString(), { referencedTable: "author.active_bans" })
+    .is("author.active_bans", null)
     .order("created_at", { ascending: false })
     .limit(100);
   if (isDbUnreachable(error)) return dbUnavailableResponse();
@@ -49,7 +55,7 @@ async function readComments({ params }: { params: Promise<{ id: string }> }) {
     // Table not migrated yet → empty, never a broken prompt page.
     return NextResponse.json({ comments: [], stats: { count: 0, avgRating: null } });
   }
-  // A banned or deleted account's comments and ratings leave the page.
+  // Recheck visibility before exposing rows, including a ban applied after the query.
   const hidden = await hiddenOwners(supabase, (all ?? []).map((r) => String(r.user_id)));
   if (!hidden) return NextResponse.json({ comments: [], stats: { count: 0, avgRating: null } });
   const rows = (all ?? []).filter((r) => !hidden.has(String(r.user_id)));
