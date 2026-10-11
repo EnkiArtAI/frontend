@@ -31,6 +31,7 @@ function scriptFetch(script: Record<string, unknown>) {
     const path = String(url);
     calls.push({ path, body: JSON.parse(String(init.body)), headers: init.headers as Record<string, string> });
     if (!(path in script)) throw new Error(`unscripted fetch: ${path}`);
+    if (script[path] instanceof Error) throw script[path];
     return { ok: true, status: 200, json: async () => script[path] } as Response;
   }));
 }
@@ -160,7 +161,7 @@ describe("a request too large to arrive", () => {
     const ensure = vi.fn(async () => {});
     registerCdpEnsure(ensure);
     try {
-      expect(await runGeneration({ ...BASE, model: GPT, referenceImages: huge }, sign)).toEqual({ ok: false, error: REFS_TOO_LARGE });
+      expect(await runGeneration({ ...BASE, model: GPT, referenceImages: huge }, sign)).toEqual({ ok: false, phase: "prepare", error: REFS_TOO_LARGE });
     } finally {
       registerCdpEnsure(null);
     }
@@ -171,7 +172,7 @@ describe("a request too large to arrive", () => {
 
   it("is refused on the free route too, unsent", async () => {
     scriptFetch({ "/api/generate-free": { imageUrl: "https://img/free.png" } });
-    expect(await runGeneration({ ...BASE, model: FLUX, referenceImages: huge }, vi.fn())).toEqual({ ok: false, error: REFS_TOO_LARGE });
+    expect(await runGeneration({ ...BASE, model: FLUX, referenceImages: huge }, vi.fn())).toEqual({ ok: false, phase: "prepare", error: REFS_TOO_LARGE });
     expect(calls).toEqual([]);
   });
 
@@ -179,5 +180,42 @@ describe("a request too large to arrive", () => {
     scriptFetch(PAID);
     await runGeneration({ ...BASE, model: GPT, referenceImages: ["data:image/webp;base64," + "A".repeat(REQUEST_MAX_BYTES / 2)] }, vi.fn(async () => "s"));
     expect(calls.at(-1)?.path).toBe("/api/generate-image");
+  });
+});
+
+
+describe("the failure phase of a generation", () => {
+  it.each(["intent", "authorize", "submit"])("a network error in %s is still before generation", async (step) => {
+    scriptFetch({ ...PAID, ["/api/payments/generation/" + step]: new Error("Connection lost") });
+    const sign = vi.fn(async () => "signed");
+    const out = await runGeneration({ ...BASE, model: GPT }, sign);
+    expect(out).toMatchObject({ ok: false, phase: "authorization", error: "Connection lost" });
+    expect(calls.map((c) => c.path)).not.toContain("/api/generate-image");
+    expect(sign).toHaveBeenCalledTimes(step === "submit" ? 1 : 0);
+  });
+
+  it("the wallet setup can fail before any payment request", async () => {
+    scriptFetch(PAID);
+    registerCdpEnsure(async () => { throw new Error("Wallet unavailable"); });
+    try {
+      expect(await runGeneration({ ...BASE, model: GPT }, vi.fn())).toMatchObject({ ok: false, phase: "prepare" });
+      expect(calls).toEqual([]);
+    } finally { registerCdpEnsure(null); }
+  });
+
+  it("a signed request lost during generation has an uncertain outcome", async () => {
+    scriptFetch({ ...PAID, "/api/generate-image": new Error("Connection lost") });
+    expect(await runGeneration({ ...BASE, model: GPT }, vi.fn(async () => "signed"))).toMatchObject({ ok: false, phase: "generation" });
+    expect(calls.at(-1)?.path).toBe("/api/generate-image");
+  });
+
+  it("a free request lost during generation also records that phase", async () => {
+    scriptFetch({ "/api/generate-free": new Error("Connection lost") });
+    expect(await runGeneration({ ...BASE, model: FLUX }, vi.fn())).toMatchObject({ ok: false, phase: "generation" });
+  });
+
+  it("a successful response without an image came from the generation phase", async () => {
+    scriptFetch({ ...PAID, "/api/generate-image": {} });
+    expect(await runGeneration({ ...BASE, model: GPT }, vi.fn(async () => "signed"))).toMatchObject({ ok: false, phase: "generation", error: "No image returned" });
   });
 });

@@ -38,20 +38,25 @@ export interface GenerationRequest {
   authoring?: boolean;
 }
 
+/** Internal progress marker; the UI renders a sentence, never this value. */
+export type GenerationPhase = "prepare" | "authorization" | "generation";
+
 export type GenerationOutcome =
   | { ok: true; imageUrl: string; data: Record<string, unknown> }
-  | { ok: false; error: string; status?: number; data?: Record<string, unknown> };
+  | { ok: false; error: string; phase?: GenerationPhase; status?: number; data?: Record<string, unknown> };
 
 export async function runGeneration(req: GenerationRequest, sign: PaymentSigner): Promise<GenerationOutcome> {
   const { model } = req;
-  if (!model) return { ok: false, error: "Pick a model first. Nothing was generated and nothing was charged." };
+  if (!model) return { ok: false, phase: "prepare", error: "Pick a model first. Nothing was generated and nothing was charged." };
   // Vercel turns away a body this large before our route runs: a paid one
   // only after its payment was signed. Measured here, before anything is.
-  if (tooLargeToSend(req)) return { ok: false, error: REFS_TOO_LARGE };
+  if (tooLargeToSend(req)) return { ok: false, phase: "prepare", error: REFS_TOO_LARGE };
 
+  let phase: GenerationPhase = "prepare";
   try {
     let res: Response;
     if (model.free) {
+      phase = "generation";
       res = await fetch("/api/generate-free", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
@@ -70,6 +75,7 @@ export async function runGeneration(req: GenerationRequest, sign: PaymentSigner)
       // An embedded wallet that is locked asks first: the intent needs the
       // session's wallet attached, the signature needs it unlocked.
       await ensureCdpWallet({ attached: true });
+      phase = "authorization";
       const { intentId } = await authorizePaidGeneration(
         {
           promptId: req.promptId,
@@ -83,6 +89,7 @@ export async function runGeneration(req: GenerationRequest, sign: PaymentSigner)
         sign,
       );
       // The settings travel on the intent; the request carries the content.
+      phase = "generation";
       res = await fetch("/api/generate-image", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
@@ -100,12 +107,12 @@ export async function runGeneration(req: GenerationRequest, sign: PaymentSigner)
 
     const data = ((await res.json().catch(() => ({}))) ?? {}) as Record<string, unknown>;
     if (!res.ok) {
-      return { ok: false, error: typeof data.error === "string" ? data.error : `Generation failed (${res.status})`, status: res.status, data };
+      return { ok: false, phase, error: typeof data.error === "string" ? data.error : `Generation failed (${res.status})`, status: res.status, data };
     }
     return typeof data.imageUrl === "string"
       ? { ok: true, imageUrl: data.imageUrl, data }
-      : { ok: false, error: "No image returned", data };
+      : { ok: false, phase, error: "No image returned", data };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Generation failed" };
+    return { ok: false, phase, error: e instanceof Error ? e.message : "Generation failed" };
   }
 }
