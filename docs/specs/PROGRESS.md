@@ -69,6 +69,37 @@ PR #173 (ENV-01 forgot-password fix, see below) was opened with code that
 proved red->green on CI before this hit; it's correct but can't show a green
 run until billing is fixed.
 
+## Session 2026-10-11 (fresh agent, handoff picked up)
+- State verified: all 9 PRs still open (#162-169, #173); `main` identical to
+  470739a (compare API, ahead_by 0). Nothing merged, nothing moved.
+- **CI billing STILL blocked**: re-ran run 38058139337 (PR #173's branch) at
+  2026-10-11 00:48 UTC — all 4 jobs failed in ~2s with the same billing
+  annotation. Fresh evidence; still needs a human with org billing access.
+- Housekeeping: the three wave-1 worktrees removed (branches verified pushed
+  and matching origin first; all trees clean).
+- Phase 0-2 prep done while CI is blocked (specs on this branch, status Draft):
+  `MFA-3.md`, `MFA-4.md` (batch 02), `REC-8.md` (batch 04), `ENV-01.md`
+  (batch 05 remainder). Test plans + ACs ready for Phase 3 the moment CI works.
+- Key findings recorded in the specs:
+  - MFA-3's lockout-guard ask (recovery clears factors) is superseded by a
+    newer binding decision (Kev 2026-10-07, in
+    `lib/__tests__/recovery-keeps-factors.test.ts`): recovery keeps factors.
+    Report, don't fix.
+  - Prompt delete still does not exist on main (`prompts/[id]` has GET+PATCH
+    only) — the §5 open decision stands; out of scope.
+  - PR #173's diff spot-checked by the coordinator (this session): 503 fires
+    before the email lookup (no enumeration oracle), tests cover
+    account/no-account/configured/dev-fallback. Still owes a Phase 6 mutation
+    check once CI returns.
+  - `chore/dev-env` (0299c6a) diffed: dev tooling only, nothing reusable for
+    the ENV-01 remainder.
+  - REC-8 upload-site inventory re-counted against main @ 470739a: the helper
+    refactor means the "six put() calls" are now 3 modules (derivative-store,
+    reference-images, gallery/upload) + the db-health cron marker (infra,
+    stays). PR #168 does not touch derivative-store.ts — no conflict.
+- Batch 02/04/05 implementation is READY but STARTs ONLY after CI billing is
+  fixed (lifecycle Phases 3/4/6 need CI run ids; there is no local testing).
+
 ## Blocked on human
 0. **Fix GitHub Actions billing (see above) — blocks literally everything else.**
 1. Secret provisioning for CI (permission + which keys) — still unresolved, rainman456 lacks admin.
