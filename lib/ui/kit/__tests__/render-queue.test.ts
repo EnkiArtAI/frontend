@@ -73,7 +73,7 @@ describe("selectors", () => {
 
 describe("settle (the outcome table)", () => {
   const ok = (data: Record<string, unknown>): GenerationOutcome => ({ ok: true, imageUrl: "https://x/i.webp", data });
-  const bad = (error: string, status?: number, data?: Record<string, unknown>): GenerationOutcome => ({ ok: false, error, status, data });
+  const bad = (error: string, status?: number, data?: Record<string, unknown>): Extract<GenerationOutcome, { ok: false }> => ({ ok: false, error, status, data });
 
   it("ok: resolves with the measured size when it is numeric", () => {
     expect(settle("j", ok({ width: 896, height: 1152 }), "none")).toEqual({
@@ -134,6 +134,17 @@ describe("settle (the outcome table)", () => {
       action: { type: "fail", id: "j", error: { message: "Busy right now · not charged · Rate limit exceeded", charged: "no" } },
       toast: "Busy right now · not charged · Rate limit exceeded",
     });
+  });
+
+  it.each(["prepare", "authorization"] as const)("a signed failure in %s never sent the generation", (phase) => {
+    const result = settle("j", { ...bad("Connection lost"), phase }, "signed");
+    expect(result.action).toMatchObject({ type: "fail", error: { charged: "no" } });
+    expect(result.toast).toContain("not charged");
+    expect(result.toast).not.toContain(phase);
+  });
+
+  it("a signed request lost during generation still has an uncertain outcome", () => {
+    expect(settle("j", { ...bad("Connection lost"), phase: "generation" }, "signed").action).toMatchObject({ type: "fail", error: { charged: "unknown" } });
   });
 
   it("signed and no HTTP answer: charged is unknown", () => {
