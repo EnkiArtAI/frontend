@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
-import "@/components/image-view/image-view.css";
+import "@/components/image-view/image-view-frame.css";
 
 /* Client-only, so a phone never paints the desktop layout first. */
 const ImageView = dynamic(() => import("@/components/image-view/ImageView"), {

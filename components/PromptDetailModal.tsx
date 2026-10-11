@@ -2,7 +2,7 @@
 
 import React, { useEffect } from "react";
 import dynamic from "next/dynamic";
-import "./image-view/image-view.css";
+import "./image-view/image-view-frame.css";
 
 const ImageView = dynamic(() => import("./image-view/ImageView"), { ssr: false });
 

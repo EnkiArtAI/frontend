@@ -5,7 +5,7 @@ import { Loader2 } from "lucide-react";
 import dynamic from "next/dynamic";
 import type { ImageViewSeed } from "@/lib/ui/image-view/seed";
 // The frame and its spinner are styled before the view's chunk arrives.
-import "@/components/image-view/image-view.css";
+import "@/components/image-view/image-view-frame.css";
 
 /* Client-only, so a phone never paints the desktop layout first. The
    spinner is centred in the FRAME, not the viewport: the frame starts at the

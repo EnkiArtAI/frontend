@@ -16,6 +16,7 @@ const STRIP = view("PreviewStrip.tsx");
 const MAIN = view("MainImage.tsx");
 const TALK = view("Discussion.tsx");
 const CSS = view("image-view.css");
+const FRAME_CSS = view("image-view-frame.css");
 const FRAME = src("components", "enki", "EnkiDetailPanel.tsx");
 
 describe("Report", () => {
@@ -157,10 +158,10 @@ describe("images made with this prompt", () => {
 
 describe("the frame", () => {
   it("starts below the recovery banner and beside the shell's menu, under the sidebar", () => {
-    const frame = /\.iv-frame \{([^}]*)\}/.exec(CSS)?.[1] ?? "";
+    const frame = /\.iv-frame \{([^}]*)\}/.exec(FRAME_CSS)?.[1] ?? "";
     expect(frame).toContain("top: var(--ek-banner-h, 0px);");
     expect(frame).toContain("left: var(--ek-sw, 0px);");
     expect(frame).toContain("z-index: 162;");
-    expect(CSS).toMatch(/\.iv-page \{[^}]*height: calc\(100dvh - var\(--ek-banner-h, 0px\)\);/);
+    expect(FRAME_CSS).toMatch(/\.iv-page \{[^}]*height: calc\(100dvh - var\(--ek-banner-h, 0px\)\);/);
   });
 });
