@@ -13,7 +13,8 @@ import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Plus, Check, Loader2 } from "lucide-react";
 import { listCategories, createCategory, addBookmark, removeBookmark, bookmarksProblem, type BookmarkCategory } from "@/hooks/useBookmarks";
-import { BOOKMARK_INDEX_KEY } from "@/hooks/useBookmarkIndex";
+import { bookmarkIndexKey } from "@/hooks/useBookmarkIndex";
+import { useBetaAccess } from "@/components/BetaGate";
 import { withMembership, withoutMembership, type BookmarkIndex, type Membership } from "@/lib/ui/feed/bookmark-index";
 import { placeMenu } from "@/lib/ui/kit/controls";
 import "@/components/enki/bookmarks.css";
@@ -33,6 +34,8 @@ export default function BookmarkPicker({ promptId, imageUrl, onClose, anchor, me
   onChange?: (kind: "added" | "removed", categoryName: string) => void;
 }) {
   const queryClient = useQueryClient();
+  const { access, role, userId } = useBetaAccess();
+  const key = bookmarkIndexKey(access === "ok" && role !== "team" ? userId : null);
   const [cats, setCats] = useState<BookmarkCategory[] | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -81,16 +84,21 @@ export default function BookmarkPicker({ promptId, imageUrl, onClose, anchor, me
     };
   }, [onClose, anchor]);
 
-  // The feed's bookmark index follows in place, without a refetch.
-  const patchIndex = (f: (index: BookmarkIndex) => BookmarkIndex) =>
-    queryClient.setQueryData<BookmarkIndex>(BOOKMARK_INDEX_KEY, (index) => index && f(index));
+  // An older read must not overwrite a confirmed change. If the initial
+  // read is still pending, retain the change while a fresh read completes it.
+  const patchIndex = async (f: (index: BookmarkIndex) => BookmarkIndex) => {
+    await queryClient.cancelQueries({ queryKey: key, exact: true });
+    const known = queryClient.getQueryData<BookmarkIndex>(key);
+    queryClient.setQueryData<BookmarkIndex>(key, f(known ?? new Map()));
+    if (!known) void queryClient.invalidateQueries({ queryKey: key, exact: true });
+  };
 
   const saveInto = async (cat: BookmarkCategory) => {
     if (savingTo) return;
     setSavingTo(cat.id);
     try {
       const b = await addBookmark(cat.id, promptId, imageUrl);
-      patchIndex((index) => withMembership(index, promptId, { bookmarkId: b.id, categoryId: cat.id }));
+      await patchIndex((index) => withMembership(index, promptId, { bookmarkId: b.id, categoryId: cat.id }));
       setSavedTo(cat.id);
       onChange?.("added", cat.name);
       window.setTimeout(onClose, 650); // let the check register, then leave
@@ -105,7 +113,7 @@ export default function BookmarkPicker({ promptId, imageUrl, onClose, anchor, me
     setSavingTo(cat.id);
     try {
       await removeBookmark(m.bookmarkId);
-      patchIndex((index) => withoutMembership(index, promptId, m.bookmarkId));
+      await patchIndex((index) => withoutMembership(index, promptId, m.bookmarkId));
       setCats((cs) => cs && cs.map((c) => (c.id === cat.id ? { ...c, count: Math.max(0, c.count - 1) } : c)));
       onChange?.("removed", cat.name);
     } catch (e) {

@@ -57,7 +57,7 @@ export default function ComposerHeader({ model: m, onBack }: { model: ImageViewM
       <div className="iv-acts">
         {m.promptId && !m.guest && (
           <button type="button" className="iv-act kit-hit" data-on={m.saved ? "saved" : undefined} aria-expanded={!!anchor}
-            title={m.saved ? `Saved to ${m.saved} · file it elsewhere` : "Bookmark"}
+            title={m.saved ? "Saved · file it elsewhere" : "Bookmark"}
             onClick={(e) => setAnchor(anchor ? null : e.currentTarget.getBoundingClientRect())}>
             <Bookmark size={13} strokeWidth={2} fill={m.saved ? "currentColor" : "none"} aria-hidden />{m.saved ? "Saved" : "Bookmark"}
           </button>
@@ -87,7 +87,7 @@ export default function ComposerHeader({ model: m, onBack }: { model: ImageViewM
         )}
       </div>
       {anchor && m.promptId && (
-        <BookmarkPicker promptId={m.promptId} imageUrl={url} anchor={anchor} onClose={() => setAnchor(null)} onChange={m.bookmarked} />
+        <BookmarkPicker promptId={m.promptId} imageUrl={url} anchor={anchor} memberships={m.memberships} onClose={() => setAnchor(null)} onChange={m.bookmarked} />
       )}
     </header>
   );

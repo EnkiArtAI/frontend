@@ -16,6 +16,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useBetaAccess } from "@/components/BetaGate";
 import { notify } from "@/components/kit/notify";
 import { useGrowOnly } from "@/components/kit/useGrowOnly";
+import { useBookmarkIndex } from "@/hooks/useBookmarkIndex";
+import type { Membership } from "@/lib/ui/feed/bookmark-index";
 import { useComposerQuote } from "@/hooks/useComposerQuote";
 import { useGenerationCore, type GenerationCore } from "@/hooks/useGenerationCore";
 import { useHoldings } from "@/hooks/useHoldings";
@@ -235,8 +237,9 @@ export interface ImageViewModel {
   post: (payload: { body?: string; rating?: number }) => Promise<boolean>;
   /** The composers open once the viewer has an image of this prompt (checked here only, plan §5 #19). */
   canPost: boolean;
-  /** The bookmark category saved to in this visit (plan §5 #21). */
-  saved: string | null;
+  /** Saved in any of the viewer's bookmark categories, including before this visit. */
+  saved: boolean;
+  memberships: readonly Membership[];
   /** BookmarkPicker's onChange. */
   bookmarked: (kind: "added" | "removed", category: string) => void;
 }
@@ -554,7 +557,8 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
     return false;
   };
 
-  const [saved, setSaved] = useState<string | null>(null);
+  const bookmarks = useBookmarkIndex(!guest && !!promptId);
+  const memberships = !guest && promptId ? bookmarks?.get(promptId) ?? [] : [];
 
   return {
     blank,
@@ -668,9 +672,9 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
     discussion: { data: talkQ.data, error: talkQ.error?.message ?? null, retry: () => void talkQ.refetch() },
     post,
     canPost: !guest && hasGenerated(jobs, own.history),
-    saved,
+    saved: memberships.length > 0,
+    memberships,
     bookmarked: (kind: "added" | "removed", category: string) => {
-      setSaved((was) => (kind === "added" ? category : was === category ? null : was));
       notify(kind === "added" ? `Saved to ${category}` : `Removed from ${category}`);
     },
   };
