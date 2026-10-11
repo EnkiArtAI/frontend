@@ -144,14 +144,6 @@
       "count": 1
     }
   },
-  "components/PromptGeneratorView.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 6
-    }
-  },
   "components/ShowroomUploadZone.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1

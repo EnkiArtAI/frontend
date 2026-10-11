@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { join } from "node:path";
 import { readSource } from "@/lib/__tests__/_read-source";
 import { serverUrls } from "@/lib/creations";
+import { historyForPrompt, type GenerationRow } from "@/lib/ui/image-view/history";
 
 /**
  * A render the server recorded is shown once. The browser keeps the URL the
@@ -17,12 +18,12 @@ describe("a recorded render", () => {
     const urls = serverUrls([ROW, { image_url: null, image_urls: [] }]);
     expect([...urls].sort()).toEqual([ROW.image_url, ROW.image_urls[0]].sort());
   });
+});
 
-  it("is matched on both in My Gallery and in the generator's history", () => {
-    const gallery = readSource(join(__dirname, "..", "..", "app", "my-gallery", "page.tsx"));
-    expect(gallery).toMatch(/const dbUrls = serverUrls\(generations\);/);
-    const view = readSource(join(__dirname, "..", "..", "components", "PromptGeneratorView.tsx"));
-    expect(view).toMatch(/const recorded = serverUrls\(genData\?\.data\?\.generations \?\? genData\?\.generations \?\? \[\]\);/);
-    expect(view).toContain("...localHistory.filter(url => !recorded.has(url))");
-  });
+it("My Gallery and the current history exclude a queued original or preview", () => {
+  const gallery = readSource(join(__dirname, "..", "..", "app", "my-gallery", "page.tsx"));
+  expect(gallery).toMatch(/const dbUrls = serverUrls\(generations\);/);
+  const row: GenerationRow = { ...ROW, id: "row", thumbnail_url: null, isUploaded: false, visibility: "private", prompt_id: "prompt", created_at: "" };
+  expect(historyForPrompt([row], "prompt", [])).toEqual([row]);
+  for (const imageUrl of [ROW.image_url, ROW.image_urls[0]]) expect(historyForPrompt([row], "prompt", [{ imageUrl }])).toEqual([]);
 });

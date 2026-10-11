@@ -37,14 +37,14 @@ describe("Quick Create", () => {
 });
 
 describe("the marketplace tiers and the shared helpers", () => {
-  const PGV = readSource(join(ROOT, "components", "PromptGeneratorView.tsx"));
+  const PGV = readSource(join(ROOT, "components", "image-view", "useImageViewModel.ts"));
   const CORE = readSource(join(ROOT, "hooks", "useGenerationCore.ts"));
   const LIMITS = readSource(join(ROOT, "hooks", "useModelLimits.ts"));
   const QUALITY = readSource(join(ROOT, "components", "generation", "QualitySelect.tsx"));
 
   it("each tier shows the server's quote for this prompt", () => {
-    expect(PGV).toMatch(/const tierQuotes = useServerQuotes\(/);
-    expect(PGV).toMatch(/priceLabel: noCharge \? undefined : quoteLabel\(tierQuotes\[i\]\) \?\? undefined/);
+    expect(PGV).toMatch(/const tierPrices = useServerQuotes\(/);
+    expect(PGV).toMatch(/const qualityPrices = useServerQuotes\(/);
   });
 
   it("no surface can compute a price in the browser any more", () => {

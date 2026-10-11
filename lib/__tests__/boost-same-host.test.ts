@@ -45,7 +45,7 @@ describe("every generate surface", () => {
   const core = src("hooks", "useGenerationCore.ts");
   const editor = src("components", "prompt-editor", "GenerateBar.tsx");
   const launcher = src("components", "GenerateLauncher.tsx");
-  const viewer = src("components", "PromptGeneratorView.tsx");
+  const viewer = src("components", "image-view", "ImageViewDesktop.tsx");
   const modal = src("components", "EnkiMobileGenerateModal.tsx");
 
   it("asks the core per size, from the sizes the catalogue answer carries", () => {
@@ -57,7 +57,7 @@ describe("every generate surface", () => {
 
   it("passes the size to the toggle", () => {
     expect(editor).toContain("sameHost={!core.boostAt(tier)}");
-    expect(viewer).toContain("sameHost={!core.boostAt(quoteResolution)}");
+    expect(viewer).toContain("sameHost={!m.core.boostAt(m.resolution)}");
     expect(launcher).toContain("boostSameHost={!core.boostAt(resolution)}");
     expect(modal).toContain("sameHost={boostSameHost}");
   });
@@ -65,8 +65,7 @@ describe("every generate surface", () => {
   it("keeps the flag out of quotes and generations at such a size", () => {
     expect(src("lib", "editor", "generate-checks.ts")).toContain("boost: picks.boost && boostAt(entry, resolution) && entry.boostAvailable === true,");
     expect(launcher.split("core.boostAt(tier) && boost")).toHaveLength(3);
-    expect(viewer.split("core.boostAt(quoteResolution) && boost")).toHaveLength(4);
-    expect(viewer).toContain("resolution: t, boost: core.boostAt(t) && boost, quality, referenceImageCount: refs.length }))");
+    expect(src("lib", "ui", "image-view", "setups.ts")).toContain("boost: c.boost && boostAt(model, c.resolution),");
     for (const s of [editor, launcher, viewer]) expect(s).not.toMatch(/boostAvailable && boost|boost && !!m\\.boostAvailable/);
   });
 });

@@ -1,45 +1,34 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { join } from "node:path";
 import { readSource } from "@/lib/__tests__/_read-source";
-
-/**
- * The marketplace generator reset any pick missing from its name list to the
- * list's first entry (the cheapest row, Flux), invented model names before the
- * catalogue loaded, ignored the prompt's own model, and paid for boost and
- * quality from a stale closure. It now runs the buyer's pick, or the prompt's
- * own model, through runGeneration.
- */
-const PGV = readSource(join(__dirname, "..", "..", "components", "PromptGeneratorView.tsx"));
-
-describe("the marketplace generator runs the selected model", () => {
-  it("never resets a pick and invents no names", () => {
-    expect(PGV).not.toMatch(/setGenerator\(GENERATORS\[0\]\)/);
-    expect(PGV).not.toMatch(/"Nano Banana Pro"|Seedream 5\.0 lite \(coming soon\)/);
-    expect(PGV).toMatch(/const \[generatorPick, setGenerator\] = useState\(""\);/);
+import type { CatalogueEntry } from "@/hooks/useModelLimits";
+import { defaultModel } from "@/lib/ui/image-view/models";
+import { makeSetup, quoteOf, toRequest, type Composer } from "@/lib/ui/image-view/setups";
+const model: CatalogueEntry = { id: "artist-model", name: "Artist model", price: 0.1, free: false, mediaType: "image", supportsQuality: true, maxResolution: "4K", ratios: ["1:1"], boostAvailable: true, boostTiers: ["4K"] };
+const catalogue = [model];
+const composer: Composer = { promptId: "prompt", publicText: "a fox", edited: null, variables: [], values: {}, model, resolution: "4K", aspectRatio: "1:1", quality: "high", boost: true, refs: ["data:image/png;base64,AA=="] };
+describe("the current marketplace model selection", () => {
+  it("preselects the artist model only when offered, and the buyer pick wins", () => {
+    expect(defaultModel({ catalogue, pick: "", aiModel: model.id, premium: true })).toBe(model.name);
+    expect(defaultModel({ catalogue, pick: "Buyer pick", aiModel: model.id, premium: true })).toBe("Buyer pick");
+    expect(defaultModel({ catalogue: [], pick: "", aiModel: model.id, premium: true })).toBe("");
+    expect(defaultModel({ catalogue: [{ ...model, free: true }], pick: "", aiModel: model.id, premium: true })).toBe("");
   });
-
-  it("preselects only the prompt's own model, and the buyer's pick wins", () => {
-    // A paid prompt whose own model is the free one preselects nothing (Kev, 2026-10-08).
-    expect(PGV).toContain('const generator = generatorPick || (!isFree && onFreeHost(promptModelName) ? "" : promptModelName);');
-    expect(PGV).toMatch(/const m = prompt\?\.ai_model;/);
+  it("sends the selected model, prompt and current settings through the shared queue", () => {
+    const setup = makeSetup(composer)!;
+    expect(toRequest(setup)).toMatchObject({ model, promptId: "prompt", quality: "high", boost: true, referenceImages: composer.refs });
+    expect(quoteOf(setup)).toMatchObject({ entry: model, promptId: "prompt", quality: "high", boost: true, referenceImageCount: 1 });
+    expect(makeSetup({ ...composer, model: undefined })).toBeNull();
   });
-
-  it("generates through runGeneration with the resolved entry and the prompt", () => {
-    expect(PGV).toMatch(/const outcome = await runGeneration\(\n\s+\{\n\s+model: core\.entry,/);
-    expect(PGV).toMatch(/promptId: promptId \|\| undefined,/);
-    expect(PGV).not.toMatch(/\/api\/generate-free/);
+  it("uses the server free flag and disables boost at a size without a faster host", () => {
+    expect(makeSetup({ ...composer, resolution: "1K" })?.boost).toBe(false);
+    const free = { ...model, price: 0.1, free: true };
+    expect(toRequest(makeSetup({ ...composer, model: free })!).model?.free).toBe(true);
   });
-
-  it("quotes the boost that will run, not a hidden one", () => {
-    expect(PGV).toMatch(/fetchGenerationQuote\(\{ promptId: promptId!, modelId: core\.entry!\.id, resolution: quoteResolution, boost: core\.boostAt\(quoteResolution\) && boost, quality, referenceImageCount: refs\.length \}\)/);
-  });
-
-  it("free is the server's flag", () => {
-    expect(PGV).toMatch(/const freeModel = core\.free;/);
-  });
-
-  it("pays with the current boost and quality, not the first render's", () => {
-    const deps = PGV.slice(PGV.indexOf("}, [isFree, core, boost, quality,"));
-    expect(deps.startsWith("}, [isFree, core, boost, quality,")).toBe(true);
+  it("never resets a pick as the catalogue loads", () => {
+    const view = readSource(join(__dirname, "..", "..", "components", "image-view", "useImageViewModel.ts"));
+    expect(view).toContain('const [pick, setPick] = useState("");');
+    expect(view).toContain('defaultModel({ catalogue, pick, aiModel: prompt?.ai_model, premium })');
+    expect(view).not.toMatch(/setPick\(catalogue\[0\]/);
   });
 });

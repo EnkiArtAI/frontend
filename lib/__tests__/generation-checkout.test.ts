@@ -186,18 +186,6 @@ describe("the quote of a prompt that is not for sale", () => {
       expect(await fetchGenerationQuote(REQ)).toBeNull();
     }
   });
-
-  it("is shown on the buyer's button, which stays dead and is not asked for again", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const PGV = readFileSync(join(__dirname, "..", "..", "components", "PromptGeneratorView.tsx"), "utf8");
-    expect(PGV).toContain("const unavailable = quoteError instanceof PromptUnavailable;");
-    expect(PGV).toContain("retry: (failures, e) => !(e instanceof PromptUnavailable) && failures < 3,");
-    expect(PGV).toContain("disabled={generating || refsLoading || guest || (!noCharge && (!paidQuote || unavailable))}");
-    // Before the stale price of a quote fetched while the prompt was still for sale.
-    expect(PGV.indexOf('? "No longer available"')).toBeGreaterThan(-1);
-    expect(PGV.indexOf('? "No longer available"')).toBeLessThan(PGV.indexOf("? `Generate $${paidQuote.totalUsd}`"));
-  });
 });
 
 describe("many quotes in one request", () => {
@@ -239,4 +227,12 @@ describe("display helpers", () => {
     expect(microToUsd("5000")).toBe("0.005");
     expect(microToUsd("garbage")).toBe("0.00");
   });
+});
+
+it("the current buyer shows an unavailable prompt before pricing it and does not retry its quote", async () => {
+  const { readSource } = await import("@/lib/__tests__/_read-source"); const { join } = await import("node:path");
+  const model = readSource(join(__dirname, "..", "..", "components", "image-view", "useImageViewModel.ts"));
+  expect(model).toContain('if (quote.unavailable) return { label: "No longer available", why: "This prompt is no longer available" };');
+  expect(model.indexOf('if (quote.unavailable)')).toBeLessThan(model.indexOf('!setup.model.free && !quote.quote'));
+  expect(readSource(join(__dirname, "..", "..", "hooks", "useComposerQuote.ts"))).toContain('retry: false,');
 });
