@@ -192,9 +192,8 @@ describe("a stored prompt's own mark", () => {
   });
 });
 
-describe("the editor", () => {
-  it("shows the server's reason when a save is refused", () => {
-    const EDITOR = readSource(join(__dirname, "..", "..", "components", "EnkiPromptEditor.tsx"));
-    expect(EDITOR).toMatch(/throw new Error\(typeof reason === "string" && reason \? reason : "Failed to save prompt"\);/);
-  });
+it("the current editor shows the server's reason on a refused release", () => {
+  const editor = readSource(join(__dirname, "..", "..", "components", "prompt-editor", "PromptEditor.tsx"));
+  expect(editor).toContain('const why = data.error ?? "Release failed — nothing was published";');
+  expect(editor).toContain('notify(res.status === 409 ?');
 });

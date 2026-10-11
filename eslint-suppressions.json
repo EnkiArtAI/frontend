@@ -119,17 +119,6 @@
       "count": 2
     }
   },
-  "components/EnkiPromptEditor.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "react-hooks/refs": {
-      "count": 6
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 8
-    }
-  },
   "components/FilterBar.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1

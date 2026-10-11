@@ -13,7 +13,6 @@ import { readSource } from "@/lib/__tests__/_read-source";
 const ROOT = join(__dirname, "..", "..");
 const SHEET = readSource(join(ROOT, "components", "EnkiMobileGenerateModal.tsx"));
 const LAUNCHER = readSource(join(ROOT, "components", "GenerateLauncher.tsx"));
-const EDITOR = readSource(join(ROOT, "components", "EnkiPromptEditor.tsx"));
 
 describe("the mobile sheet", () => {
   it("shows the parent's server quote for exactly the count it generates", () => {
@@ -37,23 +36,6 @@ describe("Quick Create", () => {
   });
 });
 
-describe("the classic editor", () => {
-  it("prices every label from server quotes", () => {
-    expect(EDITOR).toMatch(/const entryQuotes = useServerQuotes\(/);
-    expect(EDITOR).not.toMatch(/getPricePerSlot|getBatchCost|getRefillCost|model\.price\.toFixed/);
-    expect(EDITOR).toMatch(/priceFor=\{slotPrice\}/);
-  });
-
-  it("promises no refill discount the server does not give", () => {
-    expect(EDITOR).not.toMatch(/\* 0\.8|refill discount/);
-  });
-
-  it("generates as many slots as the sheet priced", () => {
-    expect(EDITOR).toMatch(/onGenerate=\{\(count\) => \{/);
-    expect(EDITOR).toMatch(/const ids = Array\.from\(\{ length: count \}, \(_, i\) => base \+ i\);/);
-  });
-});
-
 describe("the marketplace tiers and the shared helpers", () => {
   const PGV = readSource(join(ROOT, "components", "PromptGeneratorView.tsx"));
   const CORE = readSource(join(ROOT, "hooks", "useGenerationCore.ts"));
@@ -73,4 +55,11 @@ describe("the marketplace tiers and the shared helpers", () => {
   it("the quality hints make no price claims", () => {
     expect(QUALITY).not.toMatch(/\d+x the price/);
   });
+});
+
+it("the current editor uses one server quote batch and never guesses a price", () => {
+  const editor = readSource(join(ROOT, "components", "prompt-editor", "PromptEditor.tsx"));
+  expect(editor).toContain('const quotes = useServerQuotes(signedIn ? batch : []);');
+  expect(editor).toContain('quoteBatch(');
+  expect(editor).not.toMatch(/getPricePerSlot|getBatchCost|getRefillCost|model\.price\.toFixed/);
 });

@@ -25,13 +25,13 @@ describe("the category", () => {
     expect(feed).not.toMatch(/prompt\.tags\.includes\(tag\)/);
   });
 
-  it("is saved by the editor as category, and no tags are sent", () => {
-    const editor = readSource(join(ROOT, "components", "EnkiPromptEditor.tsx"));
-    expect(editor).toMatch(/category: promptData\.tags\[0\] \?\? "",/);
-    expect(editor).not.toMatch(/^\s*tags: promptData\.tags,$/m);
-  });
-
   it("offers Photography, the category live prompts already carry", () => {
     expect(ENKI_CATEGORIES).toContain("Photography");
   });
+});
+
+it("the current release body sends category and no tags", () => {
+  const body = readSource(join(ROOT, "lib", "editor", "release.ts"));
+  expect(body).toContain('category: listing.category ?? "",');
+  expect(body).not.toMatch(/\btags:/);
 });

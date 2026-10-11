@@ -53,13 +53,6 @@ describe("an artist's draft", () => {
     await runGeneration({ ...BASE, model: FLUX, authoring: true }, vi.fn());
     expect(calls[0].body.authoring).toBe(true);
   });
-
-  it("comes from the classic editor", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const ROOT = join(__dirname, "..", "..");
-    expect(readFileSync(join(ROOT, "components", "EnkiPromptEditor.tsx"), "utf8")).toMatch(/referenceImages: cardRefs\.length \? cardRefs : undefined,\s*authoring: true,/);
-  });
 });
 
 describe("no selection, no generation", () => {
