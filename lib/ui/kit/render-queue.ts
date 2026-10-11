@@ -97,8 +97,9 @@ const CONNECTION_LOST = "Connection lost · if the image was made it appears in 
  * What one finished generation does to the queue and tells the user (plan
  * §1.3 table). `sign` is what this job's signer did. The paid route signs
  * before it generates, and the server voids the payment on every failure it
- * answers; so only a job that signed and then lost the connection may have
- * been charged. A cancel is not a failed render: the job goes.
+ * answers; so a signed job is uncertain only once its generation request
+ * was sent. Older callers without a phase stay conservative. A cancel is
+ * not a failed render: the job goes.
  */
 export function settle(id: string, o: GenerationOutcome, sign: SignState): Settlement {
   if (o.ok) {
@@ -120,6 +121,6 @@ export function settle(id: string, o: GenerationOutcome, sign: SignState): Settl
     action: { type: "fail", id, error: { message, charged } },
     toast: message,
   });
-  if (sign === "signed" && o.status === undefined) return fail("unknown", CONNECTION_LOST);
+  if (sign === "signed" && o.status === undefined && (o.phase === undefined || o.phase === "generation")) return fail("unknown", CONNECTION_LOST);
   return fail("no", `${o.status === 429 ? "Busy right now" : "Render failed"} · not charged · ${o.error}`);
 }
