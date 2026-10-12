@@ -114,7 +114,7 @@ export async function recordGenerationRenditions(
   if (!Object.keys(updates).length) return;
   const { error } = await supabase.from("generated_images").update(updates)
     .eq("generation_id", generationId).eq("user_id", userId);
-  if (error) throw new GenerationRecordError();
+  if (error) throw new GenerationRecordError(`generated_images update: ${error.code ?? ""} ${error.message}`);
 }
 
 /** Encrypt into the four columns this schema uses everywhere. */

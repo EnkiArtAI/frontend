@@ -62,7 +62,10 @@ describe("Strict recording is the prerequisite for escrow delivery", () => {
       .rejects.toThrow("The generated image could not be saved");
   });
   it("names the refusing step for the server, apart from the user's sentence (devnet 2026-10-13)", async () => {
-    const strict = (r: GenerationRecord) => recordGeneration(db as never, r, { requireAcceptedImage: true }).catch((e) => e as GenerationRecordError);
+    const strict = async (r: GenerationRecord): Promise<GenerationRecordError> => {
+      try { await recordGeneration(db as never, r, { requireAcceptedImage: true }); } catch (e) { return e as GenerationRecordError; }
+      throw new Error("expected a strict refusal");
+    };
     expect((await strict(rec({ imageUrl: null }))).reason).toBe("image url is not https");
     state.failTable = "generations";
     const refused = await strict(rec());
