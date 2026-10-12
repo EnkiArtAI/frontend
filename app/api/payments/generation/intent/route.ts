@@ -86,10 +86,7 @@ export async function POST(req: NextRequest) {
     Date.now() + PRICING_POLICY.quoteTtlSeconds * 1000,
   ).toISOString();
 
-  // buyer_wallet comes from the session, never from the client. NOTE for the
-  // pay step: session wallets are stored lowercased (auth_sessions), which is
-  // lossy for base58 — resolve the case-exact address from user_wallets
-  // before building the on-chain transfer.
+  // Ownership is the case-preserving authenticated session identifier.
   const { data: intent, error: insertError } = await supabase
     .from("generation_payment_intents")
     .insert({
@@ -117,13 +114,11 @@ export async function POST(req: NextRequest) {
     .single();
   if (isDbUnreachable(insertError)) return dbUnavailableResponse();
   if (insertError || !intent) {
-    console.error("[payments/intent] insert failed:", insertError?.message);
+    console.error("[payments/intent] insert failed");
     return NextResponse.json({ error: "Failed to create payment intent" }, { status: 500 });
   }
 
-  // Free-use quotas are NOT counted here: they burn only when the generation
-  // is actually delivered — see fulfillGenerationIntent (Kev, 2026-07-12:
-  // cancellable queue; a cancelled generation must not consume a free use).
+  // The free baseline has its separate atomic daily claim; these catalogue models are paid.
 
   return NextResponse.json({
     intent: {
