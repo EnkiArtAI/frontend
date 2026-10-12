@@ -40,7 +40,7 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'Funded payment not found' USING ERRCODE='22023'; END IF;
   SELECT * INTO v_deposit FROM public.generation_escrow_deposits WHERE intent_id=p_intent_id FOR UPDATE;
   IF NOT FOUND OR v_deposit.state<>'funded' THEN RAISE EXCEPTION 'Deposit is not funded' USING ERRCODE='22023'; END IF;
-  SELECT units INTO v_units FROM public.generation_escrow_recovery WHERE intent_id=p_intent_id AND state='reserved';
+  SELECT units INTO v_units FROM public.generation_escrow_recovery WHERE intent_id=p_intent_id AND state IN ('reserved','confirmed');
   IF NOT FOUND THEN RAISE EXCEPTION 'Recovery snapshot missing' USING ERRCODE='22023'; END IF;
   INSERT INTO public.generation_escrow_batches(intent_id) VALUES(p_intent_id) ON CONFLICT DO NOTHING;
   INSERT INTO public.generation_escrow_units(intent_id,unit_index)
@@ -94,16 +94,16 @@ BEGIN
   RETURN v_unit;
 END $$;
 
+-- SETOF returns zero rows for a repeated/late failure rather than an all-null composite row.
+DROP FUNCTION IF EXISTS public.fail_generation_escrow_unit(uuid,text,integer,uuid);
 CREATE OR REPLACE FUNCTION public.fail_generation_escrow_unit(
   p_intent_id uuid,p_owner_wallet text,p_unit_index integer,p_claim_token uuid)
-RETURNS public.generation_escrow_units LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
-DECLARE v_unit public.generation_escrow_units%ROWTYPE;
+RETURNS SETOF public.generation_escrow_units LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
 BEGIN
   PERFORM public.ensure_generation_escrow_batch(p_intent_id,p_owner_wallet);
-  UPDATE public.generation_escrow_units SET state='failed',updated_at=now()
+  RETURN QUERY UPDATE public.generation_escrow_units SET state='failed',updated_at=now()
     WHERE intent_id=p_intent_id AND unit_index=p_unit_index AND claim_token=p_claim_token AND state='running'
-    RETURNING * INTO v_unit;
-  RETURN v_unit;
+    RETURNING *;
 END $$;
 
 -- No caller-supplied k. Freeze the count only after all running leases have ended.

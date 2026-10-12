@@ -111,4 +111,18 @@ REVOKE ALL ON FUNCTION public.expire_generation_escrow_transaction(uuid,text,uui
 GRANT EXECUTE ON FUNCTION public.store_generation_escrow_transaction(uuid,text,text,bytea,text,text,bigint,bigint) TO service_role;
 GRANT EXECUTE ON FUNCTION public.confirm_generation_escrow_transaction(uuid,text,uuid,text,bigint) TO service_role;
 GRANT EXECUTE ON FUNCTION public.expire_generation_escrow_transaction(uuid,text,uuid,bigint,bigint) TO service_role;
+-- Candidates exclude closed history, so abandoned orders cannot be starved by old payments.
+CREATE OR REPLACE FUNCTION public.generation_escrow_work_items(p_limit integer DEFAULT 20)
+RETURNS TABLE(intent_id uuid,owner_wallet text,deposit_state text)
+LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS $$
+  SELECT d.intent_id,i.buyer_wallet,d.state
+  FROM public.generation_escrow_deposits d
+  JOIN public.generation_payment_intents i ON i.id=d.intent_id
+  LEFT JOIN public.generation_escrow_batches b ON b.intent_id=d.intent_id
+  WHERE d.state IN ('prepared','submitting','submitted','funded') AND (b.state IS NULL OR b.state<>'closed')
+  ORDER BY COALESCE(b.updated_at,d.created_at),d.intent_id
+  LIMIT LEAST(GREATEST(COALESCE(p_limit,20),1),50)
+$$;
+REVOKE ALL ON FUNCTION public.generation_escrow_work_items(integer) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.generation_escrow_work_items(integer) TO service_role;
 COMMIT;

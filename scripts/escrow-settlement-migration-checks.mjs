@@ -52,6 +52,7 @@ export async function checkEscrowTransactions({db,row,check,rejects,id,units}) {
     assert.equal((await confirm(payment,reclaim)).state,'closed');
     const recovery=await row('SELECT * FROM public.generation_escrow_recovery WHERE intent_id=$1',[payment]);
     assert.equal(recovery.settlement_signature,settle.signature);assert.equal(recovery.delivered_units,1);
+    assert.equal((await close(payment)).state,'closed');
   });
   await check('rebuilding an attempt requires blockheight expiry and retains its audit wire',async()=>{
     const payment=await ready(),tx=await store(payment);
@@ -61,6 +62,16 @@ export async function checkEscrowTransactions({db,row,check,rejects,id,units}) {
     await rejects(()=>confirm(payment,tx));
     await confirm(payment,retry);await rejects(()=>expire(payment,retry));
     assert.equal(Number((await row('SELECT count(*) n FROM public.generation_escrow_transactions WHERE intent_id=$1',[payment])).n),2);
+  });
+  await check('worker candidates include abandoned funded orders and exclude closed history',async()=>{
+    const abandoned=await funded(1),finished=await ready(true);
+    const settle=await store(finished);await confirm(finished,settle);
+    const reclaim=await store(finished,'reclaim');await confirm(finished,reclaim);
+    const candidates=(await db.query('SELECT * FROM public.generation_escrow_work_items(50)')).rows;
+    assert(candidates.some(item=>item.intent_id===abandoned));assert(!candidates.some(item=>item.intent_id===finished));
+    for(const role of ['anon','authenticated']) {
+      await db.exec('SET ROLE '+role);await rejects(()=>db.query('SELECT * FROM public.generation_escrow_work_items(50)'),'42501');await db.exec('RESET ROLE');
+    }
   });
   await check('a failed recovery confirmation rolls back transaction and batch confirmation',async()=>{
     const payment=await ready(true),tx=await store(payment);

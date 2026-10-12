@@ -82,9 +82,9 @@ export async function checkEscrowUnits({ db,row,check,rejects,id,intent,reserve,
   });
   await check('failure cannot erase a delivered unit and never opens a retry claim',async()=>{
     const payment=await funded(1),token=id();await claim(payment,0,token);
-    await fail(payment,0,id());
+    assert.equal(await fail(payment,0,id()),undefined);
     assert.equal((await row('SELECT state FROM public.generation_escrow_units WHERE intent_id=$1',[payment])).state,'running');
-    await fail(payment,0,token);assert.equal(await claim(payment,0),undefined);
+    await fail(payment,0,token);assert.equal(await fail(payment,0,token),undefined);assert.equal(await claim(payment,0),undefined);
     assert.equal((await close(payment)).delivered_units,0);
   });
   await check('batch waits for running work and freezes k from delivered rows only',async()=>{
