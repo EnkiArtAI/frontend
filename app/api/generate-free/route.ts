@@ -26,25 +26,9 @@ import { freeGenerationDecision, releaseFreeClaim } from "@/lib/generation/free-
 export const maxDuration = 300;
 
 /**
- * Free image generation endpoint (dev/testing)
- *
- * Uses Pollinations.ai (free, no API key needed)
- * No payment required. The allowance is claimed in the database
- * (free_generation_claims), so no database means no free generation.
- *
- * REQUIRES A SESSION as of 2026-08-18. It used to be deliberately
- * unauthenticated, which made the per-account free allowance decorative: the
- * way around three-per-account was to log out, because an anonymous caller has
- * no user_id for an allowance to count against and an IP is neither stable nor
- * personal. Free generation is now: team roles without a limit, every other
- * account three images, nobody else.
- *
- * The other guards stay exactly as they were — the same moderation the paid
- * path gets, a per-IP rate limit, and violations attributed by hashed IP.
- *
- * POST /api/generate-free
- * Body: { prompt, aspectRatio?, resolution?, workflow? }
- * Reference images are refused here — the free model is text-only.
+ * One free baseline-model image per UTC day, with a session.
+ * The daily claim is taken atomically before rendering. Premium models need
+ * a payment and never fall back to this provider. References are not supported.
  */
 /** Only a real uuid may reach generations.prompt_id — it is a foreign key. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -180,17 +164,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: CLIENT_BLOCK_MESSAGE }, { status: 422 });
     }
 
-    /* The free allowance, CLAIMED before the provider is called.
-     *
-     * Three images per account (Kev, 2026-08-18) — free usage is an onboarding
-     * allowance for new accounts, not a permanent tier. Claimed here rather
-     * than counted after generating: parallel requests all read "2 used" when
-     * the row was only written once the response had gone (ENG-20), and an
-     * account over its limit must not cost a render.
-     *
-     * A caller without an account is asked to sign in here: only accounts
-     * generate on this route, and an account is stopped by its own ban.
-     */
+    // One free image per UTC day, claimed before calling the provider.
+    // Parallel requests cannot spend the same slot; failed renders release it.
     const quotaUserId = await resolveRecordingUserId(supabaseForChecks, request);
     const decision = await freeGenerationDecision(supabaseForChecks, quotaUserId);
     if (!decision.allowed && decision.reason === "sign-in") {
@@ -206,10 +181,12 @@ export async function POST(request: NextRequest) {
       const q = decision.quota;
       return NextResponse.json(
         {
-          error: `You have used all ${q?.limit ?? 0} free generations on this account.`,
+          error: "Your free image for today has already been used. Choose a paid model to generate more.",
           freeQuotaExhausted: true,
           used: q?.used ?? 0,
           limit: q?.limit ?? 0,
+          remaining: q?.remaining ?? 0,
+          resetsAt: q?.resetsAt ?? null,
         },
         { status: 402 },
       );
