@@ -15,24 +15,24 @@ import { toEditModel } from "@/backend/services/wavespeed-image-generation";
  */
 describe("Nano Banana 2", () => {
   it("is charged the first host's price per size, 1K included", () => {
-    expect(apiPricePerImage("nano-banana-2", "1K")).toBe(0.0672);
-    expect(apiPricePerImage("nano-banana-2", "1k")).toBe(0.0672);
+    expect(apiPricePerImage("nano-banana-2", "1K")).toBe(0.0913);
+    expect(apiPricePerImage("nano-banana-2", "1k")).toBe(0.0913);
     expect(apiPricePerImage("nano-banana-2", "2K")).toBe(0.045);
     expect(apiPricePerImage("nano-banana-2", "4K")).toBe(0.05);
     expect(getModelCostMicro("nano-banana-2", "2K")).toBe(45_000);
   });
 
   it("is charged Google direct's price on boost", () => {
-    expect(apiBoostPricePerImage("nano-banana-2", "1K")).toBe(0.0672);
+    expect(apiBoostPricePerImage("nano-banana-2", "1K")).toBe(0.0913);
     expect(apiBoostPricePerImage("nano-banana-2", "2K")).toBe(0.1008);
     expect(apiBoostPricePerImage("nano-banana-2", "4K")).toBe(0.1512);
     expect(getModelCostMicro("nano-banana-2", "4K", { boost: true })).toBe(151_200);
   });
 
   it("leaves the other models' prices as they were", () => {
-    expect(apiPricePerImage("nano-banana-pro", "1K")).toBe(0.134);
-    expect(apiBoostPricePerImage("nano-banana-pro", "1K")).toBe(0.134);
-    expect(apiBoostPricePerImage("nano-banana-pro", "4K")).toBe(0.24);
+    expect(apiPricePerImage("nano-banana-pro", "1K")).toBe(0.1476);
+    expect(apiBoostPricePerImage("nano-banana-pro", "1K")).toBe(0.1476);
+    expect(apiBoostPricePerImage("nano-banana-pro", "4K")).toBe(0.2525);
     expect(apiBoostPricePerImage("gpt-image-2", "2K", "high")).toBe(0.428);
     expect(geminiDirectPricePerImage("gpt-image-2", "2K")).toBeNull();
     expect(geminiDirectPricePerImage("constructor", "2K")).toBeNull();
@@ -40,7 +40,7 @@ describe("Nano Banana 2", () => {
 
   it("holds a Google bill to Google's price, not to Fast's", () => {
     expect(driftOf({ provider: "gemini", modelFamily: "nano-banana-2", resolution: "2K", observedUsd: 0.1008 }).drifted).toBe(false);
-    expect(driftOf({ provider: "gemini", modelFamily: "nano-banana-2", resolution: "1K", observedUsd: 0.0672 }).drifted).toBe(false);
+    expect(driftOf({ provider: "gemini", modelFamily: "nano-banana-2", resolution: "1K", observedUsd: 0.0913 }).drifted).toBe(false);
     expect(driftOf({ provider: "gemini", modelFamily: "nano-banana-2", resolution: "4K", observedUsd: 0.2 }).drifted).toBe(true);
     // A host that is not Google is still held to the table.
     expect(driftOf({ provider: "openai", modelFamily: "gpt-image-2", resolution: "2K", quality: "medium", observedUsd: 0.107 }).drifted).toBe(false);

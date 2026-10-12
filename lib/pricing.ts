@@ -12,9 +12,12 @@ export type PriceRow = Record<ResolutionTier, number> & { "1K"?: number };
 
 /** Real per-image API cost (USD) by model id and resolution tier. */
 export const MODEL_IMAGE_PRICING: Record<string, PriceRow> = {
-  /* nano-banana-pro runs Gemini direct since 2026-09-05: WaveSpeed raised
-     its 1K/2K to $0.14 while Gemini stays $0.134 (official page). */
-  "nano-banana-pro": { "2K": 0.134, "4K": 0.24 },
+  /* nano-banana-pro runs Gemini direct since 2026-09-05. Gemini bills every
+     output token of the answer (candidatesTokenCount x $120/1M), not only the
+     image's: measured on devnet 2026-10-13 at 1230 tokens for 2K and 2104 for
+     4K, above the official 1120/2000. The table carries the measured bill
+     (Kev: the table equals the API price; the fee comes on top). */
+  "nano-banana-pro": { "2K": 0.1476, "4K": 0.2525 },
   /* gpt-image-2 runs OpenAI direct on EVERY quality since 2026-09-05 —
      WaveSpeed dropped its flat $0.167/$0.25 for a quality matrix that would
      have lost us money at high ($0.40/$0.72 vs our $0.167/$0.25). This row
@@ -22,8 +25,9 @@ export const MODEL_IMAGE_PRICING: Record<string, PriceRow> = {
      charged price per quality is GPT_OPENAI below. */
   "gpt-image-2": { "2K": 0.107, "4K": 0.178 },
   /* nano-banana-2 runs WaveSpeed Fast at 2K/4K and Google direct at 1K, where
-     Fast has no tier: the cheapest host per size (checked 2026-10-05). */
-  "nano-banana-2": { "1K": 0.0672, "2K": 0.045, "4K": 0.05 },
+     Fast has no tier: the cheapest host per size (checked 2026-10-05). 1K is
+     the measured Gemini bill of 2026-10-13 (1522 tokens x $60/1M). */
+  "nano-banana-2": { "1K": 0.0913, "2K": 0.045, "4K": 0.05 },
 };
 
 
@@ -121,9 +125,11 @@ export function apiPricePerImage(modelId: string, resolution: string, quality?: 
  * the routed normal price.
  */
 const GEMINI_DIRECT: Record<string, PriceRow> = {
-  "nano-banana-pro": { "2K": 0.134, "4K": 0.24 },
-  // gemini-3.1-flash-image: 1120 / 1680 / 2520 tokens at $60 per 1M (official page, 2026-10-05).
-  "nano-banana-2": { "1K": 0.0672, "2K": 0.1008, "4K": 0.1512 },
+  // Measured bills, 2026-10-13 (see MODEL_IMAGE_PRICING).
+  "nano-banana-pro": { "2K": 0.1476, "4K": 0.2525 },
+  // gemini-3.1-flash-image at $60 per 1M: 1K measured 2026-10-13 (1522 tokens);
+  // 2K / 4K still the official 1680 / 2520 tokens until a boost render measures them.
+  "nano-banana-2": { "1K": 0.0913, "2K": 0.1008, "4K": 0.1512 },
 };
 
 /** Google direct's price for this model, or null when the model does not run there. */
