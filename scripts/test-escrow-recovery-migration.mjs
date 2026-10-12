@@ -266,6 +266,9 @@ try {
   const depositSql = fs.readFileSync(new URL('../migrations/2026-10-06-escrow-deposit-persistence.sql',import.meta.url),'utf8');
   await db.exec(depositSql);
   await db.exec(depositSql);
+  // Databases that ran the earlier deposit file get the structure check re-created (idempotent).
+  const readonlyBuyerSql=fs.readFileSync(new URL('../migrations/2026-10-13-escrow-deposit-readonly-buyer.sql',import.meta.url),'utf8');
+  await db.exec(readonlyBuyerSql);await db.exec(readonlyBuyerSql);
   await checkEscrowDeposits({db,row,check,rejects,id,intent,reserve,pgOptions});
   await db.exec(fs.readFileSync(new URL('./fixtures/escrow-generation-live-columns.sql',import.meta.url),'utf8'));
   const unitSql=fs.readFileSync(new URL('../migrations/2026-10-12-escrow-unit-claims.sql',import.meta.url),'utf8');
