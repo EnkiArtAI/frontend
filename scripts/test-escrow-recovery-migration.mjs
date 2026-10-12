@@ -10,6 +10,7 @@ import pg from 'pg';
 import { checkEscrowDeposits } from './escrow-deposit-migration-checks.mjs';
 import { checkEscrowUnits } from './escrow-unit-migration-checks.mjs';
 import { checkEscrowTransactions } from './escrow-settlement-migration-checks.mjs';
+import { checkEscrowOrphans } from './escrow-orphan-migration-checks.mjs';
 
 globalThis.fetch = async () => { throw new Error('HTTP calls are forbidden in migration tests'); };
 const postgres = process.argv.includes('--postgres');
@@ -273,6 +274,9 @@ try {
   const transactionSql=fs.readFileSync(new URL('../migrations/2026-10-12-escrow-settlement-attempts.sql',import.meta.url),'utf8');
   await db.exec(transactionSql);await db.exec(transactionSql);
   await checkEscrowTransactions({db,row,check,rejects,id,units});
+  const orphanSql=fs.readFileSync(new URL('../migrations/2026-10-12-escrow-orphan-reservations.sql',import.meta.url),'utf8');
+  await db.exec(orphanSql);await db.exec(orphanSql);
+  await checkEscrowOrphans({db,row,check,rejects,id,intent,reserve,pgOptions});
   console.log(`PASS ${passed} escrow migration checks; live database was not used.`);
 } finally {
   await db.close();
