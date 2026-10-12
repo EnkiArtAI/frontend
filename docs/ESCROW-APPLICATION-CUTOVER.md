@@ -49,4 +49,6 @@ Deterministic tests use generated/independent Anchor and SPL layouts, real local
 - Browser fixtures passed at 1440×900 and 390×844. A four-image order displays one free image and three paid images, requires an explicit paid model choice and displays the simulated server total before enabling confirmation. Editor and image view show available and exhausted quotas. One simulated free request consumed the quota; a second attempt made no generation request.
 - Browser audit: zero paid submissions and zero unmocked API calls. Six external font requests were blocked. Fixture prices and images are examples, not live provider prices or funded acceptance results.
 
-All changes and verification results remain local. No remote push, GitHub CI rerun, live database migration, funded transaction, or paid provider generation was performed.
+All verification results above were obtained locally. Following explicit authorization from Kev and the user on 2026-10-12, the integration snapshot was pushed to `codex/escrow-lifecycle-backend-2026-10-12` in the private `EnkiArtAI/frontend` repository. No GitHub CI rerun, live database migration, funded transaction, or paid provider generation was performed. The PostgreSQL CI entry point was subsequently corrected to `npm run test:migrations:postgres`; missing/nonlocal test database settings were verified to fail before any socket connection. The live PostgreSQL contention run remains outstanding.
+
+Published snapshot: https://github.com/EnkiArtAI/frontend/tree/codex/escrow-lifecycle-backend-2026-10-12

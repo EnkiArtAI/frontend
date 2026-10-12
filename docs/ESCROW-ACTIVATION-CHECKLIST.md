@@ -2,7 +2,7 @@
 
 Stand: 12.10.2026. Lokaler Übergabestand vor diesem Dokument: `d2d54cd5`. **3.106 Anwendungstests und 70 Offline-SQL-Prüfungen sind grün**, ebenso TypeScript, Produktionsbuild und `escrow:check`. Das belegt den lokalen Stand; Live-Migrationen, finanzierte Transaktionen, echte Provider-Generierungen und GitHub-CI wurden für diese Übergabe nicht ausgeführt. Rust-Builds bleiben wegen der ungeklärten Norton-Meldung pausiert.
 
-Lesender GitHub-Stand: Frontend-`main` ist weiterhin `470739aba34130ff0b72e2a81fa486dfeaa8440d`; Escrow-PR #1 ist offen mit HEAD `480e9a5b`. Frontend #118/#119 sowie Redesign #170–172 und #174–179 sind ebenfalls offen. Der lokale Integrationsstand wird mit Git-Bundle und Prüfnachweisen übergeben. Bereits extern erledigte Arbeiten unten bitte **bestätigen**, statt sie erneut auszuführen.
+Lesender GitHub-Stand: Frontend-`main` ist weiterhin `470739aba34130ff0b72e2a81fa486dfeaa8440d`; Escrow-PR #1 ist offen mit HEAD `480e9a5b`. Frontend #118/#119 sowie Redesign #170–172 und #174–179 sind ebenfalls offen. Der Integrationsstand wurde nach ausdrücklichem Go am 12.10.2026 auf `codex/escrow-lifecycle-backend-2026-10-12` gepusht; Git-Bundle und Prüfnachweise ergänzen die GitHub-Übergabe. Bereits extern erledigte Arbeiten unten bitte **bestätigen**, statt sie erneut auszuführen.
 
 ## Jetzt parallel vergeben
 
