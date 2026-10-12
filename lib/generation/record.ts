@@ -73,6 +73,49 @@ export interface GenerationRecord {
   amountPaidCents?: number | null;
 }
 
+/** Paid escrow can be delivered only after its accepted image row exists. */
+export class GenerationRecordError extends Error {
+  constructor() { super("The generated image could not be saved. Please check your image history before trying again."); }
+}
+
+export interface GenerationRecordOptions {
+  requireAcceptedImage?: boolean;
+}
+
+/** Optional input history never decides whether a generated image was delivered. */
+export async function recordGenerationReferences(
+  supabase: SupabaseClient,
+  generationId: string,
+  references: (StoredReference | null)[],
+): Promise<void> {
+  const rows = references
+    .map((ref, i) => (ref ? { ...ref, sequence_index: i } : null))
+    .filter((r): r is StoredReference & { sequence_index: number } => r !== null);
+  if (!rows.length) return;
+  const { error } = await supabase.from("generation_reference_images").insert(
+    rows.map((r) => ({
+      generation_id: generationId, sequence_index: r.sequence_index,
+      storage_url: r.url, mime_type: r.mimeType, bytes: r.bytes, content_hash: r.contentHash,
+    })),
+  );
+  if (error) console.warn("[generation] could not record references:", error.message);
+}
+
+/** Optional WebP previews can arrive after the original image is delivered. */
+export async function recordGenerationRenditions(
+  supabase: SupabaseClient, generationId: string, userId: string, imageUrl: string, deadline: number,
+): Promise<void> {
+  const stored = await storeGeneratedImage(imageUrl, userId, deadline);
+  const updates = {
+    ...(stored.previewUrl ? { preview_url: stored.previewUrl } : {}),
+    ...(stored.thumbnailUrl ? { thumbnail_url: stored.thumbnailUrl } : {}),
+  };
+  if (!Object.keys(updates).length) return;
+  const { error } = await supabase.from("generated_images").update(updates)
+    .eq("generation_id", generationId).eq("user_id", userId);
+  if (error) throw new GenerationRecordError();
+}
+
 /** Encrypt into the four columns this schema uses everywhere. */
 function envelope(prefix: string, plaintext: string): Record<string, string> {
   const p = encryptString(plaintext);
@@ -143,11 +186,20 @@ async function ensurePromptRow(
 export async function recordGeneration(
   supabase: SupabaseClient,
   rec: GenerationRecord,
+  options: GenerationRecordOptions = {},
 ): Promise<string | null> {
   try {
+    if (options.requireAcceptedImage) {
+      // The paid route supplies the URL returned by putDurably. Inline bytes
+      // or a missing image cannot become the durable billing record.
+      if (!rec.imageUrl || new URL(rec.imageUrl).protocol !== "https:") throw new GenerationRecordError();
+    }
     const promptId =
       rec.promptId ?? (await ensurePromptRow(supabase, rec.userId, rec.finalPrompt, rec.model, rec.adult === true));
-    if (!promptId) return null;
+    if (!promptId) {
+      if (options.requireAcceptedImage) throw new GenerationRecordError();
+      return null;
+    }
 
     const { data, error } = await supabase
       .from("generations")
@@ -181,31 +233,20 @@ export async function recordGeneration(
       .single();
 
     if (error) {
+      if (options.requireAcceptedImage) throw new GenerationRecordError();
       console.warn("[generation] could not record:", error.message);
       return null;
     }
-    const generationId = data.id as string;
+    const generationId = data?.id as string | undefined;
+    if (!generationId) {
+      if (options.requireAcceptedImage) throw new GenerationRecordError();
+      return null;
+    }
 
     // The inputs, in prompt order — "@Image 2" refers to sequence_index 1, so
     // the index comes from the ORIGINAL position and never from a filtered
     // array. A reference that failed to store simply has no row.
-    const rows = (rec.references ?? [])
-      .map((ref, i) => (ref ? { ...ref, sequence_index: i } : null))
-      .filter((r): r is StoredReference & { sequence_index: number } => r !== null);
-
-    if (rows.length) {
-      const { error: refErr } = await supabase.from("generation_reference_images").insert(
-        rows.map((r) => ({
-          generation_id: generationId,
-          sequence_index: r.sequence_index,
-          storage_url: r.url,
-          mime_type: r.mimeType,
-          bytes: r.bytes,
-          content_hash: r.contentHash,
-        })),
-      );
-      if (refErr) console.warn("[generation] could not record references:", refErr.message);
-    }
+    await recordGenerationReferences(supabase, generationId, rec.references ?? []);
 
     // The image itself. generations records what PRODUCED it; generated_images
     // is what the gallery reads, and nothing was ever writing a row there for a
@@ -242,11 +283,15 @@ export async function recordGeneration(
         visibility: "private",
         accepted: true,
       });
-      if (imgErr) console.warn("[generation] could not record the image:", imgErr.message);
+      if (imgErr) {
+        if (options.requireAcceptedImage) throw new GenerationRecordError();
+        console.warn("[generation] could not record the image:", imgErr.message);
+      }
     }
 
     return generationId;
   } catch (e) {
+    if (options.requireAcceptedImage) throw new GenerationRecordError();
     console.warn("[generation] record failed:", e instanceof Error ? e.message : e);
     return null;
   }
