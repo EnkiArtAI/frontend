@@ -178,7 +178,7 @@ async function confirmDeposit(db: SupabaseClient, chain: EscrowChain, intent: In
   if (!escrow || !vault) return statusOf(row);
   try {
     await verifyFundedEscrow(snapshot, { commitment: "confirmed", contextSlot: bank.slot,
-      minimumSlot: receipt.slot, chainNowSeconds: bank.chainNowSeconds, escrow, vault });
+      minimumSlot: receipt.slot, chainNowSeconds: bank.chainNowSeconds, allowExpired: true, escrow, vault });
   } catch { throw new EscrowPaymentError(409, "The confirmed payment could not be verified. Please check its status."); }
   const result = await db.rpc("confirm_generation_escrow_deposit", {
     p_intent_id: intent.id, p_owner_wallet: intent.buyer_wallet, p_signature: row.signature,
@@ -253,7 +253,8 @@ export async function generationEscrowStatus(db: SupabaseClient, chain: EscrowCh
   const row = await depositRow(db, intentId);
   if (!row) throw missing();
   await onDeployment(chain, row);
-  return confirmDeposit(db, chain, intent, row);
+  // Admission separately verifies fresh Funded accounts; a status read must still work after settle/reclaim.
+  return row.state === "funded" ? statusOf(row) : confirmDeposit(db, chain, intent, row);
 }
 
 /** Absence and blockheight must belong to the SAME finalized bank. Wall time is not proof. */
@@ -277,4 +278,21 @@ export async function expireUnfundedGenerationEscrow(db: SupabaseClient, chain: 
   const expired = first(result.data) as EscrowDepositRow | null;
   if (!expired) throw unavailable();
   return statusOf(expired);
+}
+
+export async function loadOwnedGenerationEscrow(db: SupabaseClient, chain: EscrowChain, intentId: string, owner: string) {
+  const intent = await ownedEscrowIntent(db, intentId, owner);
+  const row = await depositRow(db, intentId);
+  if (!row) throw missing();
+  await onDeployment(chain, row);
+  const recovery = await recoveryRow(db, intentId);
+  return { intent, row, recovery, snapshot: escrowDepositSnapshot(intent, row, recovery) };
+}
+
+/** Retry only the fully signed wire already persisted by this server. Never rebuild a deposit. */
+export async function retrySubmittedGenerationEscrow(db: SupabaseClient, chain: EscrowChain, intentId: string, owner: string) {
+  await ownedEscrowIntent(db, intentId, owner);
+  const row = await depositRow(db, intentId);
+  if (!row || row.state !== "submitted" || !row.signed_transaction) return generationEscrowStatus(db, chain, intentId, owner);
+  return submitGenerationEscrow(db, chain, { intentId, owner, signedTransaction: escrowBytea(row.signed_transaction).toString("base64") });
 }
