@@ -57,13 +57,15 @@ export async function verifyFundedEscrow(plan: EscrowPaymentSnapshot, receipt: {
   contextSlot: bigint;
   minimumSlot: bigint;
   chainNowSeconds: number;
+  /** Reconciliation only: adopt an expired funded deposit for refund, never for generation. */
+  allowExpired?: boolean;
   escrow: EscrowChainAccount;
   vault: EscrowChainAccount;
 }) {
   const amount = validateEscrowPaymentSnapshot(plan).depositedMicro;
   if (!["confirmed", "finalized"].includes(receipt.commitment) || receipt.minimumSlot <= BigInt(0) ||
       receipt.contextSlot < receipt.minimumSlot || !Number.isSafeInteger(receipt.chainNowSeconds) ||
-      receipt.chainNowSeconds < 0 || receipt.chainNowSeconds >= plan.expiresAtSeconds) {
+      receipt.chainNowSeconds < 0 || (!receipt.allowExpired && receipt.chainNowSeconds >= plan.expiresAtSeconds)) {
     throw new Error("The payment has not been confirmed yet.");
   }
   const derived = await escrowAddresses(plan.programAddress, plan.buyer, plan.intentId);
