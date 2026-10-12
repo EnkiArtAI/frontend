@@ -12,6 +12,7 @@
     "lint:prune": "eslint --prune-suppressions",
     "test": "vitest run && vitest run --root backend",
     "test:migrations": "node scripts/test-escrow-recovery-migration.mjs",
+    "test:migrations:postgres": "node scripts/test-escrow-recovery-migration.mjs --postgres",
     "check": "tsc",
     "escrow:generate": "node scripts/generate-escrow-client.mjs",
     "escrow:check": "node scripts/generate-escrow-client.mjs --check",
