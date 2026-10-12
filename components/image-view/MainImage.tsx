@@ -39,7 +39,7 @@ export default function MainImage({ model: m, onOpen, onClose }: {
             <span>{job.error?.message}</span>
             {retry && (
               <button type="button" className="iv-retry kit-hit" disabled={!retry.ready} onClick={retry.press}>
-                ⟳ Retry{retry.price && ` · ${retry.price}`}
+                ⟳ {retry.label}{retry.price && ` · ${retry.price}`}
               </button>
             )}
           </div>

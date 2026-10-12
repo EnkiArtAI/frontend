@@ -101,8 +101,11 @@ describe("every generate surface waits for its reference images", () => {
   });
 
   it("quick create refuses and greys Generate while they load", () => {
-    expect(LAUNCHER).toMatch(/if \(generating\) return;\n\s+if \(refsLoading\) \{/);
-    expect(LAUNCHER).toMatch(/generateBlocked=\{refsLoading\}/);
+    const click = LAUNCHER.slice(LAUNCHER.indexOf("const generate = async (count: number) => {"), LAUNCHER.indexOf("const confirmMixedOrder"));
+    expect(click).toContain("if (refsLoading) return toast(");
+    expect(click.indexOf("if (refsLoading)")).toBeLessThan(click.indexOf("const base: GenerationRequest"));
+    expect(click.indexOf("if (refsLoading)")).toBeLessThan(click.indexOf("await executeOrder("));
+    expect(LAUNCHER).toMatch(/generateBlocked=\{refsLoading \|\|/);
     // A picked NFT waits the same way, and travels as the image itself.
     expect(LAUNCHER).toContain("onPick={addNfts}");
     expect(LAUNCHER).toContain("picks.forEach((p) => void readRef(p).then((img) => {");

@@ -152,3 +152,47 @@ describe("settle (the outcome table)", () => {
     expect(settle("j", bad("Failed to fetch"), "signed")).toEqual({ action: { type: "fail", id: "j", error: { message, charged: "unknown" } }, toast: message });
   });
 });
+
+describe("Escrow queue retries and honest charge state", () => {
+  const payment = { intentId: "i-1", units: 4, unitIndex: 0, paymentScheme: "escrow" as const, state: "submitted" as const, signedTransaction: "same-wire", generationSubmitted: false };
+  it("a lost submit response preserves payment identity and never says not charged", () => {
+    const outcome: GenerationOutcome = { ok: false, phase: "authorization", error: "Confirmation pending", payment };
+    const result = settle("j", outcome, "signed");
+    expect(result.action).toMatchObject({ type: "fail", error: { charged: "unknown", payment } });
+    expect(result.toast).not.toMatch(/not charged|nothing was charged/i);
+  });
+  it("an HTTP provider error after funding stays subject to refund confirmation", () => {
+    const outcome: GenerationOutcome = { ok: false, phase: "generation", status: 502, error: "Provider unavailable", payment: { ...payment, state: "funded", generationSubmitted: true } };
+    expect(settle("j", outcome, "none").action).toMatchObject({ type: "fail", error: { charged: "unknown", payment: { intentId: "i-1" } } });
+  });
+  it("Retry restores all failed units of exactly the same intent with their original indexes", async () => {
+    const { retryPlan } = await import("../render-queue");
+    const pending = (id: string, unitIndex: number, intentId = "i-1"): Job<S> => ({ ...job(id, "failed"), error: { charged: "unknown", message: "pending", payment: { ...payment, unitIndex, intentId } } });
+    const first = pending("a", 0), second = pending("b", 2), other = pending("c", 0, "i-2");
+    const plan = retryPlan([first, second, other], "a");
+    expect(plan).toEqual({ jobs: [first, second], resume: [first.error!.payment, second.error!.payment] });
+  });
+  it("already-sent units keep their sent flag for status reconciliation instead of provider replay", async () => {
+    const { retryPlan } = await import("../render-queue");
+    const sent = { ...job("a", "failed"), error: { charged: "unknown" as const, message: "pending", payment: { ...payment, state: "funded" as const, generationSubmitted: true } } };
+    const plan = retryPlan([sent], "a");
+    expect(plan).toEqual({ jobs: [sent], resume: [sent.error.payment] });
+  });
+  it("an interrupted legacy job without payment identity cannot create another payment", async () => {
+    const { retryPlan } = await import("../render-queue");
+    const interrupted = { ...job("a", "failed"), error: { charged: "unknown" as const, message: "interrupted" } };
+    expect(retryPlan([interrupted], "a")).toMatchObject({ reason: expect.stringMatching(/will not be sent twice/) });
+  });
+  it("an unfunded pre-sign failure may retry as a new order", async () => {
+    const { retryPlan } = await import("../render-queue");
+    const failed = { ...job("a", "failed"), error: { charged: "no" as const, message: "wallet unavailable" } };
+    expect(retryPlan([failed], "a")).toEqual({ jobs: [failed] });
+  });
+});
+
+it("restores a checkpointed in-flight job with the exact original payment and sent flag", () => {
+  const payment = { intentId: "i-1", units: 4, unitIndex: 2, paymentScheme: "escrow" as const, state: "funded" as const, generationSubmitted: true };
+  const beforeReload = run([enqueue("a"), { type: "payment", id: "a", payment }]);
+  const restored = run([{ type: "restore", jobs: beforeReload }]);
+  expect(restored[0]).toMatchObject({ status: "failed", payment, error: { charged: "unknown", payment } });
+});

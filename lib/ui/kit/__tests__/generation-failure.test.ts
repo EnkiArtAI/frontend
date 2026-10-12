@@ -13,8 +13,8 @@ async function failureAt(path: string) {
     paths.push(input);
     if (input === path) throw new Error("Connection lost");
     const body = input.endsWith("/intent") ? { intent: { id: "fixture-intent" } }
-      : input.endsWith("/authorize") ? { transaction: "fixture-transaction" }
-      : { authorized: true };
+      : input.endsWith("/authorize") ? { intentId: "fixture-intent", transaction: "fixture-transaction", units: 1, paymentScheme: "escrow" }
+      : { intentId: "fixture-intent", paymentScheme: "escrow", state: "funded", funded: true };
     return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
   }));
   const sign = vi.fn(async () => "fixture-signature");
@@ -24,17 +24,17 @@ async function failureAt(path: string) {
 }
 
 describe("signed failures from the real runner into the shared queue", () => {
-  it("submit loses its answer before generation: the UI does not imply a charge", async () => {
+  it("submit loses its answer before generation: preserve the original payment and show an uncertain charge", async () => {
     const { paths, out, ui } = await failureAt("/api/payments/generation/submit");
     expect(paths).not.toContain("/api/generate-image");
-    expect(out).toMatchObject({ ok: false, phase: "authorization" });
-    expect(ui.action).toMatchObject({ type: "fail", error: { charged: "no" } });
-    expect(ui.toast).toContain("not charged");
+    expect(out).toMatchObject({ ok: false, phase: "authorization", payment: { intentId: "fixture-intent" } });
+    expect(ui.action).toMatchObject({ type: "fail", error: { charged: "unknown", payment: { intentId: "fixture-intent" } } });
+    expect(ui.toast).not.toMatch(/not charged|nothing was charged/i);
   });
 
   it("the generation request loses its answer: the UI retains the uncertain outcome", async () => {
     const { paths, out, ui } = await failureAt("/api/generate-image");
-    expect(paths.at(-1)).toBe("/api/generate-image");
+    expect(paths).toContain("/api/generate-image");
     expect(out).toMatchObject({ ok: false, phase: "generation" });
     expect(ui.action).toMatchObject({ type: "fail", error: { charged: "unknown" } });
   });
