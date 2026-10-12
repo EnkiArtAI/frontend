@@ -152,6 +152,16 @@ describe("server-built Escrow deposits", () => {
     expect(f.events).toEqual(["begin_generation_escrow_submit", "key", "store_generation_escrow_signed_deposit", "broadcast"]);
     expect(f.chain.broadcast).toHaveBeenCalledWith(f.fullySigned.signedTransactionBase64);
   });
+  it("leaves the database error code in the log before answering 503 (devnet 2026-10-13)", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const original = f.rpc.getMockImplementation()!;
+    f.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => name === "prepare_generation_escrow_deposit"
+      ? { data: null, error: { code: "23514", message: "fixture check" } as never }
+      : original(name, args));
+    await expect(prepareGenerationEscrow(f.db, f.chain, { intentId: ID, owner: buyer.address, units: 4 })).rejects.toMatchObject({ status: 503 });
+    expect(log).toHaveBeenCalledWith("[escrow] db error", "23514", "fixture check");
+    log.mockRestore();
+  });
   it("does not broadcast if signed-wire persistence fails", async () => {
     f.setRow();
     f.rpc.mockImplementation(async (name) => ({ data: name === "begin_generation_escrow_submit" ? [f.makeRow()] : null,

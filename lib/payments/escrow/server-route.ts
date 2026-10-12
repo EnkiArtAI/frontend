@@ -18,6 +18,7 @@ export async function escrowRoute(req: NextRequest, operation: string,
     response.headers.set("Cache-Control", "private, no-store");
     return response;
   } catch (error) {
+    if (!(error instanceof EscrowPaymentError)) console.error(`[escrow] ${operation} failed:`, error instanceof Error ? error.message : String(error));
     return NextResponse.json({ error: error instanceof EscrowPaymentError ? error.message : "The payment is temporarily unavailable. Please check its status later." },
       { status: error instanceof EscrowPaymentError ? error.status : 503, headers: { "Cache-Control": "private, no-store" } });
   }

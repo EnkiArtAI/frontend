@@ -31,8 +31,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const unavailable = () => new EscrowPaymentError(503, "Payments are temporarily unavailable. Please try again later.");
 const conflict = () => new EscrowPaymentError(409, "This payment cannot continue. Please check its status before trying again.");
 const missing = () => new EscrowPaymentError(404, "The payment was not found.");
-function dbError(error: { code?: string } | null) {
-  if (error) throw error.code === "22023" ? conflict() : unavailable();
+function dbError(error: { code?: string; message?: string } | null) {
+  if (!error) return;
+  // Code and message only: details carry row values.
+  console.error("[escrow] db error", error.code ?? "", error.message ?? "");
+  throw error.code === "22023" ? conflict() : unavailable();
 }
 function first<T>(data: T | T[] | null): T | null { return Array.isArray(data) ? data[0] ?? null : data; }
 function integer(value: string | number): number {

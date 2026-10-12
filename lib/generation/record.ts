@@ -75,7 +75,8 @@ export interface GenerationRecord {
 
 /** Paid escrow can be delivered only after its accepted image row exists. */
 export class GenerationRecordError extends Error {
-  constructor() { super("The generated image could not be saved. Please check your image history before trying again."); }
+  /** Which step refused, for the server log and generation_failures; never shown to the user. */
+  constructor(readonly reason: string) { super("The generated image could not be saved. Please check your image history before trying again."); }
 }
 
 export interface GenerationRecordOptions {
@@ -192,12 +193,12 @@ export async function recordGeneration(
     if (options.requireAcceptedImage) {
       // The paid route supplies the URL returned by putDurably. Inline bytes
       // or a missing image cannot become the durable billing record.
-      if (!rec.imageUrl || new URL(rec.imageUrl).protocol !== "https:") throw new GenerationRecordError();
+      if (!rec.imageUrl || new URL(rec.imageUrl).protocol !== "https:") throw new GenerationRecordError("image url is not https");
     }
     const promptId =
       rec.promptId ?? (await ensurePromptRow(supabase, rec.userId, rec.finalPrompt, rec.model, rec.adult === true));
     if (!promptId) {
-      if (options.requireAcceptedImage) throw new GenerationRecordError();
+      if (options.requireAcceptedImage) throw new GenerationRecordError("no prompt row");
       return null;
     }
 
@@ -233,13 +234,13 @@ export async function recordGeneration(
       .single();
 
     if (error) {
-      if (options.requireAcceptedImage) throw new GenerationRecordError();
+      if (options.requireAcceptedImage) throw new GenerationRecordError(`generations insert: ${error.code ?? ""} ${error.message}`);
       console.warn("[generation] could not record:", error.message);
       return null;
     }
     const generationId = data?.id as string | undefined;
     if (!generationId) {
-      if (options.requireAcceptedImage) throw new GenerationRecordError();
+      if (options.requireAcceptedImage) throw new GenerationRecordError("generations insert returned no id");
       return null;
     }
 
@@ -284,14 +285,14 @@ export async function recordGeneration(
         accepted: true,
       });
       if (imgErr) {
-        if (options.requireAcceptedImage) throw new GenerationRecordError();
+        if (options.requireAcceptedImage) throw new GenerationRecordError(`generated_images insert: ${imgErr.code ?? ""} ${imgErr.message}`);
         console.warn("[generation] could not record the image:", imgErr.message);
       }
     }
 
     return generationId;
   } catch (e) {
-    if (options.requireAcceptedImage) throw new GenerationRecordError();
+    if (options.requireAcceptedImage) throw e instanceof GenerationRecordError ? e : new GenerationRecordError(`record failed: ${e instanceof Error ? e.message : String(e)}`);
     console.warn("[generation] record failed:", e instanceof Error ? e.message : e);
     return null;
   }

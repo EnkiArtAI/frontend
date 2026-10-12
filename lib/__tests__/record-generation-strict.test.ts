@@ -61,6 +61,14 @@ describe("Strict recording is the prerequisite for escrow delivery", () => {
     await expect(recordGeneration(db as never, rec(), { requireAcceptedImage: true }))
       .rejects.toThrow("The generated image could not be saved");
   });
+  it("names the refusing step for the server, apart from the user's sentence (devnet 2026-10-13)", async () => {
+    const strict = (r: GenerationRecord) => recordGeneration(db as never, r, { requireAcceptedImage: true }).catch((e) => e as GenerationRecordError);
+    expect((await strict(rec({ imageUrl: null }))).reason).toBe("image url is not https");
+    state.failTable = "generations";
+    const refused = await strict(rec());
+    expect(refused.reason).toMatch(/^generations insert: /);
+    expect(refused.message).toBe("The generated image could not be saved. Please check your image history before trying again.");
+  });
   it.each([null, "", "data:image/png;base64,Zm9v", "http://fixture.test/image.png", "bad-url"])(
     "refuses non-durable strict image URL %s before writing any rows", async (imageUrl) => {
       await expect(recordGeneration(db as never, rec({ imageUrl }), { requireAcceptedImage: true })).rejects.toThrow(GenerationRecordError);

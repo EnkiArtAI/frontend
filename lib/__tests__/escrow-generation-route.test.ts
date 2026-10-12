@@ -58,7 +58,7 @@ vi.mock("@/lib/payments/escrow/server-chain", () => {
 });
 vi.mock("@/lib/payments/escrow/server-lifecycle", () => ({ advanceGenerationEscrow: (...args: unknown[]) => state.advance(...args) }));
 vi.mock("@/lib/generation/record", () => {
-  class GenerationRecordError extends Error {}
+  class GenerationRecordError extends Error { constructor(readonly reason = "fixture") { super("fixture"); } }
   return {
     GenerationRecordError, recordGeneration: (...args: unknown[]) => state.record(...args),
     resolveRecordingUserId: async () => state.userId,
@@ -89,7 +89,7 @@ vi.mock("@/lib/generation/reference-images", () => ({ storeReferenceImages: (...
 
 import { POST } from "../../app/api/generate-image/route";
 import { EscrowPaymentError } from "@/lib/payments/escrow/server-chain";
-import { GenerationRecordError } from "@/lib/generation/record";
+import { GenerationRecordError, recordGenerationFailure } from "@/lib/generation/record";
 
 function request(overrides: Record<string, unknown> = {}, session = true) {
   return new NextRequest("http://enki.test/api/generate-image", {
@@ -189,10 +189,15 @@ describe("The paid image route admits and delivers one escrow unit", () => {
     expect(state.record).not.toHaveBeenCalled(); expect(state.deliver).not.toHaveBeenCalled(); expect(state.fail).toHaveBeenCalledOnce();
   });
   it("does not deliver a generation whose accepted-image record failed", async () => {
-    state.record.mockRejectedValue(new GenerationRecordError());
+    state.record.mockRejectedValue(new GenerationRecordError("generations insert: 23514 provider"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
     const response = await POST(request());
     expect(response.status).toBe(503); expect(await response.json()).toMatchObject({ refundPending: true });
     expect(state.deliver).not.toHaveBeenCalled(); expect(state.fail).toHaveBeenCalledOnce();
+    // The step that refused reaches the log and generation_failures; the user keeps the fixed sentence.
+    expect(log).toHaveBeenCalledWith("[generate]", "record: generations insert: 23514 provider");
+    expect(recordGenerationFailure).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ error: "record: generations insert: 23514 provider" }));
+    log.mockRestore();
   });
   it("retries a lost delivery acknowledgement once with the same generation and claim", async () => {
     state.deliver.mockRejectedValueOnce(new Error("fixture lost response")).mockResolvedValue(undefined);

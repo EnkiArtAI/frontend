@@ -778,9 +778,9 @@ export async function POST(request: NextRequest) {
       generationMs: geminiResult.generationTime ?? null,
       workflow: stripped.workflow, workflowTexts: stripped.texts, chainKey: paymentChain.cluster,
     }, { requireAcceptedImage: true });
-    if (!generationId) throw new GenerationRecordError();
+    if (!generationId) throw new GenerationRecordError("record returned no generation id");
     const held = consumedUnit;
-    if (!held) throw new GenerationRecordError();
+    if (!held) throw new GenerationRecordError("no consumed escrow unit at delivery");
     let reconciliationPending = false;
     try {
       await deliverGenerationEscrowUnit(supabase, held.claim, generationId);
@@ -837,6 +837,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: e.message }, { status: e.status });
     }
     if (e instanceof GenerationRecordError) {
+      // The user gets the fixed sentence; the step that refused goes to the
+      // log and to generation_failures (found on devnet 2026-10-13: a provider
+      // CHECK refused every WaveSpeed/OpenAI row and nothing said so).
+      const reason = `record: ${e.reason ?? "unknown"}`;
+      console.error("[generate]", reason);
+      if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: reason }));
       await failIfClaimed();
       return NextResponse.json({
         error: "Your image could not be saved. Its payment is being reconciled. Please check your history before starting a new request.",

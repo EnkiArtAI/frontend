@@ -29,6 +29,18 @@ describe("escrow payment route boundary", () => {
     expect((await status(new NextRequest(`http://enki.test/api/payments/generation/status?intentId=${id}`))).status).toBe(401);
     expect(mocks.chain).not.toHaveBeenCalled(); expect(mocks.prepare).not.toHaveBeenCalled(); expect(mocks.submit).not.toHaveBeenCalled();
   });
+  it("logs an unexpected failure with its operation instead of swallowing it (devnet 2026-10-13)", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.prepare.mockRejectedValue(new Error("fixture db outage"));
+    const res = await authorize(req({ intentId: id, units: 4 }));
+    expect(res.status).toBe(503);
+    expect(log).toHaveBeenCalledWith("[escrow] authorize failed:", "fixture db outage");
+    log.mockClear();
+    mocks.prepare.mockRejectedValue(new EscrowPaymentError(409, "fixture conflict"));
+    expect((await authorize(req({ intentId: id, units: 4 }))).status).toBe(409);
+    expect(log).not.toHaveBeenCalled();
+    log.mockRestore();
+  });
   it("prepares the entire batch using the session's case-exact owner, with no client amounts", async () => {
     const res = await authorize(req({ intentId: id, units: 4 }));
     expect(res.status).toBe(200); expect(res.headers.get("cache-control")).toBe("private, no-store");
