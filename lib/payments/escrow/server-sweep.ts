@@ -5,6 +5,8 @@ import type { EscrowChain } from "./server-chain";
 
 /** Bounded sweep: retry persisted wires, expire only with proof, then reclaim on later calls. */
 export async function sweepGenerationEscrows(db: SupabaseClient, chain: EscrowChain, limit = 20, stopAt = Date.now() + 120_000) {
+  const orphanCleanup = await db.rpc("expire_orphaned_generation_escrow_reservations", { p_limit: Math.min(50, Math.max(1, limit)) });
+  if (orphanCleanup.error) throw new Error("Escrow candidates are unavailable.");
   const { data, error } = await db.rpc("generation_escrow_work_items", { p_limit: Math.min(50, Math.max(1, limit)) });
   if (error) throw new Error("Escrow candidates are unavailable.");
   let checked = 0, pending = 0, closed = 0, alerts = 0;
