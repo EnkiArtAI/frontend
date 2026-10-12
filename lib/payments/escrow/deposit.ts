@@ -142,15 +142,14 @@ function base64Bytes(value: string, maximumBytes: number): Buffer {
 }
 
 /**
- * After the route's owned-intent/submitting CAS, compare with the ORIGINAL
+ * Before acquiring the route's submission CAS, compare with the ORIGINAL
  * persisted message. Do not rebuild from current prices, debt or blockhash.
  * This function cannot simulate, broadcast, confirm or change database rows.
  */
-export async function coSignEscrowDeposit(
+export async function verifyBuyerEscrowDeposit(
   prepared: Pick<PreparedEscrowDeposit, "messageBase64" | "buyer" | "rentPayer">,
   signedTransactionBase64: string,
-  feePayerKeyPair: CryptoKeyPair,
-): Promise<{ signedTransactionBase64: string; depositSignature: string }> {
+) {
   const bytes = base64Bytes(signedTransactionBase64, 1232);
   const transaction = getTransactionDecoder().decode(bytes);
   if (!Buffer.from(getTransactionEncoder().encode(transaction)).equals(bytes)) {
@@ -170,6 +169,16 @@ export async function coSignEscrowDeposit(
     buyerSignature, transaction.messageBytes))) {
     throw new Error("The buyer has not signed this payment.");
   }
+  return transaction;
+}
+
+/** Only the database submission winner may call this after buyer verification. */
+export async function coSignEscrowDeposit(
+  prepared: Pick<PreparedEscrowDeposit, "messageBase64" | "buyer" | "rentPayer">,
+  signedTransactionBase64: string,
+  feePayerKeyPair: CryptoKeyPair,
+): Promise<{ signedTransactionBase64: string; depositSignature: string }> {
+  const transaction = await verifyBuyerEscrowDeposit(prepared, signedTransactionBase64);
   if (await getAddressFromPublicKey(feePayerKeyPair.publicKey) !== prepared.rentPayer) {
     throw new Error("The payment sponsor is unavailable.");
   }
