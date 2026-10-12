@@ -11,7 +11,7 @@
     "lint": "eslint --pass-on-unpruned-suppressions",
     "lint:prune": "eslint --prune-suppressions",
     "test": "vitest run && vitest run --root backend",
-    "test:migrations": "node scripts/test-escrow-recovery-migration.mjs",
+    "test:migrations": "node scripts/test-escrow-recovery-migration.mjs && node scripts/free-daily-quota-checks.mjs",
     "check": "tsc",
     "escrow:generate": "node scripts/generate-escrow-client.mjs",
     "escrow:check": "node scripts/generate-escrow-client.mjs --check",
