@@ -73,6 +73,25 @@ export async function checkEscrowTransactions({db,row,check,rejects,id,units}) {
       await db.exec('SET ROLE '+role);await rejects(()=>db.query('SELECT * FROM public.generation_escrow_work_items(50)'),'42501');await db.exec('RESET ROLE');
     }
   });
+  await check('only one settle or reclaim can be in flight for an intent across expiry',async()=>{
+    const payment=await ready(),settle=await store(payment);
+    await db.query('UPDATE public.generation_escrow_deposits SET chain_now_seconds=$2-1800,expires_at_seconds=$2 WHERE intent_id=$1',[payment,now]);
+    await rejects(()=>store(payment,'reclaim'),'22023');
+    await rejects(()=>db.query("INSERT INTO public.generation_escrow_transactions(intent_id,kind,signed_transaction,signature,blockhash,last_valid_block_height) VALUES($1,'reclaim',$2,$3,$4,100)",[payment,wire,sig(),'H'.repeat(32)]),'23505');
+    await expire(payment,settle);
+    assert.equal((await store(payment,'reclaim')).state,'submitted');
+  });
+  await check('scan rotation reaches newer ready orders behind more than twenty blocked orders',async()=>{
+    const older=[];for(let n=0;n<25;n++)older.push(await funded(1));
+    const newer=await ready();
+    await db.query("UPDATE public.generation_escrow_deposits SET reconciliation_checked_at='2001-01-01T00:00:00Z'");
+    await db.query("UPDATE public.generation_escrow_deposits SET reconciliation_checked_at='2000-01-01T00:00:00Z' WHERE intent_id=ANY($1::uuid[])",[older]);
+    await db.query("UPDATE public.generation_escrow_deposits SET reconciliation_checked_at='2000-01-02T00:00:00Z' WHERE intent_id=$1",[newer]);
+    const first=(await db.query('SELECT * FROM public.generation_escrow_work_items(20)')).rows;
+    assert.equal(first.length,20);assert(!first.some(item=>item.intent_id===newer));
+    const next=(await db.query('SELECT * FROM public.generation_escrow_work_items(20)')).rows;
+    assert(next.some(item=>item.intent_id===newer));
+  });
   await check('a failed recovery confirmation rolls back transaction and batch confirmation',async()=>{
     const payment=await ready(true),tx=await store(payment);
     await db.query("UPDATE public.generation_escrow_recovery SET state='released',released_at=now() WHERE intent_id=$1",[payment]);

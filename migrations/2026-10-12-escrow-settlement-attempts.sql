@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS public.generation_escrow_transactions (
   CHECK ((state='confirmed')=(confirmed_slot IS NOT NULL)),
   CHECK (state<>'expired' OR (expired_block_height>last_valid_block_height AND absence_checked_slot>0))
 );
+CREATE UNIQUE INDEX IF NOT EXISTS generation_escrow_transactions_inflight_idx
+  ON public.generation_escrow_transactions(intent_id) WHERE state='submitted';
 CREATE UNIQUE INDEX IF NOT EXISTS generation_escrow_transactions_pending_idx
   ON public.generation_escrow_transactions(intent_id,kind) WHERE state='submitted';
 CREATE UNIQUE INDEX IF NOT EXISTS generation_escrow_transactions_confirmed_idx
@@ -40,6 +42,9 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'Batch is not ready' USING ERRCODE='22023'; END IF;
   SELECT * INTO v_result FROM public.generation_escrow_transactions WHERE intent_id=p_intent_id AND kind=p_kind AND state IN ('submitted','confirmed');
   IF FOUND THEN RETURN v_result; END IF;
+  IF EXISTS(SELECT 1 FROM public.generation_escrow_transactions WHERE intent_id=p_intent_id AND state='submitted') THEN
+    RAISE EXCEPTION 'Another escrow transaction needs reconciliation' USING ERRCODE='22023';
+  END IF;
   SELECT expires_at_seconds INTO v_expiry FROM public.generation_escrow_deposits WHERE intent_id=p_intent_id;
   IF p_kind IS NULL OR p_kind NOT IN ('settle','reclaim') OR p_chain_now_seconds IS NULL OR p_chain_now_seconds<0
     OR (p_kind='settle' AND (v_batch.state<>'ready' OR v_expiry<=GREATEST(p_chain_now_seconds,extract(epoch FROM now())::bigint)))
@@ -111,17 +116,26 @@ REVOKE ALL ON FUNCTION public.expire_generation_escrow_transaction(uuid,text,uui
 GRANT EXECUTE ON FUNCTION public.store_generation_escrow_transaction(uuid,text,text,bytea,text,text,bigint,bigint) TO service_role;
 GRANT EXECUTE ON FUNCTION public.confirm_generation_escrow_transaction(uuid,text,uuid,text,bigint) TO service_role;
 GRANT EXECUTE ON FUNCTION public.expire_generation_escrow_transaction(uuid,text,uuid,bigint,bigint) TO service_role;
--- Candidates exclude closed history, so abandoned orders cannot be starved by old payments.
+-- Atomic scan rotation prevents permanently blocked old orders from starving new work.
+ALTER TABLE public.generation_escrow_deposits ADD COLUMN IF NOT EXISTS reconciliation_checked_at timestamptz;
 CREATE OR REPLACE FUNCTION public.generation_escrow_work_items(p_limit integer DEFAULT 20)
 RETURNS TABLE(intent_id uuid,owner_wallet text,deposit_state text)
 LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS $$
-  SELECT d.intent_id,i.buyer_wallet,d.state
-  FROM public.generation_escrow_deposits d
-  JOIN public.generation_payment_intents i ON i.id=d.intent_id
-  LEFT JOIN public.generation_escrow_batches b ON b.intent_id=d.intent_id
-  WHERE d.state IN ('prepared','submitting','submitted','funded') AND (b.state IS NULL OR b.state<>'closed')
-  ORDER BY COALESCE(b.updated_at,d.created_at),d.intent_id
-  LIMIT LEAST(GREATEST(COALESCE(p_limit,20),1),50)
+  WITH candidates AS (
+    SELECT d.intent_id,i.buyer_wallet
+    FROM public.generation_escrow_deposits d
+    JOIN public.generation_payment_intents i ON i.id=d.intent_id
+    LEFT JOIN public.generation_escrow_batches b ON b.intent_id=d.intent_id
+    WHERE d.state IN ('prepared','submitting','submitted','funded') AND (b.state IS NULL OR b.state<>'closed')
+    ORDER BY d.reconciliation_checked_at NULLS FIRST,COALESCE(b.updated_at,d.created_at),d.intent_id
+    LIMIT LEAST(GREATEST(COALESCE(p_limit,20),1),50)
+    FOR UPDATE OF d SKIP LOCKED
+  ), marked AS (
+    UPDATE public.generation_escrow_deposits d SET reconciliation_checked_at=clock_timestamp()
+    FROM candidates c WHERE d.intent_id=c.intent_id
+    RETURNING d.intent_id,c.buyer_wallet,d.state
+  )
+  SELECT m.intent_id,m.buyer_wallet,m.state FROM marked m
 $$;
 REVOKE ALL ON FUNCTION public.generation_escrow_work_items(integer) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.generation_escrow_work_items(integer) TO service_role;
