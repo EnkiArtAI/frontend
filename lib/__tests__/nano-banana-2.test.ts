@@ -26,7 +26,7 @@ describe("Nano Banana 2", () => {
     expect(apiBoostPricePerImage("nano-banana-2", "1K")).toBe(0.0913);
     expect(apiBoostPricePerImage("nano-banana-2", "2K")).toBe(0.1251);
     expect(apiBoostPricePerImage("nano-banana-2", "4K")).toBe(0.1763);
-    expect(getModelCostMicro("nano-banana-2", "4K", { boost: true })).toBe(151_200);
+    expect(getModelCostMicro("nano-banana-2", "4K", { boost: true })).toBe(176_300);
   });
 
   it("leaves the other models' prices as they were", () => {
