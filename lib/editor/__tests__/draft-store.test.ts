@@ -129,3 +129,20 @@ describe("draftStore", () => {
     expect(browserBackend()).toEqual({ text: null, blobs: null });
   });
 });
+
+it("job save exposes a Promise that completes only after its durable blob write", async () => {
+  const f = fake();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  f.backend.blobs!.set = async (key, value) => { await gate; f.blobs.set(key, value); };
+  const store = draftStore(f.backend, "wallet1", null);
+  let completed = false;
+  const saving = Promise.resolve(store.jobs.save([job])).then(() => { completed = true; });
+  await Promise.resolve();
+  expect(completed).toBe(false);
+  expect(f.blobs.size).toBe(0);
+  release();
+  await saving;
+  expect(completed).toBe(true);
+  expect(await store.jobs.load()).toEqual([job]);
+});
