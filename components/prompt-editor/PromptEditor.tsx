@@ -360,6 +360,8 @@ export default function PromptEditor({ promptId, onReleased }: {
       dispatch({ type: "released", stored: storedRefs(refIds, data.referenceImages) });
       notify(`${body.title} is live${body.price ? ` · $${body.price.toFixed(2)} per render` : ""}${data.adult ? " · marked 18+, shown only to viewers who may see 18+" : ""}`);
       void queryClient.invalidateQueries({ queryKey: ["/api/prompts"] });
+      // Home and creator shelves must read the new listing even while their cache is fresh.
+      void queryClient.invalidateQueries({ queryKey: ["/api/marketplace/prompts"] });
       void queryClient.invalidateQueries({ queryKey: promptKey(data.id) });
       // The Image View's copy of it, which the owner may render from next.
       void queryClient.invalidateQueries({ queryKey: [`/api/prompts/${data.id}`] });

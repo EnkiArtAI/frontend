@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { join } from "node:path";
+import { QueryClient } from "@tanstack/react-query";
 import { readSource } from "@/lib/__tests__/_read-source";
 const ROOT = join(__dirname, "..", "..");
 const src = (...p: string[]) => readSource(join(ROOT, ...p));
@@ -42,4 +43,23 @@ describe("the retained Quick Create sheet", () => {
     for (const field of ['const titleVal = title ?? localTitle;', 'const typeVal = promptType ?? localType;', 'const priceVal = price ?? localPrice;']) expect(sheet).toContain(field);
     expect(sheet).toContain('const prefModels = onToggleModel ? models.selected : internalPrefModels;');
   });
+});
+
+
+it("refreshes fresh cached Home variants and creator shelves after a successful release", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { staleTime: 60_000 } } });
+  const listings = [
+    ["/api/marketplace/prompts", "home", "", "safe", ""],
+    ["/api/marketplace/prompts", "home", "flux", "18+", "portrait"],
+    ["/api/marketplace/prompts", "profile", "creator-a"],
+    ["/api/marketplace/prompts", "profile", "creator-b"],
+  ];
+  for (const key of listings) client.setQueryData(key, { pages: [{ prompts: [{ id: "old" }] }], pageParams: [1] });
+  client.setQueryData(["bookmark-index", "creator-a"], new Map());
+  const success = EDITOR.slice(EDITOR.indexOf('dispatch({ type: "released"'), EDITOR.indexOf('if (!body.id) {'));
+  const prefixes = [...success.matchAll(/queryClient\.invalidateQueries\(\{ queryKey: \["([^"]+)"/g)].map(match => match[1]);
+  for (const prefix of prefixes) await client.invalidateQueries({ queryKey: [prefix] });
+  for (const key of listings) expect(client.getQueryState(key)?.isInvalidated, key.join(" / ")).toBe(true);
+  expect(client.getQueryState(["bookmark-index", "creator-a"])?.isInvalidated).toBe(false);
+  client.clear();
 });
