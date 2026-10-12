@@ -48,9 +48,34 @@ function wallet(key: Keypair) {
 }
 const asAdapter = (w: ReturnType<typeof wallet>) => w as unknown as Adapter;
 
+/** The escrow deposit as /api/payments/generation/authorize returns it: the
+ *  operator is the fee payer and has NOT signed yet (it co-signs on submit). */
+function escrowDeposit(): string {
+  const tx = new Transaction().add(
+    SystemProgram.transfer({ fromPubkey: buyer.publicKey, toPubkey: stranger.publicKey, lamports: 1 }),
+  );
+  tx.recentBlockhash = Keypair.generate().publicKey.toBase58();
+  tx.feePayer = feePayer.publicKey;
+  return tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64");
+}
+
 describe("buyerOf", () => {
   it("names the one signer the fee payer left unsigned", () => {
     expect(buyerOf(authorization())).toBe(buyer.publicKey.toBase58());
+  });
+
+  it("skips the unsigned fee payer of an escrow deposit (found on devnet 2026-10-13)", () => {
+    // Both slots empty, fee payer first: the old rule named the operator and
+    // every browser wallet refused with "this payment is for the wallet you signed in with".
+    expect(buyerOf(escrowDeposit())).toBe(buyer.publicKey.toBase58());
+  });
+
+  it("signs the escrow deposit with the buyer's external wallet", async () => {
+    const phantom = wallet(buyer);
+    const signed = await signForBuyer(escrowDeposit(), { adapter: asAdapter(phantom), cdpAddress: null });
+    const tx = Transaction.from(Buffer.from(signed, "base64"));
+    expect(tx.signatures.find((s) => s.publicKey.equals(buyer.publicKey))?.signature).not.toBeNull();
+    expect(tx.signatures.find((s) => s.publicKey.equals(feePayer.publicKey))?.signature).toBeNull();
   });
 });
 

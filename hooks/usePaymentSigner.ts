@@ -19,9 +19,13 @@ import { CheckoutError, type PaymentSigner } from "@/lib/generation-checkout";
 
 const fromBase64 = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 
-/** The one required signer that has not signed yet: the buyer. */
+/** The required signer that is not the fee payer: the buyer. The escrow
+ *  deposit arrives with BOTH slots empty (the operator co-signs after the
+ *  buyer), so "the first unsigned slot" would name the operator. */
 export function buyerOf(transaction: string): string | null {
-  return Transaction.from(fromBase64(transaction)).signatures.find((s) => !s.signature)?.publicKey.toBase58() ?? null;
+  const tx = Transaction.from(fromBase64(transaction));
+  const feePayer = tx.feePayer?.toBase58();
+  return tx.signatures.find((s) => !s.signature && s.publicKey.toBase58() !== feePayer)?.publicKey.toBase58() ?? null;
 }
 
 export async function signForBuyer(
