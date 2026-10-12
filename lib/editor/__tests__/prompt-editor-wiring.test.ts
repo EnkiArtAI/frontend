@@ -59,15 +59,20 @@ describe("test renders", () => {
     }
   });
 
-  it("run every check before a job is made, on Generate, Regenerate, Retry and Try anyway alike (R12)", () => {
+  it("check new orders before making jobs and resume signed payments without another quote (R12)", () => {
     const attempt = /const attempt = \([\s\S]*?\n {2}\};\n/.exec(EDITOR)?.[0] ?? "";
     expect(attempt).toMatch(
-      /const block = generateBlock\(\{[\s\S]*\}\);\n\s*if \(block \|\| !entry\) \{\n\s*if \(block\) act\(block, from\);\n\s*return block \?\? \{ check: "generator" \};\n\s*\}[\s\S]*if \(job && from\.retry\) queue\.retry\(job\.id\);\n\s*else queue\.run\(setup\);/,
+      /const block = generateBlock\(\{[\s\S]*\}\);\n\s*if \(block \|\| !entry\) \{\n\s*if \(block\) act\(block, from\);\n\s*return block \?\? \{ check: "generator" \};\n\s*\}[\s\S]*if \(job && from\.retry\) queue\.retry\(job\.id\);\n\s*else queue\.runBatch\(\[setup\]\);/,
     );
     // No other way to a job: one queue, and these two calls on it.
     for (const [file, text] of all) expect(count(text, "useRenderQueue<"), file).toBe(file === "PromptEditor.tsx" ? 1 : 0);
-    expect(count(EDITOR, "queue.run(")).toBe(1);
-    expect(count(EDITOR, "queue.retry(")).toBe(1);
+    expect(count(EDITOR, "queue.runBatch(")).toBe(1);
+    expect(count(EDITOR, "queue.retry(")).toBe(2);
+    const payment = attempt.slice(attempt.indexOf("if (job && from.retry && job.error?.payment)"), attempt.indexOf("const entry ="));
+    expect(payment).toContain("queue.retry(job.id);");
+    expect(payment).toContain("if (!signedIn)");
+    expect(payment).toContain("readyRefs(state.refs, job.setup.refIds) === null");
+    expect(payment).not.toContain("queue.runBatch(");
     expect(EDITOR).toContain("onPress: () => attempt({}),");
     expect(EDITOR).toContain("onTryAnyway={() => attempt(funds, true)}");
     expect(EDITOR).toContain("const stopped = attempt({ job, retry });");

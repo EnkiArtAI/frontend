@@ -123,6 +123,8 @@ export default function PromptEditor({ promptId, onReleased }: {
   const queue = useRenderQueue<EditorSetup>({
     toRequest: (s) => editorRequest(s, catalogue, readyRefs(state.refs, s.refIds) ?? []),
     persist: store.jobs,
+    freeModelSelected: signedIn && test?.free === true,
+    quotaKey: signedIn ? userId : null,
   });
   const { jobs } = queue;
   const groups = useMemo(() => variations(jobs, state.order), [jobs, state.order]);
@@ -206,7 +208,22 @@ export default function PromptEditor({ promptId, onReleased }: {
    */
   const attempt = (from: Source, lowBalanceOk = false): GenerateBlock | null => {
     const { job } = from;
+    if (job && from.retry && job.error?.payment) {
+      if (!signedIn) { openLogin(); return { check: "login", open: "login" }; }
+      if (!job.error.payment.generationSubmitted && readyRefs(state.refs, job.setup.refIds) === null) {
+        const toast = "Wait for the reference images before continuing this payment.";
+        notify(toast);
+        return { check: "refs-ready", toast };
+      }
+      queue.retry(job.id);
+      return null;
+    }
     const entry = job ? entryOf(job) : test;
+    if (entry?.free && (!queue.freeQuota || queue.freeQuota.exhausted)) {
+      const toast = queue.freeQuota?.exhausted ? "Your daily free image has been used. Choose a paid generator to keep going." : "The free allowance could not be checked yet. Please try again.";
+      notify(toast);
+      return { check: "generator", toast };
+    }
     const content = job ? job.setup : doc;
     const at = job ? job.setup : picks;
     const block = generateBlock({
@@ -229,7 +246,7 @@ export default function PromptEditor({ promptId, onReleased }: {
     const variation = variationKey(setup);
     dispatch({ type: "generated", variation });
     if (job && from.retry) queue.retry(job.id);
-    else queue.run(setup);
+    else queue.runBatch([setup]);
     // Two columns: Verify shows where it landed. A tab stays on Craft.
     if (!tabs) after.current = () => root.current?.querySelector(`[data-pe-group="${CSS.escape(variation)}"]`)?.scrollIntoView({ block: "nearest" });
     return null;
@@ -436,8 +453,8 @@ export default function PromptEditor({ promptId, onReleased }: {
   const costLeft = block?.toast
     ?? (!signedIn ? "Sign in to generate"
       : !test || !settings ? "Pick a generator"
-      : test.free ? (queue.note ? quotaText(queue.note) : `${test.name} · ${settings.resolution} · nothing is charged`)
-      : `${test.name} · ${settings.resolution}${settings.quality ? ` · ${QUALITY[settings.quality]}` : ""}${settings.boost ? " · Boost" : ""} · charged only when the image arrives`);
+      : test.free ? (queue.freeQuota?.exhausted ? "Your daily free image is used. Pick a paid generator to continue." : queue.note ? quotaText(queue.note) : queue.freeQuota ? `${test.name} · ${queue.freeQuota.remaining} daily free image available` : "Checking your daily free image allowance…")
+      : `${test.name} · ${settings.resolution}${settings.quality ? ` · ${QUALITY[settings.quality]}` : ""}${settings.boost ? " · Boost" : ""} · payment reserved, unused payments refunded`);
   const bal = balanceView({ payer, ready, balance, free: !test || test.free, quote: chipQuote });
   const pending = signedIn && !!test && !test.free && !chipQuote;
   const fundsQuote = funds ? (funds.job ? price(entryOf(funds.job), funds.job.setup, funds.job.setup.refIds.length) : chipQuote) : null;

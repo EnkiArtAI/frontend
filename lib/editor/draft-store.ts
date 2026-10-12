@@ -89,7 +89,7 @@ export function draftStore({ text, blobs }: DraftBackend, userKey: string | null
         const jobs = await blob("jobs", (b, k) => b.get(k));
         return Array.isArray(jobs) ? jobs : [];
       },
-      save: (jobs) => void blob("jobs", (b, k) => b.set(k, jobs)),
+      save: async (jobs) => { await blob("jobs", (b, k) => b.set(k, jobs)); },
     },
     async loadRefs() {
       const refs = await blob("refs", (b, k) => b.get(k));

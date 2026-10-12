@@ -14,15 +14,17 @@ const CORE = readSource(join(ROOT, "hooks", "useGenerationCore.ts"));
 const ADAPTER = readSource(join(ROOT, "lib", "enkiPromptAdapter.ts"));
 
 describe("Quick Create", () => {
-  it("generates the selected entry through runGeneration, never the free route directly", () => {
-    expect(LAUNCHER).toMatch(/const outcome = await runGeneration\(\n\s+\{\n\s+model: core\.entry,/);
+  it("generates the explicitly selected entry through one batch, never the free route directly", () => {
+    expect(LAUNCHER).toContain("const outcomes = await runGenerationBatch(requests, signPayment,");
+    expect(LAUNCHER).toContain("model: core.entry, resolution: tier");
+    expect(LAUNCHER).toContain("await executeOrder(Array.from({ length: count }, () => base));");
     expect(LAUNCHER).not.toMatch(/\/api\/generate-free/);
   });
 
   it("preselects nothing and refuses without a selection", () => {
     expect(LAUNCHER).toMatch(/const \[model, setModel\] = useState\(""\);/);
     expect(LAUNCHER).not.toMatch(/"nano-banana-pro"/);
-    expect(LAUNCHER).toMatch(/if \(!core\.entry \|\| !tier\) \{\n\s+toast\(\{ title: "Pick a model"/);
+    expect(LAUNCHER).toContain('if (!core.entry || !tier) return toast({ title: "Pick a model"');
   });
 
   it("sends a clicked feed prompt as itself", () => {

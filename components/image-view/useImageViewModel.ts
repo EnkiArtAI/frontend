@@ -266,7 +266,7 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
   const s = blank ? null : seed;
   const promptId = s?.promptId ?? null;
   const queryClient = useQueryClient();
-  const { access, role } = useBetaAccess();
+  const { access, role, userId } = useBetaAccess();
   const guest = !(access === "ok" && role !== "team");
   const { userKey, payer } = useViewerWallets();
   const now = useSyncExternalStore(everyMinute, minuteNow, () => 0);
@@ -363,6 +363,8 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
 
   /* ── The queue. Leaving says where the renders went; the server keeps them all. */
   const queue = useRenderQueue<ImageSetup>({
+    freeModelSelected: !guest && entry?.free === true,
+    quotaKey: guest ? null : userId,
     toRequest,
     onLeave: (jobs) => {
       const said = leaveSummary(jobs, blank ? "My Gallery" : "History");
@@ -370,7 +372,7 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
       void queryClient.invalidateQueries({ queryKey: ["user-generations"] });
     },
   });
-  const { jobs, run, markSeen } = queue;
+  const { jobs, runBatch, markSeen } = queue;
   const own = useOwnRenders({ userKey: guest ? null : userKey, promptId, jobs });
 
   /* ── Generate: the first reason it cannot go yet, said on the press (R11). */
@@ -387,6 +389,8 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
     if (field) return { label: GENERATE, why: `Fill in ${field.label} first`, field };
     const refusal = text === null ? null : promptRefusal(setup.prompt, !setup.model.free);
     if (refusal) return { label: GENERATE, why: refusal };
+    if (setup.model.free && !queue.freeQuota) return { label: GENERATE, why: "Checking your daily free image allowance…" };
+    if (setup.model.free && queue.freeQuota?.exhausted) return { label: "Choose a paid generator", why: "Your daily free image has been used. Choose a paid generator to keep going." };
     if (!setup.model.free && !quote.quote) return { label: GENERATE, why: quote.pending ? "The price is on its way" : "Price unavailable right now" };
     return { label: GENERATE, why: null };
   })();
@@ -395,7 +399,7 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
   const start = (job: ImageSetup, retried?: string) => {
     setSelected((k) => k ?? main?.key ?? null);
     if (retried) queue.retry(retried);
-    else run(job);
+    else runBatch([job]);
   };
   const [funds, setFunds] = useState<{ balanceUsd: number; totalUsd: string; go: () => void } | null>(null);
   const generate = () => {
@@ -417,10 +421,10 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
     if (guest) return "Sign in to see the price";
     if (!entry) return "Pick a generator";
     const yours = blank ? "" : "Prompt is free · ";
-    if (entry.free) return queue.note ? `${quotaText(queue.note)} · pick another generator to keep going` : `${yours}${entry.name} · nothing is charged`;
+    if (entry.free) return queue.freeQuota?.exhausted ? "Your daily free image is used. Pick a paid generator to continue." : queue.note ? `${quotaText(queue.note)} · pick another generator to keep going` : queue.freeQuota ? `${yours}${entry.name} · ${queue.freeQuota.remaining} daily free image available` : "Checking your daily free image allowance…";
     const q = quote.quote;
     const head = premium
-      ? q && Number(q.artistUsd) > 0 ? `$${q.artistUsd} of this goes to ${artistHandle ? `@${artistHandle}` : "the artist"}` : "Charged only when the image arrives"
+      ? q && Number(q.artistUsd) > 0 ? `$${q.artistUsd} of this goes to ${artistHandle ? `@${artistHandle}` : "the artist"}` : "Payment reserved; unused images refunded"
       : `${yours}${entry.name} ${resolution}${setup?.boost ? " · Boost" : ""} per image`;
     const fee = q && Number(q.networkFeeUsd) > 0 ? `incl. $${q.networkFeeUsd} network fee` : null;
     return [head, fee, q?.appliedRule?.name].filter(Boolean).join(" · ");
@@ -442,6 +446,7 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
 
   const again = (job: Job<ImageSetup>, price: JobPrice) => {
     if (guest) return openLogin();
+    if (job.status === "failed" && job.error?.payment) return queue.retry(job.id);
     const step = againStep(job.setup, price, { payer, ready: holdings.ready, balance: holdings.balance });
     if (step.why) return notify(step.why);
     const retried = job.status === "failed" ? job.id : undefined;
@@ -687,14 +692,15 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
  * composer, which may have moved on since the job ran.
  */
 export function useAgain(m: ImageViewModel, job: Job<ImageSetup> | undefined) {
-  const ok = !!job && (job.status === "ready" || job.error?.charged === "no");
-  const price = useComposerQuote(ok && !m.guest ? quoteOf(job.setup) : null);
+  const existingPayment = job?.status === "failed" && !!job.error?.payment;
+  const ok = !!job && (job.status === "ready" || job.error?.charged === "no" || existingPayment);
+  const price = useComposerQuote(ok && !existingPayment && !m.guest ? quoteOf(job.setup) : null);
   if (!ok) return null;
   const free = job.setup.model.free;
   return {
-    label: job.status === "ready" ? "Regenerate" : "Retry",
-    price: chipLabel({ signedIn: !m.guest, free, quote: price.quote, pending: price.pending }),
-    ready: free || price.quote !== null,
+    label: existingPayment ? "Check payment" : job.status === "ready" ? "Regenerate" : "Retry",
+    price: existingPayment ? null : chipLabel({ signedIn: !m.guest, free, quote: price.quote, pending: price.pending }),
+    ready: existingPayment || free || price.quote !== null,
     press: () => m.again(job, price),
   };
 }

@@ -4,7 +4,7 @@
  * mapping from a generation's outcome to what the user is told. Only the
  * `setup` a job carries is surface-specific.
  */
-import type { GenerationOutcome } from "@/lib/generation/run-generation";
+import type { GenerationOutcome, GenerationPayment } from "@/lib/generation/run-generation";
 import type { SignState } from "./serial-signer";
 
 export type Job<S> = {
@@ -19,12 +19,14 @@ export type Job<S> = {
   /** Measured by the free route only. */
   size?: { w: number; h: number };
   /** `message` is the whole sentence shown for the failure. */
-  error?: { message: string; charged: "no" | "unknown" };
+  error?: { message: string; charged: "no" | "unknown"; payment?: GenerationPayment };
+  payment?: GenerationPayment;
   seen: boolean;
 };
 
 export type QueueAction<S> =
   | { type: "enqueue"; id: string; createdAt: number; setup: S }
+  | { type: "payment"; id: string; payment: GenerationPayment }
   | { type: "resolve"; id: string; imageUrl: string; size?: { w: number; h: number } }
   | { type: "fail"; id: string; error: NonNullable<Job<S>["error"]> }
   | { type: "drop"; id: string }
@@ -45,6 +47,8 @@ export function queueReducer<S>(jobs: Job<S>[], a: QueueAction<S>): Job<S>[] {
     case "enqueue":
       // New jobs go first and nothing else moves (handoff §0).
       return [{ id: a.id, createdAt: a.createdAt, setup: a.setup, status: "rendering", seen: false }, ...jobs];
+    case "payment":
+      return update(jobs, a.id, j => j.status === "rendering" ? { ...j, payment: a.payment } : null);
     case "resolve":
       // Only a rendering job ends, and only once.
       return update(jobs, a.id, (j) => (j.status === "rendering" ? { ...j, status: "ready", imageUrl: a.imageUrl, size: a.size } : null));
@@ -58,7 +62,7 @@ export function queueReducer<S>(jobs: Job<S>[], a: QueueAction<S>): Job<S>[] {
       // Saved jobs still rendering never got their answer, but may have been made.
       const have = new Set(jobs.map((j) => j.id));
       const saved = a.jobs.filter((j) => !have.has(j.id));
-      return [...jobs, ...saved.map((j): Job<S> => (j.status === "rendering" ? { ...j, status: "failed", error: INTERRUPTED } : j))];
+      return [...jobs, ...saved.map((j): Job<S> => (j.status === "rendering" ? { ...j, status: "failed", error: j.payment ? { ...INTERRUPTED, payment: j.payment } : INTERRUPTED } : j))];
     }
   }
 }
@@ -105,12 +109,16 @@ export function settle(id: string, o: GenerationOutcome, sign: SignState): Settl
   if (o.ok) {
     const { width: w, height: h } = o.data;
     const size = typeof w === "number" && typeof h === "number" ? { w, h } : undefined;
-    return { action: { type: "resolve", id, imageUrl: o.imageUrl, size }, refresh: sign === "signed" };
+    return { action: { type: "resolve", id, imageUrl: o.imageUrl, size }, refresh: sign === "signed" || !!o.payment };
   }
   const drop = { type: "drop", id } as const;
   // The words authorizePaidGeneration tells a cancel apart by.
   if (sign === "threw" && /reject|denied|cancel/i.test(o.error)) {
     return { action: drop, toast: "Cancelled in your wallet · nothing was charged" };
+  }
+  if (o.payment) {
+    const message = "Your payment or refund is still being checked. " + o.error;
+    return { action: { type: "fail", id, error: { message, charged: "unknown", payment: o.payment } }, toast: message, refresh: true };
   }
   if (o.status === 401 && o.data?.signInRequired) return { action: drop, login: true };
   if (o.status === 402 && o.data?.freeQuotaExhausted) {
@@ -123,4 +131,18 @@ export function settle(id: string, o: GenerationOutcome, sign: SignState): Settl
   });
   if (sign === "signed" && o.status === undefined && (o.phase === undefined || o.phase === "generation")) return fail("unknown", CONNECTION_LOST);
   return fail("no", `${o.status === 429 ? "Busy right now" : "Render failed"} · not charged · ${o.error}`);
+}
+
+/** Retry a pending deposit as a group; an already sent image request must be reconciled, never replayed. */
+export function retryPlan<S>(jobs: Job<S>[], id: string): { jobs: Job<S>[]; resume?: GenerationPayment[] } | { reason: string } | null {
+  const job = jobs.find(item => item.id === id);
+  if (job?.status !== "failed") return null;
+  const payment = job.error?.payment;
+  if (payment) {
+    if (payment.state === "expired") return { reason: "Check your gallery and payment history before placing another order. This request will not be sent twice." };
+    const pending = jobs.filter(item => item.status === "failed" && item.error?.payment?.intentId === payment.intentId);
+    return { jobs: pending, resume: pending.map(item => item.error!.payment!) };
+  }
+  if (job.error?.charged === "unknown") return { reason: "Check your gallery and payment history before placing another order. This request will not be sent twice." };
+  return { jobs: [job] };
 }
