@@ -59,12 +59,15 @@ describe("Regenerate and Retry (spec-imageview-mobile D10, plan R29)", () => {
   it("Retry takes the failed job's place; Regenerate loads its setup back into the composer first", () => {
     expect(MODEL).toMatch(/const retried = job\.status === "failed" \? job\.id : undefined;\n\s+if \(!retried\) loadSetup\(job\.setup, true\);/);
     expect(MODEL).toMatch(/const go = \(\) => \{\n\s+start\(job\.setup, retried\);/);
-    expect(MODEL).toMatch(/if \(retried\) queue\.retry\(retried\);\n\s+else run\(job\);/);
+    expect(MODEL).toMatch(/if \(retried\) queue\.retry\(retried\);\n\s+else runBatch\(\[job\]\);/);
   });
 
   it("are the only way past Generate to the queue: nothing else runs or retries a job", () => {
-    expect(MODEL.match(/\brun\(/g)).toHaveLength(1);
-    expect(MODEL.match(/\.retry\(/g)).toHaveLength(1);
+    expect(MODEL.match(/\brunBatch\(/g)).toHaveLength(1);
+    expect(MODEL.match(/\.retry\(/g)).toHaveLength(2);
+    expect(MODEL).toContain('if (job.status === "failed" && job.error?.payment) return queue.retry(job.id);');
+    const again = MODEL.slice(MODEL.indexOf("const again = (job: Job<ImageSetup>"), MODEL.indexOf("/* ── Images:"));
+    expect(again.indexOf("job.error?.payment")).toBeLessThan(again.indexOf("againStep("));
     expect(MODEL).not.toMatch(/\bretry: queue\.retry\b/);
   });
 
@@ -75,7 +78,9 @@ describe("Regenerate and Retry (spec-imageview-mobile D10, plan R29)", () => {
     expect(DESKTOP).toContain("onAgain={() => setViewer(null)}");
     expect(MAIN).toContain('const retry = useAgain(m, job?.status === "failed" ? job : undefined);');
     expect(MAIN).toContain("disabled={!retry.ready} onClick={retry.press}");
-    expect(MAIN).toContain("⟳ Retry{retry.price && ` · ${retry.price}`}");
+    expect(MAIN).toContain("⟳ {retry.label}{retry.price && ` · ${retry.price}`}");
+    expect(MODEL).toContain('label: existingPayment ? "Check payment"');
+    expect(MODEL).toContain("ready: existingPayment || free || price.quote !== null,");
   });
 });
 

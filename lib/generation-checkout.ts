@@ -1,21 +1,6 @@
 "use client";
 
-/**
- * The buyer's side of authorise-then-capture, as one straight line:
- *
- *   quote                        what would this cost? (display only)
- *   intent → authorize → sign → submit     hold a payment, move no money
- *
- * After submit, the generation runs with the intentId and the SERVER decides
- * the ending: image stored → capture; anything else → void, nothing charged.
- * The client never touches an amount or a destination — it ships identifiers
- * and a signature, and everything it displays came out of the server's own
- * arithmetic (Terms of Use §4: the price shown is the price charged, network
- * fee included and itemised).
- *
- * The caller passes the signer (hooks/usePaymentSigner): the buyer's own
- * wallet, external through the wallet adapter or embedded through CDP.
- */
+/** Server-priced escrow checkout. A submitted deposit moves funds into escrow; retries reuse its original intent. */
 import { sessionAuthHeaders } from "@/lib/session-headers";
 
 /** The models table stores display names; pricing keys are their slugs. */
@@ -124,79 +109,186 @@ export async function fetchGenerationQuotes(reqs: QuoteRequest[]): Promise<Array
   }
 }
 
-/**
- * Which step failed, in the user's terms. The distinction that matters most
- * is `sign` — that one is the buyer changing their mind in the wallet, not an
- * error, and the UI should say "nothing was charged", which is literally true
- * at every step of this flow.
- */
+export type EscrowDepositState = "prepared" | "submitting" | "submitted" | "funded" | "expired";
+export interface EscrowUnitStatus {
+  unit_index: number;
+  state: "pending" | "running" | "delivered" | "failed";
+  generation_id: string | null;
+  imageUrl?: string;
+}
+export interface EscrowCheckout {
+  intentId: string;
+  units: number;
+  paymentScheme: "escrow";
+  state: EscrowDepositState | "uncertain";
+  unitStatuses?: EscrowUnitStatus[];
+  /** Public signed wire, retained only to retry the SAME deposit after a lost submit response. */
+  signedTransaction?: string;
+}
+export type FundedEscrowCheckout = EscrowCheckout & { state: "funded" };
 export class CheckoutError extends Error {
-  constructor(
-    readonly step: "intent" | "authorize" | "sign" | "submit",
-    message: string,
-  ) {
+  constructor(readonly step: "intent" | "authorize" | "sign" | "submit" | "status", message: string,
+    readonly payment?: EscrowCheckout) {
     super(message);
     this.name = "CheckoutError";
   }
 }
-
 async function post(path: string, body: unknown): Promise<Response> {
   return fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
-    body: JSON.stringify(body),
+    method: "POST", headers: { "Content-Type": "application/json", ...sessionAuthHeaders() }, body: JSON.stringify(body),
   });
 }
-
 /** Base64 transaction in, the same transaction with the buyer's signature out. */
 export type PaymentSigner = (transaction: string) => Promise<string>;
-
-const errorOf = async (res: Response, fallback: string) =>
-  ((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? fallback;
-
-/**
- * Hold the payment: intent → authorize → sign in the buyer's wallet → submit.
- * Returns the intentId to generate with. Throws CheckoutError; no step of it
- * moves money, so every failure leaves the buyer exactly where they started.
- */
-export async function authorizePaidGeneration(
-  req: QuoteRequest,
-  sign: PaymentSigner,
-): Promise<{ intentId: string }> {
-  const intentRes = await post("/api/payments/generation/intent", req);
-  if (!intentRes.ok) {
-    throw new CheckoutError("intent", await errorOf(intentRes, "Could not prepare the payment"));
+export type PaymentCheckpoint = (payment: EscrowCheckout) => void | Promise<void>;
+async function checkpointPayment(checkpoint: PaymentCheckpoint | undefined, payment: EscrowCheckout) {
+  try { await checkpoint?.(payment); }
+  catch { throw new CheckoutError("submit", "The payment could not be saved safely. Check its status before continuing.", payment); }
+}
+const errorOf = async (res: Response, fallback: string) => {
+  const body = await res.json().catch(() => null) as { error?: unknown } | null;
+  return typeof body?.error === "string" ? body.error : fallback;
+};
+const PENDING_PAYMENT = "Your payment is still being checked. Check its status before making another payment.";
+const STATES: EscrowDepositState[] = ["prepared", "submitting", "submitted", "funded", "expired"];
+async function statusBody(res: Response, payment: EscrowCheckout): Promise<EscrowCheckout> {
+  if (!res.ok) throw new CheckoutError("status", PENDING_PAYMENT, payment);
+  const body = await res.json().catch(() => null) as { intentId?: string; paymentScheme?: string; state?: EscrowDepositState; funded?: boolean; units?: EscrowUnitStatus[] } | null;
+  if (!body || body.intentId !== payment.intentId || body.paymentScheme !== "escrow" || !body.state ||
+      !STATES.includes(body.state) || body.funded !== (body.state === "funded")) {
+    throw new CheckoutError("status", PENDING_PAYMENT, payment);
   }
-  const intentId = ((await intentRes.json()) as { intent?: { id?: string } }).intent?.id;
-  if (!intentId) throw new CheckoutError("intent", "Could not prepare the payment");
-
-  const authRes = await post("/api/payments/generation/authorize", { intentId });
-  if (!authRes.ok) {
-    throw new CheckoutError("authorize", await errorOf(authRes, "Could not build the payment"));
+  if (body.units !== undefined && (!Array.isArray(body.units) || body.units.some(unit => !unit ||
+      !Number.isInteger(unit.unit_index) || unit.unit_index < 0 || unit.unit_index >= payment.units ||
+      !["pending", "running", "delivered", "failed"].includes(unit.state) ||
+      (unit.state === "delivered" ? typeof unit.generation_id !== "string" : unit.generation_id !== null) ||
+      (unit.imageUrl !== undefined && (unit.state !== "delivered" || typeof unit.imageUrl !== "string" || !unit.imageUrl.startsWith("https://")))) ||
+      new Set(body.units.map(unit => unit.unit_index)).size !== body.units.length)) {
+    throw new CheckoutError("status", PENDING_PAYMENT, payment);
   }
-  const { transaction } = (await authRes.json()) as { transaction?: string };
-  if (!transaction) throw new CheckoutError("authorize", "Could not build the payment");
-
-  let signed: string;
+  return { ...payment, state: body.state, ...(body.units ? { unitStatuses: body.units } : {}) };
+}
+async function submitSameDeposit(payment: EscrowCheckout, onPayment?: PaymentCheckpoint): Promise<EscrowCheckout> {
+  if (!payment.signedTransaction) throw new CheckoutError("submit", PENDING_PAYMENT, payment);
+  await checkpointPayment(onPayment, payment);
   try {
-    signed = await sign(transaction);
-  } catch (e) {
-    if (e instanceof CheckoutError) throw e;
-    throw new CheckoutError(
-      "sign",
-      e instanceof Error && /reject|denied|cancel/i.test(e.message)
-        ? "Signing was cancelled — nothing was charged"
-        : "The wallet could not sign — nothing was charged",
-    );
+    const res = await post("/api/payments/generation/submit", {
+      intentId: payment.intentId, signedTransaction: payment.signedTransaction,
+    });
+    const current = await statusBody(res, payment);
+    await checkpointPayment(onPayment, current);
+    return current;
+  } catch (error) {
+    if (error instanceof CheckoutError) throw error;
+    throw new CheckoutError("submit", PENDING_PAYMENT, { ...payment, state: "uncertain" });
   }
-
-  const submitRes = await post("/api/payments/generation/submit", {
-    intentId,
-    signedTransaction: signed,
-  });
-  if (!submitRes.ok) {
-    throw new CheckoutError("submit", await errorOf(submitRes, "Could not store the authorisation"));
+}
+/** Never opens an intent or a wallet. Resume only the already signed deposit. */
+export async function resumePaidGeneration(payment: EscrowCheckout, onPayment?: PaymentCheckpoint): Promise<FundedEscrowCheckout> {
+  let current: EscrowCheckout;
+  try {
+    current = await checkPaidGenerationStatus(payment);
+    if (current.state === "prepared" && current.signedTransaction) current = await submitSameDeposit(current, onPayment);
+  } catch (error) {
+    if (error instanceof CheckoutError) throw error;
+    throw new CheckoutError("status", PENDING_PAYMENT, payment);
   }
+  if (current.state === "expired") {
+    throw new CheckoutError("status", "This payment has expired. Check your balance and payment history before starting another order.", current);
+  }
+  if (current.state !== "funded") throw new CheckoutError("status", PENDING_PAYMENT, current);
+  await checkpointPayment(onPayment, current);
+  return { ...current, state: "funded" };
+}
+/** One signed escrow deposit for every paid image in this click. */
+export async function authorizePaidGeneration(req: QuoteRequest, sign: PaymentSigner, units = 1, onPayment?: PaymentCheckpoint): Promise<FundedEscrowCheckout> {
+  if (!Number.isInteger(units) || units < 1 || units > 24) throw new CheckoutError("intent", "Choose between one and twenty-four images.");
+  let intentRes: Response;
+  try { intentRes = await post("/api/payments/generation/intent", req); }
+  catch { throw new CheckoutError("intent", "Could not prepare the payment. Please try again."); }
+  if (!intentRes.ok) throw new CheckoutError("intent", await errorOf(intentRes, "Could not prepare the payment"));
+  const intentBody = await intentRes.json().catch(() => null) as { intent?: { id?: string } } | null;
+  const intentId = intentBody?.intent?.id;
+  if (!intentId) throw new CheckoutError("intent", "Could not prepare the payment");
+  let authRes: Response;
+  try { authRes = await post("/api/payments/generation/authorize", { intentId, units }); }
+  catch { throw new CheckoutError("authorize", "Could not build the payment. Please try again."); }
+  if (!authRes.ok) throw new CheckoutError("authorize", await errorOf(authRes, "Could not build the payment"));
+  const prepared = await authRes.json().catch(() => null) as { intentId?: string; transaction?: string; units?: number; paymentScheme?: string } | null;
+  if (!prepared?.transaction || prepared.intentId !== intentId || prepared.units !== units || prepared.paymentScheme !== "escrow") {
+    throw new CheckoutError("authorize", "Could not build the payment");
+  }
+  let signed: string;
+  try { signed = await sign(prepared.transaction); }
+  catch (error) {
+    if (error instanceof CheckoutError) throw error;
+    throw new CheckoutError("sign", error instanceof Error && /reject|denied|cancel/i.test(error.message)
+      ? "Signing was cancelled. Nothing was charged." : "The wallet could not sign. Nothing was charged.");
+  }
+  const payment = await submitSameDeposit({ intentId, units, paymentScheme: "escrow", state: "uncertain", signedTransaction: signed }, onPayment);
+  if (payment.state === "funded") return { ...payment, state: "funded" };
+  return resumePaidGeneration(payment, onPayment);
+}
+/** Close unstarted units; already admitted generations may finish. */
+export async function cancelPaidGeneration(payment: EscrowCheckout): Promise<void> {
+  try {
+    const res = await post("/api/payments/generation/cancel", { intentId: payment.intentId });
+    if (!res.ok) throw new CheckoutError("status", "The remaining images could not be cancelled yet. Check the payment status.", payment);
+  } catch (error) {
+    if (error instanceof CheckoutError) throw error;
+    throw new CheckoutError("status", "The remaining images could not be cancelled yet. Check the payment status.", payment);
+  }
+}
+export interface FreeGenerationQuota { used: number; limit: number; remaining: number; exhausted: boolean; resetsAt: string }
+/** Unknown quota never becomes a fabricated free allowance. */
+export async function fetchFreeGenerationQuota(): Promise<FreeGenerationQuota | null> {
+  try {
+    const res = await fetch("/api/generate-free/quota", { headers: sessionAuthHeaders(), cache: "no-store" });
+    if (!res.ok) return null;
+    const body = await res.json() as { freeQuota?: FreeGenerationQuota };
+    const q = body.freeQuota;
+    return q && Number.isInteger(q.used) && q.used >= 0 && q.limit === 1 &&
+      Number.isInteger(q.remaining) && q.remaining >= 0 && q.remaining <= q.limit &&
+      q.remaining === Math.max(0, q.limit - q.used) && q.exhausted === (q.remaining === 0) && typeof q.resetsAt === "string" ? q : null;
+  } catch { return null; }
+}
+export type PendingEscrowPayment = EscrowCheckout & { unitIndex: number; generationSubmitted: boolean };
+const pendingKey = (owner: string) => "enki-pending-escrow:v1:" + owner;
+/** Persist public payment identity only. Draft prompts and reference images are not stored here. */
+export function storePendingEscrowPayments(storage: Pick<Storage, "setItem" | "removeItem">,
+  owner: string, payments: PendingEscrowPayment[] | null): boolean {
+  try {
+    if (!payments?.length) storage.removeItem(pendingKey(owner));
+    else storage.setItem(pendingKey(owner), JSON.stringify(payments.map(payment => ({
+      intentId: payment.intentId, units: payment.units, paymentScheme: payment.paymentScheme,
+      state: payment.state, signedTransaction: payment.signedTransaction,
+      unitIndex: payment.unitIndex, generationSubmitted: payment.generationSubmitted,
+    }))));
+    return true;
+  } catch { return false; }
+}
+export function readPendingEscrowPayments(storage: Pick<Storage, "getItem">, owner: string): PendingEscrowPayment[] {
+  try {
+    const stored: unknown = JSON.parse(storage.getItem(pendingKey(owner)) ?? "[]");
+    if (!Array.isArray(stored) || stored.length > 24 || stored.some(payment => !payment ||
+        typeof payment.intentId !== "string" || !payment.intentId || !Number.isInteger(payment.units) || payment.units < 1 || payment.units > 24 ||
+        payment.paymentScheme !== "escrow" || ![...STATES, "uncertain"].includes(payment.state) ||
+        !Number.isInteger(payment.unitIndex) || payment.unitIndex < 0 || payment.unitIndex >= payment.units ||
+        typeof payment.generationSubmitted !== "boolean" ||
+        (payment.signedTransaction !== undefined && typeof payment.signedTransaction !== "string") ||
+        payment.intentId !== stored[0].intentId || payment.units !== stored[0].units) ||
+        new Set(stored.map(payment => payment.unitIndex)).size !== stored.length) return [];
+    return stored;
+  } catch { return []; }
+}
 
-  return { intentId };
+/** Read-only recovery after reload: never submits or rebuilds a deposit. */
+export async function checkPaidGenerationStatus(payment: EscrowCheckout): Promise<EscrowCheckout> {
+  try {
+    const res = await fetch("/api/payments/generation/status?intentId=" + encodeURIComponent(payment.intentId), { headers: sessionAuthHeaders(), cache: "no-store" });
+    return await statusBody(res, payment);
+  } catch (error) {
+    if (error instanceof CheckoutError) throw error;
+    throw new CheckoutError("status", PENDING_PAYMENT, payment);
+  }
 }

@@ -31,7 +31,11 @@ describe("Quick Create", () => {
     expect(LAUNCHER).toMatch(/const quotes = useServerQuotes\(/);
     expect(LAUNCHER).toMatch(/priceFor=\{priceFor\}/);
     expect(LAUNCHER).toMatch(/const generate = async \(count: number\) => \{/);
-    expect(LAUNCHER).toMatch(/for \(let n = 0; n < count; n\+\+\) \{\n\s+const outcome = await runGeneration\(/);
+    expect(LAUNCHER).toContain("await executeOrder(Array.from({ length: count }, () => base));");
+    expect(LAUNCHER).toContain("const outcomes = await runGenerationBatch(requests, signPayment,");
+    expect(LAUNCHER).toContain("const mixedTotal = quoteLabel(mixedQuotes[0], mixedPaidCount);");
+    expect(LAUNCHER).toContain("model: mixedPaid, boost: false");
+    expect(LAUNCHER).toContain("disabled={!mixedPaid || !mixedTotal || generating}");
     expect(LAUNCHER).not.toMatch(/t\.price|pricePerSlot/);
   });
 });
