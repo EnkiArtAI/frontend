@@ -1,148 +1,99 @@
-import { describe, it, expect } from "vitest";
-import { freeQuotaFor, FREE_GENERATIONS_PER_ACCOUNT } from "@/lib/generation/free-quota";
+import { describe, it, expect, vi } from "vitest";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { freeQuotaFor, freeGenerationDecision, releaseFreeClaim, FREE_GENERATIONS_PER_DAY } from "@/lib/generation/free-quota";
 
-/** Minimal stub of the one query shape freeQuotaFor issues. */
-function stub(result: { count?: number | null; error?: { message: string } | null }) {
-  const calls: Record<string, unknown>[] = [];
-  const chain = {
-    select: () => chain,
-    eq: (col: string, val: unknown) => { calls.push({ eq: [col, val] }); return Promise.resolve(result) as never; },
-  };
-  return { client: { from: (t: string) => { calls.push({ from: t }); return chain; } }, calls };
-}
+const USER = "11111111-1111-4111-8111-111111111111";
+const CLAIM = "22222222-2222-4222-8222-222222222222";
+const RESET = "2026-10-13T00:00:00+00:00";
+const quotaRow = (used = 0) => ({ used, limit: 1, remaining: Math.max(0, 1 - used), exhausted: used >= 1, resets_at: RESET });
+const clientFor = (rpc: ReturnType<typeof vi.fn>) => ({ rpc }) as unknown as SupabaseClient;
 
 describe("freeQuotaFor", () => {
-  it("reports what is left before the allowance is spent", async () => {
-    const { client } = stub({ count: 1, error: null });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const q = await freeQuotaFor(client as any, "u1");
-    expect(q).toEqual({ used: 1, limit: FREE_GENERATIONS_PER_ACCOUNT, remaining: 2, exhausted: false });
+  it("reports one remaining image, using the database UTC reset", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [quotaRow()], error: null });
+    expect(await freeQuotaFor(clientFor(rpc), USER)).toEqual({ used: 0, limit: FREE_GENERATIONS_PER_DAY, remaining: 1, exhausted: false, resetsAt: RESET });
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("free_generation_quota", { p_user_id: USER });
   });
 
-  it("is exhausted exactly AT the limit, not one past it", async () => {
-    // Off-by-one here is the difference between 3 free images and 4.
-    const { client } = stub({ count: FREE_GENERATIONS_PER_ACCOUNT, error: null });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const q = await freeQuotaFor(client as any, "u1");
-    expect(q.exhausted).toBe(true);
-    expect(q.remaining).toBe(0);
-  });
-
-  it("never reports a negative remainder for an account already over the line", async () => {
-    const { client } = stub({ count: 9, error: null });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const q = await freeQuotaFor(client as any, "u1");
-    expect(q.remaining).toBe(0);
-    expect(q.exhausted).toBe(true);
-  });
-
-  it("counts THIS user's claims, not generations rows or a provider", async () => {
-    // generations rows were written after the response (parallel requests all
-    // read the same count) and paid renders lacked amount_paid_cents; a
-    // provider filter would reset everyone the day the free provider changes.
-    const { client, calls } = stub({ count: 0, error: null });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await freeQuotaFor(client as any, "user-42");
-    expect(calls).toEqual([{ from: "free_generation_claims" }, { eq: ["user_id", "user-42"] }]);
-  });
-
-  it("throws on a failed lookup instead of granting a free generation", async () => {
-    // Treating an outage as "0 used" turns a database blip into an unlimited
-    // free tier — the expensive direction to be wrong in.
-    const { client } = stub({ count: null, error: { message: "connection reset" } });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await expect(freeQuotaFor(client as any, "u1")).rejects.toThrow(/free quota lookup failed/);
-  });
-});
-
-import { freeGenerationDecision } from "@/lib/generation/free-quota";
-
-/** Stub of what the decision issues: users.role, the claim, and the count when refused. */
-function decisionStub(opts: { role?: string | null; roleError?: boolean; count?: number; claimError?: boolean }) {
-  const seen: string[] = [];
-  const usersChain = {
-    select: () => usersChain,
-    eq: () => usersChain,
-    is: () => usersChain,
-    maybeSingle: () =>
-      Promise.resolve(
-        opts.roleError
-          // Error AND a role that WOULD grant the exemption. With data:null the
-          // case proves nothing — the `data &&` guard alone would pass it, so
-          // the `!error` half of the check would be untested.
-          ? { data: { role: "admin" }, error: { message: "boom" } }
-          : { data: opts.role === undefined ? null : { role: opts.role }, error: null },
-      ),
-  };
-  let claims = opts.count ?? 0;
-  const claimChain = {
-    select: () => claimChain,
-    eq: () => Promise.resolve({ count: claims, error: null }) as never,
-  };
-  return {
-    from: (t: string) => { seen.push(t); return t === "users" ? usersChain : claimChain; },
-    // The database's claim_free_generation: one claim while under the limit, else null.
-    rpc: (fn: string, args: { p_limit: number }) => {
-      seen.push(fn);
-      if (opts.claimError) return Promise.resolve({ data: null, error: { message: "boom" } });
-      return Promise.resolve({ data: claims < args.p_limit ? `claim-${++claims}` : null, error: null });
-    },
-    seen,
-  };
-}
-
-describe("freeGenerationDecision", () => {
-  it("refuses an anonymous caller — there is no account to count against", async () => {
-    // This is the hole: without it, the way around three-per-account was to log out.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const d = await freeGenerationDecision(decisionStub({}) as any, null);
-    expect(d).toEqual({ allowed: false, reason: "sign-in", quota: null });
-  });
-
-  it("lets the team through without a limit", async () => {
-    for (const role of ["admin", "mod"]) {
-      const stub = decisionStub({ role, count: 999 });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const d = await freeGenerationDecision(stub as any, "kev");
-      expect(d).toEqual({ allowed: true, claimId: null });
-      // and it never even claims — the exemption is not a large allowance
-      expect(stub.seen).not.toContain("claim_free_generation");
+  it("is exhausted at one image and never reports a negative remainder", async () => {
+    for (const used of [1, 9]) {
+      const rpc = vi.fn().mockResolvedValue({ data: [quotaRow(used)], error: null });
+      expect(await freeQuotaFor(clientFor(rpc), USER)).toMatchObject({ used, remaining: 0, exhausted: true });
     }
   });
 
-  it("holds an ordinary account to the allowance", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const under = await freeGenerationDecision(decisionStub({ role: "beta", count: 1 }) as any, "u");
-    expect(under).toEqual({ allowed: true, claimId: "claim-2" });
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const over = await freeGenerationDecision(decisionStub({ role: "beta", count: 3 }) as any, "u");
-    expect(over).toMatchObject({ allowed: false, reason: "quota", quota: { used: 3, remaining: 0 } });
+  it("fails closed on an error without exposing the raw database message", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: "private upstream data" } });
+    await expect(freeQuotaFor(clientFor(rpc), USER)).rejects.toThrow("free quota lookup failed");
   });
 
-  it("takes the allowance by claiming it, so a burst gets only what is left", async () => {
-    const stub = decisionStub({ role: "user", count: 1 });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const burst = await Promise.all(Array.from({ length: 10 }, () => freeGenerationDecision(stub as any, "u")));
-    expect(burst.filter((d) => d.allowed)).toHaveLength(2);
+  it("preserves database outages as outages", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: "fetch failed" } });
+    await expect(freeQuotaFor(clientFor(rpc), USER)).rejects.toThrow("database unreachable");
   });
 
-  it("refuses when the claim itself fails, instead of granting a free render", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await expect(freeGenerationDecision(decisionStub({ role: "user", claimError: true }) as any, "u")).rejects.toThrow(/free claim failed/);
+  it("refuses missing or malformed quota replies instead of inventing an allowance", async () => {
+    for (const data of [null, [], [quotaRow(), quotaRow()], [{ ...quotaRow(), limit: 3 }],
+      [{ ...quotaRow(), used: -1 }], [{ ...quotaRow(), remaining: 7 }],
+      [{ ...quotaRow(), exhausted: true }], [{ ...quotaRow(), resets_at: "bad date" }]]) {
+      const rpc = vi.fn().mockResolvedValue({ data, error: null });
+      await expect(freeQuotaFor(clientFor(rpc), USER)).rejects.toThrow("free quota lookup failed");
+    }
+  });
+});
+
+describe("freeGenerationDecision", () => {
+  it("refuses an anonymous caller without a database call", async () => {
+    const rpc = vi.fn();
+    expect(await freeGenerationDecision(clientFor(rpc), null)).toEqual({ allowed: false, reason: "sign-in", quota: null });
+    expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("does not grant the team exemption when the role lookup fails", async () => {
-    // An outage must not hand anyone unlimited free generation.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const d = await freeGenerationDecision(decisionStub({ roleError: true, count: 3 }) as any, "u");
-    expect(d.allowed).toBe(false);
-    expect(d).toMatchObject({ reason: "quota" });
+  it("claims one daily slot without a role exemption", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: CLAIM, error: null });
+    expect(await freeGenerationDecision(clientFor(rpc), USER)).toEqual({ allowed: true, claimId: CLAIM });
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("claim_free_generation", { p_user_id: USER, p_limit: 1 });
   });
 
-  it("treats an unknown role as an ordinary account, not as team", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const d = await freeGenerationDecision(decisionStub({ role: "administrator", count: 3 }) as any, "u");
-    expect(d.allowed).toBe(false);
+  it("returns the daily quota when no slot is left", async () => {
+    const rpc = vi.fn().mockResolvedValueOnce({ data: null, error: null })
+      .mockResolvedValueOnce({ data: [quotaRow(1)], error: null });
+    expect(await freeGenerationDecision(clientFor(rpc), USER)).toMatchObject({ allowed: false, reason: "quota", quota: { used: 1, remaining: 0, resetsAt: RESET } });
+  });
+
+  it("a burst gets one claimed image", async () => {
+    let claims = 0;
+    const rpc = vi.fn(async (name: string) => ({ data: name === "free_generation_quota" ? [quotaRow(claims)] : claims++ === 0 ? CLAIM : null, error: null }));
+    const decisions = await Promise.all(Array.from({ length: 10 }, () => freeGenerationDecision(clientFor(rpc), USER)));
+    expect(decisions.filter(d => d.allowed)).toHaveLength(1);
+  });
+
+  it("refuses failed or malformed claims", async () => {
+    for (const result of [{ data: null, error: { message: "unavailable" } }, { data: undefined, error: null }, { data: "", error: null }, { data: 3, error: null }]) {
+      const rpc = vi.fn().mockResolvedValue(result);
+      await expect(freeGenerationDecision(clientFor(rpc), USER)).rejects.toThrow("free claim failed");
+    }
+  });
+
+  it("preserves claim outages as outages", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: "ECONNRESET" } });
+    await expect(freeGenerationDecision(clientFor(rpc), USER)).rejects.toThrow("database unreachable");
+  });
+});
+
+describe("releaseFreeClaim", () => {
+  it("gives back only the failed claim id", async () => {
+    const eq = vi.fn().mockResolvedValue({ error: null });
+    const del = vi.fn(() => ({ eq }));
+    const from = vi.fn(() => ({ delete: del }));
+    await releaseFreeClaim({ from } as unknown as SupabaseClient, CLAIM);
+    expect(from).toHaveBeenCalledExactlyOnceWith("free_generation_claims");
+    expect(eq).toHaveBeenCalledExactlyOnceWith("id", CLAIM);
+  });
+
+  it("does nothing without a claim", async () => {
+    const from = vi.fn();
+    await releaseFreeClaim({ from } as unknown as SupabaseClient, null);
+    expect(from).not.toHaveBeenCalled();
   });
 });
