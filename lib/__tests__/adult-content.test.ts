@@ -124,7 +124,7 @@ describe("the routes", () => {
     // A refusal on 18+ still counts the extraction attempt it refuses.
     expect(HUMAN).toMatch(/if \(check\.verdict === "extraction" && asker\) \{\n\s+after\(recordExtractionHit\([^\n]+\n\s+\}\n\s+return NextResponse\.json\(ADULT_REFUSAL, \{ status: 403 \}\);/);
     expect(refuse).toBeGreaterThan(-1);
-    expect(HUMAN.indexOf("await claimForGeneration(")).toBeGreaterThan(refuse);
+    expect(HUMAN.indexOf("await claimGenerationEscrowUnit(")).toBeGreaterThan(refuse);
   });
 
   it("refuse 18+ on the free generator to anyone unconfirmed", () => {
@@ -156,7 +156,7 @@ describe("the routes", () => {
 
   it("mark the images they record", () => {
     // And the image check's own 18+ verdict marks what it delivers.
-    expect(HUMAN).toMatch(/recordGeneration\(recSupabase, \{\n\s+adult: adult \|\| seen\.verdict === "adult",/);
+    expect(HUMAN).toMatch(/recordGeneration\(supabase, \{\n\s+adult: adult \|\| seen\.verdict === "adult",/);
     expect(FREE).toMatch(/recordGeneration\(supabase, \{\n\s+adult: adult \|\| seen\.verdict === "adult",/);
   });
 

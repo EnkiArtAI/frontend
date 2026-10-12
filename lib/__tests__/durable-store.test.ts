@@ -231,20 +231,27 @@ describe("the paid routes", () => {
   const HUMAN = readSource(join(ROOT, "app", "api", "generate-image", "route.ts"));
   const AGENT = readSource(join(ROOT, "app", "api", "x402", "generate", "route.ts"));
 
-  it("the human route stores durably, inlines only what fits, and charges only after", () => {
-    const store = HUMAN.search(/await putDurably\(/);
-    const fits = HUMAN.search(/generatedImageBuffer\.length <= INLINE_MAX_BYTES/);
-    const refuse = HUMAN.search(/if \(!imageUrl \|\| Date\.now\(\) > storeDeadline\(startedAt\)\) \{[\s\S]{0,300}await releaseIfConsumed\(\);[\s\S]{0,80}return NextResponse\.json\(/);
-    const capture = HUMAN.search(/await captureAndBroadcast\(/);
+  it("the human escrow route requires a durable image before recording delivery", () => {
+    const store = HUMAN.indexOf("await putDurably(");
+    const refuse = HUMAN.indexOf("if (!imageUrl || Date.now() > storeDeadline(startedAt)) {");
+    const record = HUMAN.indexOf("const generationId = await recordGeneration(");
+    const deliver = HUMAN.indexOf("await deliverGenerationEscrowUnit(");
     expect(store).toBeGreaterThan(-1);
-    expect(fits).toBeGreaterThan(store);
-    expect(refuse).toBeGreaterThan(fits);
-    expect(capture).toBeGreaterThan(refuse);
-    expect(HUMAN).not.toMatch(/uploadError/);
+    expect(refuse).toBeGreaterThan(store);
+    expect(record).toBeGreaterThan(refuse);
+    expect(deliver).toBeGreaterThan(record);
+    expect(HUMAN).not.toContain("INLINE_MAX_BYTES");
+    expect(HUMAN).toContain("await failIfClaimed();");
+    expect(HUMAN).toContain("requireAcceptedImage: true");
   });
 
-  it("the human route uploads references after the answer, not before it", () => {
-    expect(HUMAN).toMatch(/after\(async \(\) =>\s+recordGeneration\(recSupabase, \{[\s\S]{0,2500}references: await storeReferenceImages\(/);
+  it("the human route defers reference history until after accepted-image recording", () => {
+    const history = HUMAN.indexOf("const references = await storeReferenceImages(");
+    const record = HUMAN.indexOf("const generationId = await recordGeneration(");
+    expect(record).toBeGreaterThan(-1);
+    expect(history).toBeGreaterThan(record);
+    expect(HUMAN.slice(record, history)).toContain("after(async () => {");
+    expect(HUMAN).toContain("await recordGenerationReferences(supabase, generationId, references);");
   });
 
   it("the agent route stores durably and never answers with an inline image too big to arrive", () => {

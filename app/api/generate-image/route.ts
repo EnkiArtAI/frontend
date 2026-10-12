@@ -15,36 +15,33 @@ import { normalizeTier, clampTier } from "@/lib/generation/resolution";
 import { effectiveQuality } from "@/lib/pricing";
 import { reportPriceDrift } from "@/lib/generation/price-drift";
 import { toModelFamily } from "@/lib/generation/model-family";
-import { claimForGeneration, type ClaimMode } from "@/lib/payments/generation-claim";
+import {
+  claimGenerationEscrowUnit, deliverGenerationEscrowUnit, failGenerationEscrowUnit,
+  type GenerationEscrowUnitClaim,
+} from "@/lib/payments/escrow/server-claims";
+import { escrowServerChain, EscrowPaymentError } from "@/lib/payments/escrow/server-chain";
+import { advanceGenerationEscrow } from "@/lib/payments/escrow/server-lifecycle";
 import { settingMismatch, type StoredSettings } from "@/lib/payments/generation-settings";
 import { loadPromptText, fillVariables, inputsUnmatched, overLong, VALUE_MAX } from "@/lib/generation/prompt-text";
 import { checkPrompt, NOT_CHECKED, textValues } from "@/lib/moderation/prompt-check";
 import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
 import { ADULT_REFUSAL, adultConfirmed, promptMarkedAdult } from "@/lib/adult-content";
 import { recordExtractionHit, SILENT_FAILURE, silentFailure } from "@/lib/moderation/extraction-hits";
-import { captureAndBroadcast, voidAndFlush, sweepAndFlush } from "@/lib/payments/settle";
-import { solanaChainKey } from "@/lib/payments/solana";
-import type { VoidReason } from "@/lib/payments/authorization";
 import { reportSuccess, reportFailure } from "@/lib/generation/provider-health";
 import { childSafetyScore, recordModerationEvent } from "@/lib/moderation-enforcement";
-import { recordGeneration, resolveRecordingUserId, recordGenerationFailure, type GenerationFailure } from "@/lib/generation/record";
+import {
+  recordGeneration, recordGenerationReferences, recordGenerationRenditions, resolveRecordingUserId,
+  recordGenerationFailure, GenerationRecordError, type GenerationFailure,
+} from "@/lib/generation/record";
 import { storeReferenceImages } from "@/lib/generation/reference-images";
-import { INLINE_MAX_BYTES, putDurably, removeStored, storeDeadline } from "@/lib/generation/derivative-store";
+import { putDurably, removeStored, storeDeadline } from "@/lib/generation/derivative-store";
 import { checkImageBytes, dataUrlBytes, heldBack, isLink, IMAGE_REFUSED, IMAGE_UNCHECKED, REFERENCE_LINK, REFERENCE_REFUSED, REFERENCE_UNCHECKED } from "@/lib/moderation/image-check-bytes";
 import { recordImageCase } from "@/lib/moderation/image-case";
 import { acquireSlot, releaseSlot } from "@/lib/generation/concurrency";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
-import {
-  fulfillGenerationIntent,
-  releaseGenerationIntent,
-} from "@/lib/payments/generation-redemption";
 
-// Above the 90s provider timeout: the in-process timeout (and the intent
-// release it triggers) must fire BEFORE the platform kills the function,
-// otherwise a paid, consumed intent is stranded with no release.
-// WaveSpeed's nano-banana-pro measured 73-78s and AceData's gpt-image-2 at
-// 3840x2160 took 63s — both inside 120s, but with no room for a retry or a
-// slow day, and the failure lands AFTER the buyer has authorised payment.
+// Provider timeout and storage must finish before the platform kills this
+// function. A killed unit stays leased until its database lease expires.
 export const maxDuration = 300;
 
 // Five budgets that MUST stay in this order, or a generation that is still
@@ -54,15 +51,14 @@ export const maxDuration = 300;
 //                           record and answer inside the platform budget
 //   285s  storeDeadline     (lib/generation/derivative-store.ts) counted from
 //                           the request, not the provider call: the stored
-//                           image must have landed, or nothing is captured
+//                           image must have landed before delivery is recorded
 //   300s  maxDuration       the platform kills the function here
 //   330s  SLOT_TTL_MS       (lib/generation/concurrency.ts) a killed function
 //                           must not free its slot before it is truly gone
-//   360s  STALE_CLAIM_MS    (lib/payments/generation-redemption.ts) a claim is
-//                           only "provably dead" once every step above is
+//   360s  unit lease       a claim is only dead once every step above is
 //
 // Raising maxDuration alone inverts it: at 300s the slot expires at 150s and
-// the claim is released at 180s while the generation is still legitimately
+// the claim expires at 180s while the generation is still legitimately
 // running — the concurrency cap silently breaks and a live payment is undone.
 // 15s of headroom, not a round guess. Measured 2026-08-07 on the largest real
 // output we have (3840x2160, 13.92 MB PNG from bench-output/): the sharp
@@ -92,8 +88,10 @@ type GenerateImageBody = {
   ratio?: string;
   /** Values for a marketplace prompt's [name] slots, filled on the server. */
   variableValues?: Record<string, string>;
-  /** An authorised generation_payment_intents row. Every generation here needs one. */
+  /** A funded escrow, prepared from the stored payment intent. */
   intentId?: string;
+  /** One server-reserved image within this funded batch, never a delivered count. */
+  unitIndex?: number;
   /** An artist's draft from an editor: no moderator may read it. */
   authoring?: boolean;
 };
@@ -125,42 +123,26 @@ export async function POST(request: NextRequest) {
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
     return NextResponse.json({ error: "Send the request as JSON." }, { status: 415 });
   }
-  // Set after a successful intent redemption (client captured then, so this
-  // helper can never throw); every generation-failure path — including the
-  // catch-all below — must release it so the buyer retries without paying
-  // again.
-  let consumedIntent: { supabase: SupabaseClient; id: string; mode: ClaimMode } | null = null;
+  let consumedUnit: { supabase: SupabaseClient; claim: GenerationEscrowUnitClaim } | null = null;
   // What a failure from the concurrency cap on is recorded with, for the admin person list.
   let failCtx: Omit<GenerationFailure, "error"> | null = null;
-  /**
-   * Give the payment back. What that MEANS depends on the model, and the two
-   * are not interchangeable:
-   *
-   *   prepaid     the transfer already settled, so all we can return is the
-   *               claim — the buyer keeps a usable intent and retries.
-   *   authorized  nothing has moved. Void it and close the nonce, which kills
-   *               the held signature for good. Returning the claim instead
-   *               would leave a live signature on a generation we gave up on.
-   */
-  const releaseIfConsumed = async (reason: VoidReason = "provider_failed") => {
-    if (!consumedIntent) return;
-    const held = consumedIntent;
-    consumedIntent = null;
-    if (held.mode === "authorized") {
-      await voidAndFlush(held.supabase, held.id, reason).catch((e) =>
-        console.error("[generate] void failed:", held.id, e instanceof Error ? e.message : e),
-      );
-    } else {
-      await releaseGenerationIntent(held.supabase, held.id);
-    }
+  const scheduleReconciliation = (held: { supabase: SupabaseClient; claim: GenerationEscrowUnitClaim }) => {
+    after(async () => {
+      try {
+        await advanceGenerationEscrow(held.supabase, escrowServerChain(), held.claim.intentId, held.claim.owner);
+      } catch {
+        console.error("[escrow] reconciliation pending", held.claim.intentId);
+      }
+    });
   };
-
-  // Flush authorisations whose worker went quiet. Opportunistic because this
-  // deployment has no scheduler: every generation sweeps a few on its way in,
-  // so under load it runs constantly, and with no load there is also nobody
-  // whose held signature could be misused. after() so a slow sweep never
-  // delays a paying customer, and sweepAndFlush never throws.
-  after(sweepAndFlush(getSupabaseServerClient()));
+  const failIfClaimed = async () => {
+    if (!consumedUnit) return;
+    const held = consumedUnit;
+    consumedUnit = null;
+    try { await failGenerationEscrowUnit(held.supabase, held.claim); }
+    catch { console.error("[escrow] image request failure pending", held.claim.intentId); }
+    scheduleReconciliation(held);
+  };
 
   // Held for the length of the generation. Declared out here so EVERY exit —
   // success, provider failure, the catch-all — gives it back: a leaked slot
@@ -190,7 +172,7 @@ export async function POST(request: NextRequest) {
     const askedResolution = body.resolution == null ? null : normalizeTier(body.resolution);
     if (body.resolution != null && askedResolution === null) {
       return NextResponse.json(
-        { error: `resolution must be one of 1K, 2K, 4K (received ${JSON.stringify(body.resolution)})` },
+        { error: "Choose a supported image size: 1K, 2K or 4K." },
         { status: 400 },
       );
     }
@@ -203,98 +185,30 @@ export async function POST(request: NextRequest) {
      * model_family was written onto the intent and PRICED from it. Resolving
      * from body.modelIds anyway meant falling back to DEFAULT_MODEL
      * ("Nano Banana Pro"), so the later family comparison refused every
-     * GPT-Image-2 purchase and voided its authorisation.
+     * GPT-Image-2 purchase.
      *
      * Read before the preflight on purpose: this same object decides the
      * routing, the reference-image eligibility and the quote below, so
      * learning the family after those were settled would only have let us
-     * complain about them rather than get them right. The read is by intent id
-     * alone — it selects which model to OFFER, and claimForGeneration binds to
-     * the buyer's wallet before anything is consumed, so a stolen id buys a
-     * wasted preflight and nothing else. */
+     * complain about them rather than get them right. Session ownership is
+     * checked before the quote is read or a metered preflight can run. */
     const intentId = typeof body.intentId === "string" ? body.intentId.trim() : "";
     // Intents only (REC-4): the legacy X-PAYMENT rail paid first and generated
     // second, so a failed generation kept the money. Free models have their
     // own route, /api/generate-free.
     if (!intentId) {
       return NextResponse.json(
-        { error: "A paid generation needs a payment intent. Nothing was generated and nothing was charged." },
+        { error: "A paid generation needs a payment intent. No image was generated. Check your payment status before trying again." },
         { status: 402 },
       );
     }
     if (!UUID_RE.test(intentId)) {
-      return NextResponse.json({ error: "intentId must be a UUID" }, { status: 400 });
+      return NextResponse.json({ error: "Choose a valid image request before continuing." }, { status: 400 });
     }
 
-    /* The intent is the sum of settings the buyer paid for (REC-4): the exact
-       model row, the resolution, the quality that runs, boost and how many
-       reference images. Everything below runs those and nothing the request
-       body says instead. */
-    const { data: intentRow, error: intentError } = await (getSupabaseServerClientSafe()
-      ?.from("generation_payment_intents")
-      .select("model_id, model_family, resolution, quality, boost, reference_image_count, prompt_id, artist_amount_micro")
-      .eq("id", intentId)
-      .maybeSingle() ?? Promise.resolve({ data: null, error: null }));
-    if (isDbUnreachable(intentError)) return dbUnavailableResponse();
-    const paid = intentRow as
-      | (StoredSettings & { model_family: string; prompt_id: string | null; artist_amount_micro: number })
-      | null;
-    if (!paid) {
-      return NextResponse.json(
-        { error: "Payment intent not found. Nothing was generated and nothing was charged." },
-        { status: 404 },
-      );
-    }
-
-    /* A marketplace prompt with an artist share is generated from the
-       ARTIST's text, filled with the buyer's variables, never from what the
-       client sends: the client only ever sees a paid prompt's excerpt, so it
-       sent the title and the variables, and the buyer paid the artist for an
-       image the artist's prompt never made. Free and own prompts take the
-       buyer's own text. The artist's text is never returned to the buyer. */
-    const fromArtist = Boolean(paid.prompt_id) && Number(paid.artist_amount_micro) > 0;
-    let prompt = typedPrompt;
-    let promptAdult = false;
-    if (fromArtist) {
-      const text = await loadPromptText(getSupabaseServerClient(), paid.prompt_id as string);
-      if (!text.ok) return NextResponse.json(refusalBody(text), { status: text.status });
-      if (overLong(body.variableValues)) {
-        return NextResponse.json(
-          { error: `Each input can be at most ${VALUE_MAX} characters. Nothing was generated and nothing was charged.` },
-          { status: 422 },
-        );
-      }
-      const filled = fillVariables(text.text, body.variableValues, text.variables);
-      // A buyer must never pay for an image a value of theirs did not reach.
-      if (inputsUnmatched(filled)) {
-        return NextResponse.json(
-          { error: "This prompt's inputs could not be matched to its text. Nothing was generated and nothing was charged." },
-          { status: 422 },
-        );
-      }
-      prompt = filled.text;
-      promptAdult = text.adult;
-    } else if (paid.prompt_id) {
-      const marked = await promptMarkedAdult(getSupabaseServerClient(), paid.prompt_id as string);
-      if (marked === null) {
-        return NextResponse.json({ error: "This prompt could not be checked right now. Nothing was generated and nothing was charged." }, { status: 503 });
-      }
-      promptAdult = marked;
-    }
-    if (!prompt) {
-      return NextResponse.json({ error: "prompt is required" }, { status: 400 });
-    }
-
-    // --- SECURITY GUARDS ---
-    // 1. Prompt length cap (client text; an artist's prompt is not the buyer's to size)
-    if (!fromArtist && prompt.length > 4000) {
-      return NextResponse.json({ error: "Prompt too long" }, { status: 400 });
-    }
-
-    // 2. Variable injection guard
-    const bracketCount = (prompt.match(/\[/g) || []).length;
-    if (!fromArtist && bracketCount > 20) {
-      return NextResponse.json({ error: "Too many variables" }, { status: 400 });
+    const unitIndex = body.unitIndex;
+    if (!Number.isInteger(unitIndex) || unitIndex! < 0 || unitIndex! >= 24) {
+      return NextResponse.json({ error: "Choose a valid image request." }, { status: 400 });
     }
 
     // Login and the rate limits come before the checks below: each of them
@@ -319,13 +233,89 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
     }
 
+    const supabase = getSupabaseServerClient();
+    const recordingUserId = await resolveRecordingUserId(supabase, request);
+    if (!recordingUserId) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+
+    /* The intent is the sum of settings the buyer paid for (REC-4): the exact
+       model row, the resolution, the quality that runs, boost and how many
+       reference images. Everything below runs those and nothing the request
+       body says instead. */
+    const { data: intentRow, error: intentError } = await (getSupabaseServerClientSafe()
+      ?.from("generation_payment_intents")
+      .select("model_id, model_family, resolution, quality, boost, reference_image_count, prompt_id, artist_amount_micro")
+      .eq("id", intentId)
+      .ilike("buyer_wallet", authUser.walletAddress)
+      .maybeSingle() ?? Promise.resolve({ data: null, error: null }));
+    if (isDbUnreachable(intentError)) return dbUnavailableResponse();
+    const paid = intentRow as
+      | (StoredSettings & { model_family: string; prompt_id: string | null; artist_amount_micro: number })
+      | null;
+    if (!paid) {
+      return NextResponse.json(
+        { error: "Payment intent not found. No image was generated. Check your payment status before trying again." },
+        { status: 404 },
+      );
+    }
+
+    /* A marketplace prompt with an artist share is generated from the
+       ARTIST's text, filled with the buyer's variables, never from what the
+       client sends: the client only ever sees a paid prompt's excerpt, so it
+       sent the title and the variables, and the buyer paid the artist for an
+       image the artist's prompt never made. Free and own prompts take the
+       buyer's own text. The artist's text is never returned to the buyer. */
+    const fromArtist = Boolean(paid.prompt_id) && Number(paid.artist_amount_micro) > 0;
+    let prompt = typedPrompt;
+    let promptAdult = false;
+    if (fromArtist) {
+      const text = await loadPromptText(getSupabaseServerClient(), paid.prompt_id as string);
+      if (!text.ok) return NextResponse.json(refusalBody(text), { status: text.status });
+      if (overLong(body.variableValues)) {
+        return NextResponse.json(
+          { error: `Each input can be at most ${VALUE_MAX} characters. No image was generated. Check your payment status before trying again.` },
+          { status: 422 },
+        );
+      }
+      const filled = fillVariables(text.text, body.variableValues, text.variables);
+      // A buyer must never pay for an image a value of theirs did not reach.
+      if (inputsUnmatched(filled)) {
+        return NextResponse.json(
+          { error: "This prompt's inputs could not be matched to its text. No image was generated. Check your payment status before trying again." },
+          { status: 422 },
+        );
+      }
+      prompt = filled.text;
+      promptAdult = text.adult;
+    } else if (paid.prompt_id) {
+      const marked = await promptMarkedAdult(getSupabaseServerClient(), paid.prompt_id as string);
+      if (marked === null) {
+        return NextResponse.json({ error: "This prompt could not be checked right now. No image was generated. Check your payment status before trying again." }, { status: 503 });
+      }
+      promptAdult = marked;
+    }
+    if (!prompt) {
+      return NextResponse.json({ error: "prompt is required" }, { status: 400 });
+    }
+
+    // --- SECURITY GUARDS ---
+    // 1. Prompt length cap (client text; an artist's prompt is not the buyer's to size)
+    if (!fromArtist && prompt.length > 4000) {
+      return NextResponse.json({ error: "Prompt too long" }, { status: 400 });
+    }
+
+    // 2. Variable injection guard
+    const bracketCount = (prompt.match(/\[/g) || []).length;
+    if (!fromArtist && bracketCount > 20) {
+      return NextResponse.json({ error: "Too many variables" }, { status: 400 });
+    }
+
     const paidTier = normalizeTier(paid.resolution);
     const paidModel = paid.model_id ? await resolveModel(getSupabaseServerClientSafe(), [paid.model_id]) : null;
     if (!paidTier || !paidModel || toModelFamily(paidModel.name) !== paid.model_family) {
       // The row it paid for is gone or changed family. Generating on anything
       // else would be the exact substitution this path exists to prevent.
       return NextResponse.json(
-        { error: `This payment is for ${paid.model_family}, which is not available right now. Nothing was generated and nothing was charged.` },
+        { error: "This paid model is unavailable right now. Check your payment status before trying again." },
         { status: 409 },
       );
     }
@@ -340,14 +330,14 @@ export async function POST(request: NextRequest) {
     );
     if (mismatch) {
       return NextResponse.json(
-        { error: `This payment does not cover the requested ${mismatch}. Nothing was generated and nothing was charged.` },
+        { error: "The selected settings differ from this payment. Check its status before starting a new order." },
         { status: 400 },
       );
     }
     // Never sliced away below: a reference the model cannot take is refused.
     if (attachedRefs > paidModel.maxRefs) {
       return NextResponse.json(
-        { error: `${paidModel.name} takes at most ${paidModel.maxRefs} reference images. Nothing was generated and nothing was charged.` },
+        { error: `${paidModel.name} takes at most ${paidModel.maxRefs} reference images. No image was generated. Check your payment status before trying again.` },
         { status: 422 },
       );
     }
@@ -416,7 +406,7 @@ export async function POST(request: NextRequest) {
     // Whatever else the check found, so the refusal never depends on it.
     // A reference judged 18+ makes the render 18+ too.
     const adult = ("adult" in check && check.adult === true) || promptAdult || refsSeen.some((v) => v.verdict === "adult");
-    const asker = adult ? await resolveRecordingUserId(getSupabaseServerClient(), request) : null;
+    const asker = adult ? recordingUserId : null;
     if (adult && !(await adultConfirmed(getSupabaseServerClient(), asker))) {
       // Counted only for a signed-in account: this answer comes before login,
       // where nothing would stop a loop filling the queue and the admins' inbox.
@@ -522,7 +512,7 @@ export async function POST(request: NextRequest) {
         {
           error:
             `${preflightModel.name} cannot use reference images. ` +
-            `Nothing was generated and nothing was charged. ` +
+            `No image was generated. Check your payment status before trying again. ` +
             `Choose a model that accepts them, or remove the ${attachedRefs} attached image${attachedRefs === 1 ? "" : "s"}.`,
         },
         { status: 422 },
@@ -540,15 +530,15 @@ export async function POST(request: NextRequest) {
     // A paid request never falls back to a guessed model (Kev, 2026-09-22).
     if (!preflightRoute.providerModel) {
       return NextResponse.json(
-        { error: `${preflightModel.name} has no provider model configured. Nothing was generated and nothing was charged.` },
+        { error: `${preflightModel.name} is temporarily unavailable. Check your payment status before trying again.` },
         { status: 503 },
       );
     }
 
     // 3c. Concurrency cap — before any payment step, so a refused request is
     // never a charged one. Unlimited unless an admin sets a number.
-    const slotSupabase = getSupabaseServerClientSafe();
-    const slotUserId = await resolveRecordingUserId(slotSupabase, request);
+    const slotSupabase = supabase;
+    const slotUserId = recordingUserId;
     failCtx = {
       request, surface: "generate-image", modelId: paid.model_id ?? null, resolution: paidTier ?? null, quality: effQuality,
       boost: paid.boost === true, aspectRatio: body.aspectRatio || body.ratio || null, referenceImageCount: attachedRefs,
@@ -570,76 +560,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 4. Rate limiting (Placeholder)
-    // TODO: Implement rate limiting (e.g., using @upstash/ratelimit or express-rate-limit)
-    // max 10 generations per user per minute
-    // --- END SECURITY GUARDS ---
-
     const enhancedPrompt = prompt;
 
-    // --- Redeem the authorised intent ---
-    // Identity comes from the session (the intent is bound to its buyer),
-    // the paid resolution comes from the intent row — neither is taken
-    // from the request. Redemption is a one-shot conditional UPDATE, so a
-    // replayed intentId can never buy a second generation.
-    const supabase = getSupabaseServerClient();
-    // One claim function for both payment models. Two independent claim
-    // paths against one row is how a double charge happens: each correct on
-    // its own, together broadcasting a held transaction for funds that had
-    // already settled. It refuses an intent carrying the markers of both
-    // rather than guessing which.
-    const redemption = await claimForGeneration(supabase, {
-      intentId,
-      buyerWallet: authUser.userId,
+    // A conditional per-image lease prevents a replay or parallel request
+    // from reaching a provider twice. The session binds both buyer and user.
+    const paymentChain = escrowServerChain();
+    const claim = await claimGenerationEscrowUnit(supabase, paymentChain, {
+      intentId, owner: authUser.walletAddress, userId: recordingUserId, unitIndex: unitIndex!,
     });
-    if (!redemption.ok) {
-      return NextResponse.json({ error: redemption.error }, { status: redemption.status });
-    }
-    consumedIntent = { supabase, id: intentId, mode: redemption.mode };
-
-    /* The buyer must receive the model they paid for.
-     *
-     * model_family is written onto the intent when the quote is taken and
-     * priced from it — nano-banana-pro and gpt-image-2 are $0.134 and $0.167
-     * at 2K, and $0.24 and $0.25 at 4K. Which model actually RUNS comes from
-     * body.modelIds via resolveModel() above, a completely separate input
-     * that nothing compared to the intent. `modelFamily` appeared exactly
-     * once in this file, as a field on the metadata literal below, and was
-     * never read again.
-     *
-     * So quoting the cheap family and then sending the expensive one in
-     * modelIds cost the difference on every generation, and the reverse —
-     * paying for the dear one and being served the cheap one — was equally
-     * silent. Both end here: the intent decides, and a mismatch is refused
-     * before anything is generated, with the intent released so the buyer
-     * can retry rather than losing the payment. */
-    /* Belt and braces. preflightModel was SELECTED from the intent's family
-       above, so this can only fire if the two reads disagreed — a row
-       changing under us between them. Cheap, and the failure it guards
-       against is a buyer receiving a model they did not buy. */
-    const runningFamily = toModelFamily(preflightModel.name);
-    if (redemption.modelFamily && runningFamily !== redemption.modelFamily) {
-      console.warn(
-        "[generate] model family mismatch:",
-        { intentId, paidFor: redemption.modelFamily, wouldRun: runningFamily },
-      );
-      /* releaseIfConsumed, not a hand-rolled undo: it already knows that an
-         AUTHORIZED intent must be voided rather than released — returning
-         the claim would leave a live signature on a generation we refused.
-         "rejected" is the reason that fits; the provider never failed, we
-         declined to run. */
-      await releaseIfConsumed("rejected");
-      return NextResponse.json(
-        {
-          error: `This payment is for ${redemption.modelFamily}, but the request would generate with ${runningFamily}.`,
-        },
-        { status: 400 },
-      );
-    }
+    consumedUnit = { supabase, claim };
     const paymentMetadata = {
-      paymentIntentId: intentId,
-      modelFamily: redemption.modelFamily,
-      resolution: redemption.resolution,
+      paymentIntentId: intentId, unitIndex, modelFamily: paid.model_family, resolution: paid.resolution,
     };
 
     // Every request here holds a payment — bound the provider call so a hung
@@ -690,7 +621,7 @@ export async function POST(request: NextRequest) {
       // The wait comes first: a provider failure holds the claim and the slot
       // until it answers, so a second request meanwhile must see them taken.
       const answer = await silentFailure();
-      await releaseIfConsumed();
+      await failIfClaimed();
       await releaseHeldSlot();
       return answer;
     }
@@ -712,7 +643,7 @@ export async function POST(request: NextRequest) {
 
     const geminiResult = await withTimeout(
       geminiRequest,
-      SOLANA_GENERATION_TIMEOUT_MS,
+      Math.min(SOLANA_GENERATION_TIMEOUT_MS, Math.max(1, storeDeadline(startedAt) - Date.now())),
       "Image generation timed out after payment. Please try again with a shorter prompt or lower resolution."
     );
 
@@ -731,7 +662,7 @@ export async function POST(request: NextRequest) {
         );
       }
       if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: geminiResult.error || "generation failed" }));
-      await releaseIfConsumed();
+      await failIfClaimed();
       await releaseHeldSlot();
       // The provider's own text stays in the logs and the failure record; the
       // buyer gets the answer a caught request gets, so the two cannot be told apart.
@@ -759,31 +690,20 @@ export async function POST(request: NextRequest) {
     const generatedImageBuffer = geminiResult.imageBuffers?.[0];
     if (!generatedImageBuffer) {
       if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: "No generated image buffer returned" }));
-      await releaseIfConsumed();
+      await failIfClaimed();
       await releaseHeldSlot();
       return NextResponse.json(SILENT_FAILURE, { status: 500 });
     }
 
-    // Stored until it lands (putDurably). Inline only when no store answers by
-    // the deadline AND the bytes fit the response cap: a bigger one used to go
-    // inline anyway, was captured, and reached the buyer as HTTP 413 with no
-    // image. When neither works, nothing is charged.
+    // Escrow delivery needs an image stored independently of this response.
     const storedName = `generations/${Date.now()}_${Math.random().toString(36).substring(2, 9)}.png`;
-    const imageUrl =
-      (await putDurably(
-        storedName,
-        generatedImageBuffer,
-        "image/png",
-        storeDeadline(startedAt),
-      )) ??
-      (generatedImageBuffer.length <= INLINE_MAX_BYTES
-        ? `data:image/png;base64,${generatedImageBuffer.toString("base64")}`
-        : null);
-    // Past the deadline even an inline image is refused: the capture after it
-    // would run into the platform's kill with the buyer's money moving.
+    const imageUrl = await putDurably(
+      storedName, generatedImageBuffer, "image/png", storeDeadline(startedAt),
+    );
+    // Leave time to persist delivery and answer before the platform's kill.
     if (!imageUrl || Date.now() > storeDeadline(startedAt)) {
       if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: "image could not be stored" }));
-      await releaseIfConsumed();
+      await failIfClaimed();
       await releaseHeldSlot();
       return NextResponse.json(
         { error: "Your image was made but could not be delivered. Nothing was charged. Please try again." },
@@ -795,7 +715,7 @@ export async function POST(request: NextRequest) {
     // 2026-10-08): what it refuses or cannot judge is not delivered and not
     // charged, and the stored copy comes down again (both stores: an aborted
     // Blob turn may still have landed one). Bounded by the store deadline, so
-    // the capture keeps its reserve.
+    // delivery recording keeps its reserve.
     const seen = await checkImageBytes(generatedImageBuffer, {
       // Not the request's signal: a buyer who closes the tab still gets the
       // render they paid for in the gallery.
@@ -810,118 +730,65 @@ export async function POST(request: NextRequest) {
         }));
       }
       after(removeStored([imageUrl, storedName]));
-      await releaseIfConsumed(seen.verdict === "unavailable" ? "provider_failed" : "rejected");
+      await failIfClaimed();
       await releaseHeldSlot();
       return seen.verdict === "unavailable"
         ? NextResponse.json({ error: IMAGE_UNCHECKED }, { status: 503 })
         : NextResponse.json({ error: IMAGE_REFUSED }, { status: 422 });
     }
 
-    // The image exists, is stored and passed the check. NOW take the money.
-    //
-    // This order is the whole promise: "once the image goes through, we will
-    // receive the money. otherwise it will be sent back" (Kev, 2026-08-06),
-    // written into Terms of Use Section 4. Capturing before the image was
-    // durably stored would charge for something an upload failure could still
-    // lose; capturing after means the only thing a crash in between costs us
-    // is our own fee, and that is the direction that must fail.
-    //
-    // For a prepaid intent there is nothing to capture — the transfer settled
-    // before the generation started — so this marks it delivered and stops.
-    if (consumedIntent) {
-      const settled = consumedIntent;
-      if (settled.mode === "authorized") {
-        const captured = await captureAndBroadcast(settled.supabase, settled.id);
-        if (!captured) {
-          // The claim was lost (swept as abandoned) or the broadcast failed.
-          // Either way the buyer keeps the image: a durable-nonce transaction
-          // does not expire, so a failed broadcast stays rebroadcastable, and
-          // only we can invalidate that nonce.
-          console.error("[generate] delivered but not captured:", settled.id);
-        }
-      }
-      // Marks the intent delivered so the stale-claim rescue can never mistake
-      // it for a dead claim and hand out a second image.
-      await fulfillGenerationIntent(settled.supabase, settled.id);
-      consumedIntent = null;
+    // Settlement's k comes from accepted image rows linked to the leased
+    // units. Save both rows before acknowledging this unit as delivered.
+    const m = geminiResult.metadata as {
+      resolution?: string | null; bytes?: number | null; format?: string | null;
+    } | undefined;
+    const dims = m?.resolution?.split("x") ?? [];
+    const stripped = stripWorkflowImages(body.workflow ?? {});
+    const generationId = await recordGeneration(supabase, {
+      adult: adult || seen.verdict === "adult", userId: recordingUserId,
+      promptId: paid.prompt_id ?? null, finalPrompt: prompt, effectivePrompt: enhancedPrompt,
+      variableValues: body.variableValues ?? {}, model: preflightModel, route: preflightRoute,
+      boost: paid.boost, aspectRatio: body.aspectRatio || body.ratio || null,
+      resolution: paidTier, seed: null,
+      output: dims.length === 2 && m?.bytes
+        ? { width: Number(dims[0]) || 0, height: Number(dims[1]) || 0, bytes: m.bytes, format: m.format ?? "" }
+        : null,
+      imageUrl, previewUrl: null, thumbnailUrl: null,
+      generationMs: geminiResult.generationTime ?? null,
+      workflow: stripped.workflow, workflowTexts: stripped.texts, chainKey: paymentChain.cluster,
+    }, { requireAcceptedImage: true });
+    if (!generationId) throw new GenerationRecordError();
+    const held = consumedUnit;
+    if (!held) throw new GenerationRecordError();
+    let reconciliationPending = false;
+    try {
+      await deliverGenerationEscrowUnit(supabase, held.claim, generationId);
+    } catch {
+      // A lost acknowledgement may hide a committed delivery. This RPC is
+      // idempotent, and a failure can never undo an already delivered unit.
+      try { await deliverGenerationEscrowUnit(supabase, held.claim, generationId); }
+      catch { reconciliationPending = true; await failIfClaimed(); }
     }
-
-    // Write the generation down. after() rather than await: the record must
-    // not delay the image the user is waiting on, and a floating promise can be
-    // frozen with the lambda before the insert lands.
-    //
-    // Nothing recorded a generation before this — POST /api/generations wrote
-    // columns that do not exist and its callers swallowed the failure, so every
-    // generation vanished when the tab closed.
-    {
-      const recSupabase = getSupabaseServerClientSafe();
-      // Paid and delivered: the buyer gets the image whatever this read does.
-      // An unreachable database is logged, never turned into an error here.
-      const recUserId = await resolveRecordingUserId(recSupabase, request).catch((e) => {
-        console.error("[generate] delivered image not recorded:", e instanceof Error ? e.message : e);
-        return null;
-      });
-      if (recSupabase && recUserId) {
-        // The Grok branch returns a metadata object with only `model`, so read
-        // the measured fields defensively rather than assuming the Gemini shape.
-        const m = geminiResult.metadata as {
-          resolution?: string | null;
-          bytes?: number | null;
-          format?: string | null;
-        } | undefined;
-        const dims = m?.resolution?.split("x") ?? [];
-        // Bytes out of the graph before it is stored: the editor embeds
-        // references as data URLs, and its own draft save already breaks on
-        // the 5MB cap because of it.
-        const stripped = stripWorkflowImages(body.workflow ?? {});
-        // The reference uploads run in after() too: an upload stuck on a
-        // failing store must not hold the answer to a buyer who has paid.
-        after(async () =>
-          recordGeneration(recSupabase, {
-            // Judged 18+ by the image check: delivered, and marked.
-            adult: adult || seen.verdict === "adult",
-            userId: recUserId,
-            promptId: paid.prompt_id ?? null,
-            finalPrompt: prompt,
-            // What actually reached the model, not what the user typed: the
-            // rewrite runs at temperature 0.7, so replaying the original
-            // produces a different request every time.
-            effectivePrompt: enhancedPrompt,
-            variableValues: body.variableValues ?? {},
-            model: preflightModel,
-            route: preflightRoute,
-            boost: paid.boost,
-            aspectRatio: body.aspectRatio || body.ratio || null,
-            resolution: paidTier,
-            // Only Pollinations exposes one, and it currently discards it.
-            seed: null,
-            output:
-              dims.length === 2 && m?.bytes
-                ? {
-                    width: Number(dims[0]) || 0,
-                    height: Number(dims[1]) || 0,
-                    bytes: m.bytes,
-                    format: m.format ?? '',
-                  }
-                : null,
-            imageUrl,
-            generationMs: geminiResult.generationTime ?? null,
-            workflow: stripped.workflow,
-            workflowTexts: stripped.texts,
-            // Uploaded once and referenced, rather than inlined into the
-            // workflow blob: the same reference across twenty generations is
-            // one object and twenty rows, not twenty copies of the base64.
-            // Only what the image check judged: a graph image that never went
-            // to the model keeps its position as an empty slot.
-            references: await storeReferenceImages(
-              stripped.images.length ? stripped.images.map((img) => (refs.includes(img) ? img : "")) : refs,
-              recUserId,
-            ),
-            chainKey: solanaChainKey(),
-          }),
+    if (consumedUnit) {
+      consumedUnit = null;
+      scheduleReconciliation(held);
+    }
+    // Input history is optional. Slow reference uploads cannot hold delivery
+    // or alter the database count used for settlement.
+    after(async () => {
+      try {
+        const references = await storeReferenceImages(
+          stripped.images.length ? stripped.images.map((img) => (refs.includes(img) ? img : "")) : refs,
+          recordingUserId,
         );
-      }
-    }
+        await recordGenerationReferences(supabase, generationId, references);
+      } catch { console.error("[generation] input history pending", generationId); }
+    });
+    after(async () => {
+      try {
+        await recordGenerationRenditions(supabase, generationId, recordingUserId, imageUrl, storeDeadline(startedAt));
+      } catch { console.error("[generation] image previews pending", generationId); }
+    });
 
     await releaseHeldSlot();
 
@@ -933,7 +800,9 @@ export async function POST(request: NextRequest) {
         provider: preflightRoute.provider,
         model: geminiResult.metadata?.model || preflightRoute.providerModel,
         generationTime: geminiResult.generationTime,
-        paymentScheme: 'intent',
+        paymentScheme: "escrow",
+        generationId,
+        reconciliationPending,
         metadata: {
           ...paymentMetadata,
           geminiMetadata: geminiResult.metadata,
@@ -942,10 +811,21 @@ export async function POST(request: NextRequest) {
       { status: 200 },
     );
   } catch (e: unknown) {
+    if (e instanceof EscrowPaymentError) {
+      await failIfClaimed();
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    if (e instanceof GenerationRecordError) {
+      await failIfClaimed();
+      return NextResponse.json({
+        error: "Your image could not be saved. Its payment is being reconciled. Please check your history before starting a new request.",
+        refundPending: true,
+      }, { status: 503 });
+    }
     const message = e instanceof Error ? e.message : String(e);
     console.error("Generate image error:", message);
     if (failCtx) after(recordGenerationFailure(getSupabaseServerClientSafe(), { ...failCtx, error: message }));
-    await releaseIfConsumed();
+    await failIfClaimed();
     // An outage before anything was charged is said as one, not as "sign in"
     // or a failed generation.
     if (isDbUnreachable(e)) return dbUnavailableResponse();
