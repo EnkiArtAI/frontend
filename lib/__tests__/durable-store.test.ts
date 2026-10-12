@@ -41,7 +41,7 @@ async function settle<T>(p: Promise<T>, stepMs = 1_000, steps = 400): Promise<T>
   return p;
 }
 
-import { putDurably, storeDeadline, storeGeneratedImage, INLINE_MAX_BYTES } from "@/lib/generation/derivative-store";
+import { putDurably, storeDeadline, storeGeneratedImage, storeTurnMs, INLINE_MAX_BYTES } from "@/lib/generation/derivative-store";
 
 const BYTES = Buffer.from([137, 80, 78, 71]);
 const ok = (name: string) => ({ url: `https://s.public.blob.vercel-storage.com/${name}` });
@@ -96,6 +96,29 @@ describe("putDurably", () => {
     vi.stubEnv("BLOB_READ_WRITE_TOKEN", "");
     expect(await putDurably("generations/d.png", BYTES, "image/png", Date.now() + 60_000)).toBeNull();
     expect(put).not.toHaveBeenCalled();
+  });
+});
+
+describe("a big image gets a longer turn and a multipart put (devnet 2026-10-13: 8.6 MB never landed in 20 s)", () => {
+  const MB = 1024 * 1024;
+  it("gives a store 20 s plus 5 s per started MB, never past what is left", () => {
+    expect(storeTurnMs(BYTES.length, 300_000)).toBe(25_000); // 4 bytes count as one started MB
+    expect(storeTurnMs(Math.round(8.6 * MB), 300_000)).toBe(65_000);
+    expect(storeTurnMs(Math.round(8.6 * MB), 30_000)).toBe(30_000);
+  });
+  it("uploads 5 MB and more in parts, a small image in one", async () => {
+    put.mockImplementation(async (n) => ok(n));
+    await putDurably("generations/s.png", BYTES, "image/png", Date.now() + 60_000);
+    expect(put.mock.calls[0][2]).toMatchObject({ multipart: false });
+    await putDurably("generations/l.png", Buffer.alloc(5 * MB), "image/png", Date.now() + 60_000);
+    expect(put.mock.calls[1][2]).toMatchObject({ multipart: true });
+  });
+  it("lets a slow 9 MB put finish instead of cutting it at 20 s", async () => {
+    put.mockImplementation((n) => new Promise((resolve) => setTimeout(() => resolve(ok(n)), 50_000)));
+    const p = putDurably("generations/big.png", Buffer.alloc(9 * MB), "image/png", Date.now() + 280_000);
+    await vi.advanceTimersByTimeAsync(55_000);
+    expect(await p).toBe(ok("generations/big.png").url);
+    expect(put).toHaveBeenCalledTimes(1);
   });
 });
 
