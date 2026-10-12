@@ -13,8 +13,9 @@ provenance together and regenerate.
 
 The address embedded in the generated interface belongs to the local test
 program. The application wrappers require an explicit server-configured program
-address and cluster. No route uses the client yet, and this change does not
-deploy a program or activate payments.
+address and cluster. The application generation-payment routes use these
+wrappers with owned intents and durable per-unit claims. This local integration
+does not deploy a program or activate live payments.
 
 ## Deposit integration contract
 
@@ -58,8 +59,9 @@ deploy a program or activate payments.
 
 These pure helpers perform no RPC, database writes or paid API calls. The
 generated settlement and reclaim builders share the same program interface;
-delivered-image counting, retry persistence and atomic recovery booking belong
-to the subsequent server lifecycle integration.
+delivered-image counting, retry persistence and atomic recovery booking are
+implemented by the server lifecycle modules described in
+`docs/ESCROW-APPLICATION-CUTOVER.md`.
 
 ## Settlement and reclaim integration contract
 
@@ -79,8 +81,12 @@ to the subsequent server lifecycle integration.
   ATA contents block closure. The 223-byte layout is rejected; coordinate the
   program and regenerated client release rather than mixing their layouts.
 
-Base is `main`, with #118 merged before this client (#119); the
-database chain #117 and #120 is already merged. No generation or x402 route changes belong in
-this stack. Do not call any escrow RPC in production until per-image claims
-exist; the nonce rail is removed/drained in the coordinated cutover release.
+The client originated in #119 on top of #118. The application integration is
+based on the local reviewed redesign stack and includes those client commits;
+this does not imply the open upstream PRs are merged. Generation-route changes
+and per-image claims belong to the coordinated application cutover. The x402
+`exact` endpoint retains its direct-transfer protocol. The old nonce rail must
+be drained before activating the cutover; deployment requirements and review
+areas are recorded in `docs/ESCROW-APPLICATION-CUTOVER.md` and
+`docs/ESCROW-REVIEW-HANDOFF.md`.
 The missing-buyer-ATA refund behavior is unchanged and belongs in the Terms.
