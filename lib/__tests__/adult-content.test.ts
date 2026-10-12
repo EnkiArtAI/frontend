@@ -150,7 +150,7 @@ describe("the routes", () => {
     expect(HUMAN).toMatch(/\} else if \(paid\.prompt_id\) \{\n\s+const marked = await promptMarkedAdult\(getSupabaseServerClient\(\), paid\.prompt_id as string\);/);
     expect(FREE).toMatch(/const named = await freeRenderPrompt\(\n\s+supabaseForChecks,\n\s+UUID_RE\.test\(String\(body\?\.promptId \?\? ""\)\) \? String\(body\.promptId\) : null,/);
     // A mark that cannot be read refuses the request rather than guessing either way.
-    expect(HUMAN).toMatch(/if \(marked === null\) \{\n\s+return NextResponse\.json\(\{ error: "This prompt could not be checked right now\. Nothing was generated and nothing was charged\." \}, \{ status: 503 \}\);/);
+    expect(HUMAN).toMatch(/if \(marked === null\) \{\n\s+return NextResponse\.json\(\{ error: "This prompt could not be checked right now\. No image was generated\. Check your payment status before trying again\." \}, \{ status: 503 \}\);/);
     expect(FREE).toMatch(/if \(named === null\) \{\n\s+return NextResponse\.json\(\{ error: "This prompt could not be checked right now\. Nothing was generated\." \}, \{ status: 503 \}\);/);
   });
 

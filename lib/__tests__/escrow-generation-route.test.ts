@@ -71,7 +71,8 @@ vi.mock("@/backend/services/gemini-image-generation", () => ({ generateImagesWit
 vi.mock("@/backend/services/wavespeed-image-generation", () => ({ generateImagesWithWaveSpeed: (...args: unknown[]) => state.provider(...args) }));
 vi.mock("@/lib/moderation-enforcement", () => ({ childSafetyScore: () => null, recordModerationEvent: vi.fn(async () => {}) }));
 vi.mock("@/lib/moderation/image-case", () => ({ recordImageCase: vi.fn(async () => {}) }));
-vi.mock("@/lib/moderation/image-check-bytes", () => ({
+vi.mock("@/lib/moderation/image-check-bytes", async importOriginal => ({
+  ...await importOriginal<typeof import("../moderation/image-check-bytes")>(),
   checkImageBytes: (...args: unknown[]) => state.imageCheck(...args),
   heldBack: (value: { verdict: string }) => ["blocked", "child_safety", "unavailable"].includes(value.verdict),
   isLink: (value: string) => value.startsWith("https:"), dataUrlBytes: () => null,
@@ -178,7 +179,8 @@ describe("The paid image route admits and delivers one escrow unit", () => {
   });
   it("cannot deliver or bill an unstored image even when the bytes would fit inline", async () => {
     state.put.mockResolvedValue(null);
-    expect((await POST(request())).status).toBe(503);
+    const response = await POST(request()); expect(response.status).toBe(503);
+    expect(JSON.stringify(await response.json())).not.toMatch(/nothing was charged/i);
     expect(state.record).not.toHaveBeenCalled(); expect(state.deliver).not.toHaveBeenCalled(); expect(state.fail).toHaveBeenCalledOnce();
   });
   it("does not record or deliver an image that moderation refuses", async () => {

@@ -85,7 +85,7 @@ describe("the route lets the purchase choose the model", () => {
   });
 
   it("refuses when the paid family is not available, instead of substituting", () => {
-    expect(ROUTE).toMatch(/which is not available right now/);
+    expect(ROUTE).toMatch(/This paid model is unavailable right now/);
   });
 
   it("refuses a request that repeats a setting differently, before the slot", () => {
@@ -94,7 +94,7 @@ describe("the route lets the purchase choose the model", () => {
     expect(check).toBeGreaterThan(-1);
     expect(ROUTE.indexOf("const slot = await acquireSlot(")).toBeGreaterThan(check);
     // The refusal answers the check directly, nothing in between.
-    expect(ROUTE).toMatch(/if \(mismatch\) \{\n\s+return NextResponse\.json\(\n\s+\{ error: `This payment does not cover the requested \$\{mismatch\}/);
+    expect(ROUTE).toMatch(/if \(mismatch\) \{\n\s+return NextResponse\.json\(\n\s+\{ error: "The selected settings differ from this payment/);
   });
 
   it("runs the model the purchase names, never the request's own pick", () => {

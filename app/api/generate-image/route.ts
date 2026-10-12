@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse, after } from "next/server";
-import { isDbUnreachable, dbUnavailableResponse, refusalBody } from "@/lib/db-error";
+import { isDbUnreachable, dbUnavailableResponse, refusalBody as baseRefusalBody } from "@/lib/db-error";
 import { generateImagesWithWaveSpeed } from "@/backend/services/wavespeed-image-generation";
 import { generateImagesWithOpenAI } from "@/backend/services/openai-image-generation";
 import { generateImagesWithGemini } from "@/backend/services/gemini-image-generation";
@@ -24,9 +24,9 @@ import { advanceGenerationEscrow } from "@/lib/payments/escrow/server-lifecycle"
 import { settingMismatch, type StoredSettings } from "@/lib/payments/generation-settings";
 import { loadPromptText, fillVariables, inputsUnmatched, overLong, VALUE_MAX } from "@/lib/generation/prompt-text";
 import { checkPrompt, NOT_CHECKED, textValues } from "@/lib/moderation/prompt-check";
-import { recordWarning, warningMessage } from "@/lib/moderation/warnings";
+import { recordWarning, warningMessage as baseWarningMessage } from "@/lib/moderation/warnings";
 import { ADULT_REFUSAL, adultConfirmed, promptMarkedAdult } from "@/lib/adult-content";
-import { recordExtractionHit, SILENT_FAILURE, silentFailure } from "@/lib/moderation/extraction-hits";
+import { recordExtractionHit, SILENT_FAILURE as baseSilentFailureBody, silentFailure as baseSilentFailure } from "@/lib/moderation/extraction-hits";
 import { reportSuccess, reportFailure } from "@/lib/generation/provider-health";
 import { childSafetyScore, recordModerationEvent } from "@/lib/moderation-enforcement";
 import {
@@ -35,10 +35,31 @@ import {
 } from "@/lib/generation/record";
 import { storeReferenceImages } from "@/lib/generation/reference-images";
 import { putDurably, removeStored, storeDeadline } from "@/lib/generation/derivative-store";
-import { checkImageBytes, dataUrlBytes, heldBack, isLink, IMAGE_REFUSED, IMAGE_UNCHECKED, REFERENCE_LINK, REFERENCE_REFUSED, REFERENCE_UNCHECKED } from "@/lib/moderation/image-check-bytes";
+import { checkImageBytes, dataUrlBytes, heldBack, isLink, IMAGE_REFUSED as baseImageRefused, IMAGE_UNCHECKED as baseImageUnchecked, REFERENCE_LINK as baseReferenceLink, REFERENCE_REFUSED as baseReferenceRefused, REFERENCE_UNCHECKED as baseReferenceUnchecked } from "@/lib/moderation/image-check-bytes";
 import { recordImageCase } from "@/lib/moderation/image-case";
 import { acquireSlot, releaseSlot } from "@/lib/generation/concurrency";
 import { stripWorkflowImages } from "@/lib/generation/workflow";
+
+// A funded escrow can still be awaiting refund. Shared pre-payment copy must not claim it was never paid.
+function escrowFailureMessage(message: string) {
+  return message.replace(/Nothing was generated and nothing was charged\./gi, "No image was generated. Check your payment status before trying again.")
+    .replace(/Nothing was charged\./gi, "Its payment is being reconciled.");
+}
+const IMAGE_REFUSED = escrowFailureMessage(baseImageRefused);
+const IMAGE_UNCHECKED = escrowFailureMessage(baseImageUnchecked);
+const REFERENCE_LINK = escrowFailureMessage(baseReferenceLink);
+const REFERENCE_REFUSED = escrowFailureMessage(baseReferenceRefused);
+const REFERENCE_UNCHECKED = escrowFailureMessage(baseReferenceUnchecked);
+const SILENT_FAILURE = { ...baseSilentFailureBody, error: escrowFailureMessage(baseSilentFailureBody.error) };
+const warningMessage = (...args: Parameters<typeof baseWarningMessage>) => escrowFailureMessage(baseWarningMessage(...args));
+const refusalBody = (...args: Parameters<typeof baseRefusalBody>) => {
+  const body = baseRefusalBody(...args); return { ...body, error: escrowFailureMessage(body.error) };
+};
+async function silentFailure() {
+  const response = await baseSilentFailure();
+  const body = await response.json();
+  return NextResponse.json({ ...body, error: escrowFailureMessage(body.error) }, { status: response.status, headers: response.headers });
+}
 
 // Provider timeout and storage must finish before the platform kills this
 // function. A killed unit stays leased until its database lease expires.
@@ -706,7 +727,7 @@ export async function POST(request: NextRequest) {
       await failIfClaimed();
       await releaseHeldSlot();
       return NextResponse.json(
-        { error: "Your image was made but could not be delivered. Nothing was charged. Please try again." },
+        { error: "Your image was made but could not be delivered. Its unused payment is being refunded. Check its status before trying again." },
         { status: 503 },
       );
     }
