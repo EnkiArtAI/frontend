@@ -74,7 +74,7 @@ import {
 import { findConfigPda, findEscrowPda, findVaultPda } from "../pdas";
 
 export const ENKI_ESCROW_PROGRAM_ADDRESS =
-  "hNNT7mTmthTVvnw4NYo6jYoBTDazRgweWTBHBmwgcak" as Address<"hNNT7mTmthTVvnw4NYo6jYoBTDazRgweWTBHBmwgcak">;
+  "2sfm76FMcfqUYCv47J4VCNFMrp6PpfD6QYpmWqBCPyJV" as Address<"2sfm76FMcfqUYCv47J4VCNFMrp6PpfD6QYpmWqBCPyJV">;
 
 export const EnkiEscrowAccount = {
   0: "Config",
@@ -286,7 +286,7 @@ export function identifyEnkiEscrowInstruction(
 }
 
 export type ParsedEnkiEscrowInstruction<
-  TProgram extends string = "hNNT7mTmthTVvnw4NYo6jYoBTDazRgweWTBHBmwgcak",
+  TProgram extends string = "2sfm76FMcfqUYCv47J4VCNFMrp6PpfD6QYpmWqBCPyJV",
 > =
   | ({
       instructionType: typeof EnkiEscrowInstruction.Deposit;

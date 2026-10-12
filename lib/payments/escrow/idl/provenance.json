@@ -5,5 +5,24 @@
   "sourceTree": "8b051af56fd40c83005f21eec63698245c1d2346",
   "sourceRun": "https://github.com/EnkiArtAI/enki-escrow/actions/runs/37733093489",
   "artifactName": "enki-escrow-idl",
-  "idlSha256": "c6d3ac784359ac3085eca56e73be3fe17cbaca5f71b86c8fb27f90dcb363f40a"
+  "ciIdlSha256": "c6d3ac784359ac3085eca56e73be3fe17cbaca5f71b86c8fb27f90dcb363f40a",
+  "addressRepinned": {
+    "from": "hNNT7mTmthTVvnw4NYo6jYoBTDazRgweWTBHBmwgcak",
+    "to": "2sfm76FMcfqUYCv47J4VCNFMrp6PpfD6QYpmWqBCPyJV",
+    "reason": "anchor keys sync for the devnet deployment; only the program address differs from the CI artifact"
+  },
+  "devnetDeployment": {
+    "cluster": "solana-devnet",
+    "programId": "2sfm76FMcfqUYCv47J4VCNFMrp6PpfD6QYpmWqBCPyJV",
+    "programData": "9H9HckPeHh7ohPSZLinicGPAU8wz6nXpNHm5wTBraKvF",
+    "upgradeAuthority": "92CTFPtvK53dKB2UypDArCAbh6wvsrFHfhWwUKReCVAT",
+    "deploySignature": "3bHgP41Z1BqTecCGShoeVioNFu7VZWsVAWDtkJLXdxc8cvvFfq37f3dcrhWXvbPF5oTDqfqrCKi53fJ1yYFah4pm",
+    "deploySlot": 510392028,
+    "programSha256": "a585526c8f07e3bd08f86363321161e976ea0a21274c3963a472871e3bc2f2ed",
+    "configPda": "4XB12pVHVWzpETVNmwzCbtob3Z6TEo8tGzigqfrUAR5U",
+    "initConfigSignature": "Rh6ryA7dDkxSx2gbpMqfqSwjLXfC1WNcEdgp8PAmbPfdUr5MPBU81UGFkYbQLM3b3aoJG887aV4kQU3zY9zSBgE",
+    "programRepoBranch": "deploy/devnet-program-2026-10-12",
+    "date": "2026-10-12"
+  },
+  "idlSha256": "3f8ace0574e505d0cf22ae1ac67691c5ec249bf01f37db70825869e26245bd2b"
 }

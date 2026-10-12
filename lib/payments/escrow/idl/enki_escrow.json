@@ -1,5 +1,5 @@
 {
-  "address": "hNNT7mTmthTVvnw4NYo6jYoBTDazRgweWTBHBmwgcak",
+  "address": "2sfm76FMcfqUYCv47J4VCNFMrp6PpfD6QYpmWqBCPyJV",
   "metadata": {
     "name": "enki_escrow",
     "version": "0.1.0",
@@ -247,7 +247,7 @@
         },
         {
           "name": "program",
-          "address": "hNNT7mTmthTVvnw4NYo6jYoBTDazRgweWTBHBmwgcak"
+          "address": "2sfm76FMcfqUYCv47J4VCNFMrp6PpfD6QYpmWqBCPyJV"
         },
         {
           "name": "program_data"
