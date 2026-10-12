@@ -133,5 +133,5 @@ export async function checkEscrowUnits({ db,row,check,rejects,id,intent,reserve,
       assert.equal(answer.result.rows.length,0);await second.query('COMMIT');
     } finally { await first.query('ROLLBACK');await second.query('ROLLBACK');if(pending)await pending;await first.end();await second.end(); }
   });
+  return {funded,claim,deliver,fail,close,image,userId,now};
 }
-
