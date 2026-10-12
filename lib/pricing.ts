@@ -81,11 +81,14 @@ export function effectiveQuality(resolution: string | undefined, quality?: strin
  *   medium 2K 3568 tok   4K  5930 tok
  *   high   2K 14272 tok  4K 23719 tok
  * Rounded up to the next tenth of a cent, never down.
+ * 1K (1024x1024) measured on devnet 2026-10-13: OpenAI bills it at about half
+ * of 2K; without its own cell the 2K price was charged (Kev: the table
+ * equals the API price).
  */
-const GPT_OPENAI: Record<GptQuality, Record<ResolutionTier, number>> = {
-  low: { "2K": 0.012, "4K": 0.02 },
-  medium: { "2K": 0.107, "4K": 0.178 },
-  high: { "2K": 0.428, "4K": 0.712 },
+const GPT_OPENAI: Record<GptQuality, PriceRow> = {
+  low: { "1K": 0.006, "2K": 0.012, "4K": 0.02 },
+  medium: { "1K": 0.0539, "2K": 0.107, "4K": 0.178 },
+  high: { "1K": 0.2153, "2K": 0.428, "4K": 0.712 },
 };
 
 /**
@@ -100,9 +103,8 @@ const GPT_OPENAI: Record<GptQuality, Record<ResolutionTier, number>> = {
  * remaining WaveSpeed gpt row is an outage fallback only.
  */
 export function apiPricePerImage(modelId: string, resolution: string, quality?: string | null): number {
-  const tier = toResolutionTier(resolution);
   if (modelId === "gpt-image-2") {
-    return GPT_OPENAI[effectiveQuality(resolution, quality)][tier];
+    return priceAt(GPT_OPENAI[effectiveQuality(resolution, quality)], resolution);
   }
   // No default: a family without a price table has no price, it does not
   // borrow Nano Banana Pro's.
@@ -127,9 +129,9 @@ export function apiPricePerImage(modelId: string, resolution: string, quality?: 
 const GEMINI_DIRECT: Record<string, PriceRow> = {
   // Measured bills, 2026-10-13 (see MODEL_IMAGE_PRICING).
   "nano-banana-pro": { "2K": 0.1476, "4K": 0.2525 },
-  // gemini-3.1-flash-image at $60 per 1M: 1K measured 2026-10-13 (1522 tokens);
-  // 2K / 4K still the official 1680 / 2520 tokens until a boost render measures them.
-  "nano-banana-2": { "1K": 0.0913, "2K": 0.1008, "4K": 0.1512 },
+  // gemini-3.1-flash-image at $60 per 1M, every cell measured on devnet 2026-10-13
+  // (1522 / 2085 / 2938 tokens; the official page says 1120 / 1680 / 2520).
+  "nano-banana-2": { "1K": 0.0913, "2K": 0.1251, "4K": 0.1763 },
 };
 
 /** Google direct's price for this model, or null when the model does not run there. */

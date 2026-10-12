@@ -24,8 +24,8 @@ describe("Nano Banana 2", () => {
 
   it("is charged Google direct's price on boost", () => {
     expect(apiBoostPricePerImage("nano-banana-2", "1K")).toBe(0.0913);
-    expect(apiBoostPricePerImage("nano-banana-2", "2K")).toBe(0.1008);
-    expect(apiBoostPricePerImage("nano-banana-2", "4K")).toBe(0.1512);
+    expect(apiBoostPricePerImage("nano-banana-2", "2K")).toBe(0.1251);
+    expect(apiBoostPricePerImage("nano-banana-2", "4K")).toBe(0.1763);
     expect(getModelCostMicro("nano-banana-2", "4K", { boost: true })).toBe(151_200);
   });
 
@@ -39,7 +39,7 @@ describe("Nano Banana 2", () => {
   });
 
   it("holds a Google bill to Google's price, not to Fast's", () => {
-    expect(driftOf({ provider: "gemini", modelFamily: "nano-banana-2", resolution: "2K", observedUsd: 0.1008 }).drifted).toBe(false);
+    expect(driftOf({ provider: "gemini", modelFamily: "nano-banana-2", resolution: "2K", observedUsd: 0.1251 }).drifted).toBe(false);
     expect(driftOf({ provider: "gemini", modelFamily: "nano-banana-2", resolution: "1K", observedUsd: 0.0913 }).drifted).toBe(false);
     expect(driftOf({ provider: "gemini", modelFamily: "nano-banana-2", resolution: "4K", observedUsd: 0.2 }).drifted).toBe(true);
     // A host that is not Google is still held to the table.
