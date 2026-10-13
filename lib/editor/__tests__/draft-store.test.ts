@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { draftStore, draftKey, browserBackend, type Draft, type DraftBackend } from "../draft-store";
+import { draftStore, draftKey, loadDraft, browserBackend, type Draft, type DraftBackend } from "../draft-store";
 import type { EditorSetup } from "../generate-checks";
 import type { Job } from "@/lib/ui/kit/render-queue";
 
@@ -30,6 +30,37 @@ describe("draftKey", () => {
   it("is per account and per prompt (R15)", () => {
     expect(draftKey("wallet1", null)).toBe("enki-prompt-editor:v1:wallet1:new");
     expect(draftKey("wallet1", "0b5f6c1e")).toBe("enki-prompt-editor:v1:wallet1:0b5f6c1e");
+  });
+});
+
+describe("loadDraft (drafts are the account's; one kept under the wallet key before is taken over, Kev 2026-10-13)", () => {
+  const other = { data: "data:image/webp;base64,BB", stored: null, state: "ready" as const };
+
+  it("opens the account's own draft, and never looks at the wallet's then", async () => {
+    const f = fake();
+    const own = draftStore(f.backend, "account:u-1", null);
+    const old = draftStore(f.backend, "wallet1", null);
+    own.save(draft);
+    own.saveRefs({ r1: ref });
+    old.save({ ...draft, doc: { ...draft.doc, prompt: "stale" } });
+    old.saveRefs({ r9: other });
+    expect(await loadDraft(own, old)).toEqual({ draft, refs: { r1: ref } });
+  });
+
+  it("without one, takes over the draft kept under the wallet key, with its reference images", async () => {
+    const f = fake();
+    const own = draftStore(f.backend, "account:u-1", null);
+    const old = draftStore(f.backend, "wallet1", null);
+    old.save(draft);
+    old.saveRefs({ r1: ref });
+    expect(await loadDraft(own, old)).toEqual({ draft, refs: { r1: ref } });
+  });
+
+  it("is empty when neither has a draft, or there is no wallet key at all", async () => {
+    const f = fake();
+    const own = draftStore(f.backend, "account:u-1", null);
+    expect(await loadDraft(own, draftStore(f.backend, "wallet1", null))).toEqual({ draft: null, refs: {} });
+    expect(await loadDraft(own, null)).toEqual({ draft: null, refs: {} });
   });
 });
 

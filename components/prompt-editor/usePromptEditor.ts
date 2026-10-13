@@ -13,9 +13,10 @@
  */
 import { useCallback, useEffect, useEffectEvent, useMemo, useReducer, useRef } from "react";
 import { readReference } from "@/hooks/useReferenceReads";
-import { browserBackend, draftKey, draftStore, type Draft } from "@/lib/editor/draft-store";
+import { browserBackend, draftKey, draftStore, loadDraft, type Draft } from "@/lib/editor/draft-store";
 import type { RenderPicks } from "@/lib/editor/generate-checks";
 import { stashEditorSeed, takeEditorSeed } from "@/components/enki-shell/editorBridge";
+import { editorOwner } from "@/lib/editor/editor-mount";
 import { seedDoc, type EditorSeed } from "@/lib/editor/editor-seed";
 import type { LoadedPrompt } from "@/lib/editor/load-prompt";
 import { insertToken, varNames } from "@/lib/editor/prompt-tokens";
@@ -169,9 +170,14 @@ export const blankVariable: DocPatch = (d) =>
 
 export function usePromptEditor(userKey: string | null, promptId: string | null, seedOwner: string | null = null) {
   const [state, dispatch] = useReducer(editorReducer, undefined, initialEditor);
-  const draftOwner = userKey ?? (seedOwner ? "account:" + seedOwner : null);
+  // The account's draft, whatever the wallet's connection does meanwhile (editorOwner).
+  const draftOwner = editorOwner(seedOwner, userKey);
   const store = useMemo(() => draftStore(browserBackend(), draftOwner, promptId), [draftOwner, promptId]);
   const key = draftOwner ? draftKey(draftOwner, promptId) : null;
+  /* Drafts used to be kept under the wallet key while one was known. An
+     account without a draft of its own takes that one over, once, so nobody's
+     unsaved work is orphaned by the change of key. */
+  const walletDraft = useEffectEvent(() => (seedOwner && userKey ? draftStore(browserBackend(), userKey, promptId) : null));
 
   const draftOf = (s: EditorState): Draft => ({ doc: s.history.present, listing: s.listing, picks: s.picks, stars: s.stars, order: s.order });
   const restore = useEffectEvent((action: Extract<EditorAction, { type: "restore" }>) => {
@@ -196,8 +202,8 @@ export function usePromptEditor(userKey: string | null, promptId: string | null,
   useEffect(() => {
     if (!key) return;
     let live = true;
-    void store.loadRefs().then((refs) => {
-      if (live) restore({ type: "restore", key, draft: store.load(), refs, seed: promptId === null ? takeEditorSeed(seedOwner) : null });
+    void loadDraft(store, walletDraft()).then(({ draft, refs }) => {
+      if (live) restore({ type: "restore", key, draft, refs, seed: promptId === null ? takeEditorSeed(seedOwner) : null });
     });
     return () => {
       live = false;

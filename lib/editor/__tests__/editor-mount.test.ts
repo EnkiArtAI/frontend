@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { editorMount, type EditorMount } from "../editor-mount";
+import { editorMount, editorOwner, type EditorMount } from "../editor-mount";
 
 /** Which editor /editor shows: a new `n` is a fresh one (app/editor/page.tsx keys it by n). */
 const at: EditorMount = { id: null, n: 3, own: null, user: "A" };
@@ -22,6 +22,21 @@ describe("editorMount", () => {
     expect(editorMount(at, null, "B")).toEqual({ id: null, n: 4, own: null, user: "B" });
     expect(editorMount({ ...at, own: "p9" }, null, "B").own).toBe("p9");
     expect(editorMount(at, "p1", "B").n).toBe(4);
+  });
+
+  it("a wallet connecting mid-session is not another account: the editor stays (Kev, 2026-10-13)", () => {
+    // After a reload the wallet is not connected, so there is no wallet key; the first payment connects it.
+    const before = editorOwner("u-1", null);
+    const after = editorOwner("u-1", "CM9cDp9JtuvbzybkPx6FBxcTUqR2qqjaW5c4PvbEBL8E");
+    expect(before).toBe("account:u-1");
+    expect(after).toBe(before);
+    const mount: EditorMount = { id: null, n: 3, own: null, user: before };
+    expect(editorMount(mount, null, after)).toBe(mount);
+    // Another account on the same wallet key is still another account.
+    expect(editorMount(mount, null, editorOwner("u-2", "CM9cDp9JtuvbzybkPx6FBxcTUqR2qqjaW5c4PvbEBL8E")).n).toBe(4);
+    // Without an account the wallet key is all there is; without either, nobody.
+    expect(editorOwner(null, "0xabc")).toBe("0xabc");
+    expect(editorOwner(null, null)).toBeNull();
   });
 
   it("keeps what was typed through a first sign-in, and through signing out and back in as the same account", () => {

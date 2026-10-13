@@ -110,6 +110,19 @@ export function draftStore({ text, blobs }: DraftBackend, userKey: string | null
   };
 }
 
+/**
+ * The draft an editor opens with: the owner's own, and without one the draft
+ * kept under the wallet key (`old`), from before drafts were the account's
+ * (lib/editor/editor-mount editorOwner). Its reference images come with it.
+ */
+export async function loadDraft(own: DraftStore, old: DraftStore | null): Promise<{ draft: Draft | null; refs: RefStore }> {
+  const refs = await own.loadRefs();
+  const draft = own.load();
+  if (draft || !old) return { draft, refs };
+  const taken = old.load();
+  return taken ? { draft: taken, refs: { ...(await old.loadRefs()), ...refs } } : { draft: null, refs };
+}
+
 const DB = "enki-prompt-editor";
 const STORE = "drafts";
 

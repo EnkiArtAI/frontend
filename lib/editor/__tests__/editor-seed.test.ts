@@ -103,7 +103,8 @@ describe("the real entry points", () => {
     expect(readSource(join(root, "components/enki-shell/EnkiHome.tsx"))).not.toContain("EDIT_PROMPT_EVENT");
   });
   it("consumes the seed after draft restoration and only for a new prompt", () => {
-    expect(hook).toContain('draft: store.load(), refs, seed: promptId === null ? takeEditorSeed(seedOwner) : null');
+    expect(hook).toContain("void loadDraft(store, walletDraft()).then(({ draft, refs }) => {");
+    expect(hook).toContain('if (live) restore({ type: "restore", key, draft, refs, seed: promptId === null ? takeEditorSeed(seedOwner) : null });');
     expect(editor).toContain('usePromptEditor(userKey, id, signedIn ? userId : null)');
     expect(editor).toContain('open={!!state.pendingSeed}');
     const gate = readSource(join(root, "components/BetaGate.tsx"));

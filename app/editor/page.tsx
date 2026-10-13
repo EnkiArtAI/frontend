@@ -9,7 +9,7 @@ import EnkiHome from "@/components/enki-shell/EnkiHome";
 import PromptEditor from "@/components/prompt-editor/PromptEditor";
 import { useViewerWallets } from "@/hooks/useViewerWallets";
 import { useBetaAccess } from "@/components/BetaGate";
-import { editorMount, type EditorMount } from "@/lib/editor/editor-mount";
+import { editorMount, editorOwner, type EditorMount } from "@/lib/editor/editor-mount";
 
 /**
  * The Prompt Editor inside the shell (plan R1): the shell keeps its menu,
@@ -20,7 +20,7 @@ function EditorRoute() {
   const id = useSearchParams().get("id");
   const { userKey } = useViewerWallets();
   const { userId } = useBetaAccess();
-  const owner = userKey ?? (userId ? "account:" + userId : null);
+  const owner = editorOwner(userId, userKey);
   const [mount, setMount] = useState<EditorMount>({ id, n: 0, own: null, user: owner });
   const next = editorMount(mount, id, owner);
   if (next !== mount) setMount(next);

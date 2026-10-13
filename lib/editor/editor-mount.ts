@@ -6,12 +6,24 @@
  * editor carrying the last account's would save them under the new one's
  * key. Signing in, or out and back in as the same account, keeps it.
  */
+/**
+ * Whose editor, drafts and jobs these are: the account, as long as it is
+ * known, and the wallet key only without one. The wallet key comes and goes
+ * with the wallet's connection: after a reload it is gone until the wallet is
+ * asked to sign. Keyed by it, one person was two "accounts": the session's
+ * first payment connected the wallet, the editor took that for another
+ * account and started afresh, the inputs and the running render gone (Kev,
+ * 2026-10-13).
+ */
+export const editorOwner = (userId: string | null, userKey: string | null): string | null =>
+  userId ? "account:" + userId : userKey;
+
 export interface EditorMount {
   id: string | null;
   n: number;
   /** The id this editor's first release gave it. */
   own: string | null;
-  /** The last account seen (useViewerWallets userKey). */
+  /** The last account seen (editorOwner). */
   user: string | null;
 }
 
