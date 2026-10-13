@@ -35,8 +35,10 @@ export default function AgentRow({ model: m }: { model: ImageViewModel }) {
         <span className="iv-agent-badge">x402</span>
         <ChevronDown className="iv-agent-chev" size={12} strokeWidth={2.2} aria-hidden />
       </button>
-      {open && (
-        setup && body ? (
+      {/* Always mounted: the fold opens and closes as a quick height change (Kev, 2026-10-13); closed, it is inert. */}
+      <div className="iv-agent-fold" data-open={open || undefined} inert={!open || undefined}>
+        <div className="iv-agent-fold-in">
+        {setup && body ? (
           <>
             <pre className="iv-code">
               {`POST ${location.origin}${AGENT_PATH}\nContent-Type: application/json\nX-PAYMENT: <x402 payment payload>\n${JSON.stringify(body, null, 2)}`}
@@ -53,8 +55,9 @@ export default function AgentRow({ model: m }: { model: ImageViewModel }) {
           </>
         ) : (
           <p className="iv-agent-note">Pick a generator to see the request.</p>
-        )
-      )}
+        )}
+        </div>
+      </div>
     </div>
   );
 }

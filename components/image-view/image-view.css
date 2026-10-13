@@ -276,7 +276,12 @@ button.iv-tok { cursor: pointer; }
 }
 
 /* ── Agent row, settings, Generate. */
-.iv-agent { display: flex; flex-direction: column; gap: 8px; }
+.iv-agent { display: flex; flex-direction: column; }
+/* The fold: a grid track from 0 to the content's height, quick both ways (Kev, 2026-10-13). */
+.iv-agent-fold { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.18s ease; }
+.iv-agent-fold[data-open] { grid-template-rows: 1fr; }
+.iv-agent-fold-in { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; }
+.iv-agent-fold-in > :first-child { margin-top: 8px; }
 .iv-agent-toggle {
   display: flex;
   align-items: center;
@@ -315,7 +320,6 @@ button.iv-tok { cursor: pointer; }
   font: 400 10.5px/1.55 var(--font-mono), monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  animation: kit-fade 0.14s ease;
 }
 .iv-code-copy {
   position: absolute;
@@ -843,5 +847,5 @@ button.iv-c-who:hover { color: var(--enki-ember); }
   .iv-drawer,
   .iv-drawer-scrim,
   .iv-rail-list,
-  .iv-code { animation: none; }
+  .iv-agent-fold { transition: none; }
 }
