@@ -57,10 +57,7 @@ describe("every generate surface", () => {
 
   it("shows no toggle for now (Kev, 2026-10-13: it will pick the cheapest or fastest host by itself later), the flag wired and off", () => {
     const mobile = src("components", "image-view", "ImageViewMobile.tsx");
-    for (const s of [editor, viewer, mobile, modal]) {
-      expect(s).not.toContain("<BoostToggle");
-      expect(s).not.toContain("BoostToggle from");
-    }
+    for (const s of [editor, viewer, mobile, modal]) expect(s).not.toContain("BoostToggle");
     expect(launcher).toContain("boostSameHost={!core.boostAt(resolution)}");
     // The flag still travels: a surface that turns it on later needs nothing else.
     expect(src("lib", "ui", "image-view", "setups.ts")).toContain("boost: c.boost && boostAt(model, c.resolution),");

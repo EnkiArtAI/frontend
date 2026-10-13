@@ -18,7 +18,8 @@ const w = vi.hoisted(() => ({
 vi.mock("thirdweb/react", () => ({ useActiveAccount: () => (w.evm ? { address: w.evm } : undefined) }));
 vi.mock("@solana/wallet-adapter-react", () => ({ useWallet: () => ({ publicKey: w.adapter ? { toBase58: () => w.adapter } : null }) }));
 vi.mock("@/hooks/useCdpAddress", () => ({ useCdpAddress: () => ({ address: w.cdp }) }));
-vi.mock("@/hooks/useSolanaAuth", () => ({ useSolanaAuth: () => ({ isAuthenticated: !!w.session, walletAddress: w.session }) }));
+// As useSolanaAuth answers: the session's address, else the connected adapter's, signed in or not.
+vi.mock("@/hooks/useSolanaAuth", () => ({ useSolanaAuth: () => ({ isAuthenticated: !!w.session, walletAddress: w.session ?? w.adapter }) }));
 
 import { useViewerWallets } from "@/hooks/useViewerWallets";
 
@@ -47,6 +48,12 @@ describe("userKey", () => {
     expect(read().userKey).toBe("CdpKey");
     w.adapter = "AdapterKey";
     expect(read().userKey).toBe("AdapterKey");
+    w.evm = "0xevm";
+    expect(read().userKey).toBe("0xevm");
+  });
+
+  it("signed out, an adapter merely connected is no session: the old order stands", () => {
+    w.adapter = "AdapterKey";
     w.evm = "0xevm";
     expect(read().userKey).toBe("0xevm");
   });

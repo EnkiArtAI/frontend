@@ -37,6 +37,9 @@ describe("assembleFreePrompt", () => {
       expect(fill("a cat like Reference image 1, at dusk", 3)).toBe("a cat like Reference image 1 Reference image 2 Reference image 3, at dusk");
       expect(fill("Reference image 2 beside Reference image 1 here", 3)).toBe("Reference image 2 beside Reference image 1 Reference image 3 here");
       expect(fill("Reference image 1", 2)).toBe("Reference image 1 Reference image 2");
+      // Counted from the highest number named, not how often one is named.
+      expect(fill("Reference image 1 and Reference image 1 again", 2)).toBe("Reference image 1 and Reference image 1 Reference image 2 again");
+      expect(fill("a cat like Reference image 3", 3)).toBe("a cat like Reference image 3");
     });
 
     it("names them after the text when it names none, and adds nothing when every image is named already", () => {
