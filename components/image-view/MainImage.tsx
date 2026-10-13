@@ -30,7 +30,10 @@ export default function MainImage({ model: m, onOpen, onClose }: {
     <div className="iv-stage">
       <div className="iv-box" data-state={job && job.status !== "ready" ? job.status : undefined} style={{ "--ar": ratio } as CSSProperties}>
         {!s ? (
-          <p className="iv-empty">Your image shows up here</p>
+          // The blank composer waits for its first render; a prompt without
+          // any image (no creator example, nothing made with it) says so.
+          m.blank ? <p className="iv-empty">Your image shows up here</p>
+            : m.status === "ready" && <p className="iv-empty">This prompt has no images yet · generate the first one</p>
         ) : job?.status === "rendering" ? (
           <span className="iv-ring" role="status" aria-label="Rendering" />
         ) : job?.status === "failed" ? (
