@@ -13,26 +13,33 @@ const stars = (n: number) => "★★★★★".slice(0, n) + "☆☆☆☆☆".s
 
 /**
  * Comments | Reviews below the stage, read as the centre scrolls (no toggle
- * panel, handoff §2). Both are rows of one table (plan §5 #20). The composers
- * open once the viewer has an image of this prompt; a comment is text, a
- * review a rating with optional words (plan §5 #18, #19).
+ * panel, handoff §2). Both are rows of one table (plan §5 #20). A comment is
+ * text from anyone signed in; a review shows one of the viewer's own images
+ * made with this prompt, with stars and words if they like (Kev, 2026-10-13:
+ * "reviews = comments but with a generated image").
  */
 export default function Discussion({ model: m }: { model: ImageViewModel }) {
   const [tab, setTab] = useState<"comments" | "reviews">("comments");
   const [draft, setDraft] = useState("");
   const [rating, setRating] = useState(0);
+  const [imageId, setImageId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
   const { data, error, retry } = m.discussion;
   const rows = data ? (tab === "comments" ? data.comments : data.reviews) : [];
   const count = (n: number) => (data ? ` · ${countLabel(n, data.capped)}` : "");
+  // The picked image, or the newest of the viewer's own once there is one.
+  const picked = m.reviewable.find((x) => x.record?.id === imageId) ?? m.reviewable[0];
+  const ready = tab === "comments" ? !!draft.trim() : !!picked;
 
   const send = async (e: FormEvent) => {
     e.preventDefault();
     const body = draft.trim();
-    if (busy || (tab === "comments" ? !body : !rating)) return;
+    if (busy || !ready) return;
     setBusy(true);
-    const ok = await m.post(tab === "comments" ? { body } : { rating, ...(body ? { body } : {}) });
+    const ok = await m.post(tab === "comments"
+      ? { body }
+      : { imageId: picked!.record!.id, ...(rating ? { rating } : {}), ...(body ? { body } : {}) });
     setBusy(false);
     if (!ok) return;
     setDraft("");
@@ -51,7 +58,7 @@ export default function Discussion({ model: m }: { model: ImageViewModel }) {
             { key: "comments", label: <><MessageSquare size={13} strokeWidth={2} aria-hidden />Comments{count(data?.comments.length ?? 0)}</> },
             {
               key: "reviews",
-              label: <>★ Reviews{count(data?.reviews.length ?? 0)}{m.premium && !m.canPost && <span className="iv-dim"> requires purchase</span>}</>,
+              label: <>★ Reviews{count(data?.reviews.length ?? 0)}{!m.guest && !m.reviewable.length && <span className="iv-dim"> with your image</span>}</>,
             },
           ]} />
         {rows.length > 0 && <span className="iv-hint">scroll down to read</span>}
@@ -72,24 +79,34 @@ export default function Discussion({ model: m }: { model: ImageViewModel }) {
           <div className="iv-compose">
             <button type="button" className="iv-send" onClick={openLogin}>Sign in to comment</button>
           </div>
-        ) : tab === "reviews" && !m.canPost ? (
-          <p className="iv-gate">
-            {m.premium ? "Reviews are open to people who bought a render of this prompt" : "Rate this prompt after you generated with it"}
-          </p>
+        ) : tab === "reviews" && !m.reviewable.length ? (
+          <p className="iv-gate">A review shows one of your own images made with this prompt — generate one first</p>
         ) : (
-          <form className="iv-compose" onSubmit={send}>
+          <form className="iv-compose" data-review={tab === "reviews" || undefined} onSubmit={send}>
             {tab === "reviews" && (
-              <span className="iv-rate" role="radiogroup" aria-label="Your rating">
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <button key={n} type="button" role="radio" aria-checked={rating === n} aria-label={`${n} star${n === 1 ? "" : "s"}`}
-                    className="iv-star" data-on={n <= rating || undefined} onClick={() => setRating(n)}>★</button>
+              <div className="iv-review-pick" role="radiogroup" aria-label="The image your review shows">
+                {m.reviewable.map((x) => (
+                  <button key={x.key} type="button" role="radio" aria-checked={x === picked} className="iv-review-img kit-hit"
+                    title="Show this image with your review" onClick={() => setImageId(x.record!.id)}>
+                    <img src={x.thumb} alt="" draggable={false} />
+                  </button>
                 ))}
-              </span>
+              </div>
             )}
-            <input className="iv-input" value={draft} maxLength={2000} disabled={!m.canPost || busy} onChange={(e) => setDraft(e.target.value)}
-              aria-label={tab === "comments" ? "Your comment" : "Your review"}
-              placeholder={!m.canPost ? "Generate an image with this prompt first to comment" : tab === "comments" ? "Add a comment" : "Say why (optional)"} />
-            <button type="submit" className="iv-send" disabled={!m.canPost || busy || (tab === "comments" ? !draft.trim() : !rating)}>Send</button>
+            <div className="iv-compose-row">
+              {tab === "reviews" && (
+                <span className="iv-rate" role="radiogroup" aria-label="Your rating">
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <button key={n} type="button" role="radio" aria-checked={rating === n} aria-label={`${n} star${n === 1 ? "" : "s"}`}
+                      className="iv-star" data-on={n <= rating || undefined} onClick={() => setRating(rating === n ? 0 : n)}>★</button>
+                  ))}
+                </span>
+              )}
+              <input className="iv-input" value={draft} maxLength={2000} disabled={busy} onChange={(e) => setDraft(e.target.value)}
+                aria-label={tab === "comments" ? "Your comment" : "Your review"}
+                placeholder={tab === "comments" ? "Add a comment" : "Say how it went (optional)"} />
+              <button type="submit" className="iv-send" disabled={!ready || busy}>Send</button>
+            </div>
           </form>
         )}
       </div>
@@ -102,10 +119,12 @@ function Row({ row, now, review }: { row: CommentRow; now: number; review: boole
     : <button type="button" className="iv-c-who" onClick={() => openCreator(row.handle)}>{row.handle}</button>;
   return (
     <article className="iv-c">
-      {!review && <span className="iv-av" aria-hidden>{initials(row.handle)}</span>}
+      {review && row.imageUrl
+        ? <img className="iv-c-img" src={row.imageUrl} alt="" draggable={false} />
+        : !review && <span className="iv-av" aria-hidden>{initials(row.handle)}</span>}
       <div className="iv-c-main">
         <div className="iv-c-head">
-          {review && <span className="iv-stars" aria-label={`${row.rating} of 5`}>{stars(row.rating ?? 0)}</span>}
+          {review && typeof row.rating === "number" && <span className="iv-stars" aria-label={`${row.rating} of 5`}>{stars(row.rating)}</span>}
           {who}
           <span className="iv-c-when">{formatAgo(row.createdAt, now, "short")}</span>
         </div>

@@ -8,10 +8,12 @@ describe("readDiscussion", () => {
   const star = c("star", 4, null);
   const both = c("both", 5, "Worth it");
 
-  it("splits one table into comments (text only) and reviews (every rating, with its text)", () => {
-    const d = readDiscussion({ comments: [text, star, both], stats: { count: 3, avgRating: 4.5 } });
-    expect(d.comments).toEqual([text]);
-    expect(d.reviews).toEqual([star, both]);
+  it("splits one table into comments (text only) and reviews (an image, or a rating from before reviews carried images)", () => {
+    const pictured = { ...c("pic", null, "Mine came out great"), imageUrl: "https://blob/mine.webp" };
+    const gone = { ...c("gone", null, "Picture deleted since"), imageUrl: null };
+    const d = readDiscussion({ comments: [text, star, both, pictured, gone], stats: { count: 5, avgRating: 4.5 } });
+    expect(d.comments).toEqual([text, gone]);
+    expect(d.reviews).toEqual([star, both, pictured]);
     expect(d.avgRating).toBe(4.5);
   });
 

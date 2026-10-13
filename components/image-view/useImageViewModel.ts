@@ -236,9 +236,11 @@ export interface ImageViewModel {
   likes: { count: number; mine: boolean } | null;
   toggleLike: () => void;
   discussion: { data: Discussion | undefined; error: string | null; retry: () => void };
-  /** A comment ({body}) or a rating ({rating, body?}); true once the server took it. */
-  post: (payload: { body?: string; rating?: number }) => Promise<boolean>;
-  /** The composers open once the viewer has an image of this prompt (checked here only, plan §5 #19). */
+  /** A comment ({body}) or a review ({imageId, rating?, body?}); true once the server took it. */
+  post: (payload: { body?: string; rating?: number; imageId?: string }) => Promise<boolean>;
+  /** The viewer's own recorded renders of this prompt: what a review may show (Kev, 2026-10-13). */
+  reviewable: Shot[];
+  /** The review composer opens once the viewer has an image of this prompt (checked here only, plan §5 #19). */
   canPost: boolean;
   /** Saved in any of the viewer's bookmark categories, including before this visit. */
   saved: boolean;
@@ -558,7 +560,7 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
     enabled: !!promptId,
     staleTime: 30_000,
   });
-  const post = async (payload: { body?: string; rating?: number }): Promise<boolean> => {
+  const post = async (payload: { body?: string; rating?: number; imageId?: string }): Promise<boolean> => {
     const res = await fetch(`/api/prompts/${encodeURIComponent(promptId as string)}/comments`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
@@ -566,7 +568,7 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
     }).catch(() => null);
     const d = await res?.json().catch(() => null);
     if (res?.ok) {
-      notify(payload.rating ? (d?.updated ? "Review updated" : "Review posted") : "Comment posted");
+      notify(payload.rating || payload.imageId ? (d?.updated ? "Review updated" : "Review posted") : "Comment posted");
       void talkQ.refetch();
       return true;
     }
@@ -689,6 +691,8 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
     toggleLike,
     discussion: { data: talkQ.data, error: talkQ.error?.message ?? null, retry: () => void talkQ.refetch() },
     post,
+    // Recorded, so each carries its generated_images id, which the server checks against the reviewer.
+    reviewable: all.filter((x) => x.record && x.thumb),
     canPost: !guest && hasGenerated(jobs, own.history),
     saved: memberships.length > 0,
     memberships,

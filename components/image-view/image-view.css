@@ -518,6 +518,24 @@ button.iv-c-who:hover { color: var(--enki-ember); }
 .iv-c-body { margin: 0; font-size: 13px; line-height: 1.5; color: var(--enki-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; text-wrap: pretty; }
 .iv-stars { color: var(--enki-ember); letter-spacing: 1px; }
 .iv-compose { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--enki-rule-2); }
+/* A review: the viewer's own images to pick from, above the stars and the words. */
+.iv-compose[data-review] { flex-direction: column; align-items: stretch; }
+.iv-compose-row { display: flex; align-items: center; gap: 8px; }
+.iv-review-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+.iv-review-img {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--enki-paper-2);
+  cursor: pointer;
+}
+.iv-review-img[aria-checked="true"] { border-color: var(--enki-ember); }
+.iv-review-img img { display: block; width: 100%; height: 100%; object-fit: cover; }
+/* The image a review shows, in its row. */
+.iv-c-img { flex-shrink: 0; width: 56px; height: 56px; border-radius: 8px; object-fit: cover; }
 .iv-input {
   flex: 1;
   min-width: 0;

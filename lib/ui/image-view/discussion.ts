@@ -1,7 +1,9 @@
 /**
- * Comments and ratings share one table (prompt_comments): a row is a comment,
- * a rating, or both. GET /api/prompts/[id]/comments returns the newest 100 and
- * cannot page (plan §5 #20), so a full read makes every count "at least".
+ * Comments and reviews share one table (prompt_comments): a comment is text
+ * from anyone signed in; a review carries one of the reviewer's own images
+ * made with the prompt (Kev, 2026-10-13), with a rating and text if they
+ * like. GET /api/prompts/[id]/comments returns the newest 100 and cannot page
+ * (plan §5 #20), so a full read makes every count "at least".
  */
 import { failureSentence } from "@/lib/search/client";
 
@@ -12,6 +14,8 @@ export interface CommentRow {
   handle: string;
   rating: number | null;
   body: string | null;
+  /** The reviewer's image; null on a comment, and on a review whose image is gone. */
+  imageUrl?: string | null;
   createdAt: string;
 }
 
@@ -19,9 +23,9 @@ export interface CommentRow {
 export const DISCUSSION_CAP = 100;
 
 export interface Discussion {
-  /** Rows without a rating (each has text: the route takes a rating, a text, or both): the Comments tab. */
+  /** Rows with neither an image nor a rating (each has text): the Comments tab. */
   comments: CommentRow[];
-  /** Every rating, with its text when it has one: the Reviews tab. */
+  /** Every row with an image or a rating (ratings from before reviews carried images count): the Reviews tab. */
   reviews: CommentRow[];
   /** Every row with text, rated or not: the phone's one list (it has no Reviews tab). */
   written: CommentRow[];
@@ -34,11 +38,11 @@ export interface Discussion {
 export function readDiscussion(json: unknown): Discussion {
   const j = (json ?? {}) as { comments?: unknown; stats?: { avgRating?: unknown } };
   const rows = Array.isArray(j.comments) ? (j.comments as CommentRow[]) : [];
-  const rated = (r: CommentRow) => typeof r.rating === "number";
+  const review = (r: CommentRow) => typeof r.rating === "number" || !!r.imageUrl;
   const avg = j.stats?.avgRating;
   return {
-    comments: rows.filter((r) => !rated(r)),
-    reviews: rows.filter(rated),
+    comments: rows.filter((r) => !review(r)),
+    reviews: rows.filter(review),
     written: rows.filter((r) => r.body),
     avgRating: typeof avg === "number" ? avg : null,
     capped: rows.length >= DISCUSSION_CAP,
