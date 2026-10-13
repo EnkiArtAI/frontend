@@ -364,7 +364,7 @@ export default function PromptEditor({ promptId }: {
     if (!stopped || stopped.open) setViewer(null);
     if (!stopped && !retry) notify("Rendering again with the same values");
   };
-  const acts: TileActs = { stars: state.stars, open: (j) => show(j.id), load: loadValues, star };
+  const acts: TileActs = { stars: state.stars, open: (j) => show(j.id), load: loadValues, star, cancel: queue.cancel };
 
   // ── Release.
   const starredJobs = starred(state.stars, jobs);
@@ -528,7 +528,7 @@ export default function PromptEditor({ promptId }: {
                 onRemove={(refId) => commit((d) => ({ prompt: removeRef(d.prompt, d.refIds.indexOf(refId) + 1), refIds: d.refIds.filter((r) => r !== refId) }))}
                 onTile={tileClick} onNft={() => setNftOpen(true)} onDragToken={setRefDrag} />
               <GenerateBar
-                live={<LiveStrip jobs={jobs} stars={state.stars} onOpen={(j) => show(j.id)} onAll={() => setTab("verify")} />}
+                live={<LiveStrip jobs={jobs} stars={state.stars} onOpen={(j) => show(j.id)} onCancel={queue.cancel} onAll={() => setTab("verify")} />}
                 models={offered} testId={test?.id ?? null}
                 onTest={(testId) => setListing({ testId: testId === listing.modelIds[0] ? null : testId })}
                 core={core} picks={picks} onPicks={(patch) => dispatch({ type: "set", patch: { picks: { ...picks, ...patch } } })}

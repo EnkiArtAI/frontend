@@ -739,6 +739,7 @@ button.iv-c-who:hover { color: var(--enki-ember); }
 }
 .iv-mini[data-on] { border-color: var(--enki-ember); }
 .iv-mini[data-status="rendering"] { background: var(--enki-stage); animation: kit-pulse 1.2s ease-in-out infinite; }
+.iv-mini[data-status="rendering"][data-sent] { background: color-mix(in oklab, var(--enki-turq) 45%, var(--enki-stage)); }
 .iv-mini[data-status="failed"] { border-color: var(--enki-danger); }
 .iv-mini img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .iv-rail-vert {

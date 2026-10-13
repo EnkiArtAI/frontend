@@ -69,8 +69,8 @@ export default function HistoryRail({ model: m, drawer, open, onToggle }: {
       {items.map((s) => (
         <div key={s.key} className="iv-hitem">
           {s.job ? (
-            <JobTile status={s.job.status} src={s.thumb ?? s.src} ratio={s.ratio} seen={s.job.seen} selected={m.main?.key === s.key}
-              label={`Your render, ${jobSaid(s.job)}`} onClick={() => m.select(s)} />
+            <JobTile status={s.job.status} sent={s.job.sent} src={s.thumb ?? s.src} ratio={s.ratio} seen={s.job.seen} selected={m.main?.key === s.key}
+              label={`Your render, ${jobSaid(s.job)}`} onClick={() => m.select(s)} onCancel={() => m.cancel(s)} />
           ) : (
             <button type="button" className="iv-hitem-pick" aria-pressed={m.main?.key === s.key} onClick={() => m.select(s)}>
               <img src={s.thumb} alt="" loading="lazy" decoding="async" draggable={false} />
@@ -113,7 +113,7 @@ export default function HistoryRail({ model: m, drawer, open, onToggle }: {
       {open ? rows : (
         <button type="button" className="iv-rail-mini" aria-label="Open history" onClick={onToggle}>
           {items.slice(0, 6).map((s) => (
-            <span key={s.key} className="iv-mini" data-on={m.main?.key === s.key || undefined} data-status={s.job?.status}>
+            <span key={s.key} className="iv-mini" data-on={m.main?.key === s.key || undefined} data-status={s.job?.status} data-sent={s.job?.sent || undefined}>
               {(s.thumb ?? s.src) && <img src={s.thumb ?? s.src} alt="" loading="lazy" draggable={false} />}
             </span>
           ))}

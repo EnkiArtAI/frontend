@@ -57,8 +57,8 @@ export default function PreviewStrip({ model: m, queue }: { model: ImageViewMode
       <div ref={row} className="iv-strip-row kit-noscroll" onScroll={(e) => setEdges(edgesOf(e.currentTarget))}>
         <div ref={track} className="iv-strip-track">
           {queue && m.queue.map((s) => s.job && (
-            <JobTile key={s.key} status={s.job.status} src={s.src} ratio={s.ratio} height={64} seen={s.job.seen} selected={on(s)}
-              badge="you" label={`Your render, ${jobSaid(s.job)}`} onClick={() => m.select(s)} />
+            <JobTile key={s.key} status={s.job.status} sent={s.job.sent} src={s.src} ratio={s.ratio} height={64} seen={s.job.seen} selected={on(s)}
+              badge="you" label={`Your render, ${jobSaid(s.job)}`} onClick={() => m.select(s)} onCancel={() => m.cancel(s)} />
           ))}
           {tiles.map((s, i) => (
             <button key={s.key} type="button" className="iv-thumb" aria-pressed={on(s)} onClick={() => m.select(s)}

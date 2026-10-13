@@ -144,8 +144,8 @@ export default function ImageViewMobile({ model: m, onClose }: { model: ImageVie
       {!!m.queue.length && <section className="iv-mobile-queue" aria-label="Render queue">
         <h2 className="iv-label">Queue · Tap to view</h2>
         <div className="iv-mobile-jobs">
-          {m.queue.map((s) => s.job && <JobTile key={s.key} status={s.job.status} src={s.src} ratio={s.ratio} height={64}
-            seen={s.job.seen} selected={m.main?.key === s.key} label={`Your render, ${jobSaid(s.job)}`} onClick={() => open(s)} />)}
+          {m.queue.map((s) => s.job && <JobTile key={s.key} status={s.job.status} sent={s.job.sent} src={s.src} ratio={s.ratio} height={64}
+            seen={s.job.seen} selected={m.main?.key === s.key} label={`Your render, ${jobSaid(s.job)}`} onClick={() => open(s)} onCancel={() => m.cancel(s)} />)}
         </div>
       </section>}
       {viewer && items[at] && <FullscreenViewer items={items.map((s) => ({ key: s.key, src: s.src, ratio: s.ratio,

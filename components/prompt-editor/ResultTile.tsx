@@ -7,12 +7,13 @@ import type { Job } from "@/lib/ui/kit/render-queue";
 
 export type EditorJob = Job<EditorSetup>;
 
-/** What a result tile does: open it (a failed one shows its setup and Retry), load its values, star it. */
+/** What a result tile does: open it (a failed one shows its setup and Retry), load its values, star it, take it back while it is still in line. */
 export interface TileActs {
   stars: Stars;
   open: (job: EditorJob) => void;
   load: (job: EditorJob) => void;
   star: (id: string) => void;
+  cancel: (id: string) => void;
 }
 
 /**
@@ -26,7 +27,7 @@ export default function ResultTile({ job, acts }: { job: EditorJob; acts: TileAc
   const on = acts.stars[job.id] !== undefined;
   const stored = canStar(job);
   return (
-    <JobTile status={job.status} src={job.imageUrl} ratio={s.ratio} seen={job.seen}
+    <JobTile status={job.status} sent={job.sent} src={job.imageUrl} ratio={s.ratio} seen={job.seen} onCancel={() => acts.cancel(job.id)}
       star={{
         on,
         onToggle: () => acts.star(job.id),

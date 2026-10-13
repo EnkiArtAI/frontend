@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { join } from "node:path";
+import { readSource } from "@/lib/__tests__/_read-source";
 import HistoryRail, { railItems } from "@/components/image-view/HistoryRail";
 import PreviewStrip from "@/components/image-view/PreviewStrip";
 import type { ImageViewModel, Shot } from "@/components/image-view/useImageViewModel";
@@ -11,9 +13,9 @@ import type { ImageViewModel, Shot } from "@/components/image-view/useImageViewM
  * dem Hauptbild stehen sondern in der History ganz rechts").
  */
 
-const job = (id: string, status: "rendering" | "failed" | "ready", over: Partial<Shot> = {}): Shot => ({
+const job = (id: string, status: "rendering" | "failed" | "ready", over: Partial<Shot> = {}, sent = status === "rendering"): Shot => ({
   key: `job:${id}`, kind: "job", ratio: "4:5", src: status === "ready" ? `/${id}.png` : undefined, thumb: status === "ready" ? `/${id}.png` : undefined,
-  job: { id, status, seen: false } as Shot["job"], ...over,
+  job: { id, status, sent, seen: false } as Shot["job"], ...over,
 });
 const row = (id: string): Shot => ({ key: `history:${id}`, kind: "history", ratio: null, src: `/${id}.webp`, thumb: `/${id}.webp`, createdAt: "2026-10-12T10:00:00Z" });
 const example: Shot = { key: "example:0", kind: "example", ratio: "4:5", src: "/ex.png", thumb: "/ex.png" };
@@ -21,7 +23,7 @@ const example: Shot = { key: "example:0", kind: "example", ratio: "4:5", src: "/
 const model = (queue: Shot[], history: Shot[]): ImageViewModel => ({
   queue, history, jobs: queue.map((s) => s.job), examples: [example], community: [], main: null, now: Date.parse("2026-10-13T10:00:00Z"),
   historyState: { loading: false, failed: false, more: false, loadingOlder: false, retry: vi.fn(), loadOlder: vi.fn() },
-  select: vi.fn(),
+  select: vi.fn(), cancel: vi.fn(),
 } as unknown as ImageViewModel);
 
 const rail = (m: ImageViewModel, open = true) => renderToStaticMarkup(createElement(HistoryRail, { model: m, drawer: false, open, onToggle: vi.fn() }));
@@ -63,10 +65,34 @@ describe("the History rail", () => {
     expect(html).toContain("<span>1h ago</span>");
   });
 
-  it("folded, its small strip still shows a running and a failed render", () => {
-    const html = rail(model([job("b", "rendering"), job("a", "failed")], [row("x")]), false);
-    expect(html).toContain('class="iv-mini" data-status="rendering"');
+  it("folded, its small strip still shows a running and a failed render, and whether the running one was sent", () => {
+    const html = rail(model([job("b", "rendering"), job("c", "rendering", {}, false), job("a", "failed")], [row("x")]), false);
+    expect(html).toContain('class="iv-mini" data-status="rendering" data-sent="true"');
+    expect(html).toMatch(/class="iv-mini" data-status="rendering"><\/span>/);
     expect(html).toContain('class="iv-mini" data-status="failed"');
+  });
+
+  it("a render still in line carries an X that cancels it through the model; a sent one is lit and has none (Kev, 2026-10-13)", () => {
+    const inLine = job("q", "rendering", {}, false);
+    const m = model([job("s", "rendering"), inLine], []);
+    const html = rail(m);
+    const tiles = html.match(/<div class="kit-tile kit-focus"[^>]*>/g) ?? [];
+    expect(tiles).toHaveLength(2);
+    expect(tiles[0]).toContain('data-sent="true"');
+    expect(tiles[1]).not.toContain("data-sent");
+    expect(html.match(/aria-label="Cancel this render"/g)).toHaveLength(1);
+    expect(html).toContain('aria-label="Your render, rendering"');
+    expect(html).toContain('aria-label="Your render, in line, cancel with its X"');
+    // The X is wired to the model's cancel with the shot, like select.
+    const rail_ = readSource(join(__dirname, "..", "..", "..", "..", "components", "image-view", "HistoryRail.tsx"));
+    expect(rail_).toContain("onClick={() => m.select(s)} onCancel={() => m.cancel(s)} />");
+    for (const file of ["PreviewStrip.tsx", "ImageViewMobile.tsx"]) {
+      const text = readSource(join(__dirname, "..", "..", "..", "..", "components", "image-view", file));
+      expect(text, file).toContain("sent={s.job.sent}");
+      expect(text, file).toContain("onCancel={() => m.cancel(s)}");
+    }
+    const modelSrc = readSource(join(__dirname, "..", "..", "..", "..", "components", "image-view", "useImageViewModel.ts"));
+    expect(modelSrc).toContain("cancel: (shot) => { if (shot.job) queue.cancel(shot.job.id); },");
   });
 
   it("says so when there is nothing yet", () => {

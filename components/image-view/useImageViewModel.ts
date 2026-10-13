@@ -232,6 +232,8 @@ export interface ImageViewModel {
   select: (shot: Shot) => void;
   /** A finished render was shown (stage or viewer). */
   seen: (shot: Shot) => void;
+  /** Takes a render of this tab out of the queue while its request has not gone out (Kev, 2026-10-13). */
+  cancel: (shot: Shot) => void;
   historyState: { loading: boolean; failed: boolean; retry: () => void; more: boolean; loadingOlder: boolean; loadOlder: () => void };
   setPublic: (row: GenerationRow, on: boolean) => Promise<void>;
 
@@ -697,6 +699,7 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
     main,
     select,
     seen,
+    cancel: (shot) => { if (shot.job) queue.cancel(shot.job.id); },
     historyState: { loading: own.loading, failed: own.failed, retry: own.retry, more: own.more, loadingOlder: own.loadingOlder, loadOlder: own.loadOlder },
     setPublic,
 

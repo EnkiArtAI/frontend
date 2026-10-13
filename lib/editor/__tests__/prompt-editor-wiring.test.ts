@@ -204,6 +204,18 @@ describe("touch, focus and motion", () => {
     expect(src("VariationGroup.tsx")).toContain('className="pe-load kit-hit"');
     expect(src("StackCard.tsx")).toContain('className="pe-tray-x kit-hit" onClick={onToggle}>Collapse');
     expect(src("ResultTile.tsx")).toContain('className="pe-tile-retry kit-hit"');
+  });
+
+  it("let a render still in line be taken back, and show whether it was sent (Kev, 2026-10-13)", () => {
+    expect(EDITOR).toContain("const acts: TileActs = { stars: state.stars, open: (j) => show(j.id), load: loadValues, star, cancel: queue.cancel };");
+    expect(EDITOR).toContain("onOpen={(j) => show(j.id)} onCancel={queue.cancel} onAll=");
+    expect(src("ResultTile.tsx")).toContain("sent={job.sent} src={job.imageUrl} ratio={s.ratio} seen={job.seen} onCancel={() => acts.cancel(job.id)}");
+    expect(src("LiveStrip.tsx")).toContain("sent={j.sent} src={j.imageUrl}");
+    expect(src("LiveStrip.tsx")).toContain("onCancel={() => onCancel(j.id)} />");
+    // The stack is itself a button: its top tile shows the state but carries no X.
+    const stack = src("StackCard.tsx");
+    expect(stack).toContain("<JobTile status={top.status} sent={top.sent} src={top.imageUrl}");
+    expect(stack).not.toContain("onCancel");
     expect(EDITOR).toContain('className="pe-add kit-hit" onClick={leave}>Back');
   });
 

@@ -14,11 +14,12 @@ const SHOWN = 12;
  * tab away (handoff §5): the user stays in Craft. A new render comes in at
  * the front; a strip scrolled away from the start keeps the tile in view.
  */
-export default function LiveStrip({ jobs, stars, onOpen, onAll }: {
+export default function LiveStrip({ jobs, stars, onOpen, onCancel, onAll }: {
   /** Newest first, as the queue holds them. */
   jobs: Job<EditorSetup>[];
   stars: Stars;
   onOpen: (job: Job<EditorSetup>) => void;
+  onCancel: (id: string) => void;
   onAll: () => void;
 }) {
   const strip = useRef<HTMLDivElement>(null);
@@ -44,10 +45,10 @@ export default function LiveStrip({ jobs, stars, onOpen, onAll }: {
       </div>
       <div ref={strip} className="pe-live-strip kit-noscroll">
         {jobs.slice(0, SHOWN).map((j) => (
-          <JobTile key={j.id} status={j.status} src={j.imageUrl} ratio={j.setup.ratio} height={72} seen={j.seen}
+          <JobTile key={j.id} status={j.status} sent={j.sent} src={j.imageUrl} ratio={j.setup.ratio} height={72} seen={j.seen}
             star={stars[j.id] !== undefined ? { on: true } : undefined}
             label={j.status === "rendering" ? "Rendering" : j.status === "failed" ? "Render failed · open to retry" : "Render, open it"}
-            onClick={j.status === "rendering" ? undefined : () => onOpen(j)} />
+            onClick={j.status === "rendering" ? undefined : () => onOpen(j)} onCancel={() => onCancel(j.id)} />
         ))}
       </div>
     </div>

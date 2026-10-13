@@ -154,8 +154,11 @@ describe("jobSaid", () => {
     expect(jobSaid({ status: "failed" })).toBe("failed, charged only if it reached your gallery");
   });
 
-  it("says rendering and ready as they are", () => {
-    expect(jobSaid({ status: "rendering" })).toBe("rendering");
+  it("says rendering once the request went out, in line (with its X) before, and ready as it is", () => {
+    expect(jobSaid({ status: "rendering", sent: true })).toBe("rendering");
+    expect(jobSaid({ status: "rendering", sent: false })).toBe("in line, cancel with its X");
+    expect(jobSaid({ status: "rendering" })).toBe("in line, cancel with its X");
     expect(jobSaid({ status: "ready" })).toBe("ready");
+    expect(jobSaid({ status: "ready", sent: true })).toBe("ready");
   });
 });

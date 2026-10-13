@@ -135,6 +135,30 @@ button.kit-tile-face { cursor: pointer; }
   border-radius: 50%;
   animation: kit-spin 0.9s linear infinite;
 }
+/* Its request has gone out: the spinner lights up; one still in line stays white (Kev, 2026-10-13). */
+.kit-tile[data-sent] .kit-spinner {
+  border-color: color-mix(in oklab, var(--enki-turq) 30%, transparent);
+  border-top-color: var(--enki-turq);
+  box-shadow: 0 0 10px color-mix(in oklab, var(--enki-turq) 60%, transparent);
+}
+/* Take back a render still in line: top-right, where the ✓ of a finished one goes. */
+.kit-tile-x {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid color-mix(in oklab, var(--enki-on-stage) 30%, transparent);
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--enki-stage) 70%, transparent);
+  color: var(--enki-on-stage);
+  cursor: pointer;
+}
+.kit-tile-x:hover { border-color: transparent; background: var(--enki-danger); color: var(--enki-paper); }
 .kit-tile-bang {
   box-sizing: border-box;
   display: flex;

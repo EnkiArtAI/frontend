@@ -121,8 +121,9 @@ export function againStep(setup: ImageSetup, price: JobPrice, wallet: { payer: s
   return balanceView({ ...wallet, free: false, quote: price.quote })?.short ? { funds: price.quote } : {};
 }
 
-/** A render as a screen reader hears it (the strip): "not charged" only where nothing can have been charged (render-queue `settle`). */
-export function jobSaid({ status, error }: Pick<Job<unknown>, "status" | "error">): string {
+/** A render as a screen reader hears it (the strip): in line or rendering (the colour of the spinner, Kev 2026-10-13); "not charged" only where nothing can have been charged (render-queue `settle`). */
+export function jobSaid({ status, sent, error }: Pick<Job<unknown>, "status" | "sent" | "error">): string {
+  if (status === "rendering") return sent ? status : "in line, cancel with its X";
   if (status !== "failed") return status;
   return error?.charged === "no" ? "failed, not charged" : "failed, charged only if it reached your gallery";
 }

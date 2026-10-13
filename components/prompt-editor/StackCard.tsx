@@ -44,7 +44,8 @@ export default function StackCard({ jobs, open, onToggle, acts }: {
           {j.status === "ready" && j.imageUrl && <img src={j.imageUrl} alt="" />}
         </span>
       )).reverse()}
-      <JobTile status={top.status} src={top.imageUrl} ratio={top.setup.ratio} seen={top.seen} label={`${jobs.length} images with the same values`} />
+      {/* No X here: the stack is itself a button; the tray's tiles carry it. */}
+      <JobTile status={top.status} sent={top.sent} src={top.imageUrl} ratio={top.setup.ratio} seen={top.seen} label={`${jobs.length} images with the same values`} />
       <span className="pe-stack-n">▣ {jobs.length}</span>
       {jobs.some((j) => acts.stars[j.id] !== undefined) && <span className="pe-stack-star" aria-hidden>★</span>}
     </button>

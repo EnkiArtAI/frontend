@@ -1,18 +1,23 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { X } from "lucide-react";
 import { boxRatio } from "@/lib/ui/kit/ratio";
 import { tileLook, type TileStatus } from "@/lib/ui/kit/tile";
 import "./kit-media.css";
 
 /**
  * One render in a strip, a queue or a result grid (handoff §0 Render-Queue):
- * rendering is a dark tile with a spinner; ready shows the image in a turq
- * frame until it has been seen, then a ✓; failed has a danger frame and "!".
- * The ★ sits bottom-right on every surface (plan R17).
+ * rendering is a dark tile with a spinner, white while the job waits in line
+ * and lit once its request has gone out, with an X to take it back until
+ * then (Kev, 2026-10-13); ready shows the image in a turq frame until it has
+ * been seen, then a ✓; failed has a danger frame and "!". The ★ sits
+ * bottom-right on every surface (plan R17).
  */
-export default function JobTile({ status, src, ratio, height, seen, selected, star, badge, label, onClick, children }: {
+export default function JobTile({ status, sent, src, ratio, height, seen, selected, star, badge, label, onClick, onCancel, children }: {
   status: TileStatus;
+  /** The job's request has gone out: the spinner lights up and the X goes. */
+  sent?: boolean;
   src?: string;
   /** The job's own ratio ("4:5"), held between 9:16 and 16:9. */
   ratio: string | null;
@@ -32,6 +37,8 @@ export default function JobTile({ status, src, ratio, height, seen, selected, st
   /** What the tile is, for a screen reader: "Your render, ready". */
   label: string;
   onClick?: () => void;
+  /** Takes a job still in line out of the queue; the X shows only while that is possible. */
+  onCancel?: () => void;
   /** Overlays the caller places on the tile: use values, meta, retry. */
   children?: ReactNode;
 }) {
@@ -42,13 +49,18 @@ export default function JobTile({ status, src, ratio, height, seen, selected, st
     : src ? <img src={src} alt="" loading="lazy" decoding="async" draggable={false} /> : null;
   const starTitle = star?.title ?? (star?.on ? "Remove star" : "Star");
   return (
-    <div className="kit-tile kit-focus" data-status={status} data-frame={frame} aria-busy={status === "rendering" || undefined}
-      style={height ? { width: height * r, height } : { aspectRatio: r }}>
+    <div className="kit-tile kit-focus" data-status={status} data-sent={(status === "rendering" && sent) || undefined} data-frame={frame}
+      aria-busy={status === "rendering" || undefined} style={height ? { width: height * r, height } : { aspectRatio: r }}>
       {onClick
         ? <button type="button" className="kit-tile-face" aria-label={label} aria-pressed={selected} onClick={onClick}>{face}</button>
         : <div className="kit-tile-face" role="img" aria-label={label}>{face}</div>}
       {badge === "you" && <span className="kit-tile-you" aria-hidden>YOU</span>}
       {check && <span className="kit-tile-check" aria-hidden>✓</span>}
+      {onCancel && status === "rendering" && !sent && (
+        <button type="button" className="kit-tile-x kit-hit" aria-label="Cancel this render" title="Cancel · not sent yet" onClick={onCancel}>
+          <X size={10} strokeWidth={2.6} aria-hidden />
+        </button>
+      )}
       {star?.onToggle && status === "ready" ? (
         <button type="button" className="kit-tile-star kit-hit" aria-pressed={star.on} aria-disabled={star.dimmed || undefined}
           aria-label={starTitle} title={starTitle} onClick={star.onToggle}>★</button>
