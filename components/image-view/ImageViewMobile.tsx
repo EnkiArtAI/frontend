@@ -117,9 +117,9 @@ export default function ImageViewMobile({ model: m, onClose }: { model: ImageVie
             <div className="iv-gen">
               {m.funds && <AddFundsPopover balanceUsd={m.funds.balanceUsd} totalUsd={m.funds.totalUsd} onAddFunds={openAddFunds}
                 onTryAnyway={m.tryAnyway} onClose={m.closeFunds} />}
-              <GenerateButton label={m.button.label} chip={m.chip} chipPending={m.quotePending} dimmed={m.button.dimmed} onPress={m.generate} size="block" />
+              <GenerateButton label={m.button.label} chip={m.chip} chipPending={m.quotePending} dimmed={m.button.dimmed} short={m.short} onPress={m.generate} size="block" />
             </div>
-            <CostLine left={m.cost} balance={m.balance && { ...m.balance, onAddFunds: openAddFunds }} />
+            <CostLine left={m.cost} balance={m.balance && m.short === null ? { ...m.balance, onAddFunds: openAddFunds } : null} />
           </div>
         </div>
         {active === "history" && <div className="iv-mobile-history">

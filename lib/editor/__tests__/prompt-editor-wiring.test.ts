@@ -217,7 +217,7 @@ describe("Generate and the line under it (Kev, 2026-10-13)", () => {
 
   it("a balance below the price turns Generate red with the balance on it, and its press opens Add funds; the cost line then drops its own balance", () => {
     expect(EDITOR).toContain("const short = bal?.short ? bal.text : null;");
-    expect(EDITOR).toContain("                  short,\n                  title: short === null ? undefined : \"Your balance is below the price · opens Add funds\",\n                  onPress: short === null ? () => attempt({}) : openAddFunds,");
+    expect(EDITOR).toContain("                  short,\n                  onPress: short === null ? () => attempt({}) : openAddFunds,");
     expect(EDITOR).toContain("cost={{ left: costLeft, balance: bal && short === null ? { ...bal, onAddFunds: openAddFunds } : null }}");
   });
 });

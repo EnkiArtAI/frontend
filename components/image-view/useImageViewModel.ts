@@ -41,6 +41,7 @@ import { matchVariable, parseSegments, type PromptVariable, type Segment } from 
 import type { ImageViewSeed } from "@/lib/ui/image-view/seed";
 import { againStep, makeSetup, quoteOf, toRequest, type ImageSetup, type JobPrice } from "@/lib/ui/image-view/setups";
 import { fieldsFor, initialValues, missingRequired, type Field } from "@/lib/ui/image-view/variables";
+import { openAddFunds } from "@/lib/ui/kit/controls";
 import { formatAgo } from "@/lib/ui/kit/format";
 import { balanceView, chipLabel } from "@/lib/ui/kit/price";
 import { leaveSummary, quotaText, type Job } from "@/lib/ui/kit/render-queue";
@@ -200,9 +201,11 @@ export interface ImageViewModel {
   chip: string | null;
   /** Dimmed still takes the press, which says what is missing. */
   button: { label: string; dimmed: boolean };
-  /** The line under Generate. */
-  cost: string;
+  /** The line under Generate; nothing for a paid render, whose price is on the button. */
+  cost: string | null;
   balance: { text: string; short: boolean } | null;
+  /** The balance while it is below the price: Generate turns red, carries it, and its press opens Add funds (Kev, 2026-10-13). */
+  short: string | null;
   generate: () => void;
   /** Open while a paid render waits on the low-balance question. */
   funds: { balanceUsd: number; totalUsd: string } | null;
@@ -409,8 +412,11 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
     else runBatch([job]);
   };
   const [funds, setFunds] = useState<{ balanceUsd: number; totalUsd: string; go: () => void } | null>(null);
+  const short = balance?.short ? balance.text : null;
   const generate = () => {
     if (guest) return openLogin();
+    // Red button: the balance is below the price, so the press goes to Add funds (Kev, 2026-10-13).
+    if (short !== null) return openAddFunds();
     if (gate.why) {
       notify(gate.why);
       if (gate.field) focusField(gate.field.key);
@@ -419,22 +425,16 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
     const job = makeSetup(composer);
     if (!job) return;
     if (tooLargeToSend(toRequest(job))) return notify(REFS_TOO_LARGE, { tone: "error" });
-    const go = () => start(job);
-    if (balance?.short && quote.quote) return setFunds({ balanceUsd: holdings.balance, totalUsd: quote.quote.totalUsd, go });
-    go();
+    start(job);
   };
 
+  // A paid render says nothing under the button: its price is on it (Kev, 2026-10-13).
   const cost = (() => {
     if (guest) return "Sign in to see the price";
     if (!entry) return "Pick a generator";
+    if (!entry.free) return null;
     const yours = blank ? "" : "Open prompt · ";
-    if (entry.free) return queue.freeQuota?.exhausted ? "Your daily free image is used. Pick a paid generator to continue." : queue.note ? `${quotaText(queue.note)} · pick another generator to keep going` : queue.freeQuota ? `${yours}${entry.name} · ${queue.freeQuota.remaining} daily free image available` : "Checking your daily free image allowance…";
-    const q = quote.quote;
-    const head = premium
-      ? q && Number(q.artistUsd) > 0 ? `$${q.artistUsd} of this goes to ${artistHandle ? `@${artistHandle}` : "the artist"}` : "Payment reserved; unused images refunded"
-      : `${yours}${entry.name} ${resolution}${setup?.boost ? " · Boost" : ""} per image`;
-    const fee = q && Number(q.networkFeeUsd) > 0 ? `incl. $${q.networkFeeUsd} network fee` : null;
-    return [head, fee, q?.appliedRule?.name].filter(Boolean).join(" · ");
+    return queue.freeQuota?.exhausted ? "Your daily free image is used. Pick a paid generator to continue." : queue.note ? `${quotaText(queue.note)} · pick another generator to keep going` : queue.freeQuota ? `${yours}${entry.name} · ${queue.freeQuota.remaining} daily free image available` : "Checking your daily free image allowance…";
   })();
 
   /** A job's values back into the fields (only growing them); with `settings`, its generator and settings too (Regenerate). */
@@ -675,6 +675,7 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
     button: { label: gate.label, dimmed: gate.why !== null },
     cost,
     balance,
+    short,
     generate,
     funds: funds && { balanceUsd: funds.balanceUsd, totalUsd: funds.totalUsd },
     tryAnyway: () => funds?.go(),

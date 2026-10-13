@@ -87,7 +87,21 @@ describe("Regenerate and Retry (spec-imageview-mobile D10, plan R29)", () => {
 describe("the stage", () => {
   it("keeps its image when a new job goes in front, and shows the first one when there was none (handoff §0)", () => {
     expect(MODEL).toMatch(/const start = \(job: ImageSetup, retried\?: string\) => \{\n\s+setSelected\(\(k\) => k \?\? main\?\.key \?\? null\);/);
-    expect(MODEL).toMatch(/const go = \(\) => start\(job\);\n\s+if \(balance\?\.short && quote\.quote\) return setFunds\(\{ balanceUsd: holdings\.balance, totalUsd: quote\.quote\.totalUsd, go \}\);\n\s+go\(\);/);
+    expect(MODEL).toMatch(/if \(tooLargeToSend\(toRequest\(job\)\)\) return notify\(REFS_TOO_LARGE, \{ tone: "error" \}\);\n\s+start\(job\);\n\s+\};/);
+  });
+});
+
+describe("a short balance (Kev, 2026-10-13)", () => {
+  it("never reaches the checks or a job: the red button's press is Add funds, and a paid render says nothing under the button", () => {
+    expect(MODEL).toContain("const short = balance?.short ? balance.text : null;");
+    expect(MODEL).toMatch(/if \(guest\) return openLogin\(\);\n\s*if \(short !== null\) return openAddFunds\(\);\n\s+if \(gate\.why\) \{/);
+    expect(MODEL).toContain("    if (!entry.free) return null;");
+    expect(MODEL).not.toContain("Payment reserved");
+    for (const view of ["ImageViewDesktop.tsx", "ImageViewMobile.tsx"]) {
+      const text = readSource(join(__dirname, "..", "..", "..", "..", "components", "image-view", view));
+      expect(text, view).toContain("short={m.short}");
+      expect(text, view).toContain("balance={m.balance && m.short === null ? { ...m.balance, onAddFunds: openAddFunds } : null}");
+    }
   });
 });
 

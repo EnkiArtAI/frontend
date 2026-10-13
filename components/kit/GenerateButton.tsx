@@ -9,7 +9,7 @@ import "./kit-controls.css";
  * reaches the surface, which explains what is missing (R11). A second press
  * within 350 ms is dropped, so a double click never pays twice.
  */
-export default function GenerateButton({ label, chip, chipPending = false, dimmed, onPress, size, short = null, title }: {
+export default function GenerateButton({ label, chip, chipPending = false, dimmed, onPress, size, short = null }: {
   label: string;
   /** "$0.147", "$0.00", or null for no chip. */
   chip: string | null;
@@ -23,7 +23,6 @@ export default function GenerateButton({ label, chip, chipPending = false, dimme
       and shows it beside the price; the surface makes the press open Add
       funds (Kev, 2026-10-13). Null otherwise. */
   short?: string | null;
-  title?: string;
 }) {
   const last = useRef<number | null>(null);
   const press = (e: MouseEvent) => {
@@ -33,7 +32,7 @@ export default function GenerateButton({ label, chip, chipPending = false, dimme
   };
   return (
     <button type="button" className={`kit-gen kit-gen--${size} kit-hit kit-focus`} aria-disabled={dimmed || undefined}
-      data-short={short !== null || undefined} title={title} onClick={press}>
+      data-short={short !== null || undefined} title={short === null ? undefined : "Your balance is below the price · opens Add funds"} onClick={press}>
       {label}
       {(chip !== null || chipPending) && (
         <span className="kit-gen-chip" data-pending={chipPending || undefined}>

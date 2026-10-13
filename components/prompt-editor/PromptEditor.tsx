@@ -547,7 +547,6 @@ export default function PromptEditor({ promptId, onReleased }: {
                   chipPending: pending,
                   dimmed: !!block?.toast,
                   short,
-                  title: short === null ? undefined : "Your balance is below the price · opens Add funds",
                   onPress: short === null ? () => attempt({}) : openAddFunds,
                   size: tabs ? "block" : "bar",
                 }}

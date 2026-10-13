@@ -39,9 +39,10 @@ describe("GenerateButton", () => {
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 
-  it("a short balance marks the button and puts the balance beside the price in the chip (Kev, 2026-10-13)", () => {
+  it("a short balance marks the button, says what the press now does, and puts the balance beside the price in the chip (Kev, 2026-10-13)", () => {
     const { button } = mount(false, "$0.00");
     expect(button.props["data-short"]).toBe(true);
+    expect(button.props.title).toBe("Your balance is below the price · opens Add funds");
     const chip = button.props.children[1];
     expect(chip.props.className).toBe("kit-gen-chip");
     expect(chip.props.children[0]).toMatchObject({ props: { className: "kit-gen-short", children: ["Balance ", "$0.00"] } });
@@ -51,6 +52,7 @@ describe("GenerateButton", () => {
   it("with the balance in order the chip is the price alone and nothing marks the button", () => {
     const { button } = mount(false);
     expect(button.props["data-short"]).toBeUndefined();
+    expect(button.props.title).toBeUndefined();
     expect(button.props.children[1].props.children).toEqual([false, "$0.147"]);
   });
 });
