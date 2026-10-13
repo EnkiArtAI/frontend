@@ -31,7 +31,7 @@ export default function PromptPanel({ model: m }: { model: ImageViewModel }) {
   return (
     <section className="iv-prompt">
       <div className="iv-sec-head">
-        <span className="iv-label">{m.blank ? "Prompt" : filled ? "Prompt · free · filled" : "Prompt · free"}</span>
+        <span className="iv-label">{filled ? "Prompt · filled" : "Prompt"}</span>
         <span className="iv-sec-tools">
           {m.segments?.some((s) => s.kind === "var") && (
             <span className="iv-tv">
@@ -193,7 +193,7 @@ function Locked({ model: m }: { model: ImageViewModel }) {
   if (m.textMissing) {
     return (
       <section className="iv-prompt">
-        <span className="iv-label">Prompt · free</span>
+        <span className="iv-label">Prompt</span>
         <p className="iv-note">The prompt text could not load. Try again later.</p>
       </section>
     );
