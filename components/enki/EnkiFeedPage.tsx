@@ -9,6 +9,7 @@ import MasonryGrid from "@/components/enki/MasonryGrid";
 import GenerateLauncher from "@/components/GenerateLauncher";
 import EnkiDetailPanel from "@/components/enki/EnkiDetailPanel";
 import { seedFromFeedCard, toFeedCard, type FeedCard as Card } from "@/lib/ui/feed/card";
+import { linkedPrompt } from "@/lib/ui/image-view/open-link";
 import { useModelCatalogue } from "@/hooks/useModelLimits";
 import { useBookmarkIndex } from "@/hooks/useBookmarkIndex";
 import { toModelFamily } from "@/lib/generation/model-family";
@@ -58,6 +59,11 @@ export default function EnkiFeedPage() {
     return [...branch("Image", "image"), ...branch("Video", "video")];
   }, [catalogue]);
   const [open, setOpen] = useState<Card | null>(null);
+  /* Arriving with ?prompt=<id> (a reload on an open image, Kev 2026-10-13)
+     opens that prompt's view again; it reads the prompt itself, like
+     /generator/[id]. Read once: while a view is open the address is its own
+     (EnkiDetailPanel writes it), whoever opened the view. */
+  const [linked, setLinked] = useState<string | null>(() => linkedPrompt(searchParams));
   /* Cards whose prompt the server refused on open: gone for the visit
      (the feed lists rows the detail route no longer serves). */
   const [gone, setGone] = useState<ReadonlySet<string>>(() => new Set());
@@ -210,10 +216,13 @@ export default function EnkiFeedPage() {
   };
   const closeCard = () => {
     // The view's own read of the prompt answered 404: drop the card for the visit.
-    const read = open && queryClient.getQueryState([`/api/prompts/${open.id}`]);
-    if (open && read?.status === "error" && /^404\b/.test(read.error?.message ?? "")) setGone((g) => new Set(g).add(open.id));
+    const id = open?.id ?? linked;
+    const read = id ? queryClient.getQueryState([`/api/prompts/${id}`]) : undefined;
+    if (id && read?.status === "error" && /^404\b/.test(read.error?.message ?? "")) setGone((g) => new Set(g).add(id));
     setOpen(null);
+    setLinked(null);
   };
+  const seed = open ? seedFromFeedCard(open) : linked ? { promptId: linked } : null;
 
   const renderCard = (card: Card) => (
     <FeedCard ref={observeCard} card={card} onOpen={openCard} canBookmark={authed} saved={index?.get(card.id)} />
@@ -281,8 +290,8 @@ export default function EnkiFeedPage() {
       {/* Clicking a card opens the canonical image view — the same one the
           /generator route and the profile grid open. EnkiDetailPanel is the
           frame that already knows to start where the shell's menu ends. */}
-      {open && (
-        <EnkiDetailPanel seed={seedFromFeedCard(open)} onClose={closeCard} />
+      {seed && (
+        <EnkiDetailPanel seed={seed} onClose={closeCard} />
       )}
     </>
   );

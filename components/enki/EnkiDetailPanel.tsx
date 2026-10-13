@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import dynamic from "next/dynamic";
+import { promptLink } from "@/lib/ui/image-view/open-link";
 import type { ImageViewSeed } from "@/lib/ui/image-view/seed";
 // The frame and its spinner are styled before the view's chunk arrives.
 import "@/components/image-view/image-view-frame.css";
@@ -44,6 +45,17 @@ export default function EnkiDetailPanel({ seed, onClose }: { seed: ImageViewSeed
       window.scrollTo({ top: scrollY, behavior: "auto" });
     };
   }, []);
+
+  /* A reload stays on this image (Kev, 2026-10-13): while a prompt's view is
+     open its id is in the address (?prompt=<id>), put there without a
+     navigation, and the feed opens it again on arrival. The blank composer
+     has no prompt and leaves the address alone. */
+  useEffect(() => {
+    if (id === "blank") return;
+    const write = (to: string | null) => window.history.replaceState(null, "", promptLink(window.location.href, to));
+    write(id);
+    return () => write(null);
+  }, [id]);
 
   /* Hidden-but-mounted: a sidebar menu (leaderboard, settings ...) opened
      over this view HIDES it instead of closing it, so Home can bring back
