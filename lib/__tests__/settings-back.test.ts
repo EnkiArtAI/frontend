@@ -8,11 +8,13 @@ import { readSource } from "./_read-source";
 const src = (...p: string[]) => readSource(join(__dirname, "..", "..", ...p));
 
 describe("Settings' Back", () => {
-  it("is the first thing in the layout and sticks to the top left", () => {
+  it("sits in the free space left of the column, against it, and sticks while the page scrolls; above the column where there is no space", () => {
     const layout = src("components", "settings", "SettingsLayout.tsx");
-    expect(layout).toMatch(/<div className="set-container">\n\s+<button type="button" className="set-back" onClick=\{onBack\}>/);
+    expect(layout).toMatch(/<div className="set-page">\n\s+<button type="button" className="set-back" onClick=\{onBack\}>[\s\S]*?<\/button>\n\s+<div className="set-container">/);
     const css = src("components", "settings", "settings.css");
-    expect(css).toMatch(/\.set-back \{\n\s+position: sticky;\n\s+top: 12px;/);
+    expect(css).toMatch(/\.set-page \{\n\s+display: grid;\n\s+grid-template-columns: minmax\(0, 1fr\) minmax\(0, 760px\) minmax\(0, 1fr\);/);
+    expect(css).toMatch(/\.set-back \{\n\s+grid-column: 1;\n\s+justify-self: end;\n\s+position: sticky;\n\s+top: 12px;/);
+    expect(css).toMatch(/@media \(max-width: 959\.98px\) \{\n\s+\.set-page \{ display: block; \}\n\s+\.set-back \{ margin: 12px 0 -18px 16px; \}/);
   });
 
   it("closes the shell's panel, or leaves standalone /settings for the page before", () => {

@@ -14,10 +14,10 @@ interface SettingsLayoutProps {
 export default function SettingsLayout({ children, breadcrumbs, title, description, onBack }: SettingsLayoutProps) {
   return (
     <div className="set-page">
+      <button type="button" className="set-back" onClick={onBack}>
+        <ChevronLeft size={13} strokeWidth={2.4} aria-hidden />Back
+      </button>
       <div className="set-container">
-        <button type="button" className="set-back" onClick={onBack}>
-          <ChevronLeft size={13} strokeWidth={2.4} aria-hidden />Back
-        </button>
         <div className="set-breadcrumbs">{breadcrumbs}</div>
         <h1 className="set-title">{title}</h1>
         {/* Always rendered so the reserved min-height keeps the tab menu fixed. */}
