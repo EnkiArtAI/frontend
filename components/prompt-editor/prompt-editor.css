@@ -73,7 +73,7 @@
 /* Back and the title: from 1024 px exactly the Craft column's width (the
    head's left padding taken off), so the steps start at the Verify column's
    edge (Kev, 2026-10-13: "nach links, an die linke Kante der rechten Sektion"). */
-.pe-head-left { display: flex; flex: 1 1 auto; align-items: center; gap: 18px; min-width: 0; }
+.pe-head-left { display: flex; flex: 1 1 auto; align-items: center; gap: 28px; min-width: 0; }
 .pe-steps { display: flex; flex: 0 0 auto; align-self: flex-end; }
 @media (min-width: 1024px) {
   .pe-head-left { flex: 0 0 calc(var(--pe-split, 520px) - 24px); }
