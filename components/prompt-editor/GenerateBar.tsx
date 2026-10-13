@@ -24,6 +24,7 @@ type Quotes = Array<GenerationQuote | null>;
  */
 export default function GenerateBar({ live, models, testId, primaryId, onTest, core, picks, onPicks, prices, vary, generate, cost, children }: {
   live: ReactNode;
+  /** The generators on offer (GeneratorRow's picks): the test generator is one of them. */
   models: CatalogueEntry[];
   testId: string | null;
   primaryId: string | null;
@@ -66,6 +67,7 @@ export default function GenerateBar({ live, models, testId, primaryId, onTest, c
       <div className="pe-bar-row">
         <GeneratorPill models={models} value={testId} onChange={onTest} prices={prices.models}
           tags={primaryId ? { [primaryId]: "primary" } : undefined} look="logo" direction="up"
+          placeholder={models.length ? "Pick a generator" : "Pick generators above"} disabled={!models.length}
           title="Test generator" hint="Renders your test images · the price follows it" />
         <RatioPill core={core} value={picks.ratio} onChange={(ratio) => onPicks({ ratio })} />
         <ResolutionPill core={core} value={picks.resolution} onChange={(resolution) => onPicks({ resolution })} prices={prices.tiers} />

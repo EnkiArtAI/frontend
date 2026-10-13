@@ -60,10 +60,13 @@ export type EditorAction =
 
 const EMPTY: EditorDoc = { prompt: "", vars: {}, kinds: {}, aiNames: [], refIds: [] };
 
+/** A draft saved before the generator multi-select has no modelIds: its primary is the one on offer. */
+const withModels = (l: Listing): Listing => (Array.isArray(l.modelIds) ? l : { ...l, modelIds: l.primaryId ? [l.primaryId] : [] });
+
 /** A new prompt: nothing picked (no generator is ever preselected), Premium at the default price. */
 export const initialEditor = (): EditorState => ({
   history: startHistory(EMPTY),
-  listing: { title: "", mode: "premium", price: DEFAULT_PROMPT_PRICE_USD, category: null, primaryId: null, testId: null },
+  listing: { title: "", mode: "premium", price: DEFAULT_PROMPT_PRICE_USD, category: null, modelIds: [], primaryId: null, testId: null },
   picks: { ratio: "4:5", resolution: "2K", quality: "medium", boost: false },
   stars: {},
   order: [],
@@ -113,7 +116,7 @@ export function editorReducer(s: EditorState, a: EditorAction): EditorState {
       const restored = !d ? next : {
         ...next,
         history: startHistory(d.doc),
-        listing: { ...s.listing, ...d.listing },
+        listing: withModels({ ...s.listing, ...d.listing }),
         picks: { ...s.picks, ...d.picks },
         stars: d.stars ?? {},
         order: d.order ?? [],

@@ -193,9 +193,11 @@
 }
 .pe-listing { --kit-pill-h: 32px; }
 .pe-gen-row { --kit-pill-h: 30px; gap: 8px; }
-.pe-primary .kit-pill:has(.kit-unset) { border-color: var(--enki-ember); }
-.pe-category,
-.pe-primary { display: contents; }
+/* The generators on offer: toggles, the primary (first picked) with a dot. */
+.pe-gens { display: flex; flex-wrap: wrap; gap: 6px; }
+.pe-gen[aria-checked="true"] { border-color: var(--enki-ink); background: var(--enki-ink); color: var(--enki-paper); }
+.pe-gen-sub { font: 400 11px/1 var(--font-mono), monospace; opacity: 0.7; }
+.pe-category { display: contents; }
 .pe-unset { color: var(--enki-ink-3); }
 .pe-note,
 .pe-hint { font-size: 11.5px; color: var(--enki-ink-3); }

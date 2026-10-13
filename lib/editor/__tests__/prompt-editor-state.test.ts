@@ -21,7 +21,7 @@ const loaded: LoadedPrompt = {
   id: "p1",
   doc: doc("a [subject] by Reference image 1", { vars: { subject: "fox" }, refIds: ["https://x/1.webp"] }),
   refs: { "https://x/1.webp": { data: null, stored: "https://x/1.webp", state: "loading" } },
-  listing: { title: "Fox", mode: "free", price: 0.07, category: "Portrait", primaryId: "m1", testId: null },
+  listing: { title: "Fox", mode: "free", price: 0.07, category: "Portrait", modelIds: ["m1"], primaryId: "m1", testId: null },
   picks: { ratio: "16:9" },
   saved: { content: "", variables: [], referenceImages: [], uploadedPhotos: [], aspectRatio: "16:9", resolution: null },
 };
@@ -58,7 +58,7 @@ describe("✓ Released", () => {
     };
     const primary: CatalogueEntry = { id: "m", name: "M", price: 0.1, mediaType: "image", supportsQuality: false, maxResolution: "2K", ratios: ["1:1"], free: false };
     const send = (st: EditorState) => {
-      const r = releaseBody({ listing: { ...st.listing, title: "Fox", category: "Animals", mode: "free" }, primary, starred: [cover], refs: st.refs });
+      const r = releaseBody({ listing: { ...st.listing, title: "Fox", category: "Animals", mode: "free" }, primary, starred: [cover], refs: st.refs, catalogue: [primary] });
       if (!("body" in r)) throw new Error(r.error);
       return r;
     };

@@ -29,6 +29,7 @@ import { useViewerWallets } from "@/hooks/useViewerWallets";
 import type { GenerationQuote, QuoteRequest } from "@/lib/generation-checkout";
 import { tiersUpTo, type ResolutionTier } from "@/lib/generation/resolution";
 import type { VariableRange } from "@/lib/editor/selection-variable";
+import { offeredModels } from "@/lib/offered-models";
 import { openLogin } from "@/lib/openLogin";
 import { REFS_TOO_LARGE, tooLargeToSend } from "@/lib/request-size";
 import { sessionAuthHeaders, viewerHeaders } from "@/lib/session-headers";
@@ -51,6 +52,8 @@ interface PromptRecord {
   prompt_type?: string | null;
   is_free_showcase?: boolean | null;
   ai_model?: string | null;
+  /** The prompt's other settings; `models` names the generators on offer (lib/offered-models). */
+  ai_settings?: unknown;
   aspect_ratio?: string | null;
   resolution?: string | null;
   creator_id?: string | null;
@@ -303,8 +306,10 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
 
   const catalogue = useModelCatalogue();
   const [pick, setPick] = useState("");
-  const models = modelOptions(catalogue, premium);
-  const modelName = defaultModel({ catalogue, pick, aiModel: prompt?.ai_model, premium });
+  // The generators the artist put on offer (the editor's multi-select); every one before that list existed.
+  const offered = offeredModels(prompt?.ai_settings);
+  const models = modelOptions(catalogue, premium, offered);
+  const modelName = defaultModel({ catalogue, pick, aiModel: prompt?.ai_model, premium, offered });
   const core = useGenerationCore(modelName || undefined);
   const entry = core.entry;
   const [ratioPick, setRatio] = useState("");

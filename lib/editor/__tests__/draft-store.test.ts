@@ -15,7 +15,7 @@ function fake() {
 
 const draft: Draft = {
   doc: { prompt: "a [x]", vars: { x: "1" }, kinds: {}, aiNames: [], refIds: ["r1"] },
-  listing: { title: "T", mode: "free", price: 0.07, category: null, primaryId: null, testId: null },
+  listing: { title: "T", mode: "free", price: 0.07, category: null, modelIds: [], primaryId: null, testId: null },
   picks: { ratio: "4:5", resolution: "2K", boost: false },
   stars: { j1: 5 },
   order: ["a [x]"],

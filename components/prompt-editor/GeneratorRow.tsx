@@ -1,29 +1,45 @@
 "use client";
 
-import GeneratorPill from "@/components/kit/GeneratorPill";
+import GeneratorLogo from "@/components/generation/GeneratorLogo";
+import { quoteLabel } from "@/hooks/useServerQuotes";
 import type { CatalogueEntry } from "@/hooks/useModelLimits";
 import type { GenerationQuote } from "@/lib/generation-checkout";
 
 /**
- * The generator the prompt is made for, saved as its aiModel. A prompt stores
- * one, and buyers may switch to any image generator, so there is no "also"
- * list to tick (plan §5 item 1): one grey line says so.
+ * The generators the prompt offers, as toggles (Kev, 2026-10-13: "this must
+ * be a multi-auswahl"): the first picked is the primary, saved as the prompt's
+ * aiModel and where buyers start; the whole list goes out as aiModels. Only
+ * these show in the test bar below and in the buyer's picker. Each chip
+ * carries the server's price at the current settings, "$0.00" on the free host.
  */
-export default function GeneratorRow({ models, value, prices, onPick }: {
+export default function GeneratorRow({ models, selected, prices, onToggle }: {
   models: CatalogueEntry[];
-  value: string | null;
+  /** Catalogue ids in the order picked (listing.modelIds). */
+  selected: string[];
   /** Server quotes at the current settings, aligned with `models`. */
   prices: Array<GenerationQuote | null>;
-  onPick: (id: string) => void;
+  onToggle: (id: string) => void;
 }) {
   return (
     <div className="pe-row pe-gen-row">
-      <span className="kit-label">Gen<span className="pe-wide-only">erator</span></span>
-      <span className="pe-primary">
-        <GeneratorPill models={models} value={value} onChange={onPick} prices={prices} look="named" direction="down"
-          title="Primary generator" hint="Saved with your prompt · buyers start with it" />
+      <span className="kit-label">Gen<span className="pe-wide-only">erators</span></span>
+      <span className="pe-gens" role="group" aria-label="Generators on offer">
+        {models.map((m, i) => {
+          const on = selected.includes(m.id);
+          const primary = selected[0] === m.id;
+          return (
+            <button key={m.id} type="button" role="checkbox" aria-checked={on} className="kit-pill kit-hit pe-gen" data-primary={primary || undefined}
+              title={primary ? `${m.name} · primary: buyers start with it` : on ? `${m.name} · on offer` : `${m.name} · not on offer`}
+              onClick={() => onToggle(m.id)}>
+              {primary && <span className="kit-dot" aria-hidden />}
+              <GeneratorLogo name={m.name} size={15} />
+              {m.name}
+              <span className="pe-gen-sub">{m.free ? "$0.00" : quoteLabel(prices[i]) ?? "…"}</span>
+            </button>
+          );
+        })}
       </span>
-      <span className="pe-note">people can switch to any generator</span>
+      <span className="pe-note">{selected.length ? "buyers pick from these · the first is where they start" : "pick the generators buyers may use"}</span>
     </div>
   );
 }

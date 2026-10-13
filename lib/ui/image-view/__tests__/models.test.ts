@@ -58,9 +58,31 @@ describe("defaultModel", () => {
     expect(pick({ aiModel: undefined, premium: false })).toBe("Nano Banana Pro");
   });
 
-  it("preselects nothing when the catalogue has no Nano Banana Pro either", () => {
-    expect(pick({ catalogue: [FLUX, GPT], aiModel: "Midjourney" })).toBe("");
-    expect(pick({ catalogue: [FLUX, GPT], aiModel: undefined, premium: false })).toBe("");
+  it("falls back to the first generator on offer when Nano Banana Pro is not among them, and to none without any", () => {
+    expect(pick({ catalogue: [FLUX, GPT], aiModel: "Midjourney" })).toBe("GPT-Image-2");
+    expect(pick({ catalogue: [FLUX, GPT], aiModel: undefined, premium: false })).toBe("Flux (free)");
+    expect(pick({ catalogue: [FLUX, VIDEO], aiModel: "Midjourney" })).toBe("");
+  });
+
+  it("keeps to the prompt's own list of generators (ai_settings.models)", () => {
+    expect(pick({ offered: ["GPT-Image-2"] })).toBe("GPT-Image-2"); // the own model, NBP, is not on offer
+    expect(pick({ offered: ["GPT-Image-2", "Nano Banana Pro"] })).toBe("Nano Banana Pro");
+    expect(pick({ aiModel: "Midjourney", offered: ["GPT-Image-2"] })).toBe("GPT-Image-2");
+    expect(pick({ pick: "Flux (free)", offered: ["GPT-Image-2"] })).toBe("Flux (free)"); // the buyer's pick stands
+  });
+});
+
+describe("modelOptions with the prompt's own list", () => {
+  it("offers only the named generators, in catalogue order, never the free host on a premium prompt", () => {
+    expect(modelOptions(CATALOGUE, true, ["GPT-Image-2", "Nano Banana Pro"])).toEqual([NBP, GPT]);
+    expect(modelOptions(CATALOGUE, true, ["Flux (free)", "GPT-Image-2"])).toEqual([GPT]);
+    expect(modelOptions(CATALOGUE, false, ["Flux (free)"])).toEqual([FLUX]);
+  });
+
+  it("offers every generator when the list is empty or names none the catalogue has", () => {
+    expect(modelOptions(CATALOGUE, true, [])).toEqual([NBP, GPT]);
+    expect(modelOptions(CATALOGUE, true, ["Midjourney"])).toEqual([NBP, GPT]);
+    expect(modelOptions(CATALOGUE, true, ["Flux (free)"])).toEqual([NBP, GPT]);
   });
 });
 

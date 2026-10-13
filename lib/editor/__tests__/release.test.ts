@@ -22,7 +22,9 @@ const starred: J[] = [
   job("s3", setup({ subject: "elk", light: "noon" })),
   job("s4", setup({ subject: "cat", light: "night" })),
 ];
-const listing: Listing = { title: "  Dusk portrait ", mode: "premium", price: 0.4, category: "Portrait", primaryId: "m-pro", testId: null };
+const gpt: CatalogueEntry = { ...primary, id: "m-gpt", name: "GPT Image" };
+const catalogue = [primary, gpt];
+const listing: Listing = { title: "  Dusk portrait ", mode: "premium", price: 0.4, category: "Portrait", modelIds: ["m-pro"], primaryId: "m-pro", testId: null };
 const refs: RefStore = {
   new: { data: "data:image/webp;base64,NEW", stored: null, state: "ready" },
   kept: { data: "data:image/webp;base64,OLD", stored: "https://blob/kept.webp", state: "ready" },
@@ -100,7 +102,7 @@ describe("releaseBlock", () => {
 
 describe("releaseBody", () => {
   const body = (o: Partial<Parameters<typeof releaseBody>[0]> = {}) => {
-    const r = releaseBody({ listing, primary, starred, refs, ...o });
+    const r = releaseBody({ listing, primary, starred, refs, catalogue, ...o });
     if (!("body" in r)) throw new Error(r.error);
     return r.body;
   };
@@ -112,6 +114,7 @@ describe("releaseBody", () => {
       content: "a [subject] in [light] by Reference image 1",
       promptType: "premium-prompt",
       aiModel: "Nano Banana Pro",
+      aiModels: ["Nano Banana Pro"],
       category: "Portrait",
       price: 0.4,
       variables: [
@@ -126,9 +129,14 @@ describe("releaseBody", () => {
   });
 
   it("names the cover's references it sends, in its order", () => {
-    const r = releaseBody({ listing, primary, starred: [job("s1", setup({ subject: "fox", light: "dusk" }, { refIds: ["kept"] })), ...starred.slice(1)], refs });
+    const r = releaseBody({ listing, primary, starred: [job("s1", setup({ subject: "fox", light: "dusk" }, { refIds: ["kept"] })), ...starred.slice(1)], refs, catalogue });
     expect(r).toMatchObject({ refIds: ["kept"], body: { referenceImages: ["https://blob/kept.webp"] } });
-    expect(releaseBody({ listing, primary, starred, refs })).toMatchObject({ refIds: ["new", "kept"] });
+    expect(releaseBody({ listing, primary, starred, refs, catalogue })).toMatchObject({ refIds: ["new", "kept"] });
+  });
+
+  it("names every generator on offer, the primary first, by catalogue name; an id the catalogue lost is dropped", () => {
+    expect(body({ listing: { ...listing, modelIds: ["m-gpt", "m-pro"], primaryId: "m-gpt" }, primary: gpt }).aiModels).toEqual(["GPT Image", "Nano Banana Pro"]);
+    expect(body({ listing: { ...listing, modelIds: ["m-pro", "m-gone", "m-gpt"] } }).aiModels).toEqual(["Nano Banana Pro", "GPT Image"]);
   });
 
   it("names the prompt to update, and sends no id on the first release", () => {
@@ -150,8 +158,8 @@ describe("releaseBody", () => {
 
   it("refuses a body too large to arrive, and a reference that is gone", () => {
     const huge = { ...refs, new: { data: `data:image/webp;base64,${"A".repeat(4_000_000)}`, stored: null, state: "ready" as const } };
-    expect(releaseBody({ listing, primary, starred, refs: huge })).toEqual({ error: SAVE_TOO_LARGE });
-    expect(releaseBody({ listing, primary, starred, refs: { kept: refs.kept } })).toEqual({
+    expect(releaseBody({ listing, primary, starred, refs: huge, catalogue })).toEqual({ error: SAVE_TOO_LARGE });
+    expect(releaseBody({ listing, primary, starred, refs: { kept: refs.kept }, catalogue })).toEqual({
       error: "A reference image of the starred render is gone · upload it again and render once more",
     });
   });
@@ -196,7 +204,6 @@ describe("listing-only update", () => {
     // A stored generator the catalogue did not know, picked now, is new too.
     expect(only({ primaryId: "m-pro" }, { ...loaded, listing: { ...loaded.listing, primaryId: null } })).toBe(false);
     // So Release asks for stars, and then for stars from the new generator.
-    const gpt = { ...primary, id: "m-gpt", name: "GPT Image" };
     const changed = { ...loaded.listing, primaryId: "m-gpt" };
     const verdict = (starredNow: J[]) => releaseBlock({
       listing: changed, primary: gpt, starred: starredNow, busy: false,
@@ -228,8 +235,9 @@ describe("listing-only update", () => {
       aspectRatio: "3:2",
       resolution: null,
     };
-    expect(updateBody({ listing: { ...listing, mode: "free" }, primary, saved, id: "pid" })).toEqual({
-      release: true, id: "pid", title: "Dusk portrait", promptType: "free-prompt", aiModel: "Nano Banana Pro", category: "Portrait", price: 0, ...saved,
+    expect(updateBody({ listing: { ...listing, mode: "free", modelIds: ["m-pro", "m-gpt"] }, primary, saved, id: "pid", catalogue })).toEqual({
+      release: true, id: "pid", title: "Dusk portrait", promptType: "free-prompt", aiModel: "Nano Banana Pro", aiModels: ["Nano Banana Pro", "GPT Image"],
+      category: "Portrait", price: 0, ...saved,
     });
   });
 });

@@ -12,7 +12,7 @@ import PillMenu from "./PillMenu";
  * name. Each row carries the server's price at the current settings, "$0.00"
  * on the free host (never the word "free", R30), or its tag instead.
  */
-export default function GeneratorPill({ models, value, onChange, prices, tags, look, placeholder = "Pick a generator", direction, title = "Generator", hint }: {
+export default function GeneratorPill({ models, value, onChange, prices, tags, look, placeholder = "Pick a generator", direction, title = "Generator", hint, disabled }: {
   models: CatalogueEntry[];
   value: string | null;
   onChange: (id: string) => void;
@@ -26,6 +26,8 @@ export default function GeneratorPill({ models, value, onChange, prices, tags, l
   /** The menu's heading, for a surface with two pickers ("Primary generator", "Test generator"). */
   title?: string;
   hint?: string;
+  /** Nothing to pick from yet (the editor before any generator is on offer). */
+  disabled?: boolean;
 }) {
   const entry = models.find((m) => m.id === value);
   return (
@@ -45,6 +47,7 @@ export default function GeneratorPill({ models, value, onChange, prices, tags, l
       value={value}
       onPick={onChange}
       direction={direction}
+      disabled={disabled}
     />
   );
 }

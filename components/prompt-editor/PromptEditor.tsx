@@ -86,7 +86,10 @@ const onResize = (on: () => void) => {
   return () => window.removeEventListener("resize", on);
 };
 const sameListing = (a: Listing, b: Listing) =>
-  a.title === b.title && a.mode === b.mode && a.price === b.price && a.category === b.category && a.primaryId === b.primaryId;
+  a.title === b.title && a.mode === b.mode && a.price === b.price && a.category === b.category && a.primaryId === b.primaryId
+  && a.modelIds.join() === b.modelIds.join();
+/** The first generator chip: where "pick a generator" sends the focus. */
+const GEN_CHIP = ".pe-gen-row [role=checkbox]";
 const fieldOf = (name: string, field: "name" | "value") => `[data-pe-name="${CSS.escape(name)}"] [data-pe-field="${field}"]`;
 
 export default function PromptEditor({ promptId, onReleased }: {
@@ -109,6 +112,8 @@ export default function PromptEditor({ promptId, onReleased }: {
   const core = useGenerationCore(listing.testId ?? listing.primaryId ?? undefined);
   const { catalogue } = core;
   const models = useMemo(() => catalogue.filter((m) => m.mediaType === "image"), [catalogue]);
+  // What the test bar offers: the generators picked above, in catalogue order.
+  const offered = models.filter((m) => listing.modelIds.includes(m.id));
   const test = core.entry;
   const primary = catalogue.find((m) => m.id === listing.primaryId);
   const { accept } = useModelLimits(test?.id);
@@ -199,7 +204,7 @@ export default function PromptEditor({ promptId, onReleased }: {
     if (b.toast) notify(b.toast);
     if (b.focus) focus(fieldOf(b.focus.variable, b.check === "values" ? "value" : "name"));
     if (b.open === "login") openLogin();
-    if (b.open === "primary") openMenu(".pe-primary");
+    if (b.open === "primary") focus(GEN_CHIP);
     if (b.open === "wallet") setWalletOpen(true);
     if (b.open === "add-funds") setFunds(from);
   };
@@ -333,6 +338,11 @@ export default function PromptEditor({ promptId, onReleased }: {
 
   // ── Listing and stars.
   const setListing = (patch: Partial<Listing>) => dispatch({ type: "set", patch: { listing: { ...listing, ...patch } } });
+  /** A generator on or off the offer; the first picked is the primary, and a test generator taken off the offer follows it. */
+  const toggleModel = (id: string) => {
+    const modelIds = listing.modelIds.includes(id) ? listing.modelIds.filter((m) => m !== id) : [...listing.modelIds, id];
+    setListing({ modelIds, primaryId: modelIds[0] ?? null, testId: listing.testId && modelIds.includes(listing.testId) ? listing.testId : null });
+  };
   const switchMode = (mode: Listing["mode"]) => {
     if (mode === listing.mode) return;
     const go = () => {
@@ -410,13 +420,14 @@ export default function PromptEditor({ promptId, onReleased }: {
       if (verdict.focus === "title") root.current?.querySelector<HTMLElement>('[data-pe-field="title"]')?.focus();
       else if (verdict.focus === "price") focus('[data-pe-field="price"]');
       else if (verdict.focus) focus(fieldOf(verdict.focus.variable, verdict.check === "values" ? "value" : "name"));
-      if (verdict.open) openMenu(verdict.open === "primary" ? ".pe-primary" : ".pe-category");
+      if (verdict.open === "primary") focus(GEN_CHIP);
+      else if (verdict.open) openMenu(".pe-category");
       return;
     }
     if (!primary) return;
     const made = updating && loaded
-      ? { body: updateBody({ listing, primary, saved: loaded.saved, id: loaded.id }), refIds: loaded.doc.refIds }
-      : releaseBody({ listing, primary, starred: starredJobs, refs: state.refs, id: id ?? undefined });
+      ? { body: updateBody({ listing, primary, saved: loaded.saved, id: loaded.id, catalogue: models }), refIds: loaded.doc.refIds }
+      : releaseBody({ listing, primary, starred: starredJobs, refs: state.refs, id: id ?? undefined, catalogue: models });
     if ("error" in made) return notify(made.error, { tone: "error" });
     void send(made);
   };
@@ -502,8 +513,8 @@ export default function PromptEditor({ promptId, onReleased }: {
             <div className="pe-craft" {...pane("craft")}>
               <ListingRow listing={listing} onMode={switchMode} onPrice={(p) => setListing({ price: p })}
                 onCategory={(category) => setListing({ category })} />
-              <GeneratorRow models={models} value={listing.primaryId} prices={models.map((m) => price(m, picks, refCount))}
-                onPick={(primaryId) => setListing({ primaryId })} />
+              <GeneratorRow models={models} selected={listing.modelIds} prices={models.map((m) => price(m, picks, refCount))}
+                onToggle={toggleModel} />
               <PromptField value={doc.prompt} refCount={refCount} min={min} max={max} growOnly={isHeld("prompt")}
                 onUserInput={() => release("prompt")} onEdit={(prompt, key) => commit({ prompt }, key)}
                 onCreateVariable={createVariable} onAddVariable={addVariable}
@@ -523,11 +534,11 @@ export default function PromptEditor({ promptId, onReleased }: {
                 onTile={tileClick} onNft={() => setNftOpen(true)} onDragToken={setRefDrag} />
               <GenerateBar
                 live={<LiveStrip jobs={jobs} stars={state.stars} onOpen={(j) => show(j.id)} onAll={() => setTab("verify")} />}
-                models={models} testId={test?.id ?? null} primaryId={listing.primaryId}
+                models={offered} testId={test?.id ?? null} primaryId={listing.primaryId}
                 onTest={(testId) => setListing({ testId: testId === listing.primaryId ? null : testId })}
                 core={core} picks={picks} onPicks={(patch) => dispatch({ type: "set", patch: { picks: { ...picks, ...patch } } })}
                 prices={{
-                  models: models.map((m) => price(m, picks, refCount)),
+                  models: offered.map((m) => price(m, picks, refCount)),
                   tiers: core.tiers.map((t) => price(test, { ...picks, resolution: t.tier }, refCount)),
                   qualities: (["low", "medium", "high"] as const).map((quality) => price(test, { ...picks, quality }, refCount)),
                 }}

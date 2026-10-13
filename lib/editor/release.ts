@@ -24,9 +24,11 @@ export interface Listing {
   price: number;
   /** One of ENKI_CATEGORIES; null until picked. */
   category: string | null;
-  /** The catalogue id of the generator the prompt is made for; null until picked. */
+  /** The catalogue ids of the generators the prompt offers, in the order picked (Kev, 2026-10-13); the first is the primary. */
+  modelIds: string[];
+  /** The catalogue id of the generator the prompt is made for: modelIds[0]; null until picked. */
   primaryId: string | null;
-  /** The catalogue id of the test generator; null follows the primary. */
+  /** The catalogue id of the test generator, one of modelIds; null follows the primary. */
   testId: string | null;
 }
 
@@ -62,6 +64,8 @@ export interface ReleaseBody extends Saved {
   title: string;
   promptType: "free-prompt" | "premium-prompt";
   aiModel: string;
+  /** The generators on offer, by catalogue name, the primary first (app/api/prompt: ai_settings.models). */
+  aiModels: string[];
   category: string;
   /** Dollars; 0 for Free. */
   price: number;
@@ -117,11 +121,15 @@ export function releaseBlock({ listing, primary, starred, loaded, busy }: {
   return null;
 }
 
-const listingFields = (listing: Listing, primary: CatalogueEntry) => ({
+const listingFields = (listing: Listing, primary: CatalogueEntry, catalogue: CatalogueEntry[]) => ({
   title: listing.title.trim(),
   promptType: listing.mode === "premium" ? ("premium-prompt" as const) : ("free-prompt" as const),
   // The buyer page and the feed's generator filter read the model by name.
   aiModel: primary.name,
+  aiModels: [primary.name, ...listing.modelIds.flatMap((id) => {
+    const m = catalogue.find((c) => c.id === id);
+    return m && m.id !== primary.id ? [m.name] : [];
+  })],
   category: listing.category ?? "",
   price: listing.mode === "premium" ? listing.price : 0,
 });
@@ -141,12 +149,14 @@ function variable(name: string, s: EditorSetup, position: number): SavedVariable
  * The release from the starred renders (in star order), once releaseBlock
  * lets it go, and the ids of the references it sends, in its order.
  */
-export function releaseBody({ listing, primary, starred, refs, id }: {
+export function releaseBody({ listing, primary, starred, refs, id, catalogue }: {
   listing: Listing;
   primary: CatalogueEntry;
   starred: Job<EditorSetup>[];
   refs: RefStore;
   id?: string;
+  /** Names the offered generators (listing.modelIds) for the body. */
+  catalogue: CatalogueEntry[];
 }): { body: ReleaseBody; refIds: string[] } | { error: string } {
   const cover = starred[0].setup;
   // A loaded reference goes back as the stored URL the server keeps; a new one as its data.
@@ -157,7 +167,7 @@ export function releaseBody({ listing, primary, starred, refs, id }: {
   const body: ReleaseBody = {
     release: true,
     id,
-    ...listingFields(listing, primary),
+    ...listingFields(listing, primary, catalogue),
     content: toServerText(cover.prompt),
     variables: varNames(cover.prompt).map((name, position) => variable(name, cover, position)),
     referenceImages,
@@ -201,11 +211,12 @@ export function listingOnly(doc: EditorDoc, listing: Listing, loaded: { doc: Edi
 }
 
 /** The listing-only update: the new listing over the prompt exactly as it was loaded (create-desktop §3.11). */
-export function updateBody({ listing, primary, saved, id }: {
+export function updateBody({ listing, primary, saved, id, catalogue }: {
   listing: Listing;
   primary: CatalogueEntry;
   saved: Saved;
   id: string;
+  catalogue: CatalogueEntry[];
 }): ReleaseBody {
-  return { release: true, id, ...listingFields(listing, primary), ...saved };
+  return { release: true, id, ...listingFields(listing, primary, catalogue), ...saved };
 }

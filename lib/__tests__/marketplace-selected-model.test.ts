@@ -28,7 +28,7 @@ describe("the current marketplace model selection", () => {
   it("never resets a pick as the catalogue loads", () => {
     const view = readSource(join(__dirname, "..", "..", "components", "image-view", "useImageViewModel.ts"));
     expect(view).toContain('const [pick, setPick] = useState("");');
-    expect(view).toContain('defaultModel({ catalogue, pick, aiModel: prompt?.ai_model, premium })');
+    expect(view).toContain('defaultModel({ catalogue, pick, aiModel: prompt?.ai_model, premium, offered })');
     expect(view).not.toMatch(/setPick\(catalogue\[0\]/);
   });
 });

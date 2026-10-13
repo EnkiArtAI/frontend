@@ -39,6 +39,8 @@ export interface ServerPrompt {
   content: string;
   category: string;
   aiModel: string | null;
+  /** The generators on offer, by name (ai_settings.models); absent or empty before the multi-select. */
+  aiModels?: string[];
   price: number;
   aspectRatio: string | null;
   promptType: string;
@@ -87,7 +89,10 @@ export function loadPrompt(p: ServerPrompt, catalogue: CatalogueEntry[]): Loaded
     vars[slot] = v?.type === "checkbox" ? v.description || v.label : String(v?.defaultValue ?? "");
   }
   const premium = p.promptType === "paid-prompt";
-  const primary = catalogue.find((m) => m.name === p.aiModel) ?? resolveCatalogueEntry(catalogue, p.aiModel ?? undefined);
+  const entry = (name: string | null | undefined) => (name ? (catalogue.find((m) => m.name === name) ?? resolveCatalogueEntry(catalogue, name)) : undefined);
+  const primary = entry(p.aiModel);
+  // The offered generators, the primary first; a name the catalogue no longer has is dropped.
+  const modelIds = [...new Set([primary, ...(p.aiModels ?? []).map(entry)].flatMap((m) => (m ? [m.id] : [])))];
   const resolution = normalizeTier(p.resolution);
   // Sent back under the slot's own text, which the save matches its slots by.
   const variables = p.variables.map((v): SavedVariable => ({
@@ -111,6 +116,7 @@ export function loadPrompt(p: ServerPrompt, catalogue: CatalogueEntry[]): Loaded
       mode: premium ? "premium" : "free",
       price: premium ? p.price : DEFAULT_PROMPT_PRICE_USD,
       category: (ENKI_CATEGORIES as readonly string[]).includes(p.category) ? p.category : null,
+      modelIds,
       primaryId: primary?.id ?? null,
       testId: null,
     },

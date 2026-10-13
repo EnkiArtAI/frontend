@@ -71,11 +71,17 @@ describe("loadPrompt", () => {
   });
 
   it("maps the listing: a paid prompt is Premium at its price, a known category, the model by name or id", () => {
-    expect(loaded.listing).toEqual({ title: "Night market", mode: "premium", price: 0.4, category: "Poster", primaryId: "m-pro", testId: null });
+    expect(loaded.listing).toEqual({ title: "Night market", mode: "premium", price: 0.4, category: "Poster", modelIds: ["m-pro"], primaryId: "m-pro", testId: null });
     expect(loadPrompt({ ...server, aiModel: "m-flux" }, catalogue).listing.primaryId).toBe("m-flux");
     expect(loadPrompt({ ...server, aiModel: "nano-banana-pro" }, catalogue).listing.primaryId).toBe("m-pro");
     expect(loadPrompt({ ...server, aiModel: "Midjourney" }, catalogue).listing.primaryId).toBeNull();
     expect(loadPrompt({ ...server, aiModel: null }, catalogue).listing.primaryId).toBeNull();
+  });
+
+  it("maps the generators on offer (aiModels) to catalogue ids, the primary first, each once, unknown names dropped", () => {
+    expect(loadPrompt({ ...server, aiModels: ["Flux (free)", "Nano Banana Pro", "Midjourney"] }, catalogue).listing.modelIds).toEqual(["m-pro", "m-flux"]);
+    expect(loadPrompt({ ...server, aiModel: "Midjourney", aiModels: ["m-flux"] }, catalogue).listing).toMatchObject({ modelIds: ["m-flux"], primaryId: null });
+    expect(loadPrompt({ ...server, aiModel: null, aiModels: [] }, catalogue).listing.modelIds).toEqual([]);
   });
 
   it("a free prompt is Free and would start Premium at the default price; an unknown category is none", () => {
