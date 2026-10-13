@@ -48,13 +48,16 @@ export default function EditorHeader({ title, onTitle, done, active, tab, onTab,
   );
   return (
     <header className="pe-head">
-      <button type="button" className="pe-back kit-hit" aria-label="Back" onClick={onBack}>
-        <ChevronLeft size={13} strokeWidth={2.4} aria-hidden />
-        <span className="pe-back-label">Back</span>
-      </button>
-      <input className="pe-title" data-pe-field="title" data-native-undo value={title} placeholder="Untitled prompt"
-        aria-label="Prompt title" onChange={(e) => onTitle(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} />
+      {/* Back and the title take the Craft column's width from 1024 px, so the steps start where the Verify column does (Kev, 2026-10-13). */}
+      <div className="pe-head-left">
+        <button type="button" className="pe-back kit-hit" aria-label="Back" onClick={onBack}>
+          <ChevronLeft size={13} strokeWidth={2.4} aria-hidden />
+          <span className="pe-back-label">Back</span>
+        </button>
+        <input className="pe-title" data-pe-field="title" data-native-undo value={title} placeholder="Untitled prompt"
+          aria-label="Prompt title" onChange={(e) => onTitle(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} />
+      </div>
       <div className="pe-steps">
         {tabs ? (
           <div className="pe-tablist" role="tablist" aria-label="Steps">

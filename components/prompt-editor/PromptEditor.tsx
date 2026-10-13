@@ -478,7 +478,7 @@ export default function PromptEditor({ promptId, onReleased }: {
   const [min, max] = tabs ? [200, 420] : [400, Math.round(vh * 0.72)];
 
   return (
-    <div ref={root} className="pe-root kit-focus" data-tab={tab}>
+    <div ref={root} className="pe-root kit-focus" data-tab={tab} style={{ "--pe-split": `${split.value}px` } as CSSProperties}>
       <EditorHeader title={listing.title} onTitle={(title) => setListing({ title })}
         done={[!!doc.prompt.trim(), anyReady, state.released]}
         active={state.released || anyReady ? 2 : jobs.length ? 1 : 0}
@@ -489,7 +489,7 @@ export default function PromptEditor({ promptId, onReleased }: {
             <button type="button" onClick={() => dispatch({ type: "seed", loaded, discard: true })}>Discard</button>
           </p>
         )} />
-      <div ref={measure} className="pe-body" style={{ "--pe-split": `${split.value}px` } as CSSProperties}>
+      <div ref={measure} className="pe-body">
         {editing && load.missing ? (
           <div className="pe-state">
             <p>This prompt can&apos;t be opened here (not found, or not yours).</p>
