@@ -152,6 +152,8 @@ interface EnkiMobileGenerateModalProps {
   nftImages?: string[];
   onRemoveNFT?: (index: number) => void;
   onReorderNFTs?: (from: number, to: number) => void;
+  /** Why no image can be added right now ("Flux (free) takes no images"): the add buttons grey out and say it (Kev, 2026-10-13). */
+  referencesNote?: string | null;
   generateLabel?: string;
   /** Boost: same model on a priority host. Omit onBoostChange to hide it. */
   boost?: boolean;
@@ -292,6 +294,7 @@ export default function EnkiMobileGenerateModal({
   nftImages,
   onRemoveNFT,
   onReorderNFTs,
+  referencesNote = null,
   generateLabel,
   boost,
   onBoostChange,
@@ -1262,7 +1265,8 @@ export default function EnkiMobileGenerateModal({
                         type="button"
                         className="mobile-modal-ref-btn"
                         onClick={() => refInputRef.current?.click()}
-                        title="Upload an image"
+                        disabled={!!referencesNote}
+                        title={referencesNote ?? "Upload an image"}
                         aria-label="Upload an image"
                       >
                         <Plus size={13} />
@@ -1303,7 +1307,8 @@ export default function EnkiMobileGenerateModal({
                             type="button"
                             className="mobile-modal-ref-btn"
                             onClick={() => onPickNFT()}
-                            title="Pick an NFT from your wallet"
+                            disabled={!!referencesNote}
+                            title={referencesNote ?? "Pick an NFT from your wallet"}
                             aria-label="Pick an NFT"
                           >
                             <Plus size={13} />
@@ -1328,6 +1333,7 @@ export default function EnkiMobileGenerateModal({
                           )}
                       </div>
                     )}
+                    {referencesNote && <span className="mobile-modal-ref-note">{referencesNote}</span>}
                   </div>
                 )}
                 {/* Sized to the LONGEST model name and pinned there: a

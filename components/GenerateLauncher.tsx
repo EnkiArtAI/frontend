@@ -459,8 +459,9 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
         onReorderReferenceImages={(from, to) =>
           setReferenceImages((prev) => reorder(prev, from, to))
         }
-        // No NFT button for a model that takes no references (Flux takes none).
-        onPickNFT={modelLimits.maxRefs > 0 ? pickNFT : undefined}
+        // A model that takes no references (Flux) keeps both add buttons, greyed, and says so (Kev, 2026-10-13).
+        onPickNFT={pickNFT}
+        referencesNote={modelLimits.maxRefs === 0 ? `${core.entry?.name ?? "This generator"} takes no images` : null}
         nftImages={nftImages}
         onRemoveNFT={(i) => setNftImages((prev) => prev.filter((_, idx) => idx !== i))}
         onReorderNFTs={(from, to) => setNftImages((prev) => reorder(prev, from, to))}

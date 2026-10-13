@@ -28,8 +28,12 @@ describe("the NFT picker", () => {
 });
 
 describe("quick create's NFT button", () => {
-  it("is offered only for a model that takes references, and for no more than it has left", () => {
-    expect(LAUNCHER).toContain("onPickNFT={modelLimits.maxRefs > 0 ? pickNFT : undefined}");
+  it("is always there, greyed with a word for a model that takes no references, and picks no more than it has left", () => {
+    expect(LAUNCHER).toContain("onPickNFT={pickNFT}");
+    expect(LAUNCHER).toContain('referencesNote={modelLimits.maxRefs === 0 ? `${core.entry?.name ?? "This generator"} takes no images` : null}');
+    const modal = readSource(join(ROOT, "components", "EnkiMobileGenerateModal.tsx"));
+    expect(modal.split("disabled={!!referencesNote}").length - 1).toBe(2);
+    expect(modal).toContain('{referencesNote && <span className="mobile-modal-ref-note">{referencesNote}</span>}');
     expect(LAUNCHER).toContain("max={Math.max(0, modelLimits.maxRefs - refCount - refsPending.length)}");
     expect(LAUNCHER).toContain("const refCount = referenceImages.length + nftImages.length;");
   });

@@ -1538,6 +1538,21 @@
   color: #1C1A18;
   background: #F6F3EC;
 }
+/* A generator that takes no image input (Flux): the add buttons stay where
+   they are, greyed, with the reason beside them (Kev, 2026-10-13). */
+.mobile-modal-ref-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  border-color: #EBE5DB;
+  color: #5A5550;
+  background: #FCFBF8;
+}
+.mobile-modal-ref-note {
+  font-family: var(--font-outfit), 'Outfit', sans-serif;
+  font-size: 11px;
+  color: #8A847C;
+  white-space: nowrap;
+}
 
 /* Count badge — absolutely positioned so adding images NEVER changes the
    footer layout (the button stays exactly the same size). */
