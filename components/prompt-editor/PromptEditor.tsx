@@ -46,6 +46,7 @@ import { needFor, starred, starsForFree, toggleStar, variationKey, variations, t
 import { openLogin } from "@/lib/openLogin";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import { COARSE, TABS } from "@/lib/ui/kit/breakpoints";
+import { promptPage } from "@/lib/ui/image-view/open-link";
 import { openAddFunds } from "@/lib/ui/kit/controls";
 import { balanceView, chipLabel } from "@/lib/ui/kit/price";
 import { parseRatio } from "@/lib/ui/kit/ratio";
@@ -88,11 +89,9 @@ const sameListing = (a: Listing, b: Listing) =>
   a.title === b.title && a.mode === b.mode && a.price === b.price && a.category === b.category && a.modelIds.join() === b.modelIds.join();
 const fieldOf = (name: string, field: "name" | "value") => `[data-pe-name="${CSS.escape(name)}"] [data-pe-field="${field}"]`;
 
-export default function PromptEditor({ promptId, onReleased }: {
+export default function PromptEditor({ promptId }: {
   /** A released prompt of this account to edit (?id=). */
   promptId?: string;
-  /** The first release made this prompt: the route keeps this editor as it moves to ?id=. */
-  onReleased?: (id: string) => void;
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -100,8 +99,7 @@ export default function PromptEditor({ promptId, onReleased }: {
   // Team-cookie browsing is looking around, not an account (EnkiHome).
   const signedIn = access === "ok" && role !== "team";
   const { userKey, payer } = useViewerWallets();
-  const [releasedId, setReleasedId] = useState<string | null>(null);
-  const id = releasedId ?? promptId ?? null;
+  const id = promptId ?? null;
   const { state, doc, dispatch, commit, store, decideSeed } = usePromptEditor(userKey, id, signedIn ? userId : null);
   const { listing, picks, history } = state;
 
@@ -115,7 +113,7 @@ export default function PromptEditor({ promptId, onReleased }: {
   const { accept } = useModelLimits(test?.id);
   const cap = Math.min(SAVE_REFS, test?.maxRefs ?? SAVE_REFS);
 
-  const editing = promptId !== undefined && promptId !== releasedId;
+  const editing = promptId !== undefined;
   const load = usePromptLoad(editing ? promptId : null, catalogue);
   const { loaded } = load;
   if (loaded && state.seeded !== loaded.id) dispatch({ type: "seed", loaded });
@@ -396,14 +394,13 @@ export default function PromptEditor({ promptId, onReleased }: {
       // The Image View's copy of it, which the owner may render from next.
       void queryClient.invalidateQueries({ queryKey: [`/api/prompts/${data.id}`] });
       void queryClient.invalidateQueries({ queryKey: ["prompt-public-images", data.id] });
-      if (!body.id) {
-        // The draft moves to its id: the "new" one goes, and the editor stays (R13), unless it was left meanwhile.
-        store.clear();
-        if (!mounted.current) return;
-        setReleasedId(data.id);
-        onReleased?.(data.id);
-        router.replace(`/editor?id=${data.id}`);
-      }
+      /* Released: the editor is cleared and the prompt opens as its image,
+         beside the menu (Kev, 2026-10-13: "direkt zum Image geleitet werden,
+         Prompt Editor freigeräumt"). The draft goes, so the next Create Prompt
+         starts empty; unless the editor was left meanwhile. */
+      store.clear();
+      if (!mounted.current) return;
+      router.push(promptPage(data.id));
     } catch {
       notify("Release failed — check your connection and try again", { tone: "error" });
     } finally {

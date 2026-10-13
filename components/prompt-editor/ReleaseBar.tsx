@@ -58,7 +58,7 @@ export default function ReleaseBar({ need, photos, ratio, listingOnly, released,
         </div>
         <button type="button" className="pe-more pe-tabs-only" onClick={onMore}>✦ More</button>
       </div>
-      <button type="button" className="pe-release-btn kit-hit" onClick={onRelease} disabled={busy}
+      <button type="button" className="pe-release-btn kit-hit" onClick={onRelease} disabled={busy || released}
         aria-disabled={(blocked && !released) || undefined} data-released={released || undefined}>
         {busy && <span className="pe-spin" aria-hidden />}
         {action}

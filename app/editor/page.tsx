@@ -21,12 +21,12 @@ function EditorRoute() {
   const { userKey } = useViewerWallets();
   const { userId } = useBetaAccess();
   const owner = editorOwner(userId, userKey);
-  const [mount, setMount] = useState<EditorMount>({ id, n: 0, own: null, user: owner });
+  const [mount, setMount] = useState<EditorMount>({ id, n: 0, user: owner });
   const next = editorMount(mount, id, owner);
   if (next !== mount) setMount(next);
   return (
     <EnkiHome>
-      <PromptEditor key={mount.n} promptId={id ?? undefined} onReleased={(own) => setMount((m) => ({ ...m, own }))} />
+      <PromptEditor key={mount.n} promptId={id ?? undefined} />
     </EnkiHome>
   );
 }

@@ -1,10 +1,11 @@
 /**
  * Which editor /editor shows (app/editor/page.tsx keys it by `n`, so a new
- * `n` is a fresh editor). Another ?id= is another prompt, but the id an
- * editor gives itself on its first release keeps it (R13). Another account
+ * `n` is a fresh editor). Another ?id= is another prompt. Another account
  * gets a fresh editor too: drafts and jobs are per account (R15), and one
  * editor carrying the last account's would save them under the new one's
- * key. Signing in, or out and back in as the same account, keeps it.
+ * key. Signing in, or out and back in as the same account, keeps it. A
+ * release leaves the editor for the prompt's image (Kev, 2026-10-13), so no
+ * editor keeps an id it gave itself any more.
  */
 /**
  * Whose editor, drafts and jobs these are: the account, as long as it is
@@ -21,8 +22,6 @@ export const editorOwner = (userId: string | null, userKey: string | null): stri
 export interface EditorMount {
   id: string | null;
   n: number;
-  /** The id this editor's first release gave it. */
-  own: string | null;
   /** The last account seen (editorOwner). */
   user: string | null;
 }
@@ -31,6 +30,5 @@ export interface EditorMount {
 export function editorMount(m: EditorMount, id: string | null, user: string | null): EditorMount {
   const switched = user !== null && m.user !== null && user !== m.user;
   if (m.id === id && !switched && (user ?? m.user) === m.user) return m;
-  const moved = m.id !== id && !(id !== null && id === m.own);
-  return { id, n: moved || switched ? m.n + 1 : m.n, own: m.id === id ? m.own : null, user: user ?? m.user };
+  return { id, n: m.id !== id || switched ? m.n + 1 : m.n, user: user ?? m.user };
 }

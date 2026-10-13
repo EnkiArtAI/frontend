@@ -26,15 +26,15 @@ describe("the Prompt Editor's route", () => {
     expect(page).not.toMatch(/EnkiPromptEditor|enki-editor\.css/);
   });
 
-  it("keeps the editor when its own first release moves it to ?id=, and starts afresh for another id or account (R13, R15)", () => {
+  it("starts afresh for another id or account (R15), keyed by the account", () => {
     const page = readSource(join(ROOT, "app", "editor", "page.tsx"));
     // The account first: the wallet key comes and goes with the wallet's connection (Kev, 2026-10-13).
     expect(page).toContain("const owner = editorOwner(userId, userKey);");
     expect(src("usePromptEditor.ts")).toContain("const draftOwner = editorOwner(seedOwner, userKey);");
-    expect(page).toContain('useState<EditorMount>({ id, n: 0, own: null, user: owner })');
+    expect(page).toContain('useState<EditorMount>({ id, n: 0, user: owner })');
     expect(page).toContain('const next = editorMount(mount, id, owner);');
     expect(page).toContain('if (next !== mount) setMount(next);');
-    expect(page).toContain("onReleased={(own) => setMount((m) => ({ ...m, own }))}");
+    expect(page).toContain("<PromptEditor key={mount.n} promptId={id ?? undefined} />");
   });
 
   it("is a fixed layer below the 2FA bar, beside the menu, and over the phone's header and tab bar", () => {
@@ -107,9 +107,13 @@ describe("release", () => {
     expect(EDITOR).toContain('void queryClient.invalidateQueries({ queryKey: ["prompt-public-images", data.id] });');
   });
 
-  it("stays in the editor afterwards, re-keyed to /editor?id=, instead of leaving for /showcase (R13)", () => {
-    expect(EDITOR).toMatch(/if \(!body\.id\) \{\n\s*store\.clear\(\);\n\s*if \(!mounted\.current\) return;\n\s*setReleasedId\(data\.id\);\n\s*onReleased\?\.\(data\.id\);\n\s*router\.replace\(`\/editor\?id=\$\{data\.id\}`\);/);
+  it("leaves for the prompt's image afterwards, the draft cleared, never for /showcase or back into the editor (Kev, 2026-10-13)", () => {
+    expect(EDITOR).toMatch(/store\.clear\(\);\n\s*if \(!mounted\.current\) return;\n\s*router\.push\(promptPage\(data\.id\)\);/);
+    expect(EDITOR).not.toContain("/editor?id=");
+    expect(EDITOR).not.toContain("onReleased");
     for (const [file, text] of all) expect(text, file).not.toContain("/showcase");
+    // The button cannot be pressed a second time while the editor is on its way out.
+    expect(src("ReleaseBar.tsx")).toContain("onClick={onRelease} disabled={busy || released}");
   });
 
   it("never pulls the user back into an editor they left while the release was on its way", () => {

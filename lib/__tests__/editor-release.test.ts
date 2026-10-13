@@ -7,14 +7,13 @@ const src = (...p: string[]) => readSource(join(ROOT, ...p));
 const EDITOR = src("components", "prompt-editor", "PromptEditor.tsx");
 // Body and guard behavior is covered by lib/editor/__tests__/release.test.ts.
 describe("release from the current prompt editor", () => {
-  it("sends a checked body by POST and keeps the editor on its returned id", () => {
+  it("sends a checked body by POST and then opens the released prompt as its image (Kev, 2026-10-13)", () => {
     expect(EDITOR).toContain('fetch("/api/prompt", {');
     expect(EDITOR).toContain('method: "POST"');
     expect(EDITOR).toContain('body: JSON.stringify(body),');
     expect(EDITOR).toContain('if ("error" in made) return notify(made.error, { tone: "error" });');
-    expect(EDITOR).toContain('if (!body.id) {');
-    expect(EDITOR).toContain('router.replace(');
-    expect(EDITOR).toContain('/editor?id=');
+    expect(EDITOR).toContain('router.push(promptPage(data.id));');
+    expect(EDITOR).not.toContain('/editor?id=');
     expect(EDITOR).not.toContain('published: true');
   });
   it("does not mark a refused or malformed answer as released", () => {
