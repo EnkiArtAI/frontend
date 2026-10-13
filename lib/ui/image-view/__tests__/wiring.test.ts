@@ -29,6 +29,9 @@ describe("Report", () => {
     expect(PANEL).toMatch(/\{shot\.publicId && !m\.guest && \(\n\s+<ReportButton targetType="generation" targetId=\{shot\.publicId\}/);
     // Never on the viewer's own: those are in the queue or the history, not among the public images.
     expect(MODEL).toContain(".filter((im) => !queued.has(im.url) && !recordOf(own.rows, im.url))");
+    // The mark alone in the header: no word beside it (Kev, 2026-10-13).
+    expect(HEADER).toMatch(/<Bookmark size=\{13\} strokeWidth=\{2\} fill=\{m\.saved \? "currentColor" : "none"\} aria-hidden \/>\n\s+<\/button>/);
+    expect(HEADER).toContain('aria-label={m.saved ? "Saved · file it elsewhere" : "Bookmark"}');
   });
 });
 

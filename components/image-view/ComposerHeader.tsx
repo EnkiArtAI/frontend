@@ -57,10 +57,11 @@ export default function ComposerHeader({ model: m, onBack }: { model: ImageViewM
       )}
       <div className="iv-acts">
         {m.promptId && !m.guest && (
-          <button type="button" className="iv-act kit-hit" data-on={m.saved ? "saved" : undefined} aria-expanded={!!anchor}
-            title={m.saved ? "Saved · file it elsewhere" : "Bookmark"}
+          /* The mark alone, filled once saved: no word beside it (Kev, 2026-10-13). */
+          <button type="button" className="iv-act iv-act--icon kit-hit" data-on={m.saved ? "saved" : undefined} aria-expanded={!!anchor}
+            aria-label={m.saved ? "Saved · file it elsewhere" : "Bookmark"} title={m.saved ? "Saved · file it elsewhere" : "Bookmark"}
             onClick={(e) => setAnchor(anchor ? null : e.currentTarget.getBoundingClientRect())}>
-            <Bookmark size={13} strokeWidth={2} fill={m.saved ? "currentColor" : "none"} aria-hidden />{m.saved ? "Saved" : "Bookmark"}
+            <Bookmark size={13} strokeWidth={2} fill={m.saved ? "currentColor" : "none"} aria-hidden />
           </button>
         )}
         {m.promptId && (
