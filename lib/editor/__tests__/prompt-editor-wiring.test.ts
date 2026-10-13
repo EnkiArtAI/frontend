@@ -73,7 +73,7 @@ describe("test renders", () => {
     expect(payment).toContain("if (!signedIn)");
     expect(payment).toContain("readyRefs(state.refs, job.setup.refIds) === null");
     expect(payment).not.toContain("queue.runBatch(");
-    expect(EDITOR).toContain("onPress: () => attempt({}),");
+    expect(EDITOR).toContain("onPress: short === null ? () => attempt({}) : openAddFunds,");
     expect(EDITOR).toContain("onTryAnyway={() => attempt(funds, true)}");
     expect(EDITOR).toContain("const stopped = attempt({ job, retry });");
   });
@@ -206,6 +206,19 @@ describe("touch, focus and motion", () => {
 
   it("stills the rolling dice for Reduce Motion", () => {
     expect(CSS).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\n\s*\.pe-vary\[data-rolling\] svg \{ animation: none; \}\n\}/);
+  });
+});
+
+describe("Generate and the line under it (Kev, 2026-10-13)", () => {
+  it("says nothing under a paid render: the price is on the button", () => {
+    expect(EDITOR).not.toContain("payment reserved");
+    expect(EDITOR).toContain('      : test.free ? (queue.freeQuota?.exhausted ? "Your daily free image is used. Pick a paid generator to continue." : queue.note ? quotaText(queue.note) : queue.freeQuota ? `${test.name} · ${queue.freeQuota.remaining} daily free image available` : "Checking your daily free image allowance…")\n      : null);');
+  });
+
+  it("a balance below the price turns Generate red with the balance on it, and its press opens Add funds; the cost line then drops its own balance", () => {
+    expect(EDITOR).toContain("const short = bal?.short ? bal.text : null;");
+    expect(EDITOR).toContain("                  short,\n                  title: short === null ? undefined : \"Your balance is below the price · opens Add funds\",\n                  onPress: short === null ? () => attempt({}) : openAddFunds,");
+    expect(EDITOR).toContain("cost={{ left: costLeft, balance: bal && short === null ? { ...bal, onAddFunds: openAddFunds } : null }}");
   });
 });
 

@@ -35,7 +35,7 @@ import { useRenderQueue } from "@/hooks/useRenderQueue";
 import { quoteLabel, useServerQuotes } from "@/hooks/useServerQuotes";
 import { useViewerWallets } from "@/hooks/useViewerWallets";
 import {
-  editorRequest, editorSetup, generateBlock, readyRefs, renderSettings,
+  editorRequest, editorSetup, generateBlock, readyRefs,
   type EditorSetup, type GenerateBlock, type RenderPicks,
 } from "@/lib/editor/generate-checks";
 import { insertToken, parseTokens, removeRef, varNames } from "@/lib/editor/prompt-tokens";
@@ -72,7 +72,6 @@ import "./verify.css";
 
 /** The most references a prompt is saved with (app/api/prompt). */
 const SAVE_REFS = 14;
-const QUALITY: Record<string, string> = { low: "Low", medium: "Mid", high: "High" };
 
 /** What Generate runs: the editor as it is, or a job again (Regenerate; Retry takes a failed one's place). */
 type Source = { job?: EditorJob; retry?: boolean };
@@ -462,13 +461,16 @@ export default function PromptEditor({ promptId, onReleased }: {
 
   // ── What the screen says.
   const anyReady = jobs.some((j) => j.status === "ready");
-  const settings = test ? renderSettings(test, picks) : null;
+  // A paid render says nothing under the button: its price is on it (Kev, 2026-10-13).
   const costLeft = block?.toast
     ?? (!signedIn ? "Sign in to generate"
-      : !test || !settings ? "Pick a generator"
+      : !test ? "Pick a generator"
       : test.free ? (queue.freeQuota?.exhausted ? "Your daily free image is used. Pick a paid generator to continue." : queue.note ? quotaText(queue.note) : queue.freeQuota ? `${test.name} · ${queue.freeQuota.remaining} daily free image available` : "Checking your daily free image allowance…")
-      : `${test.name} · ${settings.resolution}${settings.quality ? ` · ${QUALITY[settings.quality]}` : ""}${settings.boost ? " · Boost" : ""} · payment reserved, unused payments refunded`);
+      : null);
   const bal = balanceView({ payer, ready, balance, free: !test || test.free, quote: chipQuote });
+  /* A balance below the price: Generate turns red, carries the balance beside
+     the price, and its press opens Add funds instead of a render (Kev, 2026-10-13). */
+  const short = bal?.short ? bal.text : null;
   const pending = signedIn && !!test && !test.free && !chipQuote;
   const fundsQuote = funds ? (funds.job ? price(entryOf(funds.job), funds.job.setup, funds.job.setup.refIds.length) : chipQuote) : null;
   const againEntry = viewerJob && entryOf(viewerJob);
@@ -544,10 +546,12 @@ export default function PromptEditor({ promptId, onReleased }: {
                   chip: chipLabel({ signedIn, free: !!test?.free, quote: chipQuote, pending }),
                   chipPending: pending,
                   dimmed: !!block?.toast,
-                  onPress: () => attempt({}),
+                  short,
+                  title: short === null ? undefined : "Your balance is below the price · opens Add funds",
+                  onPress: short === null ? () => attempt({}) : openAddFunds,
                   size: tabs ? "block" : "bar",
                 }}
-                cost={{ left: costLeft, balance: bal && { ...bal, onAddFunds: openAddFunds } }}>
+                cost={{ left: costLeft, balance: bal && short === null ? { ...bal, onAddFunds: openAddFunds } : null }}>
                 {funds && fundsQuote && (
                   <AddFundsPopover balanceUsd={balanceUsd ?? 0} totalUsd={fundsQuote.totalUsd} onAddFunds={openAddFunds}
                     onTryAnyway={() => attempt(funds, true)} onClose={() => setFunds(null)} />

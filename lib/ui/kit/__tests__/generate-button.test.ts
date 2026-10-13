@@ -10,11 +10,14 @@ vi.mock("react", async (importOriginal) => ({
 
 import GenerateButton from "@/components/kit/GenerateButton";
 
-type Button = ReactElement<{ onClick: (e: { timeStamp: number }) => void; "aria-disabled"?: boolean; disabled?: boolean }>;
+type Button = ReactElement<{
+  onClick: (e: { timeStamp: number }) => void; "aria-disabled"?: boolean; disabled?: boolean; "data-short"?: boolean; title?: string;
+  children: [string, ReactElement<{ className: string; children: [ReactElement<{ children: [string, string] }> | false, string] }>];
+}>;
 
-const mount = (dimmed: boolean) => {
+const mount = (dimmed: boolean, short: string | null = null) => {
   const onPress = vi.fn();
-  const button = GenerateButton({ label: "✦ Generate", chip: "$0.147", dimmed, onPress, size: "block" }) as Button;
+  const button = GenerateButton({ label: "✦ Generate", chip: "$0.147", dimmed, onPress, size: "block", short }) as Button;
   return { onPress, button, press: (t: number) => button.props.onClick({ timeStamp: t }) };
 };
 
@@ -34,5 +37,20 @@ describe("GenerateButton", () => {
     expect(button.props.disabled).toBeUndefined();
     press(0);
     expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  it("a short balance marks the button and puts the balance beside the price in the chip (Kev, 2026-10-13)", () => {
+    const { button } = mount(false, "$0.00");
+    expect(button.props["data-short"]).toBe(true);
+    const chip = button.props.children[1];
+    expect(chip.props.className).toBe("kit-gen-chip");
+    expect(chip.props.children[0]).toMatchObject({ props: { className: "kit-gen-short", children: ["Balance ", "$0.00"] } });
+    expect(chip.props.children[1]).toBe("$0.147");
+  });
+
+  it("with the balance in order the chip is the price alone and nothing marks the button", () => {
+    const { button } = mount(false);
+    expect(button.props["data-short"]).toBeUndefined();
+    expect(button.props.children[1].props.children).toEqual([false, "$0.147"]);
   });
 });

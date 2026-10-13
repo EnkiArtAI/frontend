@@ -248,6 +248,13 @@
 }
 .kit-gen--bar .kit-gen-chip { top: 5px; right: 5px; bottom: 5px; padding: 0 10px; font-size: 12px; }
 .kit-gen-chip[data-pending] { animation: kit-pulse 1.2s ease-in-out infinite; }
+/* A short balance: the button turns red and carries the balance beside the
+   price; its press opens Add funds (Kev, 2026-10-13). The chip leaves its
+   inset for the row's end so the two figures never run under the label. */
+.kit-gen[data-short] { justify-content: space-between; gap: 10px; padding: 0 5px 0 16px; background: var(--enki-danger); color: #fff; }
+.kit-gen--block[data-short] { padding: 0 6px 0 18px; }
+.kit-gen[data-short] .kit-gen-chip { position: static; padding: 6px 10px; }
+.kit-gen-short { margin-right: 8px; padding-right: 8px; border-right: 1px solid color-mix(in oklab, currentColor 30%, transparent); color: var(--enki-danger); }
 @media (max-width: 1023.98px) {
   .kit-gen--block { height: 48px; font-size: 15px; }
   .kit-gen--block .kit-gen-chip { top: 8px; right: 8px; bottom: 8px; }
