@@ -19,6 +19,7 @@ import { stashEditorSeed, takeEditorSeed } from "@/components/enki-shell/editorB
 import { editorOwner } from "@/lib/editor/editor-mount";
 import { seedDoc, type EditorSeed } from "@/lib/editor/editor-seed";
 import type { LoadedPrompt } from "@/lib/editor/load-prompt";
+import { namedValues } from "@/lib/editor/named-values";
 import { insertToken, varNames } from "@/lib/editor/prompt-tokens";
 import type { Listing } from "@/lib/editor/release";
 import type { VariableRange } from "@/lib/editor/selection-variable";
@@ -86,7 +87,11 @@ export const initialEditor = (): EditorState => ({
 export function editorReducer(s: EditorState, a: EditorAction): EditorState {
   switch (a.type) {
     case "commit": {
-      const patch = typeof a.patch === "function" ? a.patch(s.history.present) : a.patch;
+      const raw = typeof a.patch === "function" ? a.patch(s.history.present) : a.patch;
+      // A bracket the doc meets for the first time names its variable and fills its value (lib/editor/named-values).
+      const was = raw.vars ?? s.history.present.vars;
+      const vars = namedValues(raw.prompt ?? s.history.present.prompt, was);
+      const patch = vars === was ? raw : { ...raw, vars };
       return { ...s, history: commit(s.history, patch, a.at, a.key), released: false };
     }
     case "undo":

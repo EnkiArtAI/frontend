@@ -1,4 +1,5 @@
 import type { TextStore } from "./draft-store";
+import { namedValues } from "./named-values";
 import { varNames } from "./prompt-tokens";
 import type { EditorDoc } from "./undo";
 
@@ -35,11 +36,12 @@ export function takeSeed(storage: TextStore | null, owner: string | null): Edito
   } catch { return null; }
 }
 
+/** The imported text, its brackets as variables named and filled with their content (lib/editor/named-values). */
 export function seedDoc(seed: EditorSeed): EditorDoc {
   const names = varNames(seed.promptText);
   return {
     prompt: seed.promptText,
-    vars: Object.fromEntries(names.map((n) => [n, ""])),
+    vars: namedValues(seed.promptText, {}),
     kinds: Object.fromEntries(names.map((n) => [n, "text" as const])),
     aiNames: [],
     refIds: [],

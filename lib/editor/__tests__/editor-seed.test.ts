@@ -15,7 +15,8 @@ describe("the library text seed", () => {
   it("keeps the saved title and text exactly, including whitespace", () => {
     expect(librarySeed({ name: seed.title, prompt_text: seed.promptText })).toEqual(seed);
     const doc = seedDoc(seed);
-    expect(doc).toEqual({ prompt: seed.promptText, vars: { subject: "" }, kinds: { subject: "text" }, aiNames: [], refIds: [] });
+    // The bracket's content names the variable and is its example value (Kev, 2026-10-13).
+    expect(doc).toEqual({ prompt: seed.promptText, vars: { subject: "subject" }, kinds: { subject: "text" }, aiNames: [], refIds: [] });
   });
   it.each([null, "", " \n", "A {{wf:node-7}} portrait", "{{WF:n}}"])("refuses a missing text or unsupported workflow: %j", (text) => {
     expect(librarySeed({ name: "Old workflow", prompt_text: text })).toBeNull();
