@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 
 /**
  * The buyer's checkout is a straight line — intent → authorize → sign →
@@ -24,6 +24,7 @@ import {
   toModelFamily,
   microToUsd,
   CheckoutError,
+  CONFIRM_WAITS_MS,
 } from "@/lib/generation-checkout";
 
 const REQ = { promptId: "p-1", modelId: "db00c518-ee31-4d12-b40a-f8130f8e605b", resolution: "2K" as const };
@@ -281,10 +282,75 @@ describe("one funded escrow per click", () => {
       { path: "/api/payments/generation/submit", body: { intentId: "i-1", signedTransaction: "original-wire" } },
     ]);
   });
-  it("keeps a pending confirmation as pending instead of treating submit success as paid", async () => {
-    scriptFetch({ "/api/payments/generation/status?intentId=i-1": { status: 200, body: { ...funded, state: "submitted", funded: false } } });
-    await expect(resumePaidGeneration({ intentId: "i-1", units: 4, paymentScheme: "escrow", state: "submitted" })).rejects.toMatchObject({ payment: { state: "submitted", intentId: "i-1" } });
-    expect(calls).toEqual(["/api/payments/generation/status?intentId=i-1"]);
+  describe("a deposit on its way to the chain (Kev's first browser payment, 2026-10-13)", () => {
+    const submitted = { ...funded, state: "submitted", funded: false };
+    const STATUS = "/api/payments/generation/status?intentId=i-1";
+    const total = CONFIRM_WAITS_MS.reduce((a, b) => a + b, 0);
+    /** Status answers, in order; the last one repeats. */
+    const answers = (...states: Array<Record<string, unknown>>) => {
+      let asked = 0;
+      calls = [];
+      vi.stubGlobal("fetch", vi.fn(async (path: string) => {
+        calls.push(String(path));
+        const body = path.endsWith("/intent") ? { intent: { id: "i-1" } } : path.endsWith("/authorize") ? prepared(1)
+          : path.endsWith("/submit") ? submitted : states[Math.min(asked++, states.length - 1)];
+        return { ok: true, status: 200, json: async () => body } as Response;
+      }));
+    };
+    const asked = () => calls.filter((path) => path === STATUS).length;
+    afterEach(() => vi.useRealTimers());
+
+    it("is asked about again until its receipt is there, and then the order goes on", async () => {
+      vi.useFakeTimers();
+      answers(submitted, submitted, funded);
+      const done = authorizePaidGeneration(REQ, vi.fn(async () => "signed-original"));
+      // Asked once at once (unconfirmed), again after the first wait (unconfirmed), and after the second: funded.
+      await vi.advanceTimersByTimeAsync(CONFIRM_WAITS_MS[0] + CONFIRM_WAITS_MS[1] - 1);
+      expect(asked()).toBe(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await done).toMatchObject({ intentId: "i-1", state: "funded", signedTransaction: "signed-original" });
+      expect(asked()).toBe(3);
+      expect(calls.filter((path) => path.endsWith("/intent") || path.endsWith("/submit"))).toHaveLength(2);
+    });
+
+    it("stays pending, never paid, when no receipt comes within the waits", async () => {
+      vi.useFakeTimers();
+      answers(submitted);
+      const failed = resumePaidGeneration({ intentId: "i-1", units: 4, paymentScheme: "escrow", state: "submitted" }).catch((e) => e as CheckoutError);
+      await vi.advanceTimersByTimeAsync(total);
+      const error = await failed;
+      expect(error).toMatchObject({ step: "status", payment: { state: "submitted", intentId: "i-1" } });
+      expect((error as CheckoutError).message).toBe("Your payment is still being checked. Check its status before making another payment.");
+      expect(asked()).toBe(1 + CONFIRM_WAITS_MS.length);
+      expect(total).toBe(30_000);
+    });
+
+    it("stops asking the moment the deposit has an answer", async () => {
+      vi.useFakeTimers();
+      answers(submitted, { ...funded, state: "expired", funded: false });
+      const failed = resumePaidGeneration({ intentId: "i-1", units: 1, paymentScheme: "escrow", state: "submitted" }).catch((e) => e as CheckoutError);
+      await vi.advanceTimersByTimeAsync(total);
+      expect(await failed).toMatchObject({ payment: { state: "expired" } });
+      expect(asked()).toBe(2);
+    });
+
+    it("a prepared, unsigned deposit is an answer too: nothing is waited for", async () => {
+      answers({ ...funded, state: "prepared", funded: false });
+      await expect(resumePaidGeneration({ intentId: "i-1", units: 1, paymentScheme: "escrow", state: "prepared" })).rejects.toMatchObject({ payment: { state: "prepared" } });
+      expect(asked()).toBe(1);
+    });
+
+    it("a status read that fails while waiting leaves the payment pending with its identity", async () => {
+      vi.useFakeTimers();
+      let n = 0;
+      vi.stubGlobal("fetch", vi.fn(async () => (++n === 1
+        ? { ok: true, status: 200, json: async () => submitted }
+        : { ok: false, status: 503, json: async () => ({}) }) as Response));
+      const failed = resumePaidGeneration({ intentId: "i-1", units: 1, paymentScheme: "escrow", state: "submitted", signedTransaction: "wire" }).catch((e) => e as CheckoutError);
+      await vi.advanceTimersByTimeAsync(total);
+      expect(await failed).toMatchObject({ step: "status", payment: { intentId: "i-1", state: "submitted", signedTransaction: "wire" } });
+      expect(n).toBe(2);
+    });
   });
   it.each([
     { ...funded, intentId: "another-intent" },

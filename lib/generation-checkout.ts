@@ -183,12 +183,28 @@ async function submitSameDeposit(payment: EscrowCheckout, onPayment?: PaymentChe
     throw new CheckoutError("submit", PENDING_PAYMENT, { ...payment, state: "uncertain" });
   }
 }
+/**
+ * How long a submitted deposit is asked about again before the order is left
+ * as pending, 30 s in all. A Solana confirmation takes a few seconds: asking
+ * once, right after the submit, found nearly every deposit unconfirmed, so
+ * the buyer had paid into the escrow and got "still being checked" instead of
+ * the image until they pressed Check payment (Kev's first browser payment,
+ * 2026-10-13).
+ */
+export const CONFIRM_WAITS_MS = [1000, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 5000, 5000];
+const sleep = (ms: number) => new Promise<void>((done) => { setTimeout(done, ms); });
 /** Never opens an intent or a wallet. Resume only the already signed deposit. */
 export async function resumePaidGeneration(payment: EscrowCheckout, onPayment?: PaymentCheckpoint): Promise<FundedEscrowCheckout> {
   let current: EscrowCheckout;
   try {
     current = await checkPaidGenerationStatus(payment);
     if (current.state === "prepared" && current.signedTransaction) current = await submitSameDeposit(current, onPayment);
+    // On its way to the chain: wait for the receipt. Every other state is an answer already.
+    for (const ms of CONFIRM_WAITS_MS) {
+      if (current.state !== "submitted" && current.state !== "submitting") break;
+      await sleep(ms);
+      current = await checkPaidGenerationStatus(current);
+    }
   } catch (error) {
     if (error instanceof CheckoutError) throw error;
     throw new CheckoutError("status", PENDING_PAYMENT, payment);
