@@ -180,19 +180,56 @@
 .feed-card-price.is-free {
   border-color: transparent; background: color-mix(in oklab, var(--enki-stage) 55%, transparent); color: var(--enki-on-stage);
 }
-/* Rendered only once the prompt is bookmarked: the active mark, top right. */
+/* Title and artist: hidden until a hover or the keyboard focus (Kev,
+   2026-10-13), then they rise in over a gradient; the artist is a link. */
+.feed-card-foot {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+  display: flex; flex-direction: column; gap: 4px; padding: 38px 10px 10px 12px; pointer-events: none;
+}
+.feed-card-foot::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; opacity: 0; transition: opacity 0.2s ease;
+  background: linear-gradient(to top,
+    color-mix(in oklab, var(--enki-stage) 78%, transparent) 0%,
+    color-mix(in oklab, var(--enki-stage) 45%, transparent) 55%,
+    transparent 100%);
+}
+.feed-card-title {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  color: var(--enki-on-stage); font-family: var(--font-serif), Georgia, serif; font-size: 18px; line-height: 1.15;
+  text-shadow: 0 1px 2px color-mix(in oklab, var(--enki-stage) 35%, transparent);
+}
+.feed-card-artist {
+  align-self: flex-start; max-width: 100%; padding: 0; border: 0; background: none; text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--enki-on-stage); font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer;
+}
+.feed-card-title, .feed-card-artist {
+  opacity: 0; transform: translateY(6px);
+  transition: opacity 0.2s ease, transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* The bookmark: top right, shown on hover; a set one stays. */
 .feed-card-mark {
   position: absolute; top: 8px; right: 8px; z-index: 3; width: 30px; height: 30px; padding: 0;
   display: flex; align-items: center; justify-content: center;
   border: 0; border-radius: 50%; background: color-mix(in oklab, var(--enki-stage) 38%, transparent);
   color: var(--enki-on-stage); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); cursor: pointer;
-  transition: background 0.15s;
+  opacity: 0; pointer-events: none; transition: opacity 0.18s ease, background 0.15s;
 }
 .feed-card-mark:hover { background: color-mix(in oklab, var(--enki-stage) 60%, transparent); }
 .feed-card-mark:focus-visible { outline-color: var(--enki-on-stage); }
+.feed-card.is-marked .feed-card-mark { opacity: 1; pointer-events: auto; }
+.feed-card:focus-within :is(.feed-card-title, .feed-card-artist) { opacity: 1; transform: none; }
+.feed-card:focus-within .feed-card-artist { pointer-events: auto; }
+.feed-card:focus-within .feed-card-foot::before { opacity: 1; }
+.feed-card:focus-within .feed-card-mark { opacity: 1; pointer-events: auto; }
 
 @media (hover: hover) and (pointer: fine) {
   .feed-card:hover { transform: translateY(-4px); box-shadow: 0 16px 32px color-mix(in oklab, var(--enki-stage) 8%, transparent); }
+  .feed-card:hover :is(.feed-card-title, .feed-card-artist) { opacity: 1; transform: none; }
+  .feed-card:hover .feed-card-artist { pointer-events: auto; }
+  .feed-card:hover .feed-card-foot::before { opacity: 1; }
+  .feed-card:hover .feed-card-mark { opacity: 1; pointer-events: auto; }
 }
 
 /* ── Phones, tablets, touch ── */
@@ -213,7 +250,7 @@
   .feed-card-mark svg { width: 19px; height: 19px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .feed-card, .feed-card *, .feed-bar, .feed-chips, .feed-search input { transition: none; }
+  .feed-card, .feed-card *, .feed-card-foot::before, .feed-bar, .feed-chips, .feed-search input { transition: none; }
   .feed-card:hover { transform: none; }
   .feed-skel { animation: none; opacity: 0.6; }
 }
