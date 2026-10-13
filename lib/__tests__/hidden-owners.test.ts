@@ -91,7 +91,8 @@ describe("every public read and the sell path", () => {
 
   it("a feed page with nothing to show still asks for the next, on the home feed and on /showcase", () => {
     const home = src("components", "enki", "EnkiFeedPage.tsx");
-    expect(home).toMatch(/\) : hasNextPage \? \([\s\S]{0,260}<section className="enki-masonry">\n\s+<div ref=\{sentinelCallback\}/);
+    // Nothing visible yet and more to read: the sentinel, with skeletons where the cards will land.
+    expect(home).toMatch(/\) : hasNextPage \? \(\s*<>\s*<div ref=\{sentinelCallback\} className="feed-sentinel" \/>\s*<MasonryGrid items=\{\[\]\} skeletons=\{6\}/);
     expect(home.indexOf(") : hasNextPage ? (")).toBeLessThan(home.indexOf(") : showEmpty ? ("));
     const showcase = src("app", "showcase", "page.tsx");
     expect(showcase).toContain("if (visiblePrompts.length === 0 && !promptsData?.nextCursor) {");

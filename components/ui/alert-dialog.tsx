@@ -3,6 +3,7 @@ import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog"
 
 import { cn, renderSentencesPerLine } from "@/lib/utils"
 import { buttonVariants } from "@/components/ui/button"
+import "./alert-dialog.css"
 
 const AlertDialog = AlertDialogPrimitive.Root
 
@@ -16,7 +17,7 @@ const AlertDialogOverlay = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <AlertDialogPrimitive.Overlay
     className={cn(
-      "fixed inset-0 z-[110] bg-black/80  data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      "fixed inset-0 z-[10010] bg-black/80  data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className
     )}
     {...props}
@@ -34,13 +35,15 @@ const AlertDialogContent = React.forwardRef<
     {/* Centering is done by this flex wrapper (which is NOT animated), so
         the panel's position never depends on `transform`. The `enk-pop`
         class on Content opts it into a transform-only (scale + opacity)
-        entrance animation defined in enki-editor.css, with a selector
+        entrance animation defined in alert-dialog.css, with a selector
         specific enough to override the app-wide `enk-popup-in` keyframe —
         that global keyframe forces `translate(-50%, -50%)` and would
         otherwise shove this flex-centered panel toward the top-left for the
         length of the animation (the "spawn in corner, jump to middle"
-        flash). A pure scale animation leaves the centering untouched. */}
-    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 pointer-events-none">
+        flash). A pure scale animation leaves the centering untouched.
+        z 10010: above the fullscreen viewer (9999) and the bottom sheet
+        (10000), under the toasts (10020). */}
+    <div className="fixed inset-0 z-[10010] flex items-center justify-center p-4 pointer-events-none">
       <AlertDialogPrimitive.Content
         ref={ref}
         className={cn(

@@ -75,7 +75,7 @@ describe("the human rail", () => {
   it("checks after composing, before moderation and before the charge", () => {
     expect(check).toBeGreaterThan(HUMAN.indexOf("const filled = fillVariables("));
     expect(HUMAN.indexOf("const verdict = first ?? await moderate({ prompt,")).toBeGreaterThan(check);
-    expect(HUMAN.indexOf("await claimForGeneration(")).toBeGreaterThan(check);
+    expect(HUMAN.indexOf("await claimGenerationEscrowUnit(")).toBeGreaterThan(check);
   });
 
   it("warns on an explicit or child-safety request", () => {
@@ -85,9 +85,9 @@ describe("the human rail", () => {
   it("fails a silent refusal only where a real generation fails: after login, slot and claim", () => {
     const at = HUMAN.indexOf("    if (silent) {");
     expect(at).toBeGreaterThan(HUMAN.indexOf('return NextResponse.json({ error: "Authentication required" }, { status: 401 });'));
-    expect(at).toBeGreaterThan(HUMAN.indexOf("consumedIntent = { supabase, id: intentId, mode: redemption.mode };"));
+    expect(at).toBeGreaterThan(HUMAN.indexOf("consumedUnit = { supabase, claim };"));
     expect(HUMAN.indexOf("generateImagesWithWaveSpeed(shared)")).toBeGreaterThan(at);
-    expect(HUMAN).toMatch(/if \(silent\) \{\n[\s\S]{0,600}const answer = await silentFailure\(\);\n\s+await releaseIfConsumed\(\);\n\s+await releaseHeldSlot\(\);\n\s+return answer;/);
+    expect(HUMAN).toMatch(/if \(silent\) \{\n[\s\S]{0,600}const answer = await silentFailure\(\);\n\s+await failIfClaimed\(\);\n\s+await releaseHeldSlot\(\);\n\s+return answer;/);
   });
 
   it("has no other, earlier silent answer", () => {

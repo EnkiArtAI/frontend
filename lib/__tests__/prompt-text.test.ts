@@ -140,7 +140,7 @@ describe("/api/generate-image builds a paid prompt from the artist's text", () =
     const refuse = ROUTE.search(/if \(inputsUnmatched\(filled\)\) \{\n\s+return NextResponse\.json\(/);
     expect(refuse).toBeGreaterThan(-1);
     expect(ROUTE.indexOf("const verdict = first ?? await moderate({ prompt,")).toBeGreaterThan(refuse);
-    expect(ROUTE.indexOf("await claimForGeneration(")).toBeGreaterThan(refuse);
+    expect(ROUTE.indexOf("await claimGenerationEscrowUnit(")).toBeGreaterThan(refuse);
     // The agent rail refuses in agentPrompt, which settlement calls before reading the payment.
     const helper = AGENT.slice(AGENT.indexOf("async function agentPrompt("), AGENT.indexOf("async function requirementsFor("));
     expect(helper).toMatch(/if \(inputsUnmatched\(filled\)\) \{\n\s+return \{ ok: false, status: 422,/);

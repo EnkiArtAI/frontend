@@ -1,0 +1,40 @@
+/* ──────────────────────────────────────────────────────────────────
+ * FLEX-CENTERED POPUP ANIMATION (.enk-pop)
+ *
+ * Moved here from app/editor/enki-editor.css, which only loaded after a
+ * visit to /editor: before that, every confirm opened without its motion.
+ *
+ * That file's global `enk-popup-in` keyframe bakes in
+ * `transform: translate(-50%, -50%)`, which is correct for panels that
+ * center themselves with that same translate. Panels marked `.enk-pop`
+ * instead center via a flex wrapper (no transform), so that translate
+ * would shove them toward the top-left during the animation, then snap
+ * them back to center when it ends — a visible corner-to-center flash.
+ *
+ * These rules opt `.enk-pop` panels into a transform-only (scale)
+ * entrance so their centering is never disturbed. The selectors include
+ * the `[role]` attribute so they out-specify the role-only global rule
+ * regardless of stylesheet order.
+ * ────────────────────────────────────────────────────────────────── */
+@keyframes enk-pop-scale-in {
+  0%   { opacity: 0; transform: scale(0.94); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes enk-pop-scale-out {
+  0%   { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(0.96); }
+}
+[role="alertdialog"].enk-pop[data-state="open"],
+[role="dialog"].enk-pop[data-state="open"] {
+  animation: enk-pop-scale-in 220ms cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+[role="alertdialog"].enk-pop[data-state="closed"],
+[role="dialog"].enk-pop[data-state="closed"] {
+  animation: enk-pop-scale-out 150ms cubic-bezier(0.4, 0, 1, 1) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  [role="alertdialog"].enk-pop[data-state],
+  [role="dialog"].enk-pop[data-state] {
+    animation: none !important;
+  }
+}

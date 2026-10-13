@@ -1,0 +1,912 @@
+/* Image View content, loaded with the view. The mounts load the frame separately. */
+
+/* ── The layout. Wide: 330 / fluid / rail. Medium: 300 / fluid / rail.
+   Stacked: one column, the history a drawer. */
+.iv-root {
+  position: relative;
+  display: grid;
+  grid-template-columns: 330px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
+  background: var(--enki-paper);
+  color: var(--enki-ink);
+  font-family: var(--font-sans), sans-serif;
+  font-size: 13px;
+}
+.iv-root[data-rail] { grid-template-columns: 330px minmax(0, 1fr) auto; }
+.iv-root[data-tier="medium"] { grid-template-columns: 300px minmax(0, 1fr); }
+.iv-root[data-tier="medium"][data-rail] { grid-template-columns: 300px minmax(0, 1fr) auto; }
+.iv-root[data-tier="stacked"] { display: block; }
+.iv-root button { font-family: inherit; }
+
+.iv-left {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--enki-rule-2);
+}
+.iv-left-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 14px 18px 16px;
+}
+.iv-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 18px 14px;
+  border-top: 1px solid var(--enki-rule-2);
+  background: var(--enki-paper);
+  overflow-x: hidden;
+}
+.iv-center {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 14px 18px 20px;
+  background: var(--enki-paper-2);
+}
+
+/* Stacked: header → stage → strip → composer → settings → Generate → comments. */
+/* One column never scrolls sideways: a row too wide for a 320 px phone is clipped, not a swipe that slides the page. */
+.iv-stack { height: 100%; overflow: hidden auto; scrollbar-width: thin; padding-bottom: 28px; background: var(--enki-paper); }
+.iv-stack > .iv-head { border-bottom: 0; }
+.iv-stack-stage { display: flex; flex-direction: column; gap: 10px; padding: 4px 18px 14px; background: var(--enki-paper-2); }
+.iv-stack .iv-stage { height: 56vh; min-height: 260px; }
+.iv-stack-body { display: flex; flex-direction: column; gap: 16px; padding: 16px 18px; }
+.iv-stack .iv-foot { border-top: 1px solid var(--enki-rule-2); padding: 12px 18px 16px; }
+.iv-stack-talk { padding: 4px 18px 0; }
+
+/* ── Shared text bits. */
+.iv-label {
+  font: 400 10.5px/1.3 var(--font-mono), monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--enki-ink-3);
+}
+.iv-hint { margin: -8px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--enki-ink-3); text-wrap: pretty; }
+.iv-sub { font-size: 11.5px; color: var(--enki-ink-3); }
+.iv-note { margin: 0; font-size: 12.5px; color: var(--enki-ink-2); }
+.iv-dim { opacity: 0.6; font-size: 11px; }
+.iv-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--enki-ember);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.iv-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* ── Header. */
+.iv-head { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px 12px; border-bottom: 1px solid var(--enki-rule-2); }
+.iv-head-top { display: flex; align-items: center; gap: 10px; }
+.iv-round {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--enki-rule);
+  border-radius: 50%;
+  background: var(--enki-paper);
+  color: var(--enki-ink-2);
+  cursor: pointer;
+}
+.iv-round:hover { color: var(--enki-ink); border-color: var(--enki-ink-3); }
+.iv-tier {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 400 10.5px/1 var(--font-mono), monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--enki-ink-3);
+}
+.iv-tier::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.iv-tier[data-premium] { color: var(--enki-ember); }
+.iv-title { margin: 0; font-size: 27px; line-height: 1.05; text-wrap: pretty; overflow-wrap: anywhere; }
+.iv-title[data-blank] { font-style: italic; }
+.iv-by { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12.5px; color: var(--enki-ink-3); }
+.iv-by-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--enki-ember);
+  font: 500 12.5px/1.3 var(--font-sans), sans-serif;
+  cursor: pointer;
+}
+.iv-by-link:hover { color: var(--enki-ink); }
+.iv-rating { display: inline-flex; align-items: center; gap: 4px; font: 400 11px/1 var(--font-mono), monospace; color: var(--enki-ink-2); }
+.iv-rating > span:first-child { color: var(--enki-ember); }
+.iv-rating > span:last-child { color: var(--enki-ink-3); }
+.iv-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.iv-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 999px;
+  background: var(--enki-paper);
+  color: var(--enki-ink-2);
+  font: 500 12px/1 var(--font-sans), sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.iv-act:hover:not(:disabled) { border-color: var(--enki-ink-3); color: var(--enki-ink); }
+.iv-act:disabled { opacity: 0.45; cursor: default; }
+.iv-act--icon { width: 30px; padding: 0; }
+.iv-act[data-on="saved"] {
+  border-color: var(--enki-ember);
+  background: color-mix(in oklab, var(--enki-ember) 12%, transparent);
+  color: var(--enki-ember);
+}
+.iv-act[data-on="liked"] { color: var(--enki-danger); }
+
+/* ── Prompt, values, the price of a premium prompt. */
+.iv-prompt { display: flex; flex-direction: column; gap: 16px; }
+.iv-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 26px; }
+.iv-sec-tools { display: inline-flex; align-items: center; gap: 6px; }
+.iv-tv .kit-seg { --kit-seg-h: 26px; }
+.iv-tv .kit-seg-btn { width: 34px; padding: 0; font: 400 11px/1 var(--font-mono), monospace; }
+.iv-t { font: 400 15px/1 var(--font-serif), Georgia, serif; }
+.iv-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--enki-rule);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--enki-ink-3);
+  cursor: pointer;
+}
+.iv-copy:hover { border-color: var(--enki-ink-3); color: var(--enki-ink); }
+.iv-pm { --kit-fs: 14.5px; --kit-lh: 1.55; --kit-pad: 12px 14px; --kit-radius: 14px; }
+.iv-count { margin: -10px 0 0; font: 400 11px/1 var(--font-mono), monospace; color: var(--enki-ink-3); text-align: right; }
+.iv-count[data-over] { color: var(--enki-danger); }
+
+.iv-inline {
+  padding: 12px 14px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 14px;
+  background: var(--enki-paper);
+  color: var(--enki-ink);
+  font-size: 14.5px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+.iv-tok {
+  display: inline;
+  padding: 1px 5px;
+  border: 0;
+  border-bottom: 1.5px dashed color-mix(in oklab, var(--enki-ember) 55%, transparent);
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--enki-ember) 14%, transparent);
+  color: var(--enki-ember);
+  font: 500 14.5px/1.75 var(--font-sans), sans-serif;
+  outline: 0;
+  cursor: text;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+button.iv-tok { cursor: pointer; }
+.iv-tok:focus,
+.iv-tok:focus-visible { background: color-mix(in oklab, var(--enki-ember) 22%, transparent); }
+/* An empty value shows its label, never as text the blur could commit. */
+.iv-tok:empty::before { content: attr(data-placeholder); color: var(--enki-ink-3); font-weight: 400; opacity: 0.8; }
+.iv-tok[data-off] { text-decoration: line-through; opacity: 0.6; }
+.iv-tok--ref {
+  border-bottom: 0;
+  background: linear-gradient(90deg, var(--enki-ref-a), var(--enki-ref-b));
+  color: var(--enki-ref-ink);
+  cursor: default;
+}
+.iv-tok--ref[data-missing] { outline: 1.5px dashed var(--enki-danger); outline-offset: 1px; }
+.iv-tok-menu { display: inline; }
+.iv-tok-menu .kit-pill {
+  display: inline-flex;
+  height: auto;
+  padding: 1px 5px;
+  gap: 4px;
+  border: 0;
+  border-bottom: 1.5px dashed color-mix(in oklab, var(--enki-ember) 55%, transparent);
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--enki-ember) 14%, transparent);
+  color: var(--enki-ember);
+  font: 500 14.5px/1.5 var(--font-sans), sans-serif;
+  vertical-align: baseline;
+}
+.iv-tok-menu .kit-caret { color: inherit; }
+
+.iv-fields { display: flex; flex-direction: column; gap: 10px; }
+.iv-fields > .iv-sec-head { margin-bottom: -4px; }
+
+.iv-lock {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in oklab, var(--enki-ember) 40%, var(--enki-rule));
+  border-radius: 14px;
+  background: color-mix(in oklab, var(--enki-ember) 6%, var(--enki-paper));
+}
+.iv-lock-price { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
+/* The amount and "per image" on one baseline, never wrapped under each other (Kev, 2026-10-13). */
+.iv-lock-line { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+.iv-lock-total { display: inline-flex; align-items: center; min-height: 36px; font: 400 clamp(28px, 6vw, 36px)/1 var(--font-serif), Georgia, serif; color: var(--enki-ember); }
+.iv-lock-per { font-size: 14px; color: var(--enki-ink-2); }
+.iv-lock-note { font-size: 11.5px; line-height: 1.4; color: var(--enki-ink-3); text-wrap: pretty; }
+.iv-lock-pill {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 999px;
+  background: var(--enki-paper);
+  color: var(--enki-ink-3);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* ── Agent row, settings, Generate. */
+.iv-agent { display: flex; flex-direction: column; }
+/* The fold: a grid track from 0 to the content's height, quick both ways (Kev, 2026-10-13). */
+.iv-agent-fold { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.18s ease; }
+.iv-agent-fold[data-open] { grid-template-rows: 1fr; }
+.iv-agent-fold-in { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; }
+.iv-agent-fold-in > :first-child { margin-top: 8px; }
+.iv-agent-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--enki-ink-2);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.iv-agent-toggle > svg { flex-shrink: 0; color: var(--enki-ink-3); }
+.iv-agent-toggle > span:first-of-type { flex: 1; }
+.iv-agent-badge {
+  padding: 1px 5px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 4px;
+  font: 400 9.5px/1.3 var(--font-mono), monospace;
+  letter-spacing: 0.06em;
+  color: var(--enki-ink-3);
+}
+.iv-agent-chev { transition: transform 0.2s; }
+.iv-agent-toggle[aria-expanded="true"] .iv-agent-chev { transform: rotate(180deg); }
+/* The request wraps inside the block, short of the copy icon in its corner;
+   nothing scrolls sideways or runs under the icon (Kev, 2026-10-13). */
+.iv-code {
+  position: relative;
+  margin: 0;
+  padding: 10px 44px 10px 12px;
+  border-radius: 12px;
+  background: var(--enki-stage);
+  color: var(--enki-on-stage);
+  font: 400 10.5px/1.55 var(--font-mono), monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.iv-code-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid color-mix(in oklab, var(--enki-on-stage) 25%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--enki-on-stage) 8%, transparent);
+  color: var(--enki-on-stage);
+  cursor: pointer;
+}
+.iv-code-copy:hover { background: color-mix(in oklab, var(--enki-on-stage) 16%, transparent); }
+.iv-agent-note { margin: 0; font-size: 11px; line-height: 1.45; color: var(--enki-ink-3); text-wrap: pretty; }
+
+/* The bar wraps and never scrolls sideways (handoff §0). */
+.iv-bar { --kit-pill-h: 34px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.iv-gen { position: relative; }
+
+/* ── Stage. The box is as large as the area allows at the picture's ratio. */
+.iv-stage {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: calc(100% - 128px);
+  min-height: 360px;
+  container-type: size;
+}
+.iv-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: min(100cqh, calc(100cqw / var(--ar)));
+  aspect-ratio: var(--ar);
+  max-width: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--enki-paper-3);
+  box-shadow: var(--enki-shadow-pop);
+}
+.iv-box[data-state="rendering"] { background: var(--enki-stage); }
+.iv-box[data-state="failed"] { background: color-mix(in oklab, var(--enki-danger) 14%, var(--enki-stage)); }
+.iv-open { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; }
+.iv-open img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.iv-empty { margin: 0; padding: 16px; font: italic 400 17px/1.3 var(--font-serif), Georgia, serif; color: var(--enki-ink-3); text-align: center; }
+.iv-ring {
+  box-sizing: border-box;
+  width: 34px;
+  height: 34px;
+  border: 3px solid color-mix(in oklab, var(--enki-on-stage) 20%, transparent);
+  border-top-color: var(--enki-on-stage);
+  border-radius: 50%;
+  animation: kit-spin 0.9s linear infinite;
+}
+.iv-fail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 340px;
+  padding: 16px;
+  color: color-mix(in oklab, var(--enki-on-stage) 90%, transparent);
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: center;
+  text-wrap: pretty;
+}
+.iv-bang {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  box-sizing: border-box;
+  border: 2px solid var(--enki-danger);
+  border-radius: 50%;
+  color: var(--enki-danger);
+  font: 600 22px/1 var(--font-sans), sans-serif;
+}
+.iv-retry {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 999px;
+  background: var(--enki-paper);
+  color: var(--enki-ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+.iv-retry:disabled { opacity: 0.55; cursor: default; }
+.iv-meta {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  max-width: calc(100% - 20px);
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--enki-stage) 58%, transparent);
+  color: var(--enki-on-stage);
+  font: 400 10px/1 var(--font-mono), monospace;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+.iv-x {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--enki-rule);
+  border-radius: 50%;
+  background: var(--enki-paper);
+  color: var(--enki-ink-2);
+  box-shadow: var(--enki-shadow-pop);
+  cursor: pointer;
+}
+.iv-x:hover { color: var(--enki-ink); }
+
+/* ── Strip. */
+.iv-strip { position: relative; display: flex; align-items: center; gap: 6px; }
+.iv-strip-arrow {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--enki-rule);
+  border-radius: 50%;
+  background: var(--enki-paper);
+  color: var(--enki-ink-3);
+  cursor: pointer;
+}
+.iv-strip-arrow:disabled { opacity: 0.35; cursor: default; }
+.iv-strip-row { flex: 1; min-width: 0; overflow-x: auto; scroll-behavior: smooth; }
+.iv-strip-track { display: flex; gap: 8px; width: max-content; padding: 3px 2px; }
+.iv-strip-track .kit-tile { --kit-tile-radius: 9px; box-shadow: none; }
+.iv-thumb {
+  flex: none;
+  height: 64px;
+  min-width: 40px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 9px;
+  overflow: hidden;
+  background: var(--enki-paper-3);
+  cursor: pointer;
+}
+.iv-thumb[aria-pressed="true"] { border-color: var(--enki-ember); }
+.iv-thumb img { display: block; width: auto; height: 100%; object-fit: cover; }
+/* The maker's name over an image made with the prompt (Kev, 2026-10-13): on hover
+   or focus, always where there is no hover; a link to their profile unless it is you. */
+.iv-thumb-wrap { position: relative; flex: none; display: inline-flex; }
+.iv-thumb-by {
+  position: absolute;
+  left: 5px;
+  bottom: 5px;
+  max-width: calc(100% - 10px);
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--enki-stage) 72%, transparent);
+  color: var(--enki-on-stage);
+  font: 500 10px/1.4 var(--font-sans), sans-serif;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+.iv-thumb-wrap:hover .iv-thumb-by,
+.iv-thumb-wrap:focus-within .iv-thumb-by { opacity: 1; }
+.iv-thumb-wrap:hover button.iv-thumb-by,
+.iv-thumb-wrap:focus-within button.iv-thumb-by { pointer-events: auto; cursor: pointer; }
+button.iv-thumb-by:hover { background: var(--enki-ember); color: var(--enki-paper); }
+@media (hover: none) {
+  .iv-thumb-by { opacity: 1; }
+  button.iv-thumb-by { pointer-events: auto; }
+}
+
+/* ── Comments and reviews. */
+.iv-talk { display: flex; flex: 0 0 auto; flex-direction: column; gap: 10px; margin-top: 6px; }
+.iv-talk-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.iv-talk-tabs .kit-seg { --kit-seg-h: 34px; background: var(--enki-paper); }
+.iv-talk-tabs .kit-seg-btn { padding: 0 14px; gap: 7px; }
+.iv-talk-tabs > .iv-hint { margin: 0; }
+/* The switch cannot wrap: on a phone it drops "requires purchase", which the Reviews tab's own line says. */
+@media (max-width: 767.98px) {
+  .iv-talk-tabs .iv-dim { display: none; }
+}
+.iv-talk-panel { display: flex; flex-direction: column; border: 1px solid var(--enki-rule-2); border-radius: 14px; background: var(--enki-paper); }
+.iv-talk-list { display: flex; flex-direction: column; gap: 14px; padding: 14px 16px; }
+.iv-talk-note { margin: 0; font-size: 12.5px; color: var(--enki-ink-3); }
+.iv-c { display: flex; gap: 10px; }
+.iv-av {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--enki-paper-3);
+  color: var(--enki-ink-2);
+  font: 600 10px/1 var(--font-mono), monospace;
+}
+.iv-c-main { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.iv-c-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
+.iv-c-who { padding: 0; border: 0; background: none; color: var(--enki-ink); font: 600 12px/1.3 var(--font-sans), sans-serif; }
+button.iv-c-who { cursor: pointer; }
+button.iv-c-who:hover { color: var(--enki-ember); }
+.iv-c-when { color: var(--enki-ink-3); }
+.iv-c-body { margin: 0; font-size: 13px; line-height: 1.5; color: var(--enki-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; text-wrap: pretty; }
+.iv-stars { color: var(--enki-ember); letter-spacing: 1px; }
+.iv-compose { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--enki-rule-2); }
+/* A review: the viewer's own images to pick from, above the stars and the words. */
+.iv-compose[data-review] { flex-direction: column; align-items: stretch; }
+.iv-compose-row { display: flex; align-items: center; gap: 8px; }
+.iv-review-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+.iv-review-img {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--enki-paper-2);
+  cursor: pointer;
+}
+.iv-review-img[aria-checked="true"] { border-color: var(--enki-ember); }
+.iv-review-img img { display: block; width: 100%; height: 100%; object-fit: cover; }
+/* The image a review shows, in its row. */
+.iv-c-img { flex-shrink: 0; width: 56px; height: 56px; border-radius: 8px; object-fit: cover; }
+.iv-input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 999px;
+  background: var(--enki-paper);
+  color: var(--enki-ink);
+  font: 400 13px/1 var(--font-sans), sans-serif;
+  outline: none;
+}
+.iv-input:focus { border-color: var(--enki-ember); }
+.iv-input::placeholder { color: var(--enki-ink-3); }
+.iv-input:disabled { opacity: 0.55; }
+/* Never under 16 px on a touch screen, so iOS does not zoom on focus: the
+   comment field, and the [ ] view with its editable values (the T view's
+   field follows the kit's own rule). */
+@media (pointer: coarse) {
+  .iv-input,
+  .iv-inline,
+  .iv-tok { font-size: 16px; }
+}
+.iv-send {
+  flex-shrink: 0;
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--cta-bg);
+  color: var(--cta-ink);
+  font: 500 12.5px/1 var(--font-sans), sans-serif;
+  cursor: pointer;
+}
+.iv-send:disabled { opacity: 0.55; cursor: default; }
+.iv-rate { display: inline-flex; flex-shrink: 0; }
+.iv-star {
+  width: 20px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--enki-rule);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+.iv-star[data-on] { color: var(--enki-ember); }
+/* On a touch screen a star's target grows up and down only: a 44 px square
+   would reach into the next star, so a tap would rate one higher. */
+@media (pointer: coarse) {
+  .iv-star { position: relative; }
+  .iv-star::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 44px;
+    transform: translateY(-50%);
+  }
+}
+.iv-gate { margin: 0; padding: 10px 16px; border-top: 1px solid var(--enki-rule-2); font-size: 12px; color: var(--enki-ink-3); }
+
+/* ── History: a rail that folds to the right, or (stacked) a drawer. */
+.iv-rail {
+  display: flex;
+  flex-direction: column;
+  width: 196px;
+  min-height: 0;
+  border-left: 1px solid var(--enki-rule-2);
+  background: var(--enki-paper);
+  overflow: hidden;
+  transition: width 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.iv-rail[data-open="false"] { width: 44px; }
+.iv-rail-head {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 196px;
+  padding: 14px 10px 10px 14px;
+}
+.iv-rail-label { white-space: nowrap; transition: opacity 0.2s; }
+.iv-rail[data-open="false"] .iv-rail-label { opacity: 0; }
+.iv-rail-toggle {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--enki-rule);
+  border-radius: 50%;
+  background: var(--enki-paper);
+  color: var(--enki-ink-3);
+  cursor: pointer;
+  transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.iv-rail-toggle:hover { border-color: var(--enki-ink-3); color: var(--enki-ink); }
+.iv-rail[data-open="false"] .iv-rail-toggle { transform: translateX(-143px) rotate(180deg); }
+.iv-rail-list {
+  box-sizing: border-box;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  width: 196px;
+  min-height: 0;
+  padding: 0 14px 14px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  animation: kit-fade 0.2s ease;
+}
+.iv-hitem { position: relative; display: flex; flex-direction: column; gap: 4px; text-align: left; }
+.iv-hitem-pick { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: pointer; }
+.iv-hitem img {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 60px;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: var(--enki-paper-3);
+}
+.iv-hitem-pick[aria-pressed="true"] img { border-color: var(--enki-ember); }
+/* The globe on the viewer's own image: grey while private, lit once public (Kev, 2026-10-13). */
+.iv-hpub {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--enki-stage) 55%, transparent);
+  color: var(--enki-on-stage);
+  opacity: 0.55;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s;
+}
+.iv-hpub:hover, .iv-hpub:focus-visible { opacity: 1; }
+.iv-hpub[data-on] { opacity: 1; background: var(--enki-ember); color: var(--enki-paper); }
+/* A render of this tab: the kit's job tile (spinner, "!", turq until seen), as wide as the rail's column. */
+.iv-rail-list .kit-tile { --kit-tile-radius: 10px; width: 100%; box-shadow: none; }
+.iv-hitem span { font: 400 9.5px/1.2 var(--font-mono), monospace; letter-spacing: 0.04em; color: var(--enki-ink-3); }
+.iv-rail-note { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--enki-ink-3); }
+.iv-older {
+  flex-shrink: 0;
+  height: 30px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--enki-ink-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.iv-older:disabled { opacity: 0.55; cursor: default; }
+.iv-rail-mini {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 44px;
+  min-height: 0;
+  padding: 6px 0 14px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.iv-mini {
+  box-sizing: border-box;
+  flex-shrink: 0;
+  width: 22px;
+  height: 28px;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--enki-paper-3);
+}
+.iv-mini[data-on] { border-color: var(--enki-ember); }
+.iv-mini[data-status="rendering"] { background: var(--enki-stage); animation: kit-pulse 1.2s ease-in-out infinite; }
+.iv-mini[data-status="rendering"][data-sent] { background: color-mix(in oklab, var(--enki-turq) 45%, var(--enki-stage)); }
+.iv-mini[data-status="failed"] { border-color: var(--enki-danger); }
+.iv-mini img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.iv-rail-vert {
+  margin-top: 4px;
+  writing-mode: vertical-rl;
+  font: 400 9.5px/1 var(--font-mono), monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--enki-ink-3);
+}
+.iv-drawer-handle {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 64px;
+  padding: 0;
+  border: 1px solid var(--enki-rule);
+  border-right: 0;
+  border-radius: 12px 0 0 12px;
+  background: var(--enki-paper);
+  color: var(--enki-ink-3);
+  box-shadow: var(--enki-shadow-card);
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+.iv-drawer-scrim { position: absolute; inset: 0; z-index: 4; background: color-mix(in oklab, var(--enki-stage) 40%, transparent); animation: kit-fade 0.2s ease; }
+.iv-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  width: min(300px, 86%);
+  border-left: 1px solid var(--enki-rule-2);
+  background: var(--enki-paper);
+  box-shadow: var(--enki-shadow-pop);
+  animation: iv-drawer-in 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.iv-drawer .iv-rail-head,
+.iv-drawer .iv-rail-list { width: auto; min-width: 0; }
+@keyframes iv-drawer-in { from { transform: translateX(100%); } }
+
+/* ── The viewer's panel (on the always-dark stage). */
+.iv-vpanel {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 100%;
+  padding: 24px;
+  color: var(--enki-on-stage);
+}
+.iv-vnote { margin: 0; font-size: 12.5px; line-height: 1.45; color: color-mix(in oklab, var(--enki-on-stage) 60%, transparent); }
+.iv-vmeta { margin: 0; font-size: 11px; color: color-mix(in oklab, var(--enki-on-stage) 55%, transparent); }
+.iv-public { position: relative; display: flex; align-items: center; gap: 10px; font-size: 12px; color: color-mix(in oklab, var(--enki-on-stage) 80%, transparent); cursor: pointer; }
+.iv-public input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; }
+.iv-switch {
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 22px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--enki-on-stage) 18%, transparent);
+  transition: background 0.14s;
+}
+.iv-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--enki-on-stage);
+  transition: transform 0.14s;
+}
+.iv-public input:checked + .iv-switch { background: var(--enki-turq); }
+.iv-public input:checked + .iv-switch::after { transform: translateX(14px); }
+.iv-public input:focus-visible + .iv-switch { outline: 2px solid var(--enki-ember); outline-offset: 2px; }
+.iv-public-text { display: flex; flex-direction: column; gap: 2px; }
+.iv-public-text > span { font-size: 11px; color: color-mix(in oklab, var(--enki-on-stage) 55%, transparent); }
+.iv-vreport {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: color-mix(in oklab, var(--enki-on-stage) 60%, transparent);
+  font: 400 11px/1.3 var(--font-sans), sans-serif;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.iv-vacts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: auto; }
+.iv-vact {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 56px;
+  padding: 10px 4px;
+  border: 1px solid color-mix(in oklab, var(--enki-on-stage) 18%, transparent);
+  border-radius: 14px;
+  background: color-mix(in oklab, var(--enki-on-stage) 8%, transparent);
+  color: var(--enki-on-stage);
+  font: 400 10.5px/1.2 var(--font-sans), sans-serif;
+  cursor: pointer;
+}
+.iv-vact:hover { background: color-mix(in oklab, var(--enki-on-stage) 14%, transparent); }
+.iv-vact[data-primary] {
+  grid-column: 1 / -1;
+  border-color: transparent;
+  background: var(--enki-on-stage);
+  color: var(--enki-stage);
+  font-weight: 600;
+}
+.iv-vact:disabled { opacity: 0.55; cursor: default; }
+/* Regenerate's price, a second line (spec-imageview-mobile D10). */
+.iv-vprice { font: 500 10px/1 var(--font-mono), monospace; opacity: 0.75; }
+/* BookmarkPicker inside the viewer's sheet: in the flow, not floating. */
+.iv-sheet-bmp .enki-bmp { position: static; width: auto; padding: 0; border: 0; box-shadow: none; background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  .iv-rail,
+  .iv-rail-toggle,
+  .iv-agent-chev { transition: none; }
+  .iv-drawer,
+  .iv-drawer-scrim,
+  .iv-rail-list,
+  .iv-mini[data-status="rendering"] { animation: none; }
+  .iv-agent-fold { transition: none; }
+}

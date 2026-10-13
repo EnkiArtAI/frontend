@@ -1,0 +1,30 @@
+.iv-root.iv-mobile { display: block; overflow-y: auto; overscroll-behavior: contain; padding-bottom: max(20px, env(safe-area-inset-bottom)); }
+.iv-mobile .iv-head { padding-inline: 16px; }
+.iv-mobile-stage { position: relative; min-width: 0; }
+.iv-mobile-examples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 0 16px; }
+.iv-mobile-examples button { border: 0; padding: 0; background: var(--enki-paper-2); min-width: 0; aspect-ratio: 1; overflow: hidden; cursor: pointer; }
+.iv-mobile-examples img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.iv-mobile-stage .iv-stage { height: min(56dvh, 540px); min-height: 220px; }
+.iv-mobile-previews { display: flex; gap: 6px; overflow-x: auto; padding: 10px 16px 12px; }
+.iv-mobile-previews .iv-thumb { flex-shrink: 0; }
+.iv-mobile-tabs { display: flex; border-block: 1px solid var(--enki-rule-2); }
+.iv-mobile-tabs button { flex: 1; min-width: 0; min-height: 44px; padding: 10px 4px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--enki-ink-3); font-size: 12px; cursor: pointer; }
+.iv-mobile-tabs button[aria-selected="true"] { border-bottom-color: var(--enki-ember); color: var(--enki-ink); }
+.iv-mobile-panel { min-width: 0; }
+.iv-mobile [hidden] { display: none; }
+.iv-mobile-compose { display: flex; flex-direction: column; gap: 16px; padding: 16px; }
+.iv-mobile .iv-foot { padding: 0 16px 16px; border: 0; }
+.iv-mobile .iv-bar { flex-wrap: wrap; }
+.iv-mobile .iv-talk { padding: 16px; }
+.iv-mobile-history { padding: 16px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.iv-mobile-hitem { position: relative; }
+.iv-mobile-hpick { display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 0; border: 0; background: transparent; color: var(--enki-ink-3); text-align: left; cursor: pointer; }
+.iv-mobile-hpick img { width: 100%; height: 140px; object-fit: contain; background: var(--enki-paper-2); border: 2px solid transparent; }
+.iv-mobile-hpick[aria-pressed="true"] img { border-color: var(--enki-ember); }
+.iv-mobile-hpick span { font-size: 11px; }
+/* The globe (image-view.css .iv-hpub) sits on the phone's bigger tile a touch further in, with a 44 px hit area from kit-hit. */
+.iv-mobile-hitem .iv-hpub { top: 8px; right: 8px; width: 28px; height: 28px; }
+.iv-mobile-history .iv-rail-note, .iv-mobile-history .iv-older { grid-column: 1 / -1; }
+.iv-mobile-queue { padding: 16px; border-top: 1px solid var(--enki-rule-2); }
+.iv-mobile-queue h2 { margin: 0 0 10px; }
+.iv-mobile-jobs { display: flex; flex-wrap: wrap; gap: 8px; }

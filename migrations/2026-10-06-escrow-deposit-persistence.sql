@@ -34,8 +34,10 @@ CREATE TABLE IF NOT EXISTS public.generation_escrow_deposits (
   CHECK (buyer_address <> rent_payer),
   CHECK (expires_at_seconds - chain_now_seconds BETWEEN 600 AND 1800),
   -- Exactly two empty signature slots followed by the original legacy message.
+  -- Only the signature count is pinned: the buyer is a read-only signer in the
+  -- program (Deposit.buyer has no mut), so the header's second byte is 01.
   CHECK (substring(unsigned_transaction FROM 1 FOR 1) = decode('02','hex')
-    AND substring(message FROM 1 FOR 2) = decode('0200','hex')
+    AND substring(message FROM 1 FOR 1) = decode('02','hex')
     AND substring(unsigned_transaction FROM 2 FOR 128) = decode(repeat('00',128),'hex')
     AND substring(unsigned_transaction FROM 130) = message),
   CHECK ((signed_transaction IS NULL AND signature IS NULL AND submitted_at IS NULL)
