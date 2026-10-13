@@ -64,7 +64,7 @@
   outline: 0;
   background: transparent;
   color: var(--enki-ink);
-  font: 400 26px/1.2 var(--font-serif), Georgia, serif;
+  font: 400 30px/1.2 var(--font-serif), Georgia, serif;
   letter-spacing: normal;
 }
 .pe-title::placeholder { color: var(--enki-ink-3); }
