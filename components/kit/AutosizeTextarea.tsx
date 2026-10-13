@@ -32,8 +32,15 @@ export default function AutosizeTextarea({ value, onChange, min, max, growOnly, 
     const ta = el.current;
     if (!ta) return;
     const prev = ta.offsetHeight;
+    // Chrome counts a wrapped placeholder in scrollHeight: an empty value
+    // field grew a line whenever "Example <name>" wrapped as the name was
+    // typed, and the pane jumped with it (Kev, 2026-10-13). Measured without it.
+    const placeholder = ta.placeholder;
+    ta.placeholder = "";
     ta.style.height = "auto";
-    const next = nextHeight({ scrollHeight: ta.scrollHeight, prev, min, max, growOnly: growOnly && !widthChanged });
+    const scrollHeight = ta.scrollHeight;
+    ta.placeholder = placeholder;
+    const next = nextHeight({ scrollHeight, prev, min, max, growOnly: growOnly && !widthChanged });
     ta.style.height = `${next.height}px`;
     ta.style.overflowY = next.overflowY;
   });
