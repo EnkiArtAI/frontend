@@ -203,7 +203,6 @@ export interface ImageViewModel {
   button: { label: string; dimmed: boolean };
   /** The line under Generate; nothing for a paid render, whose price is on the button. */
   cost: string | null;
-  balance: { text: string; short: boolean } | null;
   /** The balance while it is below the price: Generate turns red, carries it, and its press opens Add funds (Kev, 2026-10-13). */
   short: string | null;
   generate: () => void;
@@ -674,7 +673,6 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
     chip: chipLabel({ signedIn: !guest, free: core.free, quote: quote.quote, pending: quote.pending }),
     button: { label: gate.label, dimmed: gate.why !== null },
     cost,
-    balance,
     short,
     generate,
     funds: funds && { balanceUsd: funds.balanceUsd, totalUsd: funds.totalUsd },

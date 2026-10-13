@@ -110,7 +110,7 @@ export default function ImageViewDesktop({ model: m, onClose }: { model: ImageVi
         <GenerateButton label={m.button.label} chip={m.chip} chipPending={m.quotePending} dimmed={m.button.dimmed}
           short={m.short} onPress={m.generate} size="block" />
       </div>
-      <CostLine left={m.cost} balance={m.balance && m.short === null ? { ...m.balance, onAddFunds: openAddFunds } : null} />
+      <CostLine left={m.cost} />
     </div>
   );
   const stage = (

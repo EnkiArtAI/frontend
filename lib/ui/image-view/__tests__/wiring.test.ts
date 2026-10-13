@@ -100,7 +100,7 @@ describe("a short balance (Kev, 2026-10-13)", () => {
     for (const view of ["ImageViewDesktop.tsx", "ImageViewMobile.tsx"]) {
       const text = readSource(join(__dirname, "..", "..", "..", "..", "components", "image-view", view));
       expect(text, view).toContain("short={m.short}");
-      expect(text, view).toContain("balance={m.balance && m.short === null ? { ...m.balance, onAddFunds: openAddFunds } : null}");
+      expect(text, view).toContain("<CostLine left={m.cost} />");
     }
   });
 });

@@ -62,7 +62,7 @@ beforeEach(() => {
     queue: [], jobs: [], finished: [], history: [], examples: [], community: [], main: null,
     discussion: { data: undefined }, core: { entry: null, supportsQuality: false, boostAvailable: false, boostAt: () => false },
     refs: [], cap: 0, over: 0, pending: 0, models: [], modelPrices: [], button: { label: "Generate", dimmed: false },
-    chip: "$0.20", quotePending: false, balance: null, short: null, funds: null,
+    chip: "$0.20", quotePending: false, short: null, funds: null,
     historyState: { loading: false, failed: false, more: false, retry: vi.fn(), loadOlder: vi.fn() },
     select: vi.fn(), seen: vi.fn(), generate: vi.fn(), again: vi.fn(),
   } as unknown as ImageViewModel;

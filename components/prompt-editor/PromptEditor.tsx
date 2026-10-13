@@ -550,7 +550,7 @@ export default function PromptEditor({ promptId, onReleased }: {
                   onPress: short === null ? () => attempt({}) : openAddFunds,
                   size: tabs ? "block" : "bar",
                 }}
-                cost={{ left: costLeft, balance: bal && short === null ? { ...bal, onAddFunds: openAddFunds } : null }}>
+                cost={{ left: costLeft }}>
                 {funds && fundsQuote && (
                   <AddFundsPopover balanceUsd={balanceUsd ?? 0} totalUsd={fundsQuote.totalUsd} onAddFunds={openAddFunds}
                     onTryAnyway={() => attempt(funds, true)} onClose={() => setFunds(null)} />

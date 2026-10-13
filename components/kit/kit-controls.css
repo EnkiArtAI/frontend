@@ -277,11 +277,6 @@
   color: var(--enki-ink-3);
 }
 .kit-cost-left { min-width: 0; text-wrap: pretty; }
-.kit-cost-bal { padding: 0; border: 0; background: none; color: inherit; font: inherit; white-space: nowrap; cursor: pointer; }
-.kit-cost-amt { font-family: var(--font-mono), monospace; font-weight: 600; color: var(--enki-ink); }
-.kit-cost-bal[data-short],
-.kit-cost-bal[data-short] .kit-cost-amt { color: var(--enki-danger); }
-.kit-cost-add { text-decoration: underline; text-underline-offset: 2px; }
 
 /* ── Low-balance popover, above the Generate block, as wide as it. */
 .kit-funds {

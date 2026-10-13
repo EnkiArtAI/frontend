@@ -215,10 +215,10 @@ describe("Generate and the line under it (Kev, 2026-10-13)", () => {
     expect(EDITOR).toContain('      : test.free ? (queue.freeQuota?.exhausted ? "Your daily free image is used. Pick a paid generator to continue." : queue.note ? quotaText(queue.note) : queue.freeQuota ? `${test.name} · ${queue.freeQuota.remaining} daily free image available` : "Checking your daily free image allowance…")\n      : null);');
   });
 
-  it("a balance below the price turns Generate red with the balance on it, and its press opens Add funds; the cost line then drops its own balance", () => {
+  it("a balance below the price turns Generate red with the balance on it, and its press opens Add funds; the line under it never shows the balance", () => {
     expect(EDITOR).toContain("const short = bal?.short ? bal.text : null;");
     expect(EDITOR).toContain("                  short,\n                  onPress: short === null ? () => attempt({}) : openAddFunds,");
-    expect(EDITOR).toContain("cost={{ left: costLeft, balance: bal && short === null ? { ...bal, onAddFunds: openAddFunds } : null }}");
+    expect(EDITOR).toContain("cost={{ left: costLeft }}");
   });
 });
 
