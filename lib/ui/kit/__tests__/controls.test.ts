@@ -1,8 +1,42 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { join } from "node:path";
+import { readSource } from "@/lib/__tests__/_read-source";
 import {
-  acceptPress, menuMode, placeMenu, tierOptions, sheetDragCloses, trapStep, lockScroll, openAddFunds,
+  acceptPress, menuMode, outsideScroll, placeMenu, tierOptions, sheetDragCloses, trapStep, lockScroll, openAddFunds,
 } from "../controls";
 import { TABS } from "../breakpoints";
+
+describe("outsideScroll (Kev, 2026-10-13: the generators menu shut itself while he was choosing)", () => {
+  const inView = { top: 120, bottom: 150 };
+
+  it("a single pick closes on any scroll outside it, so the panel never sits detached", () => {
+    expect(outsideScroll(false, inView, 800)).toBe("close");
+  });
+
+  it("a menu that stays open while its rows are ticked follows its trigger instead", () => {
+    expect(outsideScroll(true, inView, 800)).toBe("follow");
+    // Still partly on screen at either edge.
+    expect(outsideScroll(true, { top: -20, bottom: 10 }, 800)).toBe("follow");
+    expect(outsideScroll(true, { top: 790, bottom: 820 }, 800)).toBe("follow");
+  });
+
+  it("and closes once its trigger has left the screen, or is gone", () => {
+    expect(outsideScroll(true, { top: -60, bottom: 0 }, 800)).toBe("close");
+    expect(outsideScroll(true, { top: 800, bottom: 830 }, 800)).toBe("close");
+    expect(outsideScroll(true, null, 800)).toBe("close");
+  });
+
+  it("is what the popover asks on a scroll, and only the multi menu follows", () => {
+    const kit = (file: string) => readSource(join(__dirname, "..", "..", "..", "..", "components", "kit", file));
+    const pos = kit("panel-pos.ts");
+    expect(pos).toContain("export function usePanelPos(itemCount: number, follows = false) {");
+    expect(pos).toMatch(/if \(panelRef\.current\?\.contains\(e\.target as Node\)\) return;\n\s+if \(outsideScroll\(follows, trigRef\.current\?\.getBoundingClientRect\(\) \?\? null, window\.innerHeight\) === "close"\) return close\(\);\n\s+setPos\(\(p\) => p && \{ \.\.\.p \}\);/);
+    const menu = kit("PillMenu.tsx");
+    expect(menu).toContain("usePanelPos(options.length, multi);");
+    // Placed anew on a scroll, the list does not take the focus again.
+    expect(menu).toMatch(/if \(!focused\.current\) \{\n\s+focused\.current = true;/);
+  });
+});
 
 describe("acceptPress (Generate's double-press guard)", () => {
   it("takes the first press and any press 350 ms or more after the last accepted one", () => {

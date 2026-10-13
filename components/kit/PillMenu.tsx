@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { usePanelPos, panelStyle } from "./panel-pos";
 import BottomSheet from "./BottomSheet";
@@ -46,13 +46,19 @@ export default function PillMenu({
   const on = (key: string) => (multi ? selected.includes(key) : key === value);
   // usePanelPos's own row estimate only seeds the first frame: the layout
   // effect below measures and places the panel before it is painted.
-  const { pos, open, toggle, close, trigRef, wrapRef, panelRef } = usePanelPos(options.length);
+  // A multi menu stays open while its rows are ticked, so it follows its trigger through a scroll instead of closing.
+  const { pos, open, toggle, close, trigRef, wrapRef, panelRef } = usePanelPos(options.length, multi);
   const [sheet, setSheet] = useState(false);
+  // Focus goes into the list when it opens, not again each time it is placed anew.
+  const focused = useRef(false);
 
   useLayoutEffect(() => {
     const panel = panelRef.current;
     const trig = trigRef.current;
-    if (!pos || !panel || !trig) return;
+    if (!pos || !panel || !trig) {
+      focused.current = false;
+      return;
+    }
     const at = placeMenu(
       trig.getBoundingClientRect(),
       { width: panel.offsetWidth, height: panel.scrollHeight },
@@ -65,8 +71,11 @@ export default function PillMenu({
       bottom: at.bottom === undefined ? "" : `${at.bottom}px`,
       maxHeight: `${at.maxHeight}px`,
     });
-    (panel.querySelector<HTMLElement>('[aria-selected="true"]:not(:disabled)') ?? panel.querySelector<HTMLElement>("button:not(:disabled)"))
-      ?.focus({ preventScroll: true });
+    if (!focused.current) {
+      focused.current = true;
+      (panel.querySelector<HTMLElement>('[aria-selected="true"]:not(:disabled)') ?? panel.querySelector<HTMLElement>("button:not(:disabled)"))
+        ?.focus({ preventScroll: true });
+    }
     return () => {
       if (!document.activeElement || document.activeElement === document.body) trig.focus({ preventScroll: true });
     };

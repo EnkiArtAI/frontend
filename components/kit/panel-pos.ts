@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { outsideScroll } from "@/lib/ui/kit/controls";
 
 /** Fixed-position coordinates for an open panel, measured from the trigger. */
 export interface PanelPos {
@@ -22,9 +23,11 @@ export interface PanelPos {
  * rail — no child z-index can beat the rail from inside it, so the open
  * panel rendered behind the left menu (Kev, 2026-08-24, screenshot). The
  * panel scrolls internally only when the viewport cannot hold the full
- * list, and closes on any other scroll so it can never sit detached.
+ * list, and closes on any other scroll so it can never sit detached. With
+ * `follows` (a menu that stays open while its rows are ticked) it moves with
+ * its trigger on such a scroll instead (lib/ui/kit/controls outsideScroll).
  */
-export function usePanelPos(itemCount: number) {
+export function usePanelPos(itemCount: number, follows = false) {
   const [pos, setPos] = useState<PanelPos | null>(null);
   const trigRef = useRef<HTMLButtonElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -46,7 +49,10 @@ export function usePanelPos(itemCount: number) {
     };
     // The capture sees the panel's own scroll too: that one is reading the list.
     const onScroll = (e: Event) => {
-      if (!panelRef.current?.contains(e.target as Node)) close();
+      if (panelRef.current?.contains(e.target as Node)) return;
+      if (outsideScroll(follows, trigRef.current?.getBoundingClientRect() ?? null, window.innerHeight) === "close") return close();
+      // A new object: the menu's layout effect places the panel at its trigger again.
+      setPos((p) => p && { ...p });
     };
     window.addEventListener("pointerdown", onDown, true);
     window.addEventListener("keydown", onKey, true);
@@ -58,7 +64,7 @@ export function usePanelPos(itemCount: number) {
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", close);
     };
-  }, [open]);
+  }, [open, follows]);
 
   const toggle = () => {
     if (open) { setPos(null); return; }

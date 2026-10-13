@@ -54,6 +54,18 @@ export function placeMenu(
   };
 }
 
+/**
+ * What a scroll outside an open popover does to it. A single pick closes, so
+ * the fixed panel never sits detached from its trigger. A menu that stays
+ * open while its rows are ticked (`follows`: the editor's generators) moves
+ * with its trigger instead: any scroll on the page, a render landing in the
+ * other column among them, used to shut it in the middle of a choice (Kev,
+ * 2026-10-13). It closes only once the trigger has left the screen.
+ */
+export function outsideScroll(follows: boolean, trigger: { top: number; bottom: number } | null, viewHeight: number): "close" | "follow" {
+  return follows && trigger !== null && trigger.bottom > 0 && trigger.top < viewHeight ? "follow" : "close";
+}
+
 /** Every tier on the ladder. The ones above the model's ceiling stay listed,
     disabled, and say why; `subs` (the caller's server quotes) align with
     `allowed`. */
