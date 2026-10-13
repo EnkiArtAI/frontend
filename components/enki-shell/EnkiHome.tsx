@@ -27,6 +27,7 @@ import { RAIL } from "@/lib/ui/kit/breakpoints";
 import { balanceView } from "@/lib/ui/kit/price";
 import EnkiSidebar, { type NavItem } from "./EnkiSidebar";
 import BookmarksPanel from "./BookmarksPanel";
+import EnkiDetailPanel from "@/components/enki/EnkiDetailPanel";
 import FeedbackModal from "./FeedbackModal";
 import EnkiPanel from "./EnkiPanel";
 import LoginModal from "@/components/LoginModal";
@@ -279,6 +280,12 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
     try { localStorage.setItem(MENU_KEY, collapsed ? "0" : "1"); } catch { /* noop */ }
   };
 
+  /* A prompt opened from a shell panel (a bookmark): the image view over the
+     panel, beside the menu, never the standalone /generator page (Kev,
+     2026-10-13: "rechts neben der Leiste, nicht im Vollbild"). Closing it
+     lands back on the panel. */
+  const [detail, setDetail] = useState<string | null>(null);
+
   /* Create Prompt from anywhere: a panel open over the editor (Hall of Fame
      on /editor) closes, or the push to the same route changed nothing and the
      click looked dead (Kev, 2026-10-13). */
@@ -356,7 +363,7 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
         ? <ProfileView key={creatorHandle} handle={creatorHandle} isOwnProfile={false} onBack={closePanel} />
         : null;
       {/* Leaderboard brings its own editorial header (design), no PanelHeadline */}
-      case "favorites": return <BookmarksPanel />;
+      case "favorites": return <BookmarksPanel onOpen={setDetail} />;
       case "leaderboard": return <LeaderboardPage />;
       default: return (
         <PanelFrame>
@@ -528,6 +535,7 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
           </div>
         </EnkiPanel>
       )}
+      {detail && <EnkiDetailPanel seed={{ promptId: detail }} onClose={() => setDetail(null)} />}
 
       {creatorNotice && (
         <div

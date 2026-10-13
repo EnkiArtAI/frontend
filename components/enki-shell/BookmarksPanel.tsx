@@ -10,15 +10,14 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Bookmark, Loader2, Trash2 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import {
   listCategories, listBookmarks, moveBookmark, removeBookmark, bookmarksProblem,
   type Bookmark as Mark, type BookmarkCategory,
 } from "@/hooks/useBookmarks";
 import "@/components/enki/bookmarks.css";
 
-export default function BookmarksPanel() {
-  const router = useRouter();
+/** `onOpen`: a bookmark's prompt opens in the shell's image view, beside the menu (Kev, 2026-10-13: "nicht im Vollbild"). */
+export default function BookmarksPanel({ onOpen }: { onOpen: (promptId: string) => void }) {
   const [cats, setCats] = useState<BookmarkCategory[] | null>(null);
   const [open, setOpen] = useState<BookmarkCategory | null>(null);
   const [marks, setMarks] = useState<Mark[]>([]);
@@ -148,7 +147,7 @@ export default function BookmarksPanel() {
             onDrop={(e) => { e.preventDefault(); void drop(i); }}
             onDragEnd={() => { dragI.current = null; setOverI(null); }}>
             {/* The whole tile opens the prompt's image UI, picture or not; dragging still reorders (Kev, 2026-10-13). */}
-            <button type="button" className="enki-bm-open" aria-label="Open this prompt" onClick={() => router.push(`/generator/${m.promptId}`)}>
+            <button type="button" className="enki-bm-open" aria-label="Open this prompt" onClick={() => onOpen(m.promptId)}>
               {m.imageUrl
                 ? <img src={m.imageUrl} alt="" draggable={false} />
                 : <span className="enki-bm-cat-empty"><Bookmark size={16} /></span>}
