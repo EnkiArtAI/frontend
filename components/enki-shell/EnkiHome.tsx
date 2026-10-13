@@ -44,7 +44,8 @@ const PANEL_TITLES: Record<string, string> = {
 
 const NAV: NavItem[] = [
   { id: "home", label: "Home", icon: "home" },
-  { id: "search", label: "Search", icon: "search" },
+  // No Search entry for now (Kev, 2026-10-13): the field lives in the feed's
+  // filter bar; from the editor the menu entry only closed the open panel.
   // Notifications = the activity feed (comments/ratings/generations/guardians);
   // Messages = person-to-person DMs (still a stub until that system exists).
   { id: "notifications", label: "Notifications", icon: "bell" },
@@ -278,6 +279,16 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
     try { localStorage.setItem(MENU_KEY, collapsed ? "0" : "1"); } catch { /* noop */ }
   };
 
+  /* Create Prompt from anywhere: a panel open over the editor (Hall of Fame
+     on /editor) closes, or the push to the same route changed nothing and the
+     click looked dead (Kev, 2026-10-13). */
+  const createPrompt = () => {
+    if (!authed) { setCreatorNotice("open"); return; }
+    setMobileDrawerOpen(false);
+    setPanel(null);
+    router.push("/editor");
+  };
+
   const onNav = (id: string) => {
     setMobileDrawerOpen(false);
     // Guests can browse, but personal areas need an account.
@@ -301,18 +312,6 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
       router.push("/home");
       window.dispatchEvent(new CustomEvent("enki:home"));
       window.scrollTo({ top: 0, behavior: "smooth" });
-      return;
-    }
-    if (id === "search") {
-      setPanel(null); setActiveNav("search");
-      /* The menu OVERRIDES whatever is open (Kev, 2026-08-24): the search
-         field lives in the feed's filter bar, so an open image view has to
-         go first — with it in the way the click looked dead. */
-      window.dispatchEvent(new CustomEvent("enki:close-detail"));
-      window.scrollTo({ top: 0, behavior: "smooth" });
-      // The field lives in the filter bar now, so ask it to open rather than
-      // reaching for a ref that no longer points at anything.
-      window.dispatchEvent(new CustomEvent("enki:open-search"));
       return;
     }
     // Every other menu item opens in the standalone right-side panel.
@@ -440,7 +439,7 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
           active={activeNav}
           onNav={onNav}
           rail={rail}
-          onCreate={() => { if (!authed) { setCreatorNotice("open"); return; } router.push("/editor"); }}
+          onCreate={createPrompt}
           guest={!authed}
           onFeedback={() => setFeedbackOpen(true)}
           account={{ name, handle, initials, avatarUrl: myProfile?.avatarUrl ?? null }}
@@ -478,20 +477,8 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
         </button>
         <button
           type="button"
-          className={"ek-mobile-nav-btn" + (activeNav === "search" && !panel ? " active" : "")}
-          onClick={() => onNav("search")}
-          aria-label="Search"
-        >
-          <Icon name="search" size={20} stroke={activeNav === "search" && !panel ? 2.4 : 1.9} />
-          <span>Search</span>
-        </button>
-        <button
-          type="button"
           className="ek-mobile-nav-btn ek-mobile-nav-btn--create"
-          onClick={() => {
-            if (!authed) { setCreatorNotice("open"); return; }
-            router.push("/editor");
-          }}
+          onClick={createPrompt}
           aria-label="Create Prompt"
         >
           <span className="ek-mobile-nav-create-pill">
