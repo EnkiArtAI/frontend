@@ -16,16 +16,18 @@ const edgesOf = (r: HTMLElement) => (e: Edges): Edges => {
 };
 
 /**
- * Under the stage (handoff §2): this tab's renders first (newest first, "YOU",
- * turq until seen, then ✓), the creator's examples, then public images made
- * with the prompt. A click puts one on the stage; a render's values load
- * into the fields. A new render scrolls the row back to its start.
+ * Under the stage (handoff §2): the creator's examples, then public images
+ * made with the prompt. A click puts one on the stage. This tab's renders are
+ * in the History rail (Kev, 2026-10-13: "not under the main image"); only
+ * where there is no rail (`queue`: the stacked tier, the blank composer) do
+ * they lead this row (newest first, "YOU", turq until seen, then ✓), and a
+ * new one scrolls it back to its start.
  */
-export default function PreviewStrip({ model: m }: { model: ImageViewModel }) {
+export default function PreviewStrip({ model: m, queue }: { model: ImageViewModel; queue: boolean }) {
   const row = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLDivElement>(null);
   const [edges, setEdges] = useState<Edges>({ start: true, end: true });
-  const count = m.jobs.length;
+  const count = queue ? m.jobs.length : 0;
   const tiles = [...m.examples, ...m.community];
   const shown = count > 0 || tiles.length > 0;
 
@@ -45,7 +47,7 @@ export default function PreviewStrip({ model: m }: { model: ImageViewModel }) {
   if (!shown) return null;
   const scroll = (by: number) => row.current?.scrollBy({ left: by, behavior: "smooth" });
   const on = (s: Shot) => m.main?.key === s.key;
-  const newest = m.jobs[0];
+  const newest = queue ? m.jobs[0] : undefined;
 
   return (
     <div className="iv-strip">
@@ -54,7 +56,7 @@ export default function PreviewStrip({ model: m }: { model: ImageViewModel }) {
       </button>
       <div ref={row} className="iv-strip-row kit-noscroll" onScroll={(e) => setEdges(edgesOf(e.currentTarget))}>
         <div ref={track} className="iv-strip-track">
-          {m.queue.map((s) => s.job && (
+          {queue && m.queue.map((s) => s.job && (
             <JobTile key={s.key} status={s.job.status} src={s.src} ratio={s.ratio} height={64} seen={s.job.seen} selected={on(s)}
               badge="you" label={`Your render, ${jobSaid(s.job)}`} onClick={() => m.select(s)} />
           ))}

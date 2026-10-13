@@ -113,10 +113,12 @@ export default function ImageViewDesktop({ model: m, onClose }: { model: ImageVi
       <CostLine left={m.cost} />
     </div>
   );
+  // The History rail beside the stage holds this tab's renders; without one they stay under the stage.
+  const railed = tier !== "stacked" && !m.blank && !m.guest;
   const stage = (
     <>
       <MainImage model={m} onOpen={open} onClose={onClose} />
-      <PreviewStrip model={m} />
+      <PreviewStrip model={m} queue={!railed} />
     </>
   );
   const talk = !m.blank && <Discussion model={m} />;

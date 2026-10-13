@@ -674,6 +674,8 @@ button.iv-c-who:hover { color: var(--enki-ember); }
   background: var(--enki-paper-3);
 }
 .iv-hitem[aria-pressed="true"] img { border-color: var(--enki-ember); }
+/* A render of this tab: the kit's job tile (spinner, "!", turq until seen), as wide as the rail's column. */
+.iv-rail-list .kit-tile { --kit-tile-radius: 10px; width: 100%; box-shadow: none; }
 .iv-hitem span { font: 400 9.5px/1.2 var(--font-mono), monospace; letter-spacing: 0.04em; color: var(--enki-ink-3); }
 .iv-rail-note { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--enki-ink-3); }
 .iv-older {
@@ -711,6 +713,8 @@ button.iv-c-who:hover { color: var(--enki-ember); }
   background: var(--enki-paper-3);
 }
 .iv-mini[data-on] { border-color: var(--enki-ember); }
+.iv-mini[data-status="rendering"] { background: var(--enki-stage); animation: kit-pulse 1.2s ease-in-out infinite; }
+.iv-mini[data-status="failed"] { border-color: var(--enki-danger); }
 .iv-mini img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .iv-rail-vert {
   margin-top: 4px;
@@ -846,6 +850,7 @@ button.iv-c-who:hover { color: var(--enki-ember); }
   .iv-agent-chev { transition: none; }
   .iv-drawer,
   .iv-drawer-scrim,
-  .iv-rail-list { animation: none; }
+  .iv-rail-list,
+  .iv-mini[data-status="rendering"] { animation: none; }
   .iv-agent-fold { transition: none; }
 }

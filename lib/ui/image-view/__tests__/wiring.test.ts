@@ -13,6 +13,7 @@ const HEADER = view("ComposerHeader.tsx");
 const PANEL = view("ViewerPanel.tsx");
 const DESKTOP = view("ImageViewDesktop.tsx");
 const STRIP = view("PreviewStrip.tsx");
+const RAIL = view("HistoryRail.tsx");
 const MAIN = view("MainImage.tsx");
 const TALK = view("Discussion.tsx");
 const CSS = view("image-view.css");
@@ -106,11 +107,22 @@ describe("a short balance (Kev, 2026-10-13)", () => {
   });
 });
 
-describe("the strip", () => {
-  it("tells a screen reader \"not charged\" only where nothing can have been charged", () => {
-    expect(STRIP).toContain("label={`Your render, ${jobSaid(s.job)}`}");
-    expect(STRIP).toContain('{!newest ? "" : newest.status === "rendering" ? "Rendering…" : `Render ${jobSaid(newest)}`}');
-    expect(STRIP).not.toContain("not charged");
+describe("the strip and the rail", () => {
+  it("tell a screen reader \"not charged\" only where nothing can have been charged", () => {
+    for (const where of [STRIP, RAIL]) {
+      expect(where).toContain("label={`Your render, ${jobSaid(s.job)}`}");
+      expect(where).toContain('{!newest ? "" : newest.status === "rendering" ? "Rendering…" : `Render ${jobSaid(newest)}`}');
+      expect(where).not.toContain("not charged");
+    }
+  });
+
+  it("this tab's renders sit in the History rail, and under the stage only where there is no rail (Kev, 2026-10-13)", () => {
+    expect(DESKTOP).toContain('const railed = tier !== "stacked" && !m.blank && !m.guest;');
+    expect(DESKTOP).toContain("<PreviewStrip model={m} queue={!railed} />");
+    expect(STRIP).toContain("{queue && m.queue.map((s) => s.job && (");
+    expect(STRIP).toContain("const count = queue ? m.jobs.length : 0;");
+    expect(STRIP).toContain("const newest = queue ? m.jobs[0] : undefined;");
+    expect(RAIL).toContain("const items = railItems(m.queue, m.history);");
   });
 });
 
@@ -172,7 +184,7 @@ describe("images made with this prompt", () => {
 
   it("follow the creator's examples in the strip", () => {
     expect(STRIP).toContain("const tiles = [...m.examples, ...m.community];");
-    expect(STRIP).toMatch(/\{m\.queue\.map\([^]*\{tiles\.map\(/);
+    expect(STRIP).toMatch(/\{queue && m\.queue\.map\([^]*\{tiles\.map\(/);
   });
 });
 
