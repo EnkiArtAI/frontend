@@ -39,7 +39,8 @@ describe("the viewer", () => {
 
   it("pages through every finished image of the page: renders, examples, public images, history", () => {
     expect(MODEL).toContain("const all = [...jobShots, ...examples, ...community, ...history];");
-    expect(MODEL).toContain("finished: all.filter((x) => x.src),");
+    // Each key once: a recorded render sits in the queue and in the history under one key (Kev, 2026-10-13).
+    expect(MODEL).toContain("finished: [...new Map(all.filter((x) => x.src).map((x) => [x.key, x])).values()],");
     expect(DESKTOP).toContain("const keys = m.finished.map((x) => x.key);");
   });
 

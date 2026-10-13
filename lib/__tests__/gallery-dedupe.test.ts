@@ -20,10 +20,13 @@ describe("a recorded render", () => {
   });
 });
 
-it("My Gallery and the current history exclude a queued original or preview", () => {
+it("My Gallery excludes a queued original or preview; the history lists the recorded row, and the Image View folds it into the queue's shot (Kev, 2026-10-13)", () => {
   const gallery = readSource(join(__dirname, "..", "..", "app", "my-gallery", "page.tsx"));
   expect(gallery).toMatch(/const dbUrls = serverUrls\(generations\);/);
   const row: GenerationRow = { ...ROW, id: "row", thumbnail_url: null, isUploaded: false, visibility: "private", prompt_id: "prompt", created_at: "" };
-  expect(historyForPrompt([row], "prompt", [])).toEqual([row]);
-  for (const imageUrl of [ROW.image_url, ROW.image_urls[0]]) expect(historyForPrompt([row], "prompt", [{ imageUrl }])).toEqual([]);
+  expect(historyForPrompt([row], "prompt")).toEqual([row]);
+  const model = readSource(join(__dirname, "..", "..", "components", "image-view", "useImageViewModel.ts"));
+  expect(model).toContain("const queuedShot = jobShots.find((s) => s.record?.id === r.id);");
+  expect(model).toContain("return queuedShot ? { ...queuedShot, createdAt: r.created_at } : {");
+  expect(model).toContain("finished: [...new Map(all.filter((x) => x.src).map((x) => [x.key, x])).values()],");
 });

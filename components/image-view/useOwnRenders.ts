@@ -62,8 +62,8 @@ export function useOwnRenders({ userKey, promptId, jobs }: {
   return {
     /** Every row read, every prompt's: what a render's recorded id is looked up in. */
     rows,
-    /** This prompt's renders, none a queued job still shows. */
-    history: historyForPrompt(rows, promptId, jobs),
+    /** This prompt's renders, a queued job's among them once it is recorded. */
+    history: historyForPrompt(rows, promptId),
     loading: enabled && q.isPending,
     failed: q.isError,
     retry: () => void refetch(),

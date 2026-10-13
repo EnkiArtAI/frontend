@@ -1,7 +1,8 @@
 /**
  * The buyer's own renders of this prompt. GET /api/generations has no prompt
  * filter (plan §5 #15), so the rows are read 100 at a time and filtered here.
- * A render the queue still shows is never listed a second time.
+ * A render the queue still shows is listed too (Kev, 2026-10-13: the rail is
+ * where a fresh render lands); the model folds the two into one shot.
  */
 import { serverUrls } from "@/lib/creations";
 import type { Job } from "@/lib/ui/kit/render-queue";
@@ -55,18 +56,16 @@ export function nextOffset(pages: GenerationsPage[]): number | undefined {
 /**
  * This prompt's renders among the rows read, in the server's order (newest
  * first): no uploads, none without an image, each row once (a page read after
- * a new render repeats the row the render pushed over), and none a queued job
- * still shows, by its original or its preview. The blank composer has none.
+ * a new render repeats the row the render pushed over). The blank composer
+ * has none.
  */
-export function historyForPrompt(rows: GenerationRow[], promptId: string | null, jobs: Pick<Job<unknown>, "imageUrl">[]): GenerationRow[] {
+export function historyForPrompt(rows: GenerationRow[], promptId: string | null): GenerationRow[] {
   if (!promptId) return [];
-  const queued = new Set(jobs.flatMap((j) => (j.imageUrl ? [j.imageUrl] : [])));
   const seen = new Set<string>();
   return rows.filter((r) => {
     if (r.prompt_id !== promptId || r.isUploaded || seen.has(r.id)) return false;
     seen.add(r.id);
-    const urls = [...serverUrls([r])];
-    return urls.length > 0 && !urls.some((u) => queued.has(u));
+    return serverUrls([r]).size > 0;
   });
 }
 

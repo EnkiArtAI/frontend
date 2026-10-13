@@ -8,9 +8,9 @@ import type { ImageViewModel } from "./useImageViewModel";
 /**
  * The viewer's own renders of this prompt, newest first (handoff §2): a
  * 196 px rail that folds to the right into a 44 px strip, or, in the stacked
- * tier, a drawer from the right edge. A render of this tab joins it only once
- * the page is left (handoff §0). No resolution and no values: no route
- * returns them (plan §5 #16).
+ * tier, a drawer from the right edge. A render of this tab joins it as soon
+ * as the server has recorded it (Kev, 2026-10-13). No resolution and no
+ * values: no route returns them (plan §5 #16).
  */
 export default function HistoryRail({ model: m, drawer, open, onToggle }: {
   model: ImageViewModel;

@@ -488,11 +488,17 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
   const community: Shot[] = (imagesQ.data ?? [])
     .filter((im) => !queued.has(im.url) && !recordOf(own.rows, im.url))
     .map((im) => ({ key: `community:${im.id}`, kind: "community", src: im.url, thumb: im.thumbnailUrl || im.url, original: im.url, ratio: null, publicId: im.id }));
-  const history: Shot[] = own.history.map((r) => ({
-    key: `history:${r.id}`, kind: "history", src: r.image_urls[0] ?? r.image_url ?? undefined,
-    thumb: r.thumbnail_url ?? r.image_urls[0] ?? r.image_url ?? undefined, original: r.image_url ?? r.image_urls[0],
-    ratio: null, record: r, createdAt: r.created_at,
-  }));
+  /* A render of this tab joins the history as soon as it is recorded (Kev,
+     2026-10-13): the rail's entry is then the queue's own shot, same key, with
+     the row's time, so picking either lands on one stage image. */
+  const history: Shot[] = own.history.map((r) => {
+    const queuedShot = jobShots.find((s) => s.record?.id === r.id);
+    return queuedShot ? { ...queuedShot, createdAt: r.created_at } : {
+      key: `history:${r.id}`, kind: "history", src: r.image_urls[0] ?? r.image_url ?? undefined,
+      thumb: r.thumbnail_url ?? r.image_urls[0] ?? r.image_url ?? undefined, original: r.image_url ?? r.image_urls[0],
+      ratio: null, record: r, createdAt: r.created_at,
+    };
+  });
   const all = [...jobShots, ...examples, ...community, ...history];
 
   const [selected, setSelected] = useState<string | null>(null);
@@ -686,7 +692,8 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
     examples,
     community,
     history,
-    finished: all.filter((x) => x.src),
+    // Each key once: a recorded render is in the queue and in the history under the same key.
+    finished: [...new Map(all.filter((x) => x.src).map((x) => [x.key, x])).values()],
     main,
     select,
     seen,

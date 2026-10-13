@@ -38,21 +38,15 @@ describe("historyForPrompt", () => {
       row("a"), row("other", { prompt_id: "p2" }), row("up", { isUploaded: true }),
       row("bare", { image_url: null, image_urls: [] }), row("b"), row("none", { prompt_id: null }),
     ];
-    expect(historyForPrompt(rows, "p1", []).map((r) => r.id)).toEqual(["a", "b"]);
+    expect(historyForPrompt(rows, "p1").map((r) => r.id)).toEqual(["a", "b"]);
   });
 
   it("lists a row once when a later page repeats it", () => {
-    expect(historyForPrompt([row("a"), row("b"), row("a")], "p1", []).map((r) => r.id)).toEqual(["a", "b"]);
-  });
-
-  it("leaves out a render the queue still shows, by its original and by its preview", () => {
-    const rows = [row("a"), row("b"), row("c")];
-    const jobs = [{ imageUrl: "https://blob/a.png" }, { imageUrl: "https://blob/b.preview.webp" }, { imageUrl: undefined }];
-    expect(historyForPrompt(rows, "p1", jobs).map((r) => r.id)).toEqual(["c"]);
+    expect(historyForPrompt([row("a"), row("b"), row("a")], "p1").map((r) => r.id)).toEqual(["a", "b"]);
   });
 
   it("is empty in the blank composer", () => {
-    expect(historyForPrompt([row("a", { prompt_id: null })], null, [])).toEqual([]);
+    expect(historyForPrompt([row("a", { prompt_id: null })], null)).toEqual([]);
   });
 });
 
