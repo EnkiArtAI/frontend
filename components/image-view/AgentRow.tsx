@@ -1,41 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Bot, ChevronDown } from "lucide-react";
-import { AGENT_PATH, agentBody, agentCurl, agentNotes, agentPrice, agentProbe } from "@/lib/ui/image-view/agent";
+import { useState } from "react";
+import { Bot, Check, ChevronDown, Copy } from "lucide-react";
+import { AGENT_PATH, agentBody, agentCurl, agentNotes } from "@/lib/ui/image-view/agent";
 import { copyText, type ImageViewModel } from "./useImageViewModel";
 
 /**
  * "Let your AI agent use this prompt": the request an agent sends to the
- * existing x402 route (plan §5 #22), the price it is told, and where its
- * render can differ from this page's. The price comes from the route itself:
- * the same body without X-PAYMENT answers 402 with it and settles nothing.
- * Asked only while the row is open, half a second after the settings rest.
+ * existing x402 route (plan §5 #22), and nothing else (Kev, 2026-10-13). The
+ * price is never part of that request: the route answers the first call,
+ * the one without X-PAYMENT, with 402 and the price per image (x402 v1,
+ * accepts[].maxAmountRequired); the agent pays it in USDC on Solana and sends
+ * the request again with X-PAYMENT.
  */
 export default function AgentRow({ model: m }: { model: ImageViewModel }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const { setup } = m;
   const body = setup && agentBody(setup, m.variables);
-  const asked = body && JSON.stringify(body);
-  const [settled, setSettled] = useState<string | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    const t = setTimeout(() => setSettled(asked), 500);
-    return () => clearTimeout(t);
-  }, [open, asked]);
-
-  const probe = useQuery({
-    queryKey: ["agent-price", settled],
-    queryFn: async () => {
-      const res = await fetch(AGENT_PATH, agentProbe(JSON.parse(settled as string)));
-      return agentPrice(res.status, await res.json().catch(() => null));
-    },
-    enabled: open && !!settled && settled === asked,
-    staleTime: 60_000,
-  });
-  const answer = settled === asked ? probe.data : undefined;
   const artistUsd = m.quote && Number(m.quote.artistUsd) > 0 ? m.quote.artistUsd : null;
 
   const copy = () => {
@@ -57,13 +39,16 @@ export default function AgentRow({ model: m }: { model: ImageViewModel }) {
         setup && body ? (
           <>
             <pre className="iv-code">
-              {`POST ${location.origin}${AGENT_PATH}\nContent-Type: application/json\nX-PAYMENT: <x402 payment payload>\n${JSON.stringify(body, null, 2)}\n→ 402 Payment Required · `}
-              {answer ? ("price" in answer ? `${answer.price} per image` : "no price") : "…"}
-              <button type="button" className="iv-code-copy" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
+              {`POST ${location.origin}${AGENT_PATH}\nContent-Type: application/json\nX-PAYMENT: <x402 payment payload>\n${JSON.stringify(body, null, 2)}`}
+              {/* An icon in the corner; the text wraps short of it. */}
+              <button type="button" className="iv-code-copy" onClick={copy} aria-label={copied ? "Copied" : "Copy the request"}
+                title={copied ? "Copied" : "Copy as curl"}>
+                {copied ? <Check size={13} strokeWidth={2.4} aria-hidden /> : <Copy size={13} strokeWidth={2} aria-hidden />}
+              </button>
             </pre>
             <p className="iv-agent-note">
-              Your agent calls the endpoint, gets a 402 with the price, pays per image in USDC on Solana and receives the render.{" "}
-              {answer && "error" in answer ? `Agents can't use this prompt right now: ${answer.error}` : agentNotes({ premium: m.premium, artistUsd, setup }).join(" ")}
+              Sent without X-PAYMENT it answers 402 with the price per image; the agent pays that in USDC on Solana and sends it again with X-PAYMENT.{" "}
+              {agentNotes({ premium: m.premium, artistUsd, setup }).join(" ")}
             </p>
           </>
         ) : (

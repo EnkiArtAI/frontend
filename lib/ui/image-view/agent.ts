@@ -1,11 +1,10 @@
 /**
  * "Let your AI agent use this prompt": the request an agent sends to the
  * existing x402 route (plan §5 #22: there is no /v1/prompts/{id}/generate).
- * The agent pays with an X-PAYMENT header it builds itself. The page never
- * sends one, so both the copied request and the page's own price probe get
- * the 402 with the price; the route settles only with the header.
+ * The agent pays with an X-PAYMENT header it builds itself; the copied
+ * request has none, so the agent's first call gets the 402 with the price,
+ * and the route settles only with the header.
  */
-import { microToUsd } from "@/lib/generation-checkout";
 import { toModelFamily } from "@/lib/generation/model-family";
 import type { PromptVariable } from "./segments";
 import type { ImageSetup } from "./setups";
@@ -44,21 +43,6 @@ export function agentBody(s: ImageSetup, variables: PromptVariable[]): AgentBody
 /** The request to copy, without X-PAYMENT, so the agent is told the price before it pays. */
 export const agentCurl = (origin: string, body: AgentBody) =>
   `curl -X POST ${origin}${AGENT_PATH} -H "Content-Type: application/json" -d '${JSON.stringify(body).replace(/'/g, "'\\''")}'`;
-
-/** The page's price probe: the same body, and never an X-PAYMENT header. */
-export const agentProbe = (body: AgentBody): RequestInit => ({
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify(body),
-});
-
-/** The probe's answer: the 402's price per image, or the route's reason it will not serve these settings. */
-export function agentPrice(status: number, json: unknown): { price: string } | { error: string } {
-  const j = (json ?? {}) as { error?: unknown; accepts?: Array<{ maxAmountRequired?: unknown }> };
-  const micro = status === 402 ? j.accepts?.[0]?.maxAmountRequired : undefined;
-  if (typeof micro === "string" && micro) return { price: `$${microToUsd(micro)}` };
-  return { error: typeof j.error === "string" && j.error ? j.error : `HTTP ${status}` };
-}
 
 /** Where the agent's render can differ from this page's, said under the snippet. */
 export function agentNotes({ premium, artistUsd, setup }: { premium: boolean; artistUsd: string | null; setup: ImageSetup }): string[] {

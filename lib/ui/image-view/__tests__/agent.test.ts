@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { CatalogueEntry } from "@/hooks/useModelLimits";
 import type { PromptVariable } from "../segments";
 import { makeSetup, type Composer } from "../setups";
-import { AGENT_PATH, agentBody, agentCurl, agentNotes, agentPrice, agentProbe } from "../agent";
+import { AGENT_PATH, agentBody, agentCurl, agentNotes } from "../agent";
 
 const variable = (name: string, over: Partial<PromptVariable> = {}): PromptVariable => ({
   id: name, name, label: null, description: "", type: "text", defaultValue: null,
@@ -50,7 +52,7 @@ describe("agentBody", () => {
   });
 });
 
-describe("the request an agent copies, and the page's probe", () => {
+describe("the request an agent copies", () => {
   const body = agentBody(setup(), VARS)!;
 
   it("the curl has no X-PAYMENT, so the agent gets the 402 first, and survives an apostrophe", () => {
@@ -62,21 +64,10 @@ describe("the request an agent copies, and the page's probe", () => {
     expect(curl).not.toMatch(/X-PAYMENT/i);
   });
 
-  it("the probe posts the same body and never an X-PAYMENT header", () => {
-    expect(agentProbe(body)).toEqual({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  });
-});
-
-describe("agentPrice", () => {
-  it("is the 402's price per image", () => {
-    expect(agentPrice(402, { error: "X-PAYMENT header is required", accepts: [{ maxAmountRequired: "134000" }] })).toEqual({ price: "$0.134" });
-  });
-
-  it("is the route's reason when it will not serve these settings", () => {
-    expect(agentPrice(400, { error: "\"\" is not a valid value for style" })).toEqual({ error: "\"\" is not a valid value for style" });
-    expect(agentPrice(402, { error: "X-PAYMENT header is required" })).toEqual({ error: "X-PAYMENT header is required" });
-    expect(agentPrice(200, { accepts: [{ maxAmountRequired: "134000" }] })).toEqual({ error: "HTTP 200" });
-    expect(agentPrice(500, null)).toEqual({ error: "HTTP 500" });
+  it("the row shows the request and nothing else: no price probe, no 402 line (Kev, 2026-10-13)", () => {
+    const row = readFileSync(join(__dirname, "..", "..", "..", "..", "components", "image-view", "AgentRow.tsx"), "utf8");
+    expect(row).not.toMatch(/useQuery|agentProbe|agentPrice|402 Payment Required/);
+    expect(row).toContain("{`POST ${location.origin}${AGENT_PATH}\\nContent-Type: application/json\\nX-PAYMENT: <x402 payment payload>\\n${JSON.stringify(body, null, 2)}`}");
   });
 });
 

@@ -303,32 +303,37 @@ button.iv-tok { cursor: pointer; }
 }
 .iv-agent-chev { transition: transform 0.2s; }
 .iv-agent-toggle[aria-expanded="true"] .iv-agent-chev { transform: rotate(180deg); }
+/* The request wraps inside the block, short of the copy icon in its corner;
+   nothing scrolls sideways or runs under the icon (Kev, 2026-10-13). */
 .iv-code {
   position: relative;
   margin: 0;
-  padding: 10px 12px;
+  padding: 10px 44px 10px 12px;
   border-radius: 12px;
   background: var(--enki-stage);
   color: var(--enki-on-stage);
   font: 400 10.5px/1.55 var(--font-mono), monospace;
-  white-space: pre;
-  overflow-x: auto;
-  scrollbar-width: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   animation: kit-fade 0.14s ease;
 }
 .iv-code-copy {
   position: absolute;
   top: 8px;
   right: 8px;
-  height: 24px;
-  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
   border: 1px solid color-mix(in oklab, var(--enki-on-stage) 25%, transparent);
   border-radius: 999px;
   background: color-mix(in oklab, var(--enki-on-stage) 8%, transparent);
   color: var(--enki-on-stage);
-  font: 400 11px/1 var(--font-sans), sans-serif;
   cursor: pointer;
 }
+.iv-code-copy:hover { background: color-mix(in oklab, var(--enki-on-stage) 16%, transparent); }
 .iv-agent-note { margin: 0; font-size: 11px; line-height: 1.45; color: var(--enki-ink-3); text-wrap: pretty; }
 
 /* The bar wraps and never scrolls sideways (handoff §0). */
