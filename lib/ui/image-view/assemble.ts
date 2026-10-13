@@ -11,10 +11,23 @@ import { fieldsFor, isFilled, sendValue } from "./variables";
 /** The longest text both routes take (generate-image, generate-free), counted after trimming as they do. */
 export const PROMPT_MAX = 4000;
 
-/** The free text filled in: each slot becomes the value it sends and keeps its [brackets] while it has none; references stay as written. */
-export function assembleFreePrompt(segments: Segment[], values: Record<string, string>): string {
+/**
+ * The free text filled in: each slot becomes the value it sends and keeps its
+ * [brackets] while it has none; references stay as written. With more images
+ * than the text names, the rest are named right after its last reference,
+ * and after the text when it names none (Kev, 2026-10-13: the first takes
+ * the artist's place, "der Rest direkt hinterher appended").
+ */
+export function assembleFreePrompt(segments: Segment[], values: Record<string, string>, refs = 0): string {
+  const named = segments.reduce((n, s) => (s.kind === "ref" ? Math.max(n, s.n) : n), 0);
+  const more = Array.from({ length: Math.max(0, refs - named) }, (_, i) => `Reference image ${named + i + 1}`);
+  const last = segments.map((s) => s.kind).lastIndexOf("ref");
   return segments
-    .map((s) => (s.kind === "var" && isFilled(s.variable, values[s.key]) ? sendValue(s.variable, values[s.key]) : s.text))
+    .map((s, i) => {
+      const own = s.kind === "var" && isFilled(s.variable, values[s.key]) ? sendValue(s.variable, values[s.key]) : s.text;
+      return i === last && more.length ? [own, ...more].join(" ") : own;
+    })
+    .concat(last < 0 && more.length ? [(segments.length ? " " : "") + more.join(" ")] : [])
     .join("");
 }
 
@@ -27,16 +40,19 @@ const valueLines = (variables: PromptVariable[], values: Record<string, string>)
 
 /**
  * The prompt Generate sends. With a text (a free prompt, the blank composer)
- * that text filled in; without one (a premium prompt) "title, label: value, …",
- * which the server replaces with the artist's text filled with the values.
+ * that text filled in, every one of the `refs` images named; without one (a
+ * premium prompt) "title, label: value, …", which the server replaces with
+ * the artist's text filled with the values.
  */
-export function buildGenerationPrompt({ title, text, variables, values }: {
+export function buildGenerationPrompt({ title, text, variables, values, refs = 0 }: {
   title?: string;
   text: string | null;
   variables: PromptVariable[];
   values: Record<string, string>;
+  /** How many reference images go with it. */
+  refs?: number;
 }): string {
-  if (text !== null) return assembleFreePrompt(parseSegments(text, variables), values);
+  if (text !== null) return assembleFreePrompt(parseSegments(text, variables), values, refs);
   return [title || "A beautiful artistic image", ...valueLines(variables, values)].join(", ");
 }
 

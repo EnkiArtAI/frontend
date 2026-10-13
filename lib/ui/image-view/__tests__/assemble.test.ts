@@ -29,11 +29,36 @@ describe("assembleFreePrompt", () => {
   it("leaves a text without slots as it is", () => {
     expect(assembleFreePrompt(parseSegments("A harbour, Reference image 2", VARS), { rain: "true" })).toBe("A harbour, Reference image 2");
   });
+
+  describe("more images than the text names (Kev, 2026-10-13)", () => {
+    const fill = (text: string, refs: number) => assembleFreePrompt(parseSegments(text, VARS), {}, refs);
+
+    it("names the rest right after the last reference the text has, however many it has", () => {
+      expect(fill("a cat like Reference image 1, at dusk", 3)).toBe("a cat like Reference image 1 Reference image 2 Reference image 3, at dusk");
+      expect(fill("Reference image 2 beside Reference image 1 here", 3)).toBe("Reference image 2 beside Reference image 1 Reference image 3 here");
+      expect(fill("Reference image 1", 2)).toBe("Reference image 1 Reference image 2");
+    });
+
+    it("names them after the text when it names none, and adds nothing when every image is named already", () => {
+      expect(fill("a cat", 2)).toBe("a cat Reference image 1 Reference image 2");
+      expect(fill("", 1)).toBe("Reference image 1");
+      expect(fill("a cat like Reference image 1 and Reference image 2", 2)).toBe("a cat like Reference image 1 and Reference image 2");
+      expect(fill("a cat like Reference image 3", 1)).toBe("a cat like Reference image 3");
+      expect(fill("a [subject]", 0)).toBe("a [subject]");
+    });
+
+    it("fills the slots in the same pass", () => {
+      expect(assembleFreePrompt(parseSegments("[sky] over Reference image 1", VARS), { sky: "red sky" }, 2)).toBe("red sky over Reference image 1 Reference image 2");
+    });
+  });
 });
 
 describe("buildGenerationPrompt", () => {
-  it("fills a free text (the edited one when there is one)", () => {
+  it("fills a free text (the edited one when there is one), naming every image that goes with it", () => {
     expect(buildGenerationPrompt({ title: "T", text: "[Character Design] at dawn", variables: VARS, values: { character_design: "a fox" } })).toBe("a fox at dawn");
+    expect(buildGenerationPrompt({ text: "[Character Design] like Reference image 1", variables: VARS, values: { character_design: "a fox" }, refs: 2 })).toBe("a fox like Reference image 1 Reference image 2");
+    // A premium prompt's stand-in names none: the server has the text.
+    expect(buildGenerationPrompt({ title: "Harbour", text: null, variables: [], values: {}, refs: 2 })).toBe("Harbour");
   });
 
   it("sends the blank composer's own text with its typed slots filled, and nothing when nothing was typed", () => {

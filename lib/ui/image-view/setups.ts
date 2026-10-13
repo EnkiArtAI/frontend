@@ -72,7 +72,7 @@ export function makeSetup(c: Composer): ImageSetup | null {
     aspectRatio: c.aspectRatio,
     ...(model.supportsQuality ? { quality: c.quality } : {}),
     boost: c.boost && boostAt(model, c.resolution),
-    prompt: buildGenerationPrompt({ title: c.title, text, variables: c.variables, values: c.values }),
+    prompt: buildGenerationPrompt({ title: c.title, text, variables: c.variables, values: c.values, refs: c.refs.length }),
     values: { ...c.values },
     edited: c.edited,
     refs: [...c.refs],

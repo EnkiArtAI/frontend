@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { join } from "node:path";
+import { readSource } from "@/lib/__tests__/_read-source";
 import type { CatalogueEntry } from "@/hooks/useModelLimits";
 import type { GenerationQuote } from "@/lib/generation-checkout";
 import type { PromptVariable } from "../segments";
@@ -78,13 +80,18 @@ describe("makeSetup", () => {
 });
 
 describe("toRequest", () => {
-  it("sends a prompt's job with its prompt id and values, and the references it holds", () => {
+  it("sends a prompt's job with its prompt id and values, and the references it holds, each named in the text", () => {
     const s = makeSetup(composer({ boost: true, refs: ["data:a", "data:b"] }))!;
     expect(toRequest(s)).toEqual({
-      model: s.model, resolution: "2K", quality: undefined, boost: true, prompt: "a fox in heavy rain at dusk",
+      // A text that names no reference gets them after it (Kev, 2026-10-13); one that names some gets the rest after its last.
+      model: s.model, resolution: "2K", quality: undefined, boost: true, prompt: "a fox in heavy rain at dusk Reference image 1 Reference image 2",
       promptId: "p1", variableValues: { subject: "a fox", rain: "in heavy rain" }, aspectRatio: "4:5",
       referenceImages: ["data:a", "data:b"],
     });
+    expect(makeSetup(composer({ edited: "[subject] like Reference image 1, [rain]", refs: ["data:a", "data:b", "data:c"] }))!.prompt)
+      .toBe("a fox like Reference image 1 Reference image 2 Reference image 3, in heavy rain");
+    // The count travels from the composer's images, every time.
+    expect(readSource(join(__dirname, "..", "setups.ts"))).toContain("prompt: buildGenerationPrompt({ title: c.title, text, variables: c.variables, values: c.values, refs: c.refs.length }),");
   });
 
   it("sends the blank composer's job with neither, and no empty reference list", () => {
