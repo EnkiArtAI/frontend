@@ -79,8 +79,15 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // The font variables live on <html>: globals.css defines the tokens
+  // (--font-sans, --font-serif, --font-mono) on :root from them, and a custom
+  // property resolves where it is DECLARED. On <body> they left every token
+  // invalid, and every `font: … var(--font-serif)` with it, so the whole app
+  // fell back to the browser's sans (found 2026-10-13: "Untitled prompt" in
+  // system-ui instead of Instrument Serif).
+  const fonts = `${geistSans.variable} ${inter.variable} ${jetbrainsMono.variable} ${instrumentSerif.variable} ${outfit.variable} ${cormorantGaramond.variable} ${dmSans.variable}`;
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className={fonts}>
       <head>
         <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
         <script
@@ -127,9 +134,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body
-        className={`${geistSans.variable} ${inter.variable} ${jetbrainsMono.variable} ${instrumentSerif.variable} ${outfit.variable} ${cormorantGaramond.variable} ${dmSans.variable} antialiased`}
-      >
+      <body className="antialiased">
         <Providers>
           {/* The old top-header Navbar is retired (Kev, 2026-07-12): the app
               uses ONLY the left-side-menu shell (/home) for navigation. */}
