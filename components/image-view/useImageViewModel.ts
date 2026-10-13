@@ -508,11 +508,19 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
   };
   /* The image brings its own generator and settings along (Kev, 2026-10-13:
      "the generator that the image was created with as the default, with the
-     ratios etc"): a job its whole setup, a creator example the prompt's own. */
+     ratios etc"): a job its whole setup, a creator example the prompt's own,
+     a recorded render what GET /api/generations says it was made with. */
   const select = (x: Shot) => {
     setSelected(x.key);
+    const recorded = x.record?.settings;
     if (x.job) loadSetup(x.job.setup, true);
-    else if (x.kind === "example") {
+    else if (recorded) {
+      const own = recorded.modelId ? catalogue.find((m) => m.id === recorded.modelId) : undefined;
+      if (own) setPick(own.name);
+      setRatio(recorded.aspectRatio ?? "");
+      setResolution(recorded.resolution ?? "");
+      setBoost(recorded.boost);
+    } else if (x.kind === "example") {
       setPick("");
       setRatio("");
       setResolution("");

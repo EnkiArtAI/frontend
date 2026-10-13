@@ -18,6 +18,8 @@ export interface GenerationRow {
   isUploaded: boolean;
   visibility: "public" | "private";
   prompt_id: string | null;
+  /** What the render was made with (the generation row); null for an upload or a row from before the route sent it. */
+  settings?: { modelId: string | null; aspectRatio: string | null; resolution: string | null; boost: boolean } | null;
   created_at: string;
 }
 
