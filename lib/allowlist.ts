@@ -44,6 +44,21 @@ export async function isEmailAllowed(supabase: Supabase, email: string): Promise
   return !!data;
 }
 
+/**
+ * During the whitelist stage, an account that came in through the access list
+ * IS a beta member (Kev, 2026-10-13). The client wall admits beta/mod/admin
+ * only, so a listed wallet whose account was created at the column default
+ * 'user' could log in and pick a name, and was then shown as a guest. Every
+ * login that passed the list calls this; it lifts 'user' only, so a staff
+ * role is never touched. Nothing once the stage is over.
+ */
+export async function admitAllowlisted(supabase: Supabase, userId: string): Promise<void> {
+  if (!whitelistStageActive()) return;
+  const { error } = await supabase.from("users").update({ role: "beta" }).eq("id", userId).eq("role", "user");
+  // The login stands either way: the account browses as before until its next one.
+  if (error) console.error("[allowlist] could not admit the account:", error.message);
+}
+
 // Grants app access after a whitelisted login by setting the gate cookie the
 // proxy checks. No-op when the whitelist stage is off. httpOnly so page JS
 // can't read it (same as /api/gate).
