@@ -147,9 +147,12 @@ export default function BookmarksPanel() {
             onDragOver={(e) => { e.preventDefault(); if (overI !== i) setOverI(i); }}
             onDrop={(e) => { e.preventDefault(); void drop(i); }}
             onDragEnd={() => { dragI.current = null; setOverI(null); }}>
-            {m.imageUrl
-              ? <img src={m.imageUrl} alt="" draggable={false} onClick={() => router.push(`/generator/${m.promptId}`)} />
-              : <span className="enki-bm-cat-empty"><Bookmark size={16} /></span>}
+            {/* The whole tile opens the prompt's image UI, picture or not; dragging still reorders (Kev, 2026-10-13). */}
+            <button type="button" className="enki-bm-open" aria-label="Open this prompt" onClick={() => router.push(`/generator/${m.promptId}`)}>
+              {m.imageUrl
+                ? <img src={m.imageUrl} alt="" draggable={false} />
+                : <span className="enki-bm-cat-empty"><Bookmark size={16} /></span>}
+            </button>
             <button type="button" className="enki-bm-x" title="Remove bookmark" onClick={() => void remove(m)}><Trash2 size={12} /></button>
           </div>
         ))}
