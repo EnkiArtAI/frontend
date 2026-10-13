@@ -428,8 +428,10 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-top: auto;
-  padding: 12px 0 18px;
+  /* As wide as the pane, padding included: a row that scrolls edge to edge
+     (the references) used to show under the bar's sides (Kev, 2026-10-13). */
+  margin: auto -22px 0 -24px;
+  padding: 12px 22px 18px 24px;
   border-top: 1px solid var(--enki-rule-2);
   background: var(--enki-paper);
   box-shadow: var(--enki-shadow-bar);
