@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { join } from "node:path";
 import { readSource } from "@/lib/__tests__/_read-source";
-import { linkedPrompt, promptLink } from "../open-link";
+import { linkedPrompt, promptLink, promptPage } from "../open-link";
 
 /**
  * A reload on an open Image View stays on the image (Kev, 2026-10-13: "wenn
@@ -22,6 +22,13 @@ describe("promptLink", () => {
     expect(promptLink(`http://enki.test/home?prompt=${other}&q=cat`, ID)).toBe(`/home?prompt=${ID}&q=cat`);
     expect(promptLink(`http://enki.test/home?prompt=${ID}&q=cat`, null)).toBe("/home?q=cat");
     expect(promptLink(`http://enki.test/home?prompt=${ID}`, null)).toBe("/home");
+  });
+});
+
+describe("promptPage", () => {
+  it("is the feed with the prompt's view over it, which linkedPrompt reads back", () => {
+    expect(promptPage(ID)).toBe(`/home?prompt=${ID}`);
+    expect(linkedPrompt(promptPage(ID).slice("/home".length))).toBe(ID);
   });
 });
 
@@ -47,9 +54,10 @@ describe("the wiring", () => {
     expect(panel).toMatch(/if \(id === "blank"\) return;\n\s+const write = \(to: string \| null\) => window\.history\.replaceState\(null, "", promptLink\(window\.location\.href, to\)\);\n\s+write\(id\);\n\s+return \(\) => write\(null\);\n\s+\}, \[id\]\);/);
   });
 
-  it("the feed opens the linked prompt on arrival, reads it once, and forgets it on close", () => {
+  it("the feed opens the linked prompt on arrival and whenever the shell pushes one, and forgets it on close", () => {
     const feed = src("enki", "EnkiFeedPage.tsx");
     expect(feed).toContain("const [linked, setLinked] = useState<string | null>(() => linkedPrompt(searchParams));");
+    expect(feed).toMatch(/useEffect\(\(\) => \{\n\s+const id = linkedPrompt\(searchParams\);\n\s+if \(id\) setLinked\(id\);\n\s+\}, \[searchParams\]\);/);
     expect(feed).toContain("const seed = open ? seedFromFeedCard(open) : linked ? { promptId: linked } : null;");
     expect(feed).toMatch(/setOpen\(null\);\n\s+setLinked\(null\);/);
     expect(feed).toMatch(/\{seed && \(\n\s+<EnkiDetailPanel seed=\{seed\} onClose=\{closeCard\} \/>/);

@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "./icons";
 import { sessionAuthHeaders } from "@/lib/session-headers";
+import { promptPage } from "@/lib/ui/image-view/open-link";
 
 type Series = { labels: string[]; earningsCents: number[]; prints: number[] };
 type PeriodStats = {
@@ -211,7 +212,7 @@ export default function AnalyticsPanel() {
                 <div style={{ padding: "14px 4px", fontSize: 12, color: "var(--enki-ink-3)" }}>No prompt activity yet.</div>
               )}
               {(data.topPrompts ?? []).map((r, i) => (
-                <button key={r.id} onClick={() => router.push(`/generator/${r.id}`)} title={`Open “${r.title}”`} style={{
+                <button key={r.id} onClick={() => router.push(promptPage(r.id))} title={`Open “${r.title}”`} style={{
                   display: "flex", alignItems: "center", gap: 11, padding: "8px 4px", width: "100%",
                   border: "none", borderTop: "1px dashed var(--enki-rule-2, var(--enki-rule))",
                   background: "none", textAlign: "left", cursor: "pointer",

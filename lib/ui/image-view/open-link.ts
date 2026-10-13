@@ -13,6 +13,9 @@ export function linkedPrompt(search: string | { get(name: string): string | null
   return id && UUID.test(id) ? id : null;
 }
 
+/** Where a prompt opens: the feed with its view over it, beside the shell's menu. Every link to a prompt goes here. */
+export const promptPage = (id: string) => `/home?${PARAM}=${encodeURIComponent(id)}`;
+
 /** The same address with the open prompt set, or taken away; every other part of it stays. */
 export function promptLink(href: string, id: string | null): string {
   const url = new URL(href);

@@ -59,11 +59,17 @@ export default function EnkiFeedPage() {
     return [...branch("Image", "image"), ...branch("Video", "video")];
   }, [catalogue]);
   const [open, setOpen] = useState<Card | null>(null);
-  /* Arriving with ?prompt=<id> (a reload on an open image, Kev 2026-10-13)
-     opens that prompt's view again; it reads the prompt itself, like
-     /generator/[id]. Read once: while a view is open the address is its own
-     (EnkiDetailPanel writes it), whoever opened the view. */
+  /* ?prompt=<id> opens that prompt's view: on arrival (a reload on an open
+     image, a prompt's link) and whenever the shell pushes one (Hall of Fame,
+     notifications, analytics), so the view always opens here, beside the
+     menu (Kev, 2026-10-13). The view reads the prompt itself. While one is
+     open the address is its own (EnkiDetailPanel writes it, and takes it
+     away on close), whoever opened the view. */
   const [linked, setLinked] = useState<string | null>(() => linkedPrompt(searchParams));
+  useEffect(() => {
+    const id = linkedPrompt(searchParams);
+    if (id) setLinked(id);
+  }, [searchParams]);
   /* Cards whose prompt the server refused on open: gone for the visit
      (the feed lists rows the detail route no longer serves). */
   const [gone, setGone] = useState<ReadonlySet<string>>(() => new Set());

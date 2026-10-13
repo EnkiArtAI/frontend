@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 
-/* The three places a prompt opens (plan §2.2) each load the Image View
-   through next/dynamic, client-only. dynamic is replaced by a recorder that
-   hands back a marker component, so each mount's tree can be searched for it. */
+/* The places a prompt opens (plan §2.2) each load the Image View through
+   next/dynamic, client-only. dynamic is replaced by a recorder that hands
+   back a marker component, so each mount's tree can be searched for it.
+   /generator/[id] no longer mounts the view: it goes on to the feed with
+   the view over it, beside the menu (Kev, 2026-10-13; shell-prompt-links). */
 type Loaded = { loader: () => Promise<{ default: unknown }>; options: { ssr?: boolean }; View: () => null };
 const loaded = vi.hoisted(() => [] as Loaded[]);
 vi.mock("next/dynamic", () => ({
@@ -28,7 +30,6 @@ const mount = async <M extends { default: unknown }>(load: () => Promise<M>) => 
   return { Mount: mod.default as (props: never) => ReactNode, dyn: loaded.slice(before) };
 };
 const panel = await mount(() => import("@/components/enki/EnkiDetailPanel"));
-const page = await mount(() => import("../../../../app/generator/[id]/GeneratorClient"));
 const modal = await mount(() => import("@/components/PromptDetailModal"));
 const { default: ImageView } = await import("@/components/image-view/ImageView");
 
@@ -44,7 +45,6 @@ const viewIn = (tree: ReactNode, View: unknown) => [...walk(tree)].find((el) => 
 
 describe.each([
   ["the feed and profile panel (EnkiDetailPanel)", panel],
-  ["/generator/[id] (GeneratorClient)", page],
   ["/showcase (PromptDetailModal)", modal],
 ])("%s", (_name, { dyn }) => {
   it("loads the Image View, and only it, through next/dynamic", async () => {
@@ -69,13 +69,6 @@ describe("what each mount hands the view", () => {
   it("the panel: the launcher's blank composer", () => {
     const tree = (panel.Mount as (p: object) => ReactNode)({ seed: "blank", onClose: () => {} });
     expect(viewIn(tree, panel.dyn[0].View)?.props.seed).toBe("blank");
-  });
-
-  it("the page: the route's id, with no close (the view goes back itself)", () => {
-    const tree = (page.Mount as () => ReactNode)();
-    const props = viewIn(tree, page.dyn[0].View)?.props;
-    expect(props?.seed).toEqual({ promptId: "p-42" });
-    expect(props?.onClose).toBeUndefined();
   });
 
   it("the modal: the prompt's id and its close, inside the frame", () => {
