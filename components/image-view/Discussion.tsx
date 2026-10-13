@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { MessageSquare } from "lucide-react";
 import Segmented from "@/components/kit/Segmented";
 import { openCreator } from "@/lib/openCreator";
@@ -24,7 +24,6 @@ export default function Discussion({ model: m }: { model: ImageViewModel }) {
   const [rating, setRating] = useState(0);
   const [imageId, setImageId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const panel = useRef<HTMLDivElement>(null);
   const { data, error, retry } = m.discussion;
   const rows = data ? (tab === "comments" ? data.comments : data.reviews) : [];
   const count = (n: number) => (data ? ` · ${countLabel(n, data.capped)}` : "");
@@ -49,11 +48,8 @@ export default function Discussion({ model: m }: { model: ImageViewModel }) {
   return (
     <section className="iv-talk" aria-label="Comments and reviews">
       <div className="iv-talk-tabs">
-        <Segmented ariaLabel="Comments or reviews" role="tablist" value={tab}
-          onChange={(t) => {
-            setTab(t);
-            requestAnimationFrame(() => panel.current?.scrollIntoView({ behavior: "smooth", block: "end" }));
-          }}
+        {/* The switch changes the list below and nothing else: no scroll, nothing moves (Kev, 2026-10-13). */}
+        <Segmented ariaLabel="Comments or reviews" role="tablist" value={tab} onChange={setTab}
           options={[
             { key: "comments", label: <><MessageSquare size={13} strokeWidth={2} aria-hidden />Comments{count(data?.comments.length ?? 0)}</> },
             {
@@ -64,7 +60,7 @@ export default function Discussion({ model: m }: { model: ImageViewModel }) {
         {rows.length > 0 && <span className="iv-hint">scroll down to read</span>}
       </div>
 
-      <div ref={panel} className="iv-talk-panel">
+      <div className="iv-talk-panel">
         <div className="iv-talk-list" role="tabpanel">
           {error && (
             <p className="iv-talk-note">{error} <button type="button" className="iv-link" onClick={retry}>Try again</button></p>
