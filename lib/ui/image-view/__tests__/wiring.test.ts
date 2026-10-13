@@ -27,8 +27,9 @@ describe("Report", () => {
 
   it("sits in the viewer's panel, on someone else's public image, for a signed-in viewer", () => {
     expect(PANEL).toMatch(/\{shot\.publicId && !m\.guest && \(\n\s+<ReportButton targetType="generation" targetId=\{shot\.publicId\}/);
-    // Never on the viewer's own: those are in the queue or the history, not among the public images.
-    expect(MODEL).toContain(".filter((im) => !queued.has(im.url) && !recordOf(own.rows, im.url))");
+    // Never on the viewer's own: among the public images those are the viewer's history entries, which carry no publicId.
+    expect(MODEL).toContain("const community: Shot[] = publicShots(imagesQ.data ?? [], own.rows, history, (im) => (");
+    expect(MODEL).toMatch(/\{ key: `community:\$\{im\.id\}`, kind: "community",[^\n]* publicId: im\.id \}/);
     // The mark alone in the header: no word beside it (Kev, 2026-10-13).
     expect(HEADER).toMatch(/<Bookmark size=\{13\} strokeWidth=\{2\} fill=\{m\.saved \? "currentColor" : "none"\} aria-hidden \/>\n\s+<\/button>/);
     expect(HEADER).toContain('aria-label={m.saved ? "Saved · file it elsewhere" : "Bookmark"}');

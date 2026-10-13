@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  generationsUrl, hasGenerated, historyForPrompt, nextOffset, readGenerations, recordOf, unrecorded,
+  generationsUrl, hasGenerated, historyForPrompt, nextOffset, publicShots, readGenerations, recordOf, unrecorded,
   type GenerationRow, type GenerationsPage,
 } from "../history";
 
@@ -62,6 +62,29 @@ describe("a fresh render's record", () => {
   it("unrecorded asks again while a finished render is not in the rows", () => {
     expect(unrecorded([{ imageUrl: "https://blob/a.png" }, { imageUrl: "https://blob/new.png" }], rows)).toBe(true);
     expect(unrecorded([{ imageUrl: "https://blob/a.preview.webp" }, { imageUrl: undefined }], rows)).toBe(false);
+  });
+});
+
+describe("publicShots (Kev, 2026-10-13: my own image, made public, is the next example under the creator's)", () => {
+  type S = { key: string; record?: GenerationRow };
+  const rows = [row("a"), row("b")];
+  const history: S[] = [{ key: "history:a", record: rows[0] }, { key: "job:7", record: rows[1] }];
+  const other = (im: { id: string; url: string }): S => ({ key: `community:${im.id}` });
+
+  it("keeps the public images in the server's order: someone else's as a public image, the viewer's own as their history entry", () => {
+    const images = [{ id: "x", url: "https://blob/x.png" }, { id: "pa", url: "https://blob/a.png" }, { id: "y", url: "https://blob/y.png" }];
+    expect(publicShots(images, rows, history, other).map((s) => s.key)).toEqual(["community:x", "history:a", "community:y"]);
+  });
+
+  it("knows its own by the original or the preview, and it is the queue's shot while that render is still in this tab", () => {
+    const [mine] = publicShots([{ id: "pb", url: "https://blob/b.preview.webp" }], rows, history, other);
+    expect(mine).toBe(history[1]);
+    // The entry carries the record, so picking it loads the settings it was made with.
+    expect(mine.record?.id).toBe("b");
+  });
+
+  it("falls back to a public image when the viewer's row is not in this prompt's history", () => {
+    expect(publicShots([{ id: "pa", url: "https://blob/a.png" }], rows, [], other).map((s) => s.key)).toEqual(["community:pa"]);
   });
 });
 

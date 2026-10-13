@@ -35,7 +35,7 @@ import { REFS_TOO_LARGE, tooLargeToSend } from "@/lib/request-size";
 import { sessionAuthHeaders, viewerHeaders } from "@/lib/session-headers";
 import { clipboardText, promptRefusal } from "@/lib/ui/image-view/assemble";
 import { loadDiscussion, loadLikes, type Discussion } from "@/lib/ui/image-view/discussion";
-import { hasGenerated, recordOf, type GenerationRow } from "@/lib/ui/image-view/history";
+import { hasGenerated, publicShots, recordOf, type GenerationRow } from "@/lib/ui/image-view/history";
 import { defaultModel, isFreePrompt, modelOptions, refCap, refSlots } from "@/lib/ui/image-view/models";
 import { matchVariable, parseSegments, type PromptVariable, type Segment } from "@/lib/ui/image-view/segments";
 import type { ImageViewSeed } from "@/lib/ui/image-view/seed";
@@ -477,7 +477,6 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
     enabled: !!promptId,
     staleTime: 30_000,
   });
-  const queued = new Set(jobs.flatMap((j) => (j.imageUrl ? [j.imageUrl] : [])));
   const jobShots: Shot[] = jobs.map((j) => ({
     key: `job:${j.id}`, kind: "job", src: j.imageUrl, thumb: j.imageUrl, original: j.imageUrl,
     ratio: j.setup.aspectRatio, job: j, record: j.imageUrl ? recordOf(own.rows, j.imageUrl) : undefined,
@@ -485,9 +484,6 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
   const examples: Shot[] = (prompt?.showcaseImages ?? []).map(({ url }, i) => ({
     key: `example:${i}`, kind: "example", src: url, thumb: url, original: url, ratio: prompt?.aspect_ratio ?? null,
   }));
-  const community: Shot[] = (imagesQ.data ?? [])
-    .filter((im) => !queued.has(im.url) && !recordOf(own.rows, im.url))
-    .map((im) => ({ key: `community:${im.id}`, kind: "community", src: im.url, thumb: im.thumbnailUrl || im.url, original: im.url, ratio: null, publicId: im.id }));
   /* A render of this tab joins the history as soon as it is recorded (Kev,
      2026-10-13): the rail's entry is then the queue's own shot, same key, with
      the row's time, so picking either lands on one stage image. */
@@ -499,6 +495,10 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
       ratio: null, record: r, createdAt: r.created_at,
     };
   });
+  // Public images made with the prompt; the viewer's own among them are their history entries (publicShots).
+  const community: Shot[] = publicShots(imagesQ.data ?? [], own.rows, history, (im) => (
+    { key: `community:${im.id}`, kind: "community", src: im.url, thumb: im.thumbnailUrl || im.url, original: im.url, ratio: null, publicId: im.id }
+  ));
   const all = [...jobShots, ...examples, ...community, ...history];
 
   const [selected, setSelected] = useState<string | null>(null);

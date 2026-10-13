@@ -72,6 +72,22 @@ export function historyForPrompt(rows: GenerationRow[], promptId: string | null)
 /** The recorded row behind a render's URL, once a read has it: its id carries the Public switch (plan §5 #23). Uploads never go public. */
 export const recordOf = (rows: GenerationRow[], url: string) => rows.find((r) => !r.isUploaded && serverUrls([r]).has(url));
 
+/**
+ * The public images made with a prompt, as the strip shows them after the
+ * creator's examples. One of the viewer's own (made public in the History) is
+ * the viewer's history entry itself: it stands there as the next example, and
+ * picking it loads the settings it was made with, like anywhere else (Kev,
+ * 2026-10-13). Anyone else's becomes `other(image)`.
+ */
+export function publicShots<S extends { record?: GenerationRow }, I extends { url: string }>(
+  images: I[], rows: GenerationRow[], history: S[], other: (image: I) => S,
+): S[] {
+  return images.map((im) => {
+    const mine = recordOf(rows, im.url);
+    return (mine && history.find((h) => h.record?.id === mine.id)) || other(im);
+  });
+}
+
 /** Whether a finished render is still missing from the rows, so the read asks again (every 3 s, for at most 60 s). */
 export function unrecorded(jobs: Pick<Job<unknown>, "imageUrl">[], rows: GenerationRow[]): boolean {
   const known = serverUrls(rows);
