@@ -351,7 +351,7 @@ export default function PromptEditor({ promptId, onReleased }: {
       if (kept.toast) notify(kept.toast);
       else if (window.matchMedia(COARSE).matches) notify(MODE_TITLE[mode]);
     };
-    if (mode === "free" && state.seeded) setAsk({ text: "Free makes your prompt text public. Continue?", ok: "Make it Free", cancel: "Keep Premium", run: go });
+    if (mode === "free" && state.seeded) setAsk({ text: "Open makes your prompt text public. Continue?", ok: "Make it Open", cancel: "Keep Premium", run: go });
     else go();
   };
   const star = (jobId: string) => {

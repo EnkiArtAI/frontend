@@ -39,7 +39,8 @@ export default function ComposerHeader({ model: m, onBack }: { model: ImageViewM
         <button type="button" className="iv-round kit-hit" aria-label="Back" title="Back" onClick={onBack}>
           <ChevronLeft size={14} strokeWidth={2.4} aria-hidden />
         </button>
-        {!m.blank && <span className="iv-tier" data-premium={m.premium || undefined}>{m.premium ? "Premium prompt" : "Free prompt"}</span>}
+        {/* Only Premium wears a kicker; an open prompt says so under its text (Kev, 2026-10-13). */}
+        {!m.blank && m.premium && <span className="iv-tier" data-premium>Premium prompt</span>}
       </div>
       <h1 className="kit-title iv-title" data-blank={m.blank || undefined}>{m.title}</h1>
       {(m.artist || talk?.avgRating != null) && (

@@ -63,7 +63,7 @@ function Text({ model: m, text }: { model: ImageViewModel; text: string }) {
         placeholder={m.blank ? "Describe the image you want…" : undefined}
         selectionPill={{ onCreate: m.addVariable }} />
       <p className="iv-hint">
-        {m.blank ? "Your own prompt · [brackets] become fields below" : "Free prompt · edit anything, [brackets] are the variables"}
+        {m.blank ? "Your own prompt · [brackets] become fields below" : "Open prompt · edit anything, [brackets] are the variables"}
         {m.edited && !m.blank && (
           <> · <button type="button" className="iv-link" onClick={m.resetText}>Reset to the artist&apos;s wording</button></>
         )}

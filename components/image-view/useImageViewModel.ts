@@ -427,7 +427,7 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
   const cost = (() => {
     if (guest) return "Sign in to see the price";
     if (!entry) return "Pick a generator";
-    const yours = blank ? "" : "Prompt is free · ";
+    const yours = blank ? "" : "Open prompt · ";
     if (entry.free) return queue.freeQuota?.exhausted ? "Your daily free image is used. Pick a paid generator to continue." : queue.note ? `${quotaText(queue.note)} · pick another generator to keep going` : queue.freeQuota ? `${yours}${entry.name} · ${queue.freeQuota.remaining} daily free image available` : "Checking your daily free image allowance…";
     const q = quote.quote;
     const head = premium
