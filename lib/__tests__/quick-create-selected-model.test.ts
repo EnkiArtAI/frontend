@@ -21,9 +21,9 @@ describe("Quick Create", () => {
     expect(LAUNCHER).not.toMatch(/\/api\/generate-free/);
   });
 
-  it("preselects nothing and refuses without a selection", () => {
-    expect(LAUNCHER).toMatch(/const \[model, setModel\] = useState\(""\);/);
-    expect(LAUNCHER).not.toMatch(/"nano-banana-pro"/);
+  it("starts on the default generator (Kev, 2026-10-13), invents no slug, and still refuses without a selection", () => {
+    expect(LAUNCHER).toMatch(/const \[model, setModel\] = useState<string>\(DEFAULT_GENERATOR\);/);
+    expect(LAUNCHER).not.toMatch(/"nano-banana-pro"|"Nano Banana Pro"/);
     expect(LAUNCHER).toContain('if (!core.entry || !tier) return toast({ title: "Pick a model"');
   });
 

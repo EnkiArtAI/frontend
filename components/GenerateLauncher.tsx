@@ -22,6 +22,7 @@ import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, A
 import { usePaymentSigner } from "@/hooks/usePaymentSigner";
 import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
 import { useGenerationCore } from "@/hooks/useGenerationCore";
+import { DEFAULT_GENERATOR } from "@/lib/ui/image-view/models";
 import NftPickerModal from "@/components/enki/NftPickerModal";
 import { useReferenceReads, REFS_LOADING, type NftPick } from "@/hooks/useReferenceReads";
 
@@ -73,8 +74,10 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
   const [boost, setBoost] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [valueByToken, setValueByToken] = useState<Record<string, string>>({});
-  // No preselected model: the user picks (Kev, 2026-10-02: "IMMER DAS AUSGEWÄHLTE").
-  const [model, setModel] = useState("");
+  // Starts on the default generator (Kev, 2026-10-13: "just pick a generator as
+  // default like NBP"); what is selected is what renders (2026-10-02: "IMMER
+  // DAS AUSGEWÄHLTE"), and nothing renders without a selection.
+  const [model, setModel] = useState<string>(DEFAULT_GENERATOR);
   const signPayment = usePaymentSigner();
   const core = useGenerationCore(model);
   const { quota: freeQuota, refresh: refreshFreeQuota } = useFreeGenerationQuota(open && signedIn && core.entry?.free === true, signedIn ? userId : null);

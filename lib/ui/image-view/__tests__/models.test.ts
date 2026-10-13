@@ -47,15 +47,20 @@ describe("defaultModel", () => {
     expect(pick({ pick: "GPT-Image-2", aiModel: null })).toBe("GPT-Image-2");
   });
 
-  it("preselects nothing when the prompt's model is not on offer or unknown", () => {
-    expect(pick({ aiModel: "Flux (free)" })).toBe("");
+  it("falls back to Nano Banana Pro when the prompt's model is not on offer or unknown", () => {
+    expect(pick({ aiModel: "Flux (free)" })).toBe("Nano Banana Pro");
     expect(pick({ aiModel: "Flux (free)", premium: false })).toBe("Flux (free)");
-    expect(pick({ aiModel: "Seedance 2.0" })).toBe("");
-    expect(pick({ aiModel: "Midjourney" })).toBe("");
+    expect(pick({ aiModel: "Seedance 2.0" })).toBe("Nano Banana Pro");
+    expect(pick({ aiModel: "Midjourney" })).toBe("Nano Banana Pro");
   });
 
-  it("preselects nothing in the blank composer, which has no prompt", () => {
-    expect(pick({ aiModel: undefined, premium: false })).toBe("");
+  it("starts the blank composer, which has no prompt, on Nano Banana Pro", () => {
+    expect(pick({ aiModel: undefined, premium: false })).toBe("Nano Banana Pro");
+  });
+
+  it("preselects nothing when the catalogue has no Nano Banana Pro either", () => {
+    expect(pick({ catalogue: [FLUX, GPT], aiModel: "Midjourney" })).toBe("");
+    expect(pick({ catalogue: [FLUX, GPT], aiModel: undefined, premium: false })).toBe("");
   });
 });
 
