@@ -846,6 +846,6 @@ button.iv-c-who:hover { color: var(--enki-ember); }
   .iv-agent-chev { transition: none; }
   .iv-drawer,
   .iv-drawer-scrim,
-  .iv-rail-list,
+  .iv-rail-list { animation: none; }
   .iv-agent-fold { transition: none; }
 }
