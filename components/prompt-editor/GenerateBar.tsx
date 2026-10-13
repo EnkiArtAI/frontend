@@ -53,7 +53,11 @@ export default function GenerateBar({ live, models, testId, onTest, core, picks,
       const grew = el.offsetHeight - was;
       was = el.offsetHeight;
       setHeight(was);
-      if (grew > 0 && pane.scrollHeight - pane.scrollTop - pane.clientHeight - grew < 140) pane.scrollTop = pane.scrollHeight;
+      /* A reader who had scrolled down to the end stays at the end as the bar
+         grows (the balance line, a quote). Not one still at the top: with the
+         column barely taller than the pane, the first growth used to throw a
+         fresh editor to its bottom (Kev, 2026-10-13: "lande ganz unten"). */
+      if (grew > 0 && pane.scrollTop > 0 && pane.scrollHeight - pane.scrollTop - pane.clientHeight - grew < 140) pane.scrollTop = pane.scrollHeight;
     });
     ro.observe(el);
     return () => ro.disconnect();
