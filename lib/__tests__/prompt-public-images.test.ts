@@ -54,10 +54,34 @@ describe("the images people made public with a prompt", () => {
     ];
     const { status, body } = await read();
     expect(status).toBe(200);
+    const nobody = { handle: null, name: null, mine: false };
     expect(body.images).toEqual([
-      { id: "g1", url: "https://blob/g1.preview.webp", thumbnailUrl: "https://blob/g1.thumb.webp", createdAt: "2026-10-08T10:00:00Z" },
-      { id: "g6", url: "https://blob/g6.png", thumbnailUrl: "https://blob/g6.png", createdAt: "2026-10-08T10:00:00Z" },
+      { id: "g1", url: "https://blob/g1.preview.webp", thumbnailUrl: "https://blob/g1.thumb.webp", createdAt: "2026-10-08T10:00:00Z", maker: nobody },
+      { id: "g6", url: "https://blob/g6.png", thumbnailUrl: "https://blob/g6.png", createdAt: "2026-10-08T10:00:00Z", maker: nobody },
     ]);
+  });
+
+  it("name who made each one by handle and display name, never by id, and say which are the viewer's own (Kev, 2026-10-13)", async () => {
+    db.current!.tables.generated_images = [img("g1", { user_id: "ada" }), img("g2", { user_id: "me" }), img("g3", { user_id: "nameless" })];
+    db.current!.tables.users = [
+      { id: "ada", handle: "ada", display_name: "Ada L.", deleted_at: null, account_status: "active" },
+      { id: "me", handle: "kiri", display_name: null, deleted_at: null, account_status: "active" },
+      { id: "nameless", handle: null, display_name: "", deleted_at: null, account_status: "active" },
+    ];
+    seen.userId = "me";
+    const { body } = await read();
+    expect(body.images.map((i: { maker: unknown }) => i.maker)).toEqual([
+      { handle: "ada", name: "Ada L.", mine: false },
+      { handle: "kiri", name: null, mine: true },
+      { handle: null, name: null, mine: false },
+    ]);
+    expect(JSON.stringify(body)).not.toMatch(/user_id|"id":"ada"|"id":"me"/);
+    // Signed out, nothing is anyone's, a row without an owner included.
+    seen.userId = null;
+    db.current!.tables.generated_images.push(img("g4", { user_id: null }));
+    const out = (await read()).body.images;
+    expect(out).toHaveLength(4);
+    expect(out.every((i: { maker: { mine: boolean } }) => i.maker.mine === false)).toBe(true);
   });
 
   it("show 18+ ones only to a viewer who may see 18+", async () => {
@@ -88,6 +112,22 @@ describe("the images people made public with a prompt", () => {
     ];
     db.current!.tables.bans = [{ user_id: "barred", lifted_at: null, expires_at: null }];
     expect((await read()).body.images.map((i: { id: string }) => i.id)).toEqual(["g1"]);
+  });
+
+  it("a makers read that fails answers like any failed read, never a row without its maker", async () => {
+    db.current!.tables.generated_images = [img("g1", { user_id: "ada" })];
+    db.current!.tables.users = [{ id: "ada", handle: "ada", display_name: null, deleted_at: null, account_status: "active" }];
+    const client = db.current!.client as unknown as { from: (table: string) => unknown };
+    const from = client.from.bind(client);
+    let reads = 0;
+    client.from = (table: string) => {
+      // The first users read is hiddenOwners'; the second is the makers'.
+      if (table === "users" && ++reads === 2) {
+        return { select: () => ({ in: async () => ({ data: null, error: new Error("users down") }) }) };
+      }
+      return from(table);
+    };
+    expect((await read()).status).toBe(500);
   });
 
   it("are none for a banned creator's prompt, whoever made them", async () => {
