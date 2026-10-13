@@ -11,7 +11,7 @@
  * same model without a prompt: the buyer's own text, every image generator,
  * nothing preselected, no history and no discussion.
  */
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useBetaAccess } from "@/components/BetaGate";
 import { notify } from "@/components/kit/notify";
@@ -65,6 +65,8 @@ interface PromptRecord {
    */
   publicPromptText?: string;
   showcaseImages?: { url: string }[];
+  /** The images the creator released it with; the route sends them to the creator alone (uploads nothing has checked yet, Kev 2026-10-08). */
+  beforeImages?: { url: string }[];
   promptData?: { variables?: PromptVariable[] };
 }
 
@@ -330,6 +332,24 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
   const cap = refCap(entry);
   const slots = refSlots(cap, refs.length, reads.pending.length);
   const { accept } = useModelLimits(entry?.id);
+  /* The creator's own reference images stand in the slots once their prompt
+     is back in the view, in the order it was released with, ready to be
+     swapped for others (Kev, 2026-10-13: "weiterhin alle reference images
+     gezeigt werden, was ich dann ändern kann"); read into data once, as every
+     reference travels. Never over images the viewer added first. */
+  const seeded = useRef<string | null>(null);
+  const before = prompt?.beforeImages;
+  const readRef = reads.read;
+  useEffect(() => {
+    if (!promptId || !before?.length || seeded.current === promptId) return;
+    seeded.current = promptId;
+    void Promise.all(before.map(({ url }) =>
+      fetch(url).then((res) => (res.ok ? res.blob() : null)).catch(() => null).then((blob) => (blob ? readRef(blob) : null)),
+    )).then((data) => {
+      const got = data.flatMap((src) => (src ? [{ id: crypto.randomUUID(), src }] : []));
+      if (got.length) setRefs((r) => (r.length ? r : got));
+    });
+  }, [promptId, before, readRef]);
 
   const composer = {
     promptId: promptId ?? undefined,

@@ -201,3 +201,12 @@ describe("the frame", () => {
     expect(FRAME_CSS).toMatch(/\.iv-page \{[^}]*height: calc\(100dvh - var\(--ek-banner-h, 0px\)\);/);
   });
 });
+
+describe("the creator's own reference images (Kev, 2026-10-13)", () => {
+  it("stand in the slots once, read into data in their released order, never over the viewer's own", () => {
+    expect(MODEL).toContain("beforeImages?: { url: string }[];");
+    expect(MODEL).toContain("if (!promptId || !before?.length || seeded.current === promptId) return;");
+    expect(MODEL).toContain("fetch(url).then((res) => (res.ok ? res.blob() : null)).catch(() => null).then((blob) => (blob ? readRef(blob) : null)),");
+    expect(MODEL).toContain("if (got.length) setRefs((r) => (r.length ? r : got));");
+  });
+});
