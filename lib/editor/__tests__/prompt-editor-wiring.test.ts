@@ -218,6 +218,9 @@ describe("touch, focus and motion", () => {
 describe("Generate and the line under it (Kev, 2026-10-13)", () => {
   it("says nothing under a paid render: the price is on the button", () => {
     expect(EDITOR).not.toContain("payment reserved");
+    // Nor under a missing generator: the bar's pill already says "Pick a generator".
+    expect(EDITOR).toContain('\n      : !test ? null\n');
+    expect(EDITOR).not.toContain('"Pick a generator"');
     expect(EDITOR).toContain('      : test.free ? (queue.freeQuota?.exhausted ? "Your daily free image is used. Pick a paid generator to continue." : queue.note ? quotaText(queue.note) : queue.freeQuota ? `${test.name} · ${queue.freeQuota.remaining} daily free image available` : "Checking your daily free image allowance…")\n      : null);');
   });
 

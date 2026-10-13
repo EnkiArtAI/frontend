@@ -458,10 +458,10 @@ export default function PromptEditor({ promptId }: {
 
   // ── What the screen says.
   const anyReady = jobs.some((j) => j.status === "ready");
-  // A paid render says nothing under the button: its price is on it (Kev, 2026-10-13).
+  // A paid render says nothing under the button: its price is on it; nor does a missing generator, the bar's pill says so (Kev, 2026-10-13).
   const costLeft = block?.toast
     ?? (!signedIn ? "Sign in to generate"
-      : !test ? "Pick a generator"
+      : !test ? null
       : test.free ? (queue.freeQuota?.exhausted ? "Your daily free image is used. Pick a paid generator to continue." : queue.note ? quotaText(queue.note) : queue.freeQuota ? `${test.name} · ${queue.freeQuota.remaining} daily free image available` : "Checking your daily free image allowance…")
       : null);
   const bal = balanceView({ payer, ready, balance, free: !test || test.free, quote: chipQuote });
