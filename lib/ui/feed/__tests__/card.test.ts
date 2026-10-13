@@ -16,8 +16,8 @@ const row = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("priceChipLabel", () => {
-  it("says FREE at 0 cents and dollars from cents otherwise", () => {
-    expect(priceChipLabel(0)).toBe("FREE");
+  it("says Open at 0 cents (an open prompt) and dollars from cents otherwise", () => {
+    expect(priceChipLabel(0)).toBe("Open");
     expect(priceChipLabel(40)).toBe("$0.40");
     expect(priceChipLabel(1)).toBe("$0.01");
     expect(priceChipLabel(125)).toBe("$1.25");

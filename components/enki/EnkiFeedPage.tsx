@@ -69,20 +69,6 @@ export default function EnkiFeedPage() {
   const authed = access === "ok" && role !== "team";
   const showAdult = adultConfirmed && adultPill;
 
-  /* Touch: the card revealed by a first tap. It belongs to one view of the
-     wall, so a new category or search clears it. */
-  const view = `${tags.join()}|${query}`;
-  const [reveal, setReveal] = useState<{ id: string; view: string } | null>(null);
-  const revealedId = reveal?.view === view ? reveal.id : null;
-  useEffect(() => {
-    if (!revealedId) return;
-    const onDown = (e: PointerEvent) => {
-      if (!(e.target as Element).closest?.("[data-pid], .enki-bmp")) setReveal(null);
-    };
-    document.addEventListener("pointerdown", onDown);
-    return () => document.removeEventListener("pointerdown", onDown);
-  }, [revealedId]);
-
   /* The shell's Home with nothing open: back to All at the top. */
   useEffect(() => {
     const onHome = () => setTags([]);
@@ -219,7 +205,6 @@ export default function EnkiFeedPage() {
 
   const openCard = (card: Card) => {
     setOpen(card);
-    setReveal(null);
     // OPEN counter: fire-and-forget; the server dedupes per viewer for 10 min.
     fetch(`/api/prompts/${encodeURIComponent(card.id)}/view`, { method: "POST" }).catch(() => {});
   };
@@ -231,8 +216,7 @@ export default function EnkiFeedPage() {
   };
 
   const renderCard = (card: Card) => (
-    <FeedCard ref={observeCard} card={card} revealed={revealedId === card.id} onReveal={(id) => setReveal({ id, view })}
-      onOpen={openCard} canBookmark={authed} saved={index?.get(card.id)} />
+    <FeedCard ref={observeCard} card={card} onOpen={openCard} canBookmark={authed} saved={index?.get(card.id)} />
   );
 
   const showEmpty = !isPending && visible.length === 0 && !isFetchingNextPage;

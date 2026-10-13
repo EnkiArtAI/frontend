@@ -47,11 +47,12 @@ export function toFeedCard(raw: unknown): FeedCard | null {
   };
 }
 
-/** The card's price chip: "FREE" at 0 cents, "$0.40" otherwise, and none for
- *  a price that is not whole cents (the card never guesses FREE). */
+/** The card's price chip: "Open" at 0 cents (an open prompt; Kev, 2026-10-13:
+ *  "free aka Open"), "$0.40" otherwise, and none for a price that is not
+ *  whole cents (the card never guesses). */
 export function priceChipLabel(v: unknown): string | null {
   const c = cents(v);
-  return c === null ? null : c === 0 ? "FREE" : `$${(c / 100).toFixed(2)}`;
+  return c === null ? null : c === 0 ? "Open" : `$${(c / 100).toFixed(2)}`;
 }
 
 /** What the Image View paints while /api/prompts/[id] loads. */
