@@ -293,20 +293,19 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
     // Guests can browse, but personal areas need an account.
     if (!authed && AUTHED_ONLY.has(id)) { showToast("Sign in to use this."); return; }
     if (id === "home") {
+      const hadPanel = panel !== null;
       setPanel(null); setActiveNav("home");
-      /* If the image view is open, Home means "back to where I was" — close it
-         and leave the feed exactly as it was, rather than routing and scrolling
-         to the top of a list the reader had already worked their way down. */
+      /* Home is the feed where the reader left it (Kev, 2026-10-13: "in the
+         same line I left, so I can continue scrolling"): an image view
+         closes, hidden behind a panel or not (closing puts the scroll offset
+         back), a panel closes, and the feed stays as it was. Only from the
+         plain feed does Home go back to All at the top. */
       const detailEl = document.querySelector(".iv-frame");
-      /* A detail HIDDEN behind a menu panel is "where I was" — Home brings it
-         back instead of closing it (Kev, 2026-08-22). A VISIBLE detail keeps
-         the old meaning: Home closes it, back to the feed. */
-      if (detailEl?.classList.contains("is-hidden")) {
-        window.dispatchEvent(new CustomEvent("enki:show-detail"));
+      window.dispatchEvent(new CustomEvent("enki:close-detail"));
+      if (detailEl || hadPanel) {
+        if (window.location.pathname !== "/home") router.push("/home");
         return;
       }
-      window.dispatchEvent(new CustomEvent("enki:close-detail"));
-      if (detailEl) return;
       // Nothing open: back to the whole feed (no search, All) at the top.
       router.push("/home");
       window.dispatchEvent(new CustomEvent("enki:home"));

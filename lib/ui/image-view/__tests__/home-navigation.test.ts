@@ -64,16 +64,24 @@ beforeEach(() => {
   vi.stubGlobal("window", {
     dispatchEvent: (event: Event) => { shell.events.push(event.type); return true; },
     scrollTo: shell.scroll,
+    location: { pathname: "/home" },
   });
   vi.stubGlobal("CustomEvent", class extends Event {});
 });
 afterEach(() => vi.unstubAllGlobals());
 
-describe("Home preserves the reader's place in the Image View", () => {
-  it("restores a view covered by a menu panel without closing or resetting the feed", () => {
+describe("Home is the feed where the reader left it (Kev, 2026-10-13)", () => {
+  it("closes a view hidden behind a menu panel, never brings it back, and leaves the feed as it was", () => {
     frame(true); home();
-    expect(shell.events).toEqual(["enki:show-detail"]);
+    expect(shell.events).toEqual(["enki:close-detail"]);
     expect(shell.push).not.toHaveBeenCalled();
+    expect(shell.scroll).not.toHaveBeenCalled();
+  });
+  it("from another route it goes home without resetting the feed", () => {
+    (window as unknown as { location: { pathname: string } }).location.pathname = "/editor";
+    frame(true); home();
+    expect(shell.events).toEqual(["enki:close-detail"]);
+    expect(shell.push).toHaveBeenCalledWith("/home");
     expect(shell.scroll).not.toHaveBeenCalled();
   });
   it("closes a visible view without resetting the feed", () => {
