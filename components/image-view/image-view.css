@@ -492,6 +492,36 @@ button.iv-tok { cursor: pointer; }
 }
 .iv-thumb[aria-pressed="true"] { border-color: var(--enki-ember); }
 .iv-thumb img { display: block; width: auto; height: 100%; object-fit: cover; }
+/* The maker's name over an image made with the prompt (Kev, 2026-10-13): on hover
+   or focus, always where there is no hover; a link to their profile unless it is you. */
+.iv-thumb-wrap { position: relative; flex: none; display: inline-flex; }
+.iv-thumb-by {
+  position: absolute;
+  left: 5px;
+  bottom: 5px;
+  max-width: calc(100% - 10px);
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--enki-stage) 72%, transparent);
+  color: var(--enki-on-stage);
+  font: 500 10px/1.4 var(--font-sans), sans-serif;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+.iv-thumb-wrap:hover .iv-thumb-by,
+.iv-thumb-wrap:focus-within .iv-thumb-by { opacity: 1; }
+.iv-thumb-wrap:hover button.iv-thumb-by,
+.iv-thumb-wrap:focus-within button.iv-thumb-by { pointer-events: auto; cursor: pointer; }
+button.iv-thumb-by:hover { background: var(--enki-ember); color: var(--enki-paper); }
+@media (hover: none) {
+  .iv-thumb-by { opacity: 1; }
+  button.iv-thumb-by { pointer-events: auto; }
+}
 
 /* ── Comments and reviews. */
 .iv-talk { display: flex; flex: 0 0 auto; flex-direction: column; gap: 10px; margin-top: 6px; }

@@ -139,4 +139,27 @@ describe("the strip under the stage", () => {
     expect(strip(m, false)).toBe("");
     expect(strip(m, true)).not.toBe("");
   });
+
+  it("names who made a public image instead of \"Made with this prompt\", as a link to their profile unless it is you (Kev, 2026-10-13)", () => {
+    const made = (id: string, maker: Shot["maker"]): Shot => ({ key: `community:${id}`, kind: "community", ratio: null, src: `/${id}.png`, thumb: `/${id}.png`, publicId: id, maker });
+    const m = model([], []);
+    (m as { community: Shot[] }).community = [
+      made("a", { handle: "ada", name: "Ada", mine: false }),
+      made("b", { handle: null, name: "Bea", mine: false }),
+      made("c", { handle: "me", name: null, mine: true }),
+      made("d", undefined),
+    ];
+    const html = strip(m, false);
+    expect(html).not.toContain("Made with this prompt ");
+    expect(html).toContain('aria-label="Creator example 1"');
+    expect(html).toContain('aria-label="Made by @ada"');
+    expect(html).toMatch(/<button type="button" class="iv-thumb-by kit-hit" title="Open @ada&#x27;s profile">@ada<\/button>/);
+    expect(html).toContain('<span class="iv-thumb-by" aria-hidden="true">Bea</span>');
+    expect(html).toContain('<span class="iv-thumb-by" aria-hidden="true">You</span>');
+    expect(html).toContain('aria-label="Made by another member"');
+    expect(html.match(/class="iv-thumb-by/g)).toHaveLength(3);
+    // The mark is the tile's sibling in a wrap, never a button inside the tile's button.
+    expect(html).not.toMatch(/<button[^>]*class="iv-thumb"[^>]*>(?:(?!<\/button>).)*<button/);
+    expect(html.match(/<span class="iv-thumb-wrap">/g)).toHaveLength(5);
+  });
 });

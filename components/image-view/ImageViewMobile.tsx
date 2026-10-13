@@ -13,12 +13,14 @@ import { QualityPill, RatioPill, ResolutionPill } from "@/components/kit/Setting
 import { openAddFunds } from "@/lib/ui/kit/controls";
 import { formatAgo } from "@/lib/ui/kit/format";
 import { clampIndex } from "@/lib/ui/kit/viewer";
+import { madeBy } from "@/lib/ui/image-view/maker";
 import { jobSaid } from "@/lib/ui/image-view/setups";
 import { countLabel } from "@/lib/ui/image-view/discussion";
 import AgentRow from "./AgentRow";
 import ComposerHeader from "./ComposerHeader";
 import Discussion from "./Discussion";
 import MainImage from "./MainImage";
+import MakerMark from "./MakerMark";
 import PublicMark from "./PublicMark";
 import PromptPanel from "./PromptPanel";
 import ViewerPanel from "./ViewerPanel";
@@ -74,11 +76,14 @@ export default function ImageViewMobile({ model: m, onClose }: { model: ImageVie
       {!!previews.length && (
         <div className="iv-mobile-previews kit-noscroll" aria-label="Image previews">
           {previews.map((s, i) => (
-            <button key={s.key} type="button" className="iv-thumb" aria-pressed={m.main?.key === s.key}
-              aria-label={s.kind === "example" ? `Creator example ${i + 1}` : `Made with this prompt ${i - m.examples.length + 1}`}
-              onClick={() => { m.select(s); }}>
-              <img src={s.thumb} alt="" loading="lazy" draggable={false} />
-            </button>
+            <span key={s.key} className="iv-thumb-wrap">
+              <button type="button" className="iv-thumb" aria-pressed={m.main?.key === s.key}
+                aria-label={s.kind === "example" ? `Creator example ${i + 1}` : madeBy(s.maker)}
+                onClick={() => { m.select(s); }}>
+                <img src={s.thumb} alt="" loading="lazy" draggable={false} />
+              </button>
+              {s.kind === "community" && <MakerMark maker={s.maker} />}
+            </span>
           ))}
         </div>
       )}

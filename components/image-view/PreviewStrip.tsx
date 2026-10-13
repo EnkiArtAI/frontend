@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import JobTile from "@/components/kit/JobTile";
+import { madeBy } from "@/lib/ui/image-view/maker";
 import { jobSaid } from "@/lib/ui/image-view/setups";
+import MakerMark from "./MakerMark";
 import type { ImageViewModel, Shot } from "./useImageViewModel";
 
 type Edges = { start: boolean; end: boolean };
@@ -61,11 +63,14 @@ export default function PreviewStrip({ model: m, queue }: { model: ImageViewMode
               badge="you" label={`Your render, ${jobSaid(s.job)}`} onClick={() => m.select(s)} onCancel={() => m.cancel(s)} />
           ))}
           {tiles.map((s, i) => (
-            <button key={s.key} type="button" className="iv-thumb" aria-pressed={on(s)} onClick={() => m.select(s)}
-              aria-label={s.kind === "example" ? `Creator example ${i + 1}` : `Made with this prompt ${i - m.examples.length + 1}`}
-              title={s.kind === "example" ? "Creator example" : "Made with this prompt"}>
-              <img src={s.thumb} alt="" loading="lazy" decoding="async" draggable={false} />
-            </button>
+            <span key={s.key} className="iv-thumb-wrap">
+              <button type="button" className="iv-thumb" aria-pressed={on(s)} onClick={() => m.select(s)}
+                aria-label={s.kind === "example" ? `Creator example ${i + 1}` : madeBy(s.maker)}
+                title={s.kind === "example" ? "Creator example" : madeBy(s.maker)}>
+                <img src={s.thumb} alt="" loading="lazy" decoding="async" draggable={false} />
+              </button>
+              {s.kind === "community" && <MakerMark maker={s.maker} />}
+            </span>
           ))}
         </div>
       </div>

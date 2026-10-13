@@ -36,6 +36,7 @@ import { sessionAuthHeaders, viewerHeaders } from "@/lib/session-headers";
 import { clipboardText, promptRefusal } from "@/lib/ui/image-view/assemble";
 import { loadDiscussion, loadLikes, type Discussion } from "@/lib/ui/image-view/discussion";
 import { hasGenerated, publicShots, recordOf, type GenerationRow } from "@/lib/ui/image-view/history";
+import type { Maker } from "@/lib/ui/image-view/maker";
 import { defaultModel, isFreePrompt, modelOptions, refCap, refSlots } from "@/lib/ui/image-view/models";
 import { matchVariable, parseSegments, type PromptVariable, type Segment } from "@/lib/ui/image-view/segments";
 import type { ImageViewSeed } from "@/lib/ui/image-view/seed";
@@ -96,6 +97,8 @@ export interface Shot {
   record?: GenerationRow;
   /** Someone else's public image: it carries Report. */
   publicId?: string;
+  /** Who made a public image, for the strip's hover (never the viewer's own: those are history entries). */
+  maker?: Maker;
   createdAt?: string;
 }
 
@@ -490,7 +493,7 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
   /* ── Images: this tab's renders, the creator's examples, public images
      made with the prompt (none of the viewer's own: those are in the queue
      or the history), and the viewer's history. */
-  const imagesQ = useQuery<{ id: string; url: string; thumbnailUrl?: string }[]>({
+  const imagesQ = useQuery<{ id: string; url: string; thumbnailUrl?: string; maker?: Maker }[]>({
     queryKey: ["prompt-public-images", promptId],
     queryFn: async () => {
       const res = await fetch(`/api/prompts/${encodeURIComponent(promptId as string)}/images`, { headers: viewerHeaders() });
@@ -519,7 +522,7 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
   });
   // Public images made with the prompt; the viewer's own among them are their history entries (publicShots).
   const community: Shot[] = publicShots(imagesQ.data ?? [], own.rows, history, (im) => (
-    { key: `community:${im.id}`, kind: "community", src: im.url, thumb: im.thumbnailUrl || im.url, original: im.url, ratio: null, publicId: im.id }
+    { key: `community:${im.id}`, kind: "community", src: im.url, thumb: im.thumbnailUrl || im.url, original: im.url, ratio: null, publicId: im.id, maker: im.maker }
   ));
   const all = [...jobShots, ...examples, ...community, ...history];
 

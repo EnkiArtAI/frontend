@@ -29,7 +29,7 @@ describe("Report", () => {
     expect(PANEL).toMatch(/\{shot\.publicId && !m\.guest && \(\n\s+<ReportButton targetType="generation" targetId=\{shot\.publicId\}/);
     // Never on the viewer's own: among the public images those are the viewer's history entries, which carry no publicId.
     expect(MODEL).toContain("const community: Shot[] = publicShots(imagesQ.data ?? [], own.rows, history, (im) => (");
-    expect(MODEL).toMatch(/\{ key: `community:\$\{im\.id\}`, kind: "community",[^\n]* publicId: im\.id \}/);
+    expect(MODEL).toMatch(/\{ key: `community:\$\{im\.id\}`, kind: "community",[^\n]* publicId: im\.id, maker: im\.maker \}/);
     // The mark alone in the header: no word beside it (Kev, 2026-10-13).
     expect(HEADER).toMatch(/<Bookmark size=\{13\} strokeWidth=\{2\} fill=\{m\.saved \? "currentColor" : "none"\} aria-hidden \/>\n\s+<\/button>/);
     expect(HEADER).toContain('aria-label={m.saved ? "Saved · file it elsewhere" : "Bookmark"}');
@@ -189,6 +189,21 @@ describe("images made with this prompt", () => {
   it("follow the creator's examples in the strip", () => {
     expect(STRIP).toContain("const tiles = [...m.examples, ...m.community];");
     expect(STRIP).toMatch(/\{queue && m\.queue\.map\([^]*\{tiles\.map\(/);
+  });
+
+  it("carry their maker from the route into the shot, and the strip and the phone row show the mark (Kev, 2026-10-13)", () => {
+    expect(MODEL).toContain("maker?: Maker }[]>({");
+    expect(MODEL).toContain("publicId: im.id, maker: im.maker }");
+    for (const [name, text] of [["strip", STRIP], ["phone", view("ImageViewMobile.tsx")]] as const) {
+      expect(text, name).not.toContain("Made with this prompt");
+      expect(text, name).toContain('{s.kind === "community" && <MakerMark maker={s.maker} />}');
+      expect(text, name).toContain("madeBy(s.maker)");
+    }
+    // Hidden until hover or focus, always where there is no hover; only the link takes the pointer.
+    expect(CSS).toMatch(/\.iv-thumb-by \{[^}]*opacity: 0;[^}]*pointer-events: none;/);
+    expect(CSS).toContain(".iv-thumb-wrap:hover .iv-thumb-by,\n.iv-thumb-wrap:focus-within .iv-thumb-by { opacity: 1; }");
+    expect(CSS).toContain(".iv-thumb-wrap:hover button.iv-thumb-by,\n.iv-thumb-wrap:focus-within button.iv-thumb-by { pointer-events: auto; cursor: pointer; }");
+    expect(CSS).toMatch(/@media \(hover: none\) \{\n\s+\.iv-thumb-by \{ opacity: 1; \}\n\s+button\.iv-thumb-by \{ pointer-events: auto; \}/);
   });
 });
 
