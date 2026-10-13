@@ -108,7 +108,6 @@ export default function AnalyticsPanel() {
   const ser = data?.charts?.[period];
   const st = data?.stats?.[period];
   const vals = ser ? (metric === "earnings" ? ser.earningsCents : ser.prints) : [];
-  const hasAny = (data?.stats?.all?.prints ?? 0) > 0 || (data?.stats?.all?.unlocks ?? 0) > 0;
 
   // chart geometry (design: 720×200, baseline 160, top 14)
   const W = 720, top = 14, base = 160;
@@ -147,14 +146,8 @@ export default function AnalyticsPanel() {
         <div style={{ padding: "60px 0", textAlign: "center", color: "var(--enki-ink-3)", fontSize: 13 }}>Could not load your analytics — try again in a moment.</div>
       ) : !data ? (
         <div style={{ padding: "60px 0", textAlign: "center", color: "var(--enki-ink-3)", fontSize: 13 }}>Loading…</div>
-      ) : !hasAny ? (
-        <div style={{ padding: "72px 0", textAlign: "center", maxWidth: 460, margin: "0 auto" }}>
-          <div style={{ fontFamily: SERIF, fontSize: 24, fontStyle: "italic", color: "var(--enki-ink-2)" }}>Nothing to chart yet.</div>
-          <p style={{ fontSize: 14, color: "var(--enki-ink-3)", marginTop: 8 }}>
-            Release a prompt and this page fills up with earnings, renders and ratings.
-          </p>
-        </div>
       ) : (
+        /* Without a print yet the page is the same, with every figure at 0 (Kev, 2026-10-13), never a placeholder. */
         <>
           {/* ── stat cards ── */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 10, marginBottom: 12 }}>

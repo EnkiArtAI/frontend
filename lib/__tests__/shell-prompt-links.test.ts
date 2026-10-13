@@ -32,3 +32,14 @@ describe("every link to a prompt", () => {
     expect(src("app", "generator", "[id]", "page.tsx")).toContain("export async function generateMetadata(");
   });
 });
+
+describe("Analytics without a print", () => {
+  it("shows the dashboard at 0, never a placeholder", () => {
+    const panel = src("components", "enki-shell", "AnalyticsPanel.tsx");
+    expect(panel).not.toContain("Nothing to chart yet");
+    expect(panel).not.toContain("hasAny");
+    // Loading and failure are the only other states; data, however empty, draws the cards.
+    expect(panel).toMatch(/\) : !data \? \([^]*?\) : \(\n\s*<>\n/);
+    expect(panel).toContain('<StatCard label="Prints" value={(st?.prints ?? 0).toLocaleString("en-US")}');
+  });
+});
