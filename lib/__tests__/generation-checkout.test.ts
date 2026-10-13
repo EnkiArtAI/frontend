@@ -139,6 +139,49 @@ describe("every failure stops the line cold", () => {
     expect(calls).not.toContain("/api/payments/generation/submit");
   });
 
+  describe("an order taken back (Kev, 2026-10-13) stops the line at the next step, and a signature already given goes nowhere", () => {
+    const line = () => scriptFetch({
+      "/api/payments/generation/intent": { status: 200, body: { intent: { id: "i-1" } } },
+      "/api/payments/generation/authorize": { status: 200, body: { intentId: "i-1", transaction: "dHg=", units: 1, paymentScheme: "escrow" } },
+      "/api/payments/generation/submit": { status: 200, body: { intentId: "i-1", paymentScheme: "escrow", state: "funded", funded: true } },
+    });
+
+    it.each([
+      ["intent", 0, []],
+      ["authorize", 1, ["/api/payments/generation/intent"]],
+      ["sign", 2, ["/api/payments/generation/intent", "/api/payments/generation/authorize"]],
+    ] as const)("before %s: no further request, the wallet unasked", async (step, after, sent) => {
+      line();
+      let asked = 0;
+      signMock.mockResolvedValue("c2lnbmVk");
+      const err = await authorizePaidGeneration(REQ, signMock, 1, undefined, () => asked++ >= after).catch((e) => e as CheckoutError);
+      expect(err).toBeInstanceOf(CheckoutError);
+      expect((err as CheckoutError).step).toBe(step);
+      expect((err as CheckoutError).message).toBe("Cancelled before anything was charged.");
+      expect((err as CheckoutError).payment).toBeUndefined();
+      expect(calls).toEqual(sent);
+      expect(signMock).not.toHaveBeenCalled();
+    });
+
+    it("after signing: the signed deposit is never submitted", async () => {
+      line();
+      let gone = false;
+      signMock.mockImplementation(async () => { gone = true; return "c2lnbmVk"; });
+      const err = await authorizePaidGeneration(REQ, signMock, 1, undefined, () => gone).catch((e) => e as CheckoutError);
+      expect(signMock).toHaveBeenCalledTimes(1);
+      expect((err as CheckoutError).step).toBe("sign");
+      expect((err as CheckoutError).message).toBe("Cancelled before anything was charged.");
+      expect(calls).not.toContain("/api/payments/generation/submit");
+    });
+
+    it("never taken back: the line runs as without the hook", async () => {
+      line();
+      signMock.mockResolvedValue("c2lnbmVk");
+      expect(await authorizePaidGeneration(REQ, signMock, 1, undefined, () => false)).toMatchObject({ state: "funded" });
+      expect(calls).toContain("/api/payments/generation/submit");
+    });
+  });
+
   it("an intent with no id is a refusal, not an undefined ride-along", async () => {
     scriptFetch({
       "/api/payments/generation/intent": { status: 200, body: { intent: {} } },

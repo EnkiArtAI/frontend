@@ -29,6 +29,19 @@ export type GenerationPayment = EscrowCheckout & { unitIndex: number; generation
 export type GenerationOutcome =
   | { ok: true; imageUrl: string; data: Record<string, unknown>; payment?: GenerationPayment }
   | { ok: false; error: string; phase?: GenerationPhase; status?: number; data?: Record<string, unknown>; payment?: GenerationPayment };
+/** What a queue watches a batch for (Kev, 2026-10-13: cancel "solange der API call noch nicht abgeschickt wurde"). */
+export interface BatchWatch {
+  /** Said right before unit `index`'s image request goes out; from then on it cannot be cancelled. */
+  onSend?: (index: number) => void;
+  /**
+   * Asked before anything is opened, spent or sent for unit `index`: true
+   * leaves it out. A batch whose units are all left out stops before the
+   * wallet opens or a deposit is submitted; a deposit already made comes
+   * back through the batch's close, like any unstarted unit's.
+   */
+  cancelled?: (index: number) => boolean;
+}
+const CANCELLED = "Cancelled before it was sent.";
 function quoteFor(req: GenerationRequest): QuoteRequest {
   return {
     promptId: req.promptId, modelId: req.model!.id, resolution: req.resolution,
@@ -46,7 +59,7 @@ function contentFor(req: GenerationRequest) {
 async function generate(req: GenerationRequest, payment?: GenerationPayment, beforeRequest?: () => Promise<void>): Promise<GenerationOutcome> {
   const submitted = payment ? { ...payment, generationSubmitted: true } : undefined;
   try {
-    if (submitted) await beforeRequest?.();
+    await beforeRequest?.();
     const res = await fetch(req.model!.free ? "/api/generate-free" : "/api/generate-image", {
       method: "POST", headers: { "Content-Type": "application/json", ...sessionAuthHeaders() },
       body: JSON.stringify(req.model!.free ? {
@@ -65,7 +78,10 @@ async function generate(req: GenerationRequest, payment?: GenerationPayment, bef
 /** Paid units share terms, one deposit, and their original indexes. A free unit requires an explicit free-model choice. */
 export async function runGenerationBatch(reqs: GenerationRequest[], sign: PaymentSigner,
   onOutcome?: (outcome: GenerationOutcome, index: number) => void,
-  resume?: GenerationPayment[], onPayment?: (payments: GenerationPayment[]) => void | Promise<void>): Promise<GenerationOutcome[]> {
+  resume?: GenerationPayment[], onPayment?: (payments: GenerationPayment[]) => void | Promise<void>,
+  watch?: BatchWatch): Promise<GenerationOutcome[]> {
+  const left = (index: number) => watch?.cancelled?.(index) === true;
+  const abandoned = () => reqs.every((_, index) => left(index));
   const finishAll = (error: string, phase: GenerationPhase = "prepare", payment: EscrowCheckout | undefined = resume?.[0]) => reqs.map((req, index): GenerationOutcome => {
     const paidIndex = reqs.slice(0, index).filter(item => item.model && !item.model.free).length;
     const out: GenerationOutcome = { ok: false, phase, error,
@@ -102,10 +118,11 @@ export async function runGenerationBatch(reqs: GenerationRequest[], sign: Paymen
   let payment: EscrowCheckout | undefined;
   let phase: GenerationPhase = "prepare";
   try {
+    if (abandoned()) return finishAll(CANCELLED);
     if (paid.length) {
       if (!resume) await ensureCdpWallet({ attached: true });
       phase = "authorization";
-      payment = resume ? await resumePaidGeneration(resume[0], checkpoint) : await authorizePaidGeneration(quote!, sign, paid.length, checkpoint);
+      payment = resume ? await resumePaidGeneration(resume[0], checkpoint) : await authorizePaidGeneration(quote!, sign, paid.length, checkpoint, abandoned);
     }
   } catch (error) {
     return finishAll(error instanceof Error ? error.message : "The payment could not be prepared.", phase,
@@ -123,8 +140,13 @@ export async function runGenerationBatch(reqs: GenerationRequest[], sign: Paymen
         ? "This image could not finish. Its unused payment is being refunded."
         : "This image was already requested and is still being checked. It will not be requested again.";
       result = { ok: false, phase: "generation", error, payment: { ...payment!, unitIndex: unitIndex!, generationSubmitted: true } };
+    } else if (left(index)) {
+      // Taken back while the batch was being paid for: never requested; its unit is closed with the batch.
+      result = { ok: false, phase, error: CANCELLED, ...(unitIndex === undefined ? {} : { payment: { ...payment!, unitIndex, generationSubmitted: false } }) };
     } else result = await generate(req, unitIndex === undefined ? undefined : { ...payment!, unitIndex, generationSubmitted: false }, async () => {
-      sent.add(unitIndex!);
+      watch?.onSend?.(index);
+      if (unitIndex === undefined) return;
+      sent.add(unitIndex);
       await checkpoint(payment!);
     });
     onOutcome?.(result, index);

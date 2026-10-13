@@ -331,6 +331,74 @@ it("awaits unit payment checkpoints before any provider request and preserves se
   expect((await running)[0]).toMatchObject({ ok: true });
 });
 
+describe("a batch watched by its queue (Kev, 2026-10-13: cancel while the request is not yet sent)", () => {
+  const authorise = (units: number) => ({ ...PAID, "/api/payments/generation/authorize": { intentId: "i-1", transaction: "dHg=", units, paymentScheme: "escrow" } });
+  const never = () => false;
+
+  it("says onSend right before each image request goes out, free and paid, and never for a unit that was not requested", async () => {
+    scriptFetch({ ...authorise(2), "/api/generate-free": { imageUrl: "https://img/free.png" } });
+    const sent: number[] = [];
+    const seenAtSend: number[] = [];
+    await runGenerationBatch([{ ...BASE, model: FLUX }, { ...BASE, model: GPT }, { ...BASE, model: GPT }], vi.fn(async () => "signed"), undefined, undefined, undefined, {
+      onSend: (index) => { sent.push(index); seenAtSend.push(calls.filter((c) => c.path.startsWith("/api/generate-")).length); },
+      cancelled: (index) => index === 2,
+    });
+    expect(sent.sort()).toEqual([0, 1]);
+    // Before its own request: at most the other unit's request had gone out by then.
+    expect(seenAtSend.every((n) => n <= 1)).toBe(true);
+    expect(calls.filter((c) => c.path === "/api/generate-image").map((c) => c.body.unitIndex)).toEqual([0]);
+  });
+
+  it("a cancelled unit of a paid batch is never requested, carries its deposit, and the batch still closes the unstarted units", async () => {
+    scriptFetch(authorise(2));
+    const outcomes = await runGenerationBatch([{ ...BASE, model: GPT }, { ...BASE, model: GPT }], vi.fn(async () => "signed"), undefined, undefined, undefined, { cancelled: (index) => index === 1 });
+    expect(outcomes[0]).toMatchObject({ ok: true });
+    expect(outcomes[1]).toMatchObject({ ok: false, error: "Cancelled before it was sent.", payment: { intentId: "i-1", unitIndex: 1, generationSubmitted: false } });
+    expect(outcomes[1]).not.toMatchObject({ phase: "generation" });
+    expect(calls.filter((c) => c.path === "/api/generate-image").map((c) => c.body.unitIndex)).toEqual([0]);
+    expect(calls.at(-1)?.path).toBe("/api/payments/generation/cancel");
+  });
+
+  it("a cancelled free unit is simply never requested and carries no payment", async () => {
+    scriptFetch({ "/api/generate-free": { imageUrl: "https://img/free.png" } });
+    const [out] = await runGenerationBatch([{ ...BASE, model: FLUX }], vi.fn(), undefined, undefined, undefined, { cancelled: () => true });
+    expect(out).toEqual({ ok: false, phase: "prepare", error: "Cancelled before it was sent." });
+    expect(calls).toEqual([]);
+  });
+
+  it("a batch whose every unit was taken back before it started opens no wallet and sends nothing", async () => {
+    scriptFetch(PAID);
+    const ensure = vi.fn(async () => {});
+    registerCdpEnsure(ensure);
+    const sign = vi.fn(async () => "signed");
+    try {
+      const outcomes = await runGenerationBatch([{ ...BASE, model: GPT }], sign, undefined, undefined, undefined, { cancelled: () => true });
+      expect(outcomes).toEqual([{ ok: false, phase: "prepare", error: "Cancelled before it was sent." }]);
+    } finally { registerCdpEnsure(null); }
+    expect(ensure).not.toHaveBeenCalled();
+    expect(sign).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+  });
+
+  it("taken back while the wallet was open: the signature is never submitted, nothing is charged", async () => {
+    scriptFetch(PAID);
+    let gone = false;
+    const sign = vi.fn(async () => { gone = true; return "signed"; });
+    const [out] = await runGenerationBatch([{ ...BASE, model: GPT }], sign, undefined, undefined, undefined, { cancelled: () => gone });
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(out).toMatchObject({ ok: false, phase: "authorization", error: "Cancelled before anything was charged." });
+    expect(out).not.toHaveProperty("payment");
+    expect(calls.map((c) => c.path)).toEqual(["/api/payments/generation/intent", "/api/payments/generation/authorize"]);
+  });
+
+  it("a watch that cancels nothing changes nothing", async () => {
+    scriptFetch(PAID);
+    const [out] = await runGenerationBatch([{ ...BASE, model: GPT }], vi.fn(async () => "signed"), undefined, undefined, undefined, { cancelled: never });
+    expect(out).toMatchObject({ ok: true });
+    expect(calls.map((c) => c.path)).toContain("/api/generate-image");
+  });
+});
+
 it("a disappeared catalogue entry during resume never discards the existing payment identity", async () => {
   scriptFetch({});
   const payment = { intentId: "i-1", units: 1, unitIndex: 0, paymentScheme: "escrow" as const, state: "funded" as const, generationSubmitted: true };

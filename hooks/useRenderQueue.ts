@@ -7,7 +7,7 @@
  * carries it out.
  */
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { runGenerationBatch, type GenerationRequest, type GenerationPayment } from "@/lib/generation/run-generation";
+import { runGenerationBatch, type BatchWatch, type GenerationRequest, type GenerationPayment } from "@/lib/generation/run-generation";
 import { fetchFreeGenerationQuota, type FreeGenerationQuota } from "@/lib/generation-checkout";
 import { usePaymentSigner } from "@/hooks/usePaymentSigner";
 import { refreshHoldings } from "@/hooks/useHoldings";
@@ -70,22 +70,40 @@ export function useRenderQueue<S>({ toRequest, persist, onLeave, freeModelSelect
     if (persist && loaded) persist.save(jobs);
   }, [persist, loaded, jobs]);
 
+  // Applied to the handlers' copy at once, so a batch in flight reads the queue as it is; true when it changed anything.
+  const publish = useCallback((action: QueueAction<S>) => {
+    const next = queueReducer(latest.current.jobs, action);
+    const changed = next !== latest.current.jobs;
+    latest.current.jobs = next;
+    dispatch(action);
+    return changed;
+  }, []);
+  // Taken back before their request went out: their batch leaves them out, and their outcome is nobody's news.
+  const cancelled = useRef(new Set<string>());
+
   const execute = useCallback((setups: S[], resume?: GenerationPayment[]) => {
     if (!setups.length) return;
-    const publish = (action: QueueAction<S>) => {
-      latest.current.jobs = queueReducer(latest.current.jobs, action);
-      dispatch(action);
-    };
     const ids = setups.map(setup => {
       const id = crypto.randomUUID();
       publish({ type: "enqueue", id, createdAt: Date.now(), setup });
       return id;
     });
     const requests = setups.map(toRequest);
+    const watch: BatchWatch = {
+      onSend: index => publish({ type: "sent", id: ids[index] }),
+      cancelled: index => cancelled.current.has(ids[index]),
+    };
     serial.current ??= serialSigner();
-    const signer = trackSigner(transaction => serial.current!(() => latestSign.current(transaction)));
+    // A cancelled order never opens the wallet, even one that waited its turn behind another prompt.
+    const signer = trackSigner(transaction => serial.current!(() =>
+      ids.every(id => cancelled.current.has(id)) ? Promise.reject(new Error("Cancelled before signing")) : latestSign.current(transaction)));
     void runGenerationBatch(requests, signer.sign, (outcome, index) => {
-      const result = settle(ids[index], outcome, signer.state());
+      const id = ids[index];
+      if (cancelled.current.delete(id)) {
+        if (outcome.payment) refreshHoldings();
+        return;
+      }
+      const result = settle(id, outcome, signer.state());
       publish(result.action);
       if (result.toast) notify(result.toast, result.action.type === "fail" ? { tone: "error" } : undefined);
       if (result.login) openLogin();
@@ -95,10 +113,10 @@ export function useRenderQueue<S>({ toRequest, persist, onLeave, freeModelSelect
       const paidIds = ids.filter((_, index) => requests[index].model && !requests[index].model.free);
       payments.forEach((payment, index) => publish({ type: "payment", id: paidIds[index], payment }));
       await persist?.save(latest.current.jobs);
-    }).then(() => {
+    }, watch).then(() => {
       if (requests.some(request => request.model?.free)) void refreshQuota();
     });
-  }, [toRequest, refreshQuota, persist]);
+  }, [toRequest, refreshQuota, persist, publish]);
   const runBatch = useCallback((setups: S[]) => execute(setups), [execute]);
   const run = useCallback((setup: S) => execute([setup]), [execute]);
   const retry = useCallback((id: string) => {
@@ -109,9 +127,16 @@ export function useRenderQueue<S>({ toRequest, persist, onLeave, freeModelSelect
     execute(plan.jobs.map(job => job.setup), plan.resume);
   }, [jobs, execute]);
   const drop = useCallback((id: string) => dispatch({ type: "drop", id }), []);
+  /** The X on a tile still in line (Kev, 2026-10-13): the job goes now; a deposit already on its way comes back with the batch's close. */
+  const cancel = useCallback((id: string) => {
+    const job = latest.current.jobs.find(j => j.id === id);
+    if (!publish({ type: "cancel", id })) return;
+    cancelled.current.add(id);
+    notify(job?.payment ? "Cancelled · its payment is being refunded" : "Cancelled · nothing was charged");
+  }, [publish]);
   const markSeen = useCallback((id: string) => dispatch({ type: "seen", id }), []);
 
-  return { jobs, run, runBatch, retry, drop, markSeen, note, freeQuota };
+  return { jobs, run, runBatch, retry, drop, cancel, markSeen, note, freeQuota };
 }
 
 /** The daily allowance is server-owned; no local fallback grants free images. */

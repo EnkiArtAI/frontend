@@ -216,9 +216,17 @@ export async function resumePaidGeneration(payment: EscrowCheckout, onPayment?: 
   await checkpointPayment(onPayment, current);
   return { ...current, state: "funded" };
 }
-/** One signed escrow deposit for every paid image in this click. */
-export async function authorizePaidGeneration(req: QuoteRequest, sign: PaymentSigner, units = 1, onPayment?: PaymentCheckpoint): Promise<FundedEscrowCheckout> {
+const CANCELLED = "Cancelled before anything was charged.";
+/**
+ * One signed escrow deposit for every paid image in this click. `abandoned`
+ * is asked before each step up to the submit: once true the line stops cold,
+ * and a signature already given is never submitted (Kev, 2026-10-13).
+ */
+export async function authorizePaidGeneration(req: QuoteRequest, sign: PaymentSigner, units = 1, onPayment?: PaymentCheckpoint,
+  abandoned?: () => boolean): Promise<FundedEscrowCheckout> {
   if (!Number.isInteger(units) || units < 1 || units > 24) throw new CheckoutError("intent", "Choose between one and twenty-four images.");
+  const unless = (step: CheckoutError["step"]) => { if (abandoned?.()) throw new CheckoutError(step, CANCELLED); };
+  unless("intent");
   let intentRes: Response;
   try { intentRes = await post("/api/payments/generation/intent", req); }
   catch { throw new CheckoutError("intent", "Could not prepare the payment. Please try again."); }
@@ -226,6 +234,7 @@ export async function authorizePaidGeneration(req: QuoteRequest, sign: PaymentSi
   const intentBody = await intentRes.json().catch(() => null) as { intent?: { id?: string } } | null;
   const intentId = intentBody?.intent?.id;
   if (!intentId) throw new CheckoutError("intent", "Could not prepare the payment");
+  unless("authorize");
   let authRes: Response;
   try { authRes = await post("/api/payments/generation/authorize", { intentId, units }); }
   catch { throw new CheckoutError("authorize", "Could not build the payment. Please try again."); }
@@ -234,6 +243,7 @@ export async function authorizePaidGeneration(req: QuoteRequest, sign: PaymentSi
   if (!prepared?.transaction || prepared.intentId !== intentId || prepared.units !== units || prepared.paymentScheme !== "escrow") {
     throw new CheckoutError("authorize", "Could not build the payment");
   }
+  unless("sign");
   let signed: string;
   try { signed = await sign(prepared.transaction); }
   catch (error) {
@@ -241,6 +251,8 @@ export async function authorizePaidGeneration(req: QuoteRequest, sign: PaymentSi
     throw new CheckoutError("sign", error instanceof Error && /reject|denied|cancel/i.test(error.message)
       ? "Signing was cancelled. Nothing was charged." : "The wallet could not sign. Nothing was charged.");
   }
+  // Taken back while the wallet was open: the signature goes nowhere.
+  unless("sign");
   const payment = await submitSameDeposit({ intentId, units, paymentScheme: "escrow", state: "uncertain", signedTransaction: signed }, onPayment);
   if (payment.state === "funded") return { ...payment, state: "funded" };
   return resumePaidGeneration(payment, onPayment);

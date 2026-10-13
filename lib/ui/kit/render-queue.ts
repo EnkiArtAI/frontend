@@ -12,6 +12,12 @@ export type Job<S> = {
   id: string;
   createdAt: number;
   status: "rendering" | "ready" | "failed";
+  /**
+   * Its image request has gone out: the spinner lights up and the job can no
+   * longer be cancelled (Kev, 2026-10-13). Before that it waits in line, white
+   * and with an X. Absent on a job saved before the flag existed.
+   */
+  sent?: boolean;
   /** Everything needed to run the same job again. */
   setup: S;
   /** https (stored) or data: (the store missed). */
@@ -26,6 +32,8 @@ export type Job<S> = {
 
 export type QueueAction<S> =
   | { type: "enqueue"; id: string; createdAt: number; setup: S }
+  | { type: "sent"; id: string }
+  | { type: "cancel"; id: string }
   | { type: "payment"; id: string; payment: GenerationPayment }
   | { type: "resolve"; id: string; imageUrl: string; size?: { w: number; h: number } }
   | { type: "fail"; id: string; error: NonNullable<Job<S>["error"]> }
@@ -34,6 +42,9 @@ export type QueueAction<S> =
   | { type: "restore"; jobs: Job<S>[] };
 
 const INTERRUPTED = { message: "Interrupted — the image may be in your gallery", charged: "unknown" } as const;
+
+/** Still in line: its request has not gone out, so taking it back costs nothing that is not refunded. */
+export const cancellable = (j: Pick<Job<unknown>, "status" | "sent">) => j.status === "rendering" && !j.sent;
 
 /** The job with this id replaced by `edit(job)`; the same array when there is none or `edit` declines. */
 function update<S>(jobs: Job<S>[], id: string, edit: (j: Job<S>) => Job<S> | null): Job<S>[] {
@@ -46,7 +57,12 @@ export function queueReducer<S>(jobs: Job<S>[], a: QueueAction<S>): Job<S>[] {
   switch (a.type) {
     case "enqueue":
       // New jobs go first and nothing else moves (handoff §0).
-      return [{ id: a.id, createdAt: a.createdAt, setup: a.setup, status: "rendering", seen: false }, ...jobs];
+      return [{ id: a.id, createdAt: a.createdAt, setup: a.setup, status: "rendering", sent: false, seen: false }, ...jobs];
+    case "sent":
+      return update(jobs, a.id, (j) => (cancellable(j) ? { ...j, sent: true } : null));
+    case "cancel":
+      // Once sent, the image may still arrive: only a job still in line goes.
+      return jobs.some((j) => j.id === a.id && cancellable(j)) ? jobs.filter((j) => j.id !== a.id) : jobs;
     case "payment":
       return update(jobs, a.id, j => j.status === "rendering" ? { ...j, payment: a.payment } : null);
     case "resolve":

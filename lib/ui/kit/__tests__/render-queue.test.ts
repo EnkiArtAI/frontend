@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { queueReducer, viewerList, leaveSummary, settle, quotaText, type Job, type QueueAction } from "../render-queue";
+import { queueReducer, viewerList, leaveSummary, settle, quotaText, cancellable, type Job, type QueueAction } from "../render-queue";
 import type { GenerationOutcome } from "@/lib/generation/run-generation";
 
 type S = { prompt: string };
@@ -8,10 +8,39 @@ const enqueue = (id: string): QueueAction<S> => ({ type: "enqueue", id, createdA
 const job = (id: string, status: Job<S>["status"], seen = false): Job<S> => ({ id, createdAt: 1, status, setup: { prompt: id }, seen });
 
 describe("queueReducer", () => {
-  it("prepends a new job as rendering and unseen, and moves nothing else", () => {
+  it("prepends a new job as rendering, unsent and unseen, and moves nothing else", () => {
     const jobs = run([enqueue("a"), enqueue("b")]);
     expect(jobs.map((j) => j.id)).toEqual(["b", "a"]);
-    expect(jobs[0]).toEqual({ id: "b", createdAt: 1, setup: { prompt: "b" }, status: "rendering", seen: false });
+    expect(jobs[0]).toEqual({ id: "b", createdAt: 1, setup: { prompt: "b" }, status: "rendering", sent: false, seen: false });
+  });
+
+  describe("a job in line can be taken back until its request goes out (Kev, 2026-10-13)", () => {
+    it("is cancellable only while rendering and unsent", () => {
+      expect(cancellable({ status: "rendering", sent: false })).toBe(true);
+      expect(cancellable({ status: "rendering" })).toBe(true);
+      expect(cancellable({ status: "rendering", sent: true })).toBe(false);
+      expect(cancellable({ status: "ready", sent: false })).toBe(false);
+      expect(cancellable({ status: "failed" })).toBe(false);
+    });
+
+    it("sent marks a job in line, once, and nothing finished", () => {
+      const inLine = run([enqueue("a"), enqueue("b")]);
+      const jobs = run([{ type: "sent", id: "a" }], inLine);
+      expect(jobs.map((j) => [j.id, j.sent])).toEqual([["b", false], ["a", true]]);
+      expect(run([{ type: "sent", id: "a" }], jobs)).toBe(jobs);
+      expect(run([{ type: "sent", id: "x" }], jobs)).toBe(jobs);
+      const done = [job("r", "ready"), job("f", "failed")];
+      expect(run([{ type: "sent", id: "r" }, { type: "sent", id: "f" }], done)).toBe(done);
+    });
+
+    it("cancel removes a job in line and leaves a sent, finished or unknown one exactly as it is", () => {
+      const jobs = run([enqueue("a"), enqueue("b"), { type: "sent", id: "b" }]);
+      expect(run([{ type: "cancel", id: "a" }], jobs).map((j) => j.id)).toEqual(["b"]);
+      expect(run([{ type: "cancel", id: "b" }], jobs)).toBe(jobs);
+      expect(run([{ type: "cancel", id: "nope" }], jobs)).toBe(jobs);
+      const done = [job("r", "ready"), job("f", "failed")];
+      expect(run([{ type: "cancel", id: "r" }, { type: "cancel", id: "f" }], done)).toBe(done);
+    });
   });
 
   it("resolves a rendering job in place, with its size", () => {
