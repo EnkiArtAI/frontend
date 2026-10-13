@@ -278,14 +278,16 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
     try { localStorage.setItem(MENU_KEY, collapsed ? "0" : "1"); } catch { /* noop */ }
   };
 
-  /* Create Prompt from anywhere: a panel open over the editor (Hall of Fame
-     on /editor) closes, or the push to the same route changed nothing and the
-     click looked dead (Kev, 2026-10-13). */
+  /* Create Prompt from anywhere. On /editor a panel over the editor (Hall of
+     Fame) closes, since the push to the same route would change nothing and
+     the click looked dead. From any other route the panel stays up until the
+     editor is on screen: this shell leaves with its route, and closing the
+     panel first showed the feed for a moment (Kev, 2026-10-13). */
   const createPrompt = () => {
     if (!authed) { setCreatorNotice("open"); return; }
     setMobileDrawerOpen(false);
-    setPanel(null);
-    router.push("/editor");
+    if (window.location.pathname === "/editor") setPanel(null);
+    else router.push("/editor");
   };
 
   const onNav = (id: string) => {

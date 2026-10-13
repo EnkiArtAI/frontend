@@ -47,10 +47,12 @@ function* walk(node: ReactNode): Generator<ReactElement<Record<string, unknown>>
     yield* walk(node.props.children as ReactNode);
   }
 }
+const sidebar = () => [...walk(EnkiHome({ children: null }))].find((el) => el.type === EnkiSidebar)!;
 function home() {
-  const tree = EnkiHome({ children: null });
-  const sidebar = [...walk(tree)].find((el) => el.type === EnkiSidebar)!;
-  (sidebar.props.onNav as (id: string) => void)("home");
+  (sidebar().props.onNav as (id: string) => void)("home");
+}
+function create() {
+  (sidebar().props.onCreate as () => void)();
 }
 function frame(hidden: boolean) {
   vi.stubGlobal("document", {
@@ -95,5 +97,18 @@ describe("Home is the feed where the reader left it (Kev, 2026-10-13)", () => {
     expect(shell.events).toEqual(["enki:close-detail", "enki:home"]);
     expect(shell.push).toHaveBeenCalledWith("/home");
     expect(shell.scroll).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+  });
+});
+
+describe("Create Prompt (Kev, 2026-10-13: no flash of the feed on the way)", () => {
+  it("from another route goes to the editor and leaves the panel up until the editor is on screen", () => {
+    vi.stubGlobal("document", { querySelector: () => null }); create();
+    expect(shell.push).toHaveBeenCalledWith("/editor");
+    expect(shell.events).toEqual([]);
+  });
+  it("on the editor already it only closes the panel: nothing to push", () => {
+    (window as unknown as { location: { pathname: string } }).location.pathname = "/editor";
+    vi.stubGlobal("document", { querySelector: () => null }); create();
+    expect(shell.push).not.toHaveBeenCalled();
   });
 });
