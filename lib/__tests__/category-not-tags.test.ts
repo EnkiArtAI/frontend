@@ -25,8 +25,8 @@ describe("the category", () => {
     expect(feed).not.toMatch(/prompt\.tags\.includes\(tag\)/);
   });
 
-  it("offers Photography, the category live prompts already carry", () => {
-    expect(ENKI_CATEGORIES).toContain("Photography");
+  it("offers Kev's list of 2026-10-13, in his order, More last", () => {
+    expect([...ENKI_CATEGORIES]).toEqual(["Marketing", "Portrait", "Influencers", "Product", "Architecture", "Characters", "Branding", "More"]);
   });
 });
 

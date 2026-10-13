@@ -17,7 +17,7 @@ const server: ServerPrompt = {
   id: "pid",
   title: "Night market",
   content: "A [Red car] in [neon], Reference image 1 and Reference image 3, [ 2nd shot ] [猫] [extra]",
-  category: "Poster",
+  category: "Branding",
   aiModel: "Nano Banana Pro",
   price: 0.4,
   aspectRatio: "3:2",
@@ -71,7 +71,7 @@ describe("loadPrompt", () => {
   });
 
   it("maps the listing: a paid prompt is Premium at its price, a known category, the prompt's own model on offer by name or id", () => {
-    expect(loaded.listing).toEqual({ title: "Night market", mode: "premium", price: 0.4, category: "Poster", modelIds: ["m-pro"], testId: null });
+    expect(loaded.listing).toEqual({ title: "Night market", mode: "premium", price: 0.4, category: "Branding", modelIds: ["m-pro"], testId: null });
     expect(loadPrompt({ ...server, aiModel: "m-flux" }, catalogue).listing.modelIds).toEqual(["m-flux"]);
     expect(loadPrompt({ ...server, aiModel: "nano-banana-pro" }, catalogue).listing.modelIds).toEqual(["m-pro"]);
     expect(loadPrompt({ ...server, aiModel: "Midjourney" }, catalogue).listing.modelIds).toEqual([]);
