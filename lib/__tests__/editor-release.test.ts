@@ -29,10 +29,14 @@ describe("release from the current prompt editor", () => {
     expect(price).toContain('stepPrice(price, -1)');
     expect(price).toContain('stepPrice(price, 1)');
     expect(price).toContain('const cents = Math.round(price * 100) / 100;');
-    // An arrow press rolls the figure (rollKeyframes), unless the reader asked for no motion.
-    expect(price).toContain('if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) field.current?.animate(rollKeyframes(direction), ROLL_TIMING);');
+    // An arrow press rolls only the digits that changed (changedDigits), unless the reader asked for no motion.
+    expect(price).toContain('if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;');
+    expect(price).toContain('for (const i of changedDigits(p.from, shown)) digits.current[i]?.animate(rollKeyframes(p.direction), ROLL_TIMING);');
     expect(price).toContain('onClick={() => press(down, -1)}');
     expect(price).toContain('onClick={() => press(up, 1)}');
+    // The digits are drawn over the input only while it is not typed in; typing sees the input itself.
+    expect(price).toContain('{text === null && (\n            <span className="pe-price-digits" aria-hidden>');
+    expect(src("components", "prompt-editor", "prompt-editor.css")).toContain(".pe-price-field:not([data-typing]) input { color: transparent; }");
   });
 });
 describe("the retained Quick Create sheet", () => {

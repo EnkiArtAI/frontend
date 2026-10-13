@@ -43,12 +43,21 @@ export function stepPrice(current: number, direction: 1 | -1): number | null {
 }
 
 /**
- * How the figure moves on an arrow press (Kev, 2026-10-13: "die Zahlen sollen
- * sich hoch oder runter bewegen"): the new price rolls in from below on +,
- * from above on −, like a counter wheel.
+ * How a digit moves on an arrow press (Kev, 2026-10-13: "die Zahlen sollen
+ * sich hoch oder runter bewegen … nur diejenigen Stellen, die auch verändert
+ * werden"): the new digit rolls in from below on +, from above on −, like a
+ * counter wheel. Only the digits that changed roll (changedDigits).
  */
 export const rollKeyframes = (direction: 1 | -1): Keyframe[] => [
   { transform: `translateY(${direction * 60}%)`, opacity: 0 },
   { transform: "translateY(0)", opacity: 1 },
 ];
 export const ROLL_TIMING: KeyframeAnimationOptions = { duration: 160, easing: "ease-out" };
+
+/** The positions in `to` whose character differs from `from`, the two aligned at their end (0.07 → 0.08: [3]; 0.09 → 0.10: [2, 3]; 9.99 → 10.00: a new leading digit too). */
+export function changedDigits(from: string, to: string): number[] {
+  const shift = to.length - from.length;
+  const out: number[] = [];
+  for (let i = 0; i < to.length; i++) if (to[i] !== from[i - shift]) out.push(i);
+  return out;
+}

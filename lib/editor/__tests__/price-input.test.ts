@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { join } from "node:path";
 import { readSource } from "@/lib/__tests__/_read-source";
-import { priceInputText, priceOf, priceTextFor, ROLL_TIMING, rollKeyframes, stepPrice } from "@/lib/editor/price-input";
+import { changedDigits, priceInputText, priceOf, priceTextFor, ROLL_TIMING, rollKeyframes, stepPrice } from "@/lib/editor/price-input";
 
 /**
  * The mobile sheet is the whole editor on a phone, and a release sends what
@@ -109,9 +109,20 @@ describe("an arrow press on the price", () => {
     expect(stepPrice(0.0005, 1)).toBe(0.0105);
   });
 
-  it("rolls the figure in from below on +, from above on −, in one short step", () => {
+  it("rolls a digit in from below on +, from above on −, in one short step", () => {
     expect(rollKeyframes(1)).toEqual([{ transform: "translateY(60%)", opacity: 0 }, { transform: "translateY(0)", opacity: 1 }]);
     expect(rollKeyframes(-1)[0]).toEqual({ transform: "translateY(-60%)", opacity: 0 });
     expect(ROLL_TIMING).toEqual({ duration: 160, easing: "ease-out" });
+  });
+
+  it("rolls only the digits that changed (Kev: nicht die gesamte Zahl)", () => {
+    expect(changedDigits("0.07", "0.08")).toEqual([3]);
+    expect(changedDigits("0.09", "0.10")).toEqual([2, 3]);
+    expect(changedDigits("0.10", "0.09")).toEqual([2, 3]);
+    expect(changedDigits("1.99", "2.00")).toEqual([0, 2, 3]);
+    // A figure that grows a digit: the new leading digit rolls, the dot stays.
+    expect(changedDigits("9.99", "10.00")).toEqual([0, 1, 3, 4]);
+    expect(changedDigits("10.00", "9.99")).toEqual([0, 2, 3]);
+    expect(changedDigits("0.07", "0.07")).toEqual([]);
   });
 });

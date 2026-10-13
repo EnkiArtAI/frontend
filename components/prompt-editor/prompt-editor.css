@@ -232,6 +232,12 @@
   font: inherit;
   text-align: left;
 }
+/* Not typing: the digit spans draw the figure over the transparent input,
+   same mono font and metrics, so an arrow press rolls single digits. */
+.pe-price-field { position: relative; display: inline-block; }
+.pe-price-field:not([data-typing]) input { color: transparent; }
+.pe-price-digits { position: absolute; inset: 0; display: flex; pointer-events: none; }
+.pe-price-digits span { display: inline-block; }
 
 /* ── Prompt. The kit mirror takes its metrics from these variables. */
 .pe-prompt { display: flex; flex-direction: column; gap: 8px; }
