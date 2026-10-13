@@ -10,6 +10,7 @@ import { sessionAuthHeaders, viewerHeaders } from "@/lib/session-headers";
 import EnkiCard from "@/components/enki/EnkiCard";
 import EnkiDetailPanel from "@/components/enki/EnkiDetailPanel";
 import PromptWall from "@/components/enki/PromptWall";
+import BookmarksPanel from "@/components/enki-shell/BookmarksPanel";
 import { seedFromEnkiPrompt } from "@/lib/ui/image-view/seed";
 import {
   mapMarketplacePromptToEnkiPrompt
@@ -455,7 +456,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
   /* Library is PRIVATE too (Kev, 2026-09-05): the owner's saved prompts and
      workflows, one click from the editor. */
   const TABS = own
-    ? ["Released", "Gallery", "Library", "Likes", "Reviews", "About", "History"]
+    ? ["Released", "Gallery", "Library", "Likes", "Bookmarks", "Reviews", "About", "History"]
     : ["Released", "Gallery", "Reviews", "About"];
   const router = useRouter();
   const [activeTab, setActiveTab] = useState("Released");
@@ -1011,6 +1012,9 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
               ); })}
             </div>
           )
+        ) : activeTab === "Bookmarks" ? (
+          /* The owner's bookmarks, here instead of a menu entry (Kev, 2026-10-13): the categories, then a category as the feed's wall. */
+          <BookmarksPanel />
         ) : activeTab === "Likes" ? (
           /* The liked prompts exactly as Home shows them (Kev, 2026-10-13). */
           <PromptWall ids={(myLikes ?? []).map((l) => l.promptId)} loading={myLikes === null}

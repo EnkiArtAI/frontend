@@ -26,7 +26,6 @@ import { notify } from "@/components/kit/notify";
 import { RAIL } from "@/lib/ui/kit/breakpoints";
 import { balanceView } from "@/lib/ui/kit/price";
 import EnkiSidebar, { type NavItem } from "./EnkiSidebar";
-import BookmarksPanel from "./BookmarksPanel";
 import FeedbackModal from "./FeedbackModal";
 import EnkiPanel from "./EnkiPanel";
 import LoginModal from "@/components/LoginModal";
@@ -50,7 +49,7 @@ const NAV: NavItem[] = [
   // Messages = person-to-person DMs (still a stub until that system exists).
   { id: "notifications", label: "Notifications", icon: "bell" },
   { id: "messages", label: "Messages", icon: "message" },
-  { id: "favorites", label: "Bookmarks", icon: "bookmark" },
+  // Bookmarks live in the owner's Profile as a tab (Kev, 2026-10-13), like History and Likes.
   { id: "leaderboard", label: "Hall of Fame", icon: "trophy" },
   { id: "analytics", label: "Analytics", icon: "chart" },
   { id: "settings", label: "Settings", icon: "settings" },
@@ -59,7 +58,7 @@ const NAV: NavItem[] = [
 // Personal areas: hidden from (and blocked for) visitors who aren't signed in.
 // (Matters post-beta, when guests may browse the feed again.) History moved
 // to the owner's own Profile as a tab.
-const AUTHED_ONLY = new Set(["settings", "favorites", "analytics", "notifications", "messages"]);
+const AUTHED_ONLY = new Set(["settings", "analytics", "notifications", "messages"]);
 
 // Same safe-wrapper pattern the old Navbar used: these wallet hooks throw if a
 // provider is momentarily absent, so swallow and fall back to "not connected".
@@ -356,7 +355,6 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
         ? <ProfileView key={creatorHandle} handle={creatorHandle} isOwnProfile={false} onBack={closePanel} />
         : null;
       {/* Leaderboard brings its own editorial header (design), no PanelHeadline */}
-      case "favorites": return <BookmarksPanel />;
       case "leaderboard": return <LeaderboardPage />;
       default: return (
         <PanelFrame>
@@ -487,17 +485,6 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
         </button>
         {/* Bookmarks are AUTHED_ONLY: the desktop nav filters them out for
             guests, so the bar must not offer them either (guest honesty). */}
-        {authed && (
-          <button
-            type="button"
-            className={"ek-mobile-nav-btn" + (panel === "favorites" ? " active" : "")}
-            onClick={() => onNav("favorites")}
-            aria-label="Bookmarks"
-          >
-            <Icon name="bookmark" size={20} stroke={panel === "favorites" ? 2.4 : 1.9} />
-            <span>Bookmarks</span>
-          </button>
-        )}
         <button
           type="button"
           className={"ek-mobile-nav-btn" + (panel === "profile" ? " active" : "")}
