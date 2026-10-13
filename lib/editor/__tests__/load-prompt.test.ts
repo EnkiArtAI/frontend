@@ -70,17 +70,19 @@ describe("loadPrompt", () => {
     expect(loaded.refs).toEqual({ [R1]: { data: null, stored: R1, state: "loading" }, [R2]: { data: null, stored: R2, state: "loading" } });
   });
 
-  it("maps the listing: a paid prompt is Premium at its price, a known category, the model by name or id", () => {
-    expect(loaded.listing).toEqual({ title: "Night market", mode: "premium", price: 0.4, category: "Poster", modelIds: ["m-pro"], primaryId: "m-pro", testId: null });
-    expect(loadPrompt({ ...server, aiModel: "m-flux" }, catalogue).listing.primaryId).toBe("m-flux");
-    expect(loadPrompt({ ...server, aiModel: "nano-banana-pro" }, catalogue).listing.primaryId).toBe("m-pro");
-    expect(loadPrompt({ ...server, aiModel: "Midjourney" }, catalogue).listing.primaryId).toBeNull();
-    expect(loadPrompt({ ...server, aiModel: null }, catalogue).listing.primaryId).toBeNull();
+  it("maps the listing: a paid prompt is Premium at its price, a known category, the prompt's own model on offer by name or id", () => {
+    expect(loaded.listing).toEqual({ title: "Night market", mode: "premium", price: 0.4, category: "Poster", modelIds: ["m-pro"], testId: null });
+    expect(loadPrompt({ ...server, aiModel: "m-flux" }, catalogue).listing.modelIds).toEqual(["m-flux"]);
+    expect(loadPrompt({ ...server, aiModel: "nano-banana-pro" }, catalogue).listing.modelIds).toEqual(["m-pro"]);
+    expect(loadPrompt({ ...server, aiModel: "Midjourney" }, catalogue).listing.modelIds).toEqual([]);
+    expect(loadPrompt({ ...server, aiModel: null }, catalogue).listing.modelIds).toEqual([]);
+    // The server's own model goes back as it is on a listing-only update.
+    expect(loaded.saved.aiModel).toBe("Nano Banana Pro");
   });
 
-  it("maps the generators on offer (aiModels) to catalogue ids, the primary first, each once, unknown names dropped", () => {
+  it("maps the generators on offer (aiModels) to catalogue ids, the prompt's own first, each once, unknown names dropped", () => {
     expect(loadPrompt({ ...server, aiModels: ["Flux (free)", "Nano Banana Pro", "Midjourney"] }, catalogue).listing.modelIds).toEqual(["m-pro", "m-flux"]);
-    expect(loadPrompt({ ...server, aiModel: "Midjourney", aiModels: ["m-flux"] }, catalogue).listing).toMatchObject({ modelIds: ["m-flux"], primaryId: null });
+    expect(loadPrompt({ ...server, aiModel: "Midjourney", aiModels: ["m-flux"] }, catalogue).listing.modelIds).toEqual(["m-flux"]);
     expect(loadPrompt({ ...server, aiModel: null, aiModels: [] }, catalogue).listing.modelIds).toEqual([]);
   });
 
@@ -108,6 +110,7 @@ describe("loadPrompt", () => {
       uploadedPhotos: ["https://blob/s1.webp"],
       aspectRatio: "3:2",
       resolution: "4K",
+      aiModel: "Nano Banana Pro",
     });
   });
 });

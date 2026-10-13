@@ -22,12 +22,11 @@ type Quotes = Array<GenerationQuote | null>;
  * Toasts sit above it, and a pane scrolled to the end follows when the bar
  * grows, so the references stay in view above the strip (handoff §5).
  */
-export default function GenerateBar({ live, models, testId, primaryId, onTest, core, picks, onPicks, prices, vary, generate, cost, children }: {
+export default function GenerateBar({ live, models, testId, onTest, core, picks, onPicks, prices, vary, generate, cost, children }: {
   live: ReactNode;
   /** The generators on offer (GeneratorRow's picks): the test generator is one of them. */
   models: CatalogueEntry[];
   testId: string | null;
-  primaryId: string | null;
   onTest: (id: string) => void;
   /** The test generator's options (useGenerationCore). */
   core: GenerationCore;
@@ -65,8 +64,7 @@ export default function GenerateBar({ live, models, testId, primaryId, onTest, c
     <div ref={bar} className="pe-bar">
       {live}
       <div className="pe-bar-row">
-        <GeneratorPill models={models} value={testId} onChange={onTest} prices={prices.models}
-          tags={primaryId ? { [primaryId]: "primary" } : undefined} look="logo" direction="up"
+        <GeneratorPill models={models} value={testId} onChange={onTest} prices={prices.models} look="logo" direction="up"
           placeholder={models.length ? "Pick a generator" : "Pick generators above"} disabled={!models.length}
           title="Test generator" hint="Renders your test images · the price follows it" />
         <RatioPill core={core} value={picks.ratio} onChange={(ratio) => onPicks({ ratio })} />

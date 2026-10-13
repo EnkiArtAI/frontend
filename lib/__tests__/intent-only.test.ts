@@ -44,6 +44,6 @@ describe("the current editor uses the shared generation queue", () => {
     expect(editor).not.toMatch(/useSolanaX402Payment|useX402PaymentProduction|\/api\/generate-free/);
   });
   it("starts without a preselected generator", () => {
-    expect(src("components", "prompt-editor", "usePromptEditor.ts")).toContain('primaryId: null, testId: null');
+    expect(src("components", "prompt-editor", "usePromptEditor.ts")).toContain('modelIds: [], testId: null');
   });
 });

@@ -21,18 +21,24 @@ const loaded: LoadedPrompt = {
   id: "p1",
   doc: doc("a [subject] by Reference image 1", { vars: { subject: "fox" }, refIds: ["https://x/1.webp"] }),
   refs: { "https://x/1.webp": { data: null, stored: "https://x/1.webp", state: "loading" } },
-  listing: { title: "Fox", mode: "free", price: 0.07, category: "Portrait", modelIds: ["m1"], primaryId: "m1", testId: null },
+  listing: { title: "Fox", mode: "free", price: 0.07, category: "Portrait", modelIds: ["m1"], testId: null },
   picks: { ratio: "16:9" },
-  saved: { content: "", variables: [], referenceImages: [], uploadedPhotos: [], aspectRatio: "16:9", resolution: null },
+  saved: { content: "", variables: [], referenceImages: [], uploadedPhotos: [], aspectRatio: "16:9", resolution: null, aiModel: null },
 };
 const draft = (prompt: string): Draft => ({ doc: doc(prompt), listing: { ...initialEditor().listing, title: "Mine" }, picks: initialEditor().picks, stars: { j1: 5 }, order: ["x"] });
 
 describe("a new prompt", () => {
   it("starts with nothing picked: no generator is ever preselected", () => {
     const s = initialEditor();
-    expect(s.listing.primaryId).toBeNull();
+    expect(s.listing.modelIds).toEqual([]);
     expect(s.listing.testId).toBeNull();
     expect(s.history.present.prompt).toBe("");
+  });
+
+  it("a draft from before the multi-select brings its primary of the time as the one on offer, and loses the field", () => {
+    const old = { ...draft("x"), listing: { title: "Old", mode: "premium" as const, price: 0.2, category: null, primaryId: "m-pro", testId: null } as unknown as Draft["listing"] };
+    const s = editorReducer(initialEditor(), { type: "restore", key: "k", draft: old, refs: {} });
+    expect(s.listing).toEqual({ title: "Old", mode: "premium", price: 0.2, category: null, modelIds: ["m-pro"], testId: null });
   });
 });
 
@@ -58,7 +64,7 @@ describe("✓ Released", () => {
     };
     const primary: CatalogueEntry = { id: "m", name: "M", price: 0.1, mediaType: "image", supportsQuality: false, maxResolution: "2K", ratios: ["1:1"], free: false };
     const send = (st: EditorState) => {
-      const r = releaseBody({ listing: { ...st.listing, title: "Fox", category: "Animals", mode: "free" }, primary, starred: [cover], refs: st.refs, catalogue: [primary] });
+      const r = releaseBody({ listing: { ...st.listing, title: "Fox", category: "Animals", mode: "free", modelIds: ["m"] }, starred: [cover], refs: st.refs, catalogue: [primary] });
       if (!("body" in r)) throw new Error(r.error);
       return r;
     };

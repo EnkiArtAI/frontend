@@ -86,10 +86,7 @@ const onResize = (on: () => void) => {
   return () => window.removeEventListener("resize", on);
 };
 const sameListing = (a: Listing, b: Listing) =>
-  a.title === b.title && a.mode === b.mode && a.price === b.price && a.category === b.category && a.primaryId === b.primaryId
-  && a.modelIds.join() === b.modelIds.join();
-/** The first generator chip: where "pick a generator" sends the focus. */
-const GEN_CHIP = ".pe-gen-row [role=checkbox]";
+  a.title === b.title && a.mode === b.mode && a.price === b.price && a.category === b.category && a.modelIds.join() === b.modelIds.join();
 const fieldOf = (name: string, field: "name" | "value") => `[data-pe-name="${CSS.escape(name)}"] [data-pe-field="${field}"]`;
 
 export default function PromptEditor({ promptId, onReleased }: {
@@ -109,13 +106,13 @@ export default function PromptEditor({ promptId, onReleased }: {
   const { state, doc, dispatch, commit, store, decideSeed } = usePromptEditor(userKey, id, signedIn ? userId : null);
   const { listing, picks, history } = state;
 
-  const core = useGenerationCore(listing.testId ?? listing.primaryId ?? undefined);
+  // The test generator: the one picked in the bar, else the first on offer.
+  const core = useGenerationCore(listing.testId ?? listing.modelIds[0] ?? undefined);
   const { catalogue } = core;
   const models = useMemo(() => catalogue.filter((m) => m.mediaType === "image"), [catalogue]);
   // What the test bar offers: the generators picked above, in catalogue order.
   const offered = models.filter((m) => listing.modelIds.includes(m.id));
   const test = core.entry;
-  const primary = catalogue.find((m) => m.id === listing.primaryId);
   const { accept } = useModelLimits(test?.id);
   const cap = Math.min(SAVE_REFS, test?.maxRefs ?? SAVE_REFS);
 
@@ -204,7 +201,7 @@ export default function PromptEditor({ promptId, onReleased }: {
     if (b.toast) notify(b.toast);
     if (b.focus) focus(fieldOf(b.focus.variable, b.check === "values" ? "value" : "name"));
     if (b.open === "login") openLogin();
-    if (b.open === "primary") focus(GEN_CHIP);
+    if (b.open === "primary") openMenu(".pe-gen-row");
     if (b.open === "wallet") setWalletOpen(true);
     if (b.open === "add-funds") setFunds(from);
   };
@@ -338,10 +335,11 @@ export default function PromptEditor({ promptId, onReleased }: {
 
   // ── Listing and stars.
   const setListing = (patch: Partial<Listing>) => dispatch({ type: "set", patch: { listing: { ...listing, ...patch } } });
-  /** A generator on or off the offer; the first picked is the primary, and a test generator taken off the offer follows it. */
+  /** A generator on or off the offer, in catalogue order; a test generator taken off the offer falls back to the first on it. */
   const toggleModel = (id: string) => {
-    const modelIds = listing.modelIds.includes(id) ? listing.modelIds.filter((m) => m !== id) : [...listing.modelIds, id];
-    setListing({ modelIds, primaryId: modelIds[0] ?? null, testId: listing.testId && modelIds.includes(listing.testId) ? listing.testId : null });
+    const on = listing.modelIds.includes(id) ? listing.modelIds.filter((m) => m !== id) : [...listing.modelIds, id];
+    const modelIds = models.filter((m) => on.includes(m.id)).map((m) => m.id);
+    setListing({ modelIds, testId: listing.testId && modelIds.includes(listing.testId) ? listing.testId : null });
   };
   const switchMode = (mode: Listing["mode"]) => {
     if (mode === listing.mode) return;
@@ -374,7 +372,7 @@ export default function PromptEditor({ promptId, onReleased }: {
   // ── Release.
   const starredJobs = starred(state.stars, jobs);
   const updating = !!loaded && state.seeded === loaded.id && listingOnly(doc, listing, loaded, starredJobs.length);
-  const verdict = releaseBlock({ listing, primary, starred: starredJobs, loaded: updating ? loaded.doc : null, busy: releasing });
+  const verdict = releaseBlock({ listing, starred: starredJobs, loaded: updating ? loaded.doc : null, busy: releasing });
   const send = async ({ body, refIds }: { body: ReleaseBody; refIds: string[] }) => {
     setReleasing(true);
     try {
@@ -420,14 +418,12 @@ export default function PromptEditor({ promptId, onReleased }: {
       if (verdict.focus === "title") root.current?.querySelector<HTMLElement>('[data-pe-field="title"]')?.focus();
       else if (verdict.focus === "price") focus('[data-pe-field="price"]');
       else if (verdict.focus) focus(fieldOf(verdict.focus.variable, verdict.check === "values" ? "value" : "name"));
-      if (verdict.open === "primary") focus(GEN_CHIP);
-      else if (verdict.open) openMenu(".pe-category");
+      if (verdict.open) openMenu(verdict.open === "offer" ? ".pe-gen-row" : ".pe-category");
       return;
     }
-    if (!primary) return;
     const made = updating && loaded
-      ? { body: updateBody({ listing, primary, saved: loaded.saved, id: loaded.id, catalogue: models }), refIds: loaded.doc.refIds }
-      : releaseBody({ listing, primary, starred: starredJobs, refs: state.refs, id: id ?? undefined, catalogue: models });
+      ? { body: updateBody({ listing, saved: loaded.saved, id: loaded.id, catalogue: models }), refIds: loaded.doc.refIds }
+      : releaseBody({ listing, starred: starredJobs, refs: state.refs, id: id ?? undefined, catalogue: models });
     if ("error" in made) return notify(made.error, { tone: "error" });
     void send(made);
   };
@@ -534,8 +530,8 @@ export default function PromptEditor({ promptId, onReleased }: {
                 onTile={tileClick} onNft={() => setNftOpen(true)} onDragToken={setRefDrag} />
               <GenerateBar
                 live={<LiveStrip jobs={jobs} stars={state.stars} onOpen={(j) => show(j.id)} onAll={() => setTab("verify")} />}
-                models={offered} testId={test?.id ?? null} primaryId={listing.primaryId}
-                onTest={(testId) => setListing({ testId: testId === listing.primaryId ? null : testId })}
+                models={offered} testId={test?.id ?? null}
+                onTest={(testId) => setListing({ testId: testId === listing.modelIds[0] ? null : testId })}
                 core={core} picks={picks} onPicks={(patch) => dispatch({ type: "set", patch: { picks: { ...picks, ...patch } } })}
                 prices={{
                   models: offered.map((m) => price(m, picks, refCount)),

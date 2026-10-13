@@ -74,6 +74,9 @@
 }
 .kit-opt:hover:not(:disabled):not([aria-selected="true"]) { background: var(--enki-paper-3); }
 .kit-opt[aria-selected="true"] { background: var(--enki-ink); color: var(--enki-paper); }
+/* A multi-select menu: a box before each row, filled while the row is on. */
+.kit-check { flex-shrink: 0; width: 14px; height: 14px; border: 1.5px solid currentColor; border-radius: 4px; }
+.kit-opt[aria-selected="true"] .kit-check { background: currentColor; box-shadow: inset 0 0 0 2px var(--enki-ink); }
 .kit-opt:disabled { opacity: 0.45; cursor: not-allowed; }
 .kit-opt-sub {
   margin-left: auto;

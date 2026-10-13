@@ -1,45 +1,44 @@
 "use client";
 
 import GeneratorLogo from "@/components/generation/GeneratorLogo";
+import PillMenu from "@/components/kit/PillMenu";
 import { quoteLabel } from "@/hooks/useServerQuotes";
 import type { CatalogueEntry } from "@/hooks/useModelLimits";
 import type { GenerationQuote } from "@/lib/generation-checkout";
 
 /**
- * The generators the prompt offers, as toggles (Kev, 2026-10-13: "this must
- * be a multi-auswahl"): the first picked is the primary, saved as the prompt's
- * aiModel and where buyers start; the whole list goes out as aiModels. Only
- * these show in the test bar below and in the buyer's picker. Each chip
- * carries the server's price at the current settings, "$0.00" on the free host.
+ * The generators the prompt offers: one pill, a menu of checkboxes that
+ * stays open while they are ticked (Kev, 2026-10-13: "ein Dropdown-Menü mit
+ * Checkboxes"; the chips before it moved as their prices loaded). There is
+ * no primary generator: buyers get the settings of the image they look at.
+ * The whole list goes out as aiModels; the test bar below offers only these.
  */
 export default function GeneratorRow({ models, selected, prices, onToggle }: {
   models: CatalogueEntry[];
-  /** Catalogue ids in the order picked (listing.modelIds). */
-  selected: string[];
+  /** Catalogue ids on offer (listing.modelIds). */
+  selected: readonly string[];
   /** Server quotes at the current settings, aligned with `models`. */
   prices: Array<GenerationQuote | null>;
   onToggle: (id: string) => void;
 }) {
+  const names = models.filter((m) => selected.includes(m.id)).map((m) => m.name);
+  const face = !names.length ? <span className="kit-unset">Pick generators</span>
+    : names.length <= 2 ? names.join(" · ") : `${names.length} generators`;
   return (
     <div className="pe-row pe-gen-row">
       <span className="kit-label">Gen<span className="pe-wide-only">erators</span></span>
-      <span className="pe-gens" role="group" aria-label="Generators on offer">
-        {models.map((m, i) => {
-          const on = selected.includes(m.id);
-          const primary = selected[0] === m.id;
-          return (
-            // Colour alone marks on and primary: a chip never changes its words or width when pressed (Kev, 2026-10-13).
-            <button key={m.id} type="button" role="checkbox" aria-checked={on} className="kit-pill kit-hit pe-gen" data-primary={primary || undefined}
-              title={primary ? `${m.name} · primary: buyers start with it` : on ? `${m.name} · on offer` : `${m.name} · not on offer`}
-              onClick={() => onToggle(m.id)}>
-              <GeneratorLogo name={m.name} size={15} />
-              {m.name}
-              <span className="pe-gen-sub">{m.free ? "$0.00" : quoteLabel(prices[i]) ?? "…"}</span>
-            </button>
-          );
-        })}
-      </span>
-      <span className="pe-note">buyers pick from these · the first you pick is where they start</span>
+      <PillMenu
+        trigger={face}
+        ariaLabel={names.length ? `Generators on offer: ${names.join(", ")}` : "Pick the generators buyers may use"}
+        title="Generators on offer"
+        hint="Buyers pick from these"
+        direction="down"
+        options={models.map((m, i) => ({ key: m.id, label: m.name, icon: <GeneratorLogo name={m.name} size={15} />, sub: m.free ? "$0.00" : quoteLabel(prices[i]) }))}
+        value={null}
+        selected={selected}
+        onPick={onToggle}
+      />
+      <span className="pe-note">buyers pick from these</span>
     </div>
   );
 }

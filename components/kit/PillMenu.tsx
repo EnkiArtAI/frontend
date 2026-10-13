@@ -25,7 +25,7 @@ export interface MenuOption {
  * viewport, and closes on an outside press, Esc, scroll or resize.
  */
 export default function PillMenu({
-  trigger, ariaLabel, title, hint, options, value, onPick, columns = 1, direction, disabled = false,
+  trigger, ariaLabel, title, hint, options, value, onPick, columns = 1, direction, disabled = false, selected,
 }: {
   /** The pill's face; the caret is added. */
   trigger: ReactNode;
@@ -39,7 +39,11 @@ export default function PillMenu({
   columns?: 1 | 2;
   direction?: "up" | "down";
   disabled?: boolean;
+  /** Several at once: each row is a checkbox, `onPick` toggles it, and the menu stays open (the editor's generators). */
+  selected?: readonly string[];
 }) {
+  const multi = selected !== undefined;
+  const on = (key: string) => (multi ? selected.includes(key) : key === value);
   // usePanelPos's own row estimate only seeds the first frame: the layout
   // effect below measures and places the panel before it is painted.
   const { pos, open, toggle, close, trigRef, wrapRef, panelRef } = usePanelPos(options.length);
@@ -70,14 +74,16 @@ export default function PillMenu({
 
   const pick = (key: string) => {
     onPick(key);
+    if (multi) return;
     close();
     setSheet(false);
   };
   const list = (
-    <div className={`kit-opts${columns === 2 ? " kit-opts--2" : ""}`} role="listbox" aria-label={title}>
+    <div className={`kit-opts${columns === 2 ? " kit-opts--2" : ""}`} role="listbox" aria-label={title} aria-multiselectable={multi || undefined}>
       {options.map((o) => (
-        <button key={o.key} type="button" role="option" aria-selected={o.key === value} disabled={o.disabled}
+        <button key={o.key} type="button" role="option" aria-selected={on(o.key)} disabled={o.disabled}
           title={o.title} className="kit-opt" onClick={() => pick(o.key)}>
+          {multi && <span className="kit-check" aria-hidden />}
           {o.icon}
           <span>{o.label}</span>
           {o.sub && <span className="kit-opt-sub">{o.sub}</span>}

@@ -56,7 +56,7 @@ describe("import after the existing draft is restored", () => {
     const state = editorReducer(initialEditor(), { type: "restore", key: "alice:new", draft: null, refs: {}, seed });
     expect(state.history.present).toEqual(seedDoc(seed));
     expect(state.listing.title).toBe(seed.title);
-    expect(state.listing.primaryId).toBeNull();
+    expect(state.listing.modelIds).toEqual([]);
     expect(state.listing.testId).toBeNull();
     expect(state.pendingSeed).toBeNull();
     expect(state.stars).toEqual({});

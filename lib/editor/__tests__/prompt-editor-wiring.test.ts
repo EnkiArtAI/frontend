@@ -84,7 +84,7 @@ describe("release", () => {
     const sent = /const send = async \(\{ body, refIds \}: \{ body: ReleaseBody; refIds: string\[\] \}\) => \{[\s\S]*?\n {2}\};\n/.exec(EDITOR)?.[0] ?? "";
     expect(sent).toMatch(/await fetch\("\/api\/prompt", \{\n\s*method: "POST",\n\s*headers: \{ "Content-Type": "application\/json", \.\.\.sessionAuthHeaders\(\) \},\n\s*body: JSON\.stringify\(body\),/);
     expect(EDITOR).toMatch(
-      /\? \{ body: updateBody\(\{ listing, primary, saved: loaded\.saved, id: loaded\.id, catalogue: models \}\), refIds: loaded\.doc\.refIds \}\n\s*: releaseBody\(\{ listing, primary, starred: starredJobs, refs: state\.refs, id: id \?\? undefined, catalogue: models \}\);/,
+      /\? \{ body: updateBody\(\{ listing, saved: loaded\.saved, id: loaded\.id, catalogue: models \}\), refIds: loaded\.doc\.refIds \}\n\s*: releaseBody\(\{ listing, starred: starredJobs, refs: state\.refs, id: id \?\? undefined, catalogue: models \}\);/,
     );
     expect(EDITOR).toContain("void send(made);");
     // Nothing else in the editor writes: Vary is useDiceRoll's, the rest reads.
@@ -93,7 +93,7 @@ describe("release", () => {
 
   it("updates the listing alone only when lib/editor/release listingOnly says so, for the listing as it is now", () => {
     expect(EDITOR).toContain("const updating = !!loaded && state.seeded === loaded.id && listingOnly(doc, listing, loaded, starredJobs.length);");
-    expect(EDITOR).toContain("const verdict = releaseBlock({ listing, primary, starred: starredJobs, loaded: updating ? loaded.doc : null, busy: releasing });");
+    expect(EDITOR).toContain("const verdict = releaseBlock({ listing, starred: starredJobs, loaded: updating ? loaded.doc : null, busy: releasing });");
   });
 
   it("keeps the server's stored references, so a later release never sends their data again (Kev)", () => {

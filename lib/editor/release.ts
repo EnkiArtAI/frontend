@@ -24,11 +24,9 @@ export interface Listing {
   price: number;
   /** One of ENKI_CATEGORIES; null until picked. */
   category: string | null;
-  /** The catalogue ids of the generators the prompt offers, in the order picked (Kev, 2026-10-13); the first is the primary. */
+  /** The catalogue ids of the generators the prompt offers (Kev, 2026-10-13); there is no primary one. */
   modelIds: string[];
-  /** The catalogue id of the generator the prompt is made for: modelIds[0]; null until picked. */
-  primaryId: string | null;
-  /** The catalogue id of the test generator, one of modelIds; null follows the primary. */
+  /** The catalogue id of the test generator, one of modelIds; null means the first on offer. */
   testId: string | null;
 }
 
@@ -54,6 +52,8 @@ export interface Saved {
   uploadedPhotos: string[];
   aspectRatio: string | null;
   resolution: string | null;
+  /** The generator the server holds as the prompt's own (its cover's); a listing-only update sends it back as it is. */
+  aiModel: string | null;
 }
 
 /** POST /api/prompt (its SaveBody), field for field. */
@@ -63,32 +63,33 @@ export interface ReleaseBody extends Saved {
   id?: string;
   title: string;
   promptType: "free-prompt" | "premium-prompt";
+  /** The generator the cover was made with (the server's one model column); "" on a listing-only update keeps the stored one. */
   aiModel: string;
-  /** The generators on offer, by catalogue name, the primary first (app/api/prompt: ai_settings.models). */
+  /** The generators on offer, by catalogue name, the cover's first (app/api/prompt: ai_settings.models). */
   aiModels: string[];
   category: string;
   /** Dollars; 0 for Free. */
   price: number;
 }
 
-export type ReleaseCheck = "stars" | "primary" | "model" | "title" | "category" | "price" | "names" | "values" | "busy";
+export type ReleaseCheck = "stars" | "offer" | "model" | "title" | "category" | "price" | "names" | "values" | "busy";
 
 export interface ReleaseBlock {
   check: ReleaseCheck;
   /** The sentence to toast; null when the click is ignored (a release is on its way). */
   message: string | null;
   focus?: "title" | "price" | { variable: string };
-  open?: "primary" | "category";
+  open?: "offer" | "category";
 }
 
 /**
  * The first reason Release cannot go, in order; null when it may. With
  * `loaded` (a listing-only update) the loaded doc stands in for the starred
- * renders.
+ * renders. A starred render must be made with a generator on offer (no
+ * primary one: buyers get each image's own settings, Kev 2026-10-13).
  */
-export function releaseBlock({ listing, primary, starred, loaded, busy }: {
+export function releaseBlock({ listing, starred, loaded, busy }: {
   listing: Listing;
-  primary: CatalogueEntry | undefined;
   /** In star order. */
   starred: Job<EditorSetup>[];
   loaded?: Pick<EditorDoc, "prompt" | "vars"> | null;
@@ -96,13 +97,14 @@ export function releaseBlock({ listing, primary, starred, loaded, busy }: {
 }): ReleaseBlock | null {
   const short = needFor(listing.mode) - starred.length;
   if (!loaded && short > 0) return { check: "stars", message: `Star ${short} more image${short === 1 ? "" : "s"} from one variation` };
-  if (!primary) return { check: "primary", message: "Pick the generator this prompt is made for", open: "primary" };
-  const other = starred.filter((j) => j.setup.modelId !== primary.id);
-  if (other.length) {
-    const model = other[0].setup.modelName;
+  if (!listing.modelIds.length) return { check: "offer", message: "Pick the generators this prompt offers", open: "offer" };
+  const outside = starred.filter((j) => !listing.modelIds.includes(j.setup.modelId));
+  if (outside.length) {
+    const model = outside[0].setup.modelName;
     return {
       check: "model",
-      message: `${other.length} starred image${other.length === 1 ? " was" : "s were"} made with ${model} — your primary generator is ${primary.name}. Star images from ${primary.name}, or make ${model} primary`,
+      message: `${outside.length} starred image${outside.length === 1 ? " was" : "s were"} made with ${model}, which is not on offer — put ${model} on offer, or star images from an offered generator`,
+      open: "offer",
     };
   }
   if (!listing.title.trim()) return { check: "title", message: "Give your prompt a title", focus: "title" };
@@ -121,18 +123,22 @@ export function releaseBlock({ listing, primary, starred, loaded, busy }: {
   return null;
 }
 
-const listingFields = (listing: Listing, primary: CatalogueEntry, catalogue: CatalogueEntry[]) => ({
-  title: listing.title.trim(),
-  promptType: listing.mode === "premium" ? ("premium-prompt" as const) : ("free-prompt" as const),
-  // The buyer page and the feed's generator filter read the model by name.
-  aiModel: primary.name,
-  aiModels: [primary.name, ...listing.modelIds.flatMap((id) => {
+/** The listing, with the generators on offer by name and `aiModel` (the cover's, by name) first among them. */
+const listingFields = (listing: Listing, aiModel: string, catalogue: CatalogueEntry[]) => {
+  const offered = listing.modelIds.flatMap((id) => {
     const m = catalogue.find((c) => c.id === id);
-    return m && m.id !== primary.id ? [m.name] : [];
-  })],
-  category: listing.category ?? "",
-  price: listing.mode === "premium" ? listing.price : 0,
-});
+    return m ? [m.name] : [];
+  });
+  return {
+    title: listing.title.trim(),
+    promptType: listing.mode === "premium" ? ("premium-prompt" as const) : ("free-prompt" as const),
+    // The buyer page and the feed's generator filter read the model by name.
+    aiModel,
+    aiModels: [...new Set([...(aiModel ? [aiModel] : []), ...offered])],
+    category: listing.category ?? "",
+    price: listing.mode === "premium" ? listing.price : 0,
+  };
+};
 
 /**
  * A checkbox is shown to buyers by its description and adds its label when
@@ -149,9 +155,8 @@ function variable(name: string, s: EditorSetup, position: number): SavedVariable
  * The release from the starred renders (in star order), once releaseBlock
  * lets it go, and the ids of the references it sends, in its order.
  */
-export function releaseBody({ listing, primary, starred, refs, id, catalogue }: {
+export function releaseBody({ listing, starred, refs, id, catalogue }: {
   listing: Listing;
-  primary: CatalogueEntry;
   starred: Job<EditorSetup>[];
   refs: RefStore;
   id?: string;
@@ -167,7 +172,7 @@ export function releaseBody({ listing, primary, starred, refs, id, catalogue }: 
   const body: ReleaseBody = {
     release: true,
     id,
-    ...listingFields(listing, primary, catalogue),
+    ...listingFields(listing, catalogue.find((m) => m.id === cover.modelId)?.name ?? cover.modelName, catalogue),
     content: toServerText(cover.prompt),
     variables: varNames(cover.prompt).map((name, position) => variable(name, cover, position)),
     referenceImages,
@@ -194,10 +199,9 @@ export function storedRefs(sent: string[], answered: unknown): Record<string, st
 }
 
 /**
- * A loaded prompt untouched in text, values, references and generator, with
- * nothing starred: Release only updates its listing. A new generator always
- * needs new starred renders made with it (Kev), and a new mode needs as many
- * live images as it shows.
+ * A loaded prompt untouched in text, values and references, with nothing
+ * starred: Release only updates its listing (the generators on offer among
+ * it). A new mode needs as many live images as it shows.
  */
 export function listingOnly(doc: EditorDoc, listing: Listing, loaded: { doc: EditorDoc; listing: Listing; saved: Saved }, starredCount: number): boolean {
   const print = (d: EditorDoc) => {
@@ -205,18 +209,17 @@ export function listingOnly(doc: EditorDoc, listing: Listing, loaded: { doc: Edi
     return JSON.stringify([d.prompt, names.map((n) => d.vars[n] ?? ""), names.map((n) => d.kinds[n] ?? "text"), d.refIds]);
   };
   return starredCount === 0
-    && listing.primaryId === loaded.listing.primaryId
     && (listing.mode === loaded.listing.mode || loaded.saved.uploadedPhotos.length >= needFor(listing.mode))
     && print(doc) === print(loaded.doc);
 }
 
-/** The listing-only update: the new listing over the prompt exactly as it was loaded (create-desktop §3.11). */
-export function updateBody({ listing, primary, saved, id, catalogue }: {
+/** The listing-only update: the new listing over the prompt exactly as it was loaded (create-desktop §3.11); its own model stays. */
+export function updateBody({ listing, saved, id, catalogue }: {
   listing: Listing;
-  primary: CatalogueEntry;
   saved: Saved;
   id: string;
   catalogue: CatalogueEntry[];
 }): ReleaseBody {
-  return { release: true, id, ...listingFields(listing, primary, catalogue), ...saved };
+  const { aiModel, ...rest } = saved;
+  return { release: true, id, ...listingFields(listing, aiModel ?? "", catalogue), ...rest };
 }

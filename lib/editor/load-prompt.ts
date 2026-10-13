@@ -90,9 +90,8 @@ export function loadPrompt(p: ServerPrompt, catalogue: CatalogueEntry[]): Loaded
   }
   const premium = p.promptType === "paid-prompt";
   const entry = (name: string | null | undefined) => (name ? (catalogue.find((m) => m.name === name) ?? resolveCatalogueEntry(catalogue, name)) : undefined);
-  const primary = entry(p.aiModel);
-  // The offered generators, the primary first; a name the catalogue no longer has is dropped.
-  const modelIds = [...new Set([primary, ...(p.aiModels ?? []).map(entry)].flatMap((m) => (m ? [m.id] : [])))];
+  // The offered generators (the prompt's own model among them, for a prompt from before the list); a name the catalogue no longer has is dropped.
+  const modelIds = [...new Set([entry(p.aiModel), ...(p.aiModels ?? []).map(entry)].flatMap((m) => (m ? [m.id] : [])))];
   const resolution = normalizeTier(p.resolution);
   // Sent back under the slot's own text, which the save matches its slots by.
   const variables = p.variables.map((v): SavedVariable => ({
@@ -117,7 +116,6 @@ export function loadPrompt(p: ServerPrompt, catalogue: CatalogueEntry[]): Loaded
       price: premium ? p.price : DEFAULT_PROMPT_PRICE_USD,
       category: (ENKI_CATEGORIES as readonly string[]).includes(p.category) ? p.category : null,
       modelIds,
-      primaryId: primary?.id ?? null,
       testId: null,
     },
     picks: { ...(p.aspectRatio ? { ratio: p.aspectRatio } : {}), ...(resolution ? { resolution } : {}) },
@@ -128,6 +126,7 @@ export function loadPrompt(p: ServerPrompt, catalogue: CatalogueEntry[]): Loaded
       uploadedPhotos: p.uploadedPhotos,
       aspectRatio: p.aspectRatio,
       resolution: p.resolution,
+      aiModel: p.aiModel,
     },
   };
 }
