@@ -125,6 +125,13 @@ export function snapIndex(text: string, i: number, dragged?: { start: number; en
   return dragged && j >= dragged.start && j <= dragged.end ? null : j;
 }
 
+/** The same token once more, right after itself (Kev, 2026-10-13: a double-tap on a reference doubles it). */
+export const duplicateToken = (text: string, t: Pick<Token, "start" | "end">) => insertToken(text, t.end, text.slice(t.start, t.end)).text;
+
+/** This one token gone, with one adjacent space; its siblings stay (the hold menu's Delete). */
+export const removeToken = (text: string, t: Pick<Token, "start">) =>
+  rewrite(text, parseTokens(text), (k) => (k.start === t.start ? null : undefined));
+
 /** Remove reference n: each [Reference image n] goes with one adjacent space, and every higher one moves down by one. */
 export const removeRef = (text: string, n: number) =>
   rewrite(text, parseTokens(text), (t) =>

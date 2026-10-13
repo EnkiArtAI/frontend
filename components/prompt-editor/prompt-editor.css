@@ -318,6 +318,8 @@
   border-radius: 2px;
   background: var(--enki-ember);
 }
+/* "Delete" above a held reference token (Kev, 2026-10-13): the kit's pill, over the marker. */
+.pe-tok-menu { z-index: 4; }
 
 /* ── Variables. */
 .pe-vars { display: flex; flex-direction: column; gap: 6px; }

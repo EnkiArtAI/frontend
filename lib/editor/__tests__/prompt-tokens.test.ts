@@ -6,6 +6,8 @@ import {
   fromServerText,
   fillPrompt,
   insertToken,
+  duplicateToken,
+  removeToken,
   snapIndex,
   removeRef,
   renameVar,
@@ -111,6 +113,30 @@ describe("insertToken", () => {
   it("never lands inside another token", () => {
     expect(insertToken("[mood] x", 2, T)).toEqual({ text: `${T} [mood] x`, caret: 19 });
     expect(insertToken("[mood] x", 4, T).text).toBe(`[mood] ${T} x`);
+  });
+});
+
+describe("one token of the text (Kev, 2026-10-13: a double-tap doubles a reference, a hold offers Delete)", () => {
+  const T = "[Reference image 1]";
+  const at = (text: string, i: number) => parseTokens(text)[i];
+
+  it("duplicateToken puts the same token right after itself, spaced like a drop", () => {
+    expect(duplicateToken(`a ${T} b`, at(`a ${T} b`, 0))).toBe(`a ${T} ${T} b`);
+    expect(duplicateToken(`${T}.`, at(`${T}.`, 0))).toBe(`${T} ${T}.`);
+    expect(duplicateToken(`${T}`, at(`${T}`, 0))).toBe(`${T} ${T}`);
+    // Its own text, whatever its case or kind; the others stay.
+    expect(duplicateToken(`[mood] [reference image 2]`, at(`[mood] [reference image 2]`, 1))).toBe(`[mood] [reference image 2] [reference image 2]`);
+    expect(duplicateToken(`[mood] x`, at(`[mood] x`, 0))).toBe(`[mood] [mood] x`);
+  });
+
+  it("removeToken takes that one token out with one adjacent space, and leaves its twins", () => {
+    const twice = `a ${T} b ${T} c`;
+    expect(removeToken(twice, at(twice, 0))).toBe(`a b ${T} c`);
+    expect(removeToken(twice, at(twice, 1))).toBe(`a ${T} b c`);
+    expect(removeToken(`${T} a`, at(`${T} a`, 0))).toBe("a");
+    expect(removeToken(`a ${T}.`, at(`a ${T}.`, 0))).toBe("a.");
+    // A start that is no token's leaves the text alone.
+    expect(removeToken(twice, { start: 1 })).toBe(twice);
   });
 });
 

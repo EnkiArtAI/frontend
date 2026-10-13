@@ -255,3 +255,24 @@ describe("the listing row (Kev, 2026-10-13)", () => {
     expect(CSS).toContain(".pe-price-slot[data-open] { grid-template-columns: 1fr; margin-right: 0; opacity: 1; }");
   });
 });
+
+describe("a reference token in the prompt (Kev, 2026-10-13)", () => {
+  const field = src("PromptField.tsx");
+
+  it("doubles on a second press within 350 ms, mouse or touch, before any drag begins", () => {
+    expect(field).toContain("const TAP_MS = 350;");
+    expect(field).toMatch(/if \(t\.kind === "ref" && tap\?\.start === t\.start && now - tap\.at < TAP_MS\) \{\n\s+lastTap\.current = null;\n\s+onEdit\(duplicateToken\(value, t\)\);\n\s+return;\n\s+\}\n\s+const el = e\.currentTarget;/);
+    // Never the browser's zoom instead.
+    expect(readSource(join(ROOT, "components", "kit", "kit-media.css"))).toContain(".kit-pm-mirror[data-interactive] .kit-tok { touch-action: manipulation; }");
+  });
+
+  it("offers Delete above it after a hold, which takes that one token out; the menu goes with a move, a press elsewhere, Esc or new text", () => {
+    expect(field).toMatch(/p\.timer = setTimeout\(\(\) => \{\n\s+if \(press\.current !== p\) return;\n\s+if \(e\.pointerType !== "mouse"\) lift\(p, el\);\n\s+if \(t\.kind === "ref"\) showMenu\(t, el\);\n\s+\}, HOLD_MS\);/);
+    expect(field).toContain('<button type="button" className="kit-pm-pill pe-tok-menu" style={{ left: shownMenu.left, top: shownMenu.top }}');
+    expect(field).toContain("onEdit(removeToken(value, shownMenu.token));");
+    expect(field).toContain("if (far > SLOP) setMenu(null);");
+    expect(field).toContain("const shownMenu = menu?.text === value ? menu : null;");
+    expect(field).toContain('if (!(e.target instanceof Element && e.target.closest(".pe-tok-menu"))) setMenu(null);');
+    expect(CSS).toContain(".pe-tok-menu { z-index: 4; }");
+  });
+});

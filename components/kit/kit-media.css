@@ -56,6 +56,8 @@
 }
 .kit-pm-mirror[data-interactive] .kit-tok,
 .kit-pm[data-dragging] .kit-pm-mirror { pointer-events: auto; }
+/* A double-tap on a token is the surface's (it doubles a reference), never the browser's zoom. */
+.kit-pm-mirror[data-interactive] .kit-tok { touch-action: manipulation; }
 .kit-pm-probe { visibility: hidden; }
 
 /* A token changes background and colour only, never the box or the type,

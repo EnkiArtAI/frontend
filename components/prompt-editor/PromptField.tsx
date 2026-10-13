@@ -4,14 +4,18 @@ import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type Drag
 import { Redo, Undo } from "lucide-react";
 import PromptMirror from "@/components/kit/PromptMirror";
 import { moveToken } from "@/lib/editor/move-token";
-import { insertToken, parseTokens, snapIndex, unbracket, type Token } from "@/lib/editor/prompt-tokens";
+import { duplicateToken, insertToken, parseTokens, removeToken, snapIndex, unbracket, type Token } from "@/lib/editor/prompt-tokens";
 import type { VariableRange } from "@/lib/editor/selection-variable";
 
-/** On a touch screen a token is lifted after this long a press; moving further than SLOP first is a scroll. */
+/** On a touch screen a token is lifted after this long a press; moving further than SLOP first is a scroll. A held reference also offers Delete. */
 const HOLD_MS = 400;
 const SLOP = 8;
 /** A mouse lifts a token as soon as it moves this far. */
 const MOUSE_SLOP = 4;
+/** Two presses on the same reference this close together double it (Kev, 2026-10-13). */
+const TAP_MS = 350;
+/** How far above a held token its Delete sits. */
+const MENU_LIFT = 34;
 
 type Marker = { index: number; left: number; top: number; height: number };
 type Press = { token: Token; x: number; y: number; id: number; active: boolean; timer?: ReturnType<typeof setTimeout> };
@@ -83,9 +87,15 @@ export default function PromptField({ value, refCount, min, max, growOnly, onUse
   const dragged = useRef(false);
   const [drag, setDrag] = useState<Token | null>(null);
   const [marker, setMarker] = useState<Marker | null>(null);
+  const lastTap = useRef<{ start: number; at: number } | null>(null);
+  /* "Delete" above a held reference (Kev, 2026-10-13: "when i longhold on it,
+     then i can delete it"); gone with the next text, a press elsewhere, or Esc. */
+  const [menu, setMenu] = useState<{ token: Token; text: string; left: number; top: number } | null>(null);
   const tokens = parseTokens(value);
   const missing = tokens.flatMap((t) => (t.kind === "ref" && t.n > refCount ? [t.n] : []));
   const shown = drag || refDrag ? marker : null;
+  // A menu measured for other text is gone: the text changed under it.
+  const shownMenu = menu?.text === value ? menu : null;
 
   /** The marker for a drop at this point; none on the dragged token itself or outside the text. */
   const aim = (x: number, y: number, lifted?: Token) => {
@@ -117,20 +127,44 @@ export default function PromptField({ value, refCount, min, max, growOnly, onUse
     setDrag(p.token);
     navigator.vibrate?.(10);
   };
+  const showMenu = (t: Token, el: HTMLElement) => {
+    const box = wrap.current?.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    if (box) setMenu({ token: t, text: value, left: r.left - box.left, top: r.top - box.top - MENU_LIFT });
+  };
   const down = (t: Token) => (e: PointerEvent<HTMLElement>) => {
     dragged.current = false;
     if (e.button !== 0 || t.kind === "blank") return;
+    // A second press on the same reference within TAP_MS doubles it: a mouse double-click and a double-tap alike.
+    const now = Date.now();
+    const tap = lastTap.current;
+    lastTap.current = t.kind === "ref" ? { start: t.start, at: now } : null;
+    if (t.kind === "ref" && tap?.start === t.start && now - tap.at < TAP_MS) {
+      lastTap.current = null;
+      onEdit(duplicateToken(value, t));
+      return;
+    }
     const el = e.currentTarget;
     const p: Press = { token: t, x: e.clientX, y: e.clientY, id: e.pointerId, active: false };
     press.current = p;
-    if (e.pointerType !== "mouse") p.timer = setTimeout(() => press.current === p && lift(p, el), HOLD_MS);
+    // Held still: a touch lifts the token (iOS has no HTML5 drag), and a reference offers Delete either way.
+    p.timer = setTimeout(() => {
+      if (press.current !== p) return;
+      if (e.pointerType !== "mouse") lift(p, el);
+      if (t.kind === "ref") showMenu(t, el);
+    }, HOLD_MS);
   };
   const move = (e: PointerEvent<HTMLElement>) => {
     const p = press.current;
     if (!p) return;
-    if (p.active) return aim(e.clientX, e.clientY, p.token);
+    const far = Math.hypot(e.clientX - p.x, e.clientY - p.y);
+    if (p.active) {
+      // Carried away: the menu goes, the marker follows.
+      if (far > SLOP) setMenu(null);
+      return aim(e.clientX, e.clientY, p.token);
+    }
     const mouse = e.pointerType === "mouse";
-    if (Math.hypot(e.clientX - p.x, e.clientY - p.y) <= (mouse ? MOUSE_SLOP : SLOP)) return;
+    if (far <= (mouse ? MOUSE_SLOP : SLOP)) return;
     if (mouse) lift(p, e.currentTarget);
     else end();
   };
@@ -177,6 +211,24 @@ export default function PromptField({ value, refCount, min, max, growOnly, onUse
     return () => window.removeEventListener("keydown", esc, true);
   }, [drag]);
   useEffect(() => () => document.removeEventListener("touchmove", still), []);
+  // The menu is the top layer while it shows: a press anywhere but on it, or Esc, closes it.
+  useEffect(() => {
+    if (!shownMenu) return;
+    const away = (e: Event) => {
+      if (!(e.target instanceof Element && e.target.closest(".pe-tok-menu"))) setMenu(null);
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setMenu(null);
+    };
+    window.addEventListener("pointerdown", away, true);
+    window.addEventListener("keydown", key, true);
+    return () => {
+      window.removeEventListener("pointerdown", away, true);
+      window.removeEventListener("keydown", key, true);
+    };
+  }, [shownMenu]);
 
   const tileOver = (e: DragEvent) => {
     if (!refDrag) return;
@@ -220,11 +272,22 @@ export default function PromptField({ value, refCount, min, max, growOnly, onUse
           dragging={!!drag || !!refDrag}
           renderToken={(t, _i, look) => (
             <span {...look} data-dragged={drag?.start === t.start || undefined}
-              title={t.kind === "blank" ? "Unnamed variable" : t.kind === "ref" ? `${t.name} · drag to move` : `Variable ${t.name} · drag to move`}
+              title={t.kind === "blank" ? "Unnamed variable" : t.kind === "ref" ? `${t.name} · drag to move · double-tap doubles it · hold to delete` : `Variable ${t.name} · drag to move`}
               onPointerDown={down(t)} onPointerMove={move} onPointerUp={up} onPointerCancel={end}
               onClick={() => caretAfter(t)} />
           )} />
         {shown && <span className="pe-marker" style={{ left: shown.left, top: shown.top, height: shown.height }} aria-hidden />}
+        {shownMenu && (
+          <button type="button" className="kit-pm-pill pe-tok-menu" style={{ left: shownMenu.left, top: shownMenu.top }}
+            // Keeps the focus and the selection in the field.
+            onPointerDown={(e) => e.preventDefault()} onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              setMenu(null);
+              onEdit(removeToken(value, shownMenu.token));
+            }}>
+            Delete
+          </button>
+        )}
       </div>
       <span className="pe-hint pe-tabs-only">Select text to make a variable · tap a reference to add it</span>
     </section>
