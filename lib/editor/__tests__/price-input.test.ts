@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { join } from "node:path";
 import { readSource } from "@/lib/__tests__/_read-source";
-import { priceInputText, priceOf, priceTextFor, stepPrice } from "@/lib/editor/price-input";
+import { priceInputText, priceOf, priceTextFor, ROLL_TIMING, rollKeyframes, stepPrice } from "@/lib/editor/price-input";
 
 /**
  * The mobile sheet is the whole editor on a phone, and a release sends what
@@ -107,5 +107,11 @@ describe("an arrow press on the price", () => {
     expect(stepPrice(0.0705, 1)).toBe(0.0805);
     expect(stepPrice(0.0705, -1)).toBe(0.0605);
     expect(stepPrice(0.0005, 1)).toBe(0.0105);
+  });
+
+  it("rolls the figure in from below on +, from above on −, in one short step", () => {
+    expect(rollKeyframes(1)).toEqual([{ transform: "translateY(60%)", opacity: 0 }, { transform: "translateY(0)", opacity: 1 }]);
+    expect(rollKeyframes(-1)[0]).toEqual({ transform: "translateY(-60%)", opacity: 0 });
+    expect(ROLL_TIMING).toEqual({ duration: 160, easing: "ease-out" });
   });
 });

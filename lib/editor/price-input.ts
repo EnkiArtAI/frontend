@@ -41,3 +41,14 @@ export function stepPrice(current: number, direction: 1 | -1): number | null {
   const next = Math.max(PRICE_STEP, parseFloat((current + direction * PRICE_STEP).toFixed(4)));
   return next === current || (direction < 0 && next > current) ? null : next;
 }
+
+/**
+ * How the figure moves on an arrow press (Kev, 2026-10-13: "die Zahlen sollen
+ * sich hoch oder runter bewegen"): the new price rolls in from below on +,
+ * from above on −, like a counter wheel.
+ */
+export const rollKeyframes = (direction: 1 | -1): Keyframe[] => [
+  { transform: `translateY(${direction * 60}%)`, opacity: 0 },
+  { transform: "translateY(0)", opacity: 1 },
+];
+export const ROLL_TIMING: KeyframeAnimationOptions = { duration: 160, easing: "ease-out" };

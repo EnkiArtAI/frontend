@@ -29,6 +29,10 @@ describe("release from the current prompt editor", () => {
     expect(price).toContain('stepPrice(price, -1)');
     expect(price).toContain('stepPrice(price, 1)');
     expect(price).toContain('const cents = Math.round(price * 100) / 100;');
+    // An arrow press rolls the figure (rollKeyframes), unless the reader asked for no motion.
+    expect(price).toContain('if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) field.current?.animate(rollKeyframes(direction), ROLL_TIMING);');
+    expect(price).toContain('onClick={() => press(down, -1)}');
+    expect(price).toContain('onClick={() => press(up, 1)}');
   });
 });
 describe("the retained Quick Create sheet", () => {
