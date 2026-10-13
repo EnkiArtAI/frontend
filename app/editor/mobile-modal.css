@@ -1023,7 +1023,7 @@
 
 /* ─── Footer container ─── */
 .mobile-modal-footer {
-  padding: 14px 16px;
+  padding: 10px 16px;
   border-top: 1px solid #EBE5DB;
   background: #FCFBF8;
   flex-shrink: 0;
@@ -1116,7 +1116,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px 10px;
+  gap: 6px 8px;
   flex-wrap: wrap;
 }
 
@@ -1183,11 +1183,21 @@
 .mobile-modal-pay-inline {
   white-space: nowrap;
 }
+/* Compact (Kev, 2026-10-13: "aufgequollen"): 30 px controls, the icon inside
+   its trigger, the generator first and the image/NFT buttons after the counts. */
 .mobile-modal-select--mini {
-  padding: 6px 22px 6px 8px;
+  height: 30px;
+  padding: 0 16px 0 7px;
   font-size: 12px;
-  background-position: right 7px center;
+  line-height: 28px;
+  border-radius: 8px;
+  background-position: right 5px center;
 }
+.mobile-modal-minisel-trigger { gap: 4px; }
+.mobile-modal-gen-left .mobile-modal-setting { gap: 0; }
+.mobile-modal-gen-left .mobile-modal-ref-inline { order: 1; }
+.mobile-modal-gen-left .mobile-modal-ref-btn { height: 30px; }
+.mobile-modal-gen-left .mobile-modal-ref-chip { width: 30px; height: 30px; }
 .mobile-modal-gen-left .mobile-modal-setting--model .mobile-modal-select--mini {
   max-width: 132px;
 }
@@ -2183,4 +2193,36 @@
    a long list cannot swallow the viewport. */
 @media (min-width: 768px) {
   .mobile-modal-minisel-panel { max-height: none; overflow-y: visible; }
+}
+
+/* Quick Create's top (Kev, 2026-10-13): the grip is a small pill that names
+   the sheet, the close sits in the corner, and there is no tab row. The
+   desktop keeps its close in the PROMPT row. */
+.mobile-modal-sheet--fixed .mobile-modal-handle {
+  display: flex;
+  justify-content: center;
+  width: auto;
+  height: auto;
+  margin: 10px auto 4px;
+  padding: 0 16px;
+  background: none;
+}
+.mobile-modal-handle-title {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: #F2EFEA;
+  color: #5A5550;
+  font-family: var(--font-outfit), 'Outfit', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.dark .mobile-modal-handle-title { background: var(--surface-3); color: var(--surface-text); }
+.mobile-modal-sheet--fixed .mobile-modal-header { display: none; }
+.mobile-modal-corner-close { position: absolute; top: 8px; right: 10px; }
+@media (min-width: 768px) {
+  .mobile-modal-corner-close { display: none; }
 }
