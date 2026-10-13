@@ -10,6 +10,7 @@ import {
   removeRef,
   renameVar,
   removeVar,
+  unbracket,
 } from "../prompt-tokens";
 
 const R1 = "[Reference image 1]";
@@ -188,5 +189,35 @@ describe("removeVar", () => {
   it("leaves nothing for an empty unnamed variable, with one space", () => {
     expect(removeVar("a [] b []", "", "")).toBe("a b");
     expect(removeVar("a [] b", "", "big")).toBe("a big b");
+  });
+});
+
+describe("unbracket", () => {
+  const text = "a [red] fox at [dusk]";
+
+  it("a deleted ] takes the token's [ with it, and the caret moves back by one", () => {
+    // Backspace on the "]" of [red]: caret 6, the "[" at 2 goes too.
+    expect(unbracket(text, "a [red fox at [dusk]", 6)).toEqual({ text: "a red fox at [dusk]", caret: 5 });
+    // Delete on the last token's "]" (caret 20): its "[" at 15 goes.
+    expect(unbracket(text, "a [red] fox at [dusk", 20)).toEqual({ text: "a [red] fox at dusk", caret: 19 });
+  });
+
+  it("a deleted [ takes the token's ] with it, and the caret stays", () => {
+    expect(unbracket(text, "a red] fox at [dusk]", 2)).toEqual({ text: "a red fox at [dusk]", caret: 2 });
+    expect(unbracket("[] b", " b", 0)).toBeNull(); // two characters gone: not a single deletion
+    expect(unbracket("[] b", "] b", 0)).toEqual({ text: " b", caret: 0 });
+  });
+
+  it("stands aside for every other edit: typing, deleting a letter, a bracket outside any token, a selection", () => {
+    expect(unbracket(text, "a [red] fox at [dusk]!", 22)).toBeNull();
+    expect(unbracket(text, "a [rd] fox at [dusk]", 4)).toBeNull();
+    expect(unbracket("a ] b", "a  b", 2)).toBeNull();
+    expect(unbracket("a [x b", "a x b", 2)).toBeNull();
+    expect(unbracket(text, "a fox at [dusk]", 2)).toBeNull();
+    expect(unbracket(text, text, 3)).toBeNull();
+  });
+
+  it("a reference token loses both brackets too", () => {
+    expect(unbracket("see [Reference image 1] now", "see [Reference image 1 now", 22)).toEqual({ text: "see Reference image 1 now", caret: 21 });
   });
 });

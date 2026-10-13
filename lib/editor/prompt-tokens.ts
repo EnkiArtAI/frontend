@@ -151,3 +151,24 @@ export function renameVar(text: string, from: string, to: string): Rename {
 /** Take a variable out of the text: each [name] becomes its value, else its name; an empty unnamed one leaves nothing. */
 export const removeVar = (text: string, name: string, value: string) =>
   rewrite(text, parseTokens(text), (t) => (t.name !== name ? undefined : value || name || null));
+
+/**
+ * A bracket deleted by hand takes its partner with it (Kev, 2026-10-13: "wenn
+ * ich ne ] Klammer lösche, soll auch die [ Klammer gelöscht werden"): when
+ * `next` is `prev` with one bracket of a token gone, the token's other bracket
+ * goes too and its words stay as plain text; `caret` (where the deletion left
+ * it) moves with the text. Null for any other edit, which stands as typed.
+ */
+export function unbracket(prev: string, next: string, caret: number): { text: string; caret: number } | null {
+  if (next.length !== prev.length - 1) return null;
+  let at = 0;
+  while (at < next.length && prev[at] === next[at]) at++;
+  if (prev.slice(0, at) + prev.slice(at + 1) !== next) return null;
+  const c = prev[at];
+  if (c !== "[" && c !== "]") return null;
+  const t = parseTokens(prev).find((k) => (c === "[" ? k.start === at : k.end - 1 === at));
+  if (!t) return null;
+  // The partner's index in `next`: its own, or one less once the "[" before it is gone.
+  const partner = c === "]" ? t.start : t.end - 2;
+  return { text: next.slice(0, partner) + next.slice(partner + 1), caret: caret > partner ? caret - 1 : caret };
+}

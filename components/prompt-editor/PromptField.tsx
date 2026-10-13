@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useEffectEvent, useRef, useState, type DragEvent, type PointerEvent } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type DragEvent, type PointerEvent } from "react";
 import { Redo, Undo } from "lucide-react";
 import PromptMirror from "@/components/kit/PromptMirror";
 import { moveToken } from "@/lib/editor/move-token";
-import { insertToken, parseTokens, snapIndex, type Token } from "@/lib/editor/prompt-tokens";
+import { insertToken, parseTokens, snapIndex, unbracket, type Token } from "@/lib/editor/prompt-tokens";
 import type { VariableRange } from "@/lib/editor/selection-variable";
 
 /** On a touch screen a token is lifted after this long a press; moving further than SLOP first is a scroll. */
@@ -148,6 +148,22 @@ export default function PromptField({ value, refCount, min, max, growOnly, onUse
     ta.current?.setSelectionRange(t.end, t.end);
   };
 
+  /* A deleted bracket takes its partner along (unbracket). The field is
+     controlled, so a text other than the one typed lands with the caret at
+     its end; the caret is put back where the deletion left it, before paint. */
+  const caretFix = useRef<number | null>(null);
+  const typed = (v: string) => {
+    const r = unbracket(value, v, ta.current?.selectionStart ?? v.length);
+    if (r) caretFix.current = r.caret;
+    onEdit(r ? r.text : v, "prompt");
+  };
+  useLayoutEffect(() => {
+    const at = caretFix.current;
+    if (at === null) return;
+    caretFix.current = null;
+    ta.current?.setSelectionRange(at, at);
+  });
+
   // Esc puts a held token back.
   const cancel = useEffectEvent(end);
   useEffect(() => {
@@ -197,7 +213,7 @@ export default function PromptField({ value, refCount, min, max, growOnly, onUse
       <div ref={wrap} className="pe-field" onDragOver={tileOver} onDrop={tileDrop}
         onDragLeave={(e) => { if (!wrap.current?.contains(e.relatedTarget as Node | null)) setMarker(null); }}>
         <PromptMirror ref={ta} data-pe-field="prompt" aria-label="Prompt text"
-          value={value} onChange={(v) => onEdit(v, "prompt")} onFocus={onFocus} tokens={tokens} missingRefs={missing}
+          value={value} onChange={typed} onFocus={onFocus} tokens={tokens} missingRefs={missing}
           min={min} max={max} growOnly={growOnly} onUserInput={onUserInput}
           placeholder="Describe the image you want to sell as a prompt. Wrap anything the buyer should change in [brackets] — a [subject], a [mood]…"
           selectionPill={{ onCreate: onCreateVariable }}
