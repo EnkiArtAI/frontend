@@ -803,7 +803,8 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
             {/* Title & Actions */}
             <div style={{ flex: 1, paddingBottom: 10, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-                <h1 className="serif" style={{ fontSize: "clamp(48px, 5vw, 72px)", fontWeight: 400, margin: 0, lineHeight: 1 }}>
+                {/* Shrinks on a phone and breaks a long handle, never past the edge (Kev, 2026-10-13: "skewed wenn browser zu schmal"). */}
+                <h1 className="serif" style={{ fontSize: "clamp(32px, 9vw, 72px)", fontWeight: 400, margin: 0, lineHeight: 1, minWidth: 0, overflowWrap: "anywhere" }}>
                   <em>{displayName}</em>
                 </h1>
                 {/* Edit is the owner's; a foreign profile can be reported
@@ -859,7 +860,8 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
           alignItems: "center",
           justifyContent: "space-between"
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "clamp(14px, 3vw, 32px)", flexWrap: "wrap" }}>
+          {/* One row that scrolls sideways on a phone instead of wrapping into two (Kev, 2026-10-13). */}
+          <div className="kit-noscroll" style={{ display: "flex", alignItems: "center", gap: "clamp(14px, 3vw, 32px)", flexWrap: "nowrap", overflowX: "auto", minWidth: 0 }}>
             {TABS.map(tab => (
               <button
                 key={tab}
@@ -873,7 +875,9 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
                   fontSize: 14,
                   fontWeight: activeTab === tab ? 600 : 400,
                   cursor: "pointer",
-                  transition: "all 0.2s ease"
+                  transition: "all 0.2s ease",
+                  flexShrink: 0,
+                  whiteSpace: "nowrap"
                 }}
               >
                 {tab}
@@ -886,7 +890,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
               </button>
             ))}
             
-            <button className="enki-catbar-all" style={{ height: 36, fontSize: 11, gap: 6, marginLeft: 16 }}>
+            <button className="enki-catbar-all" style={{ height: 36, fontSize: 11, gap: 6, marginLeft: 16, flexShrink: 0, whiteSpace: "nowrap" }}>
               <Sparkles size={14} /> Filter by NFT <ChevronDown size={12} />
             </button>
           </div>
