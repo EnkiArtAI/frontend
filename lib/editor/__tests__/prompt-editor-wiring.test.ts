@@ -208,3 +208,12 @@ describe("touch, focus and motion", () => {
     expect(CSS).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\n\s*\.pe-vary\[data-rolling\] svg \{ animation: none; \}\n\}/);
   });
 });
+
+describe("the listing row (Kev, 2026-10-13)", () => {
+  it("Open | Premium is a sliding switch, and the price has a slot that opens and closes beside it", () => {
+    const row = src("ListingRow.tsx");
+    expect(row).toContain('<Segmented slide role="radiogroup" ariaLabel="Listing"');
+    expect(row).toContain('<span className="pe-price-slot" data-open={listing.mode === "premium" || undefined} inert={listing.mode !== "premium" || undefined}>');
+    expect(CSS).toContain(".pe-price-slot[data-open] { grid-template-columns: 1fr; margin-right: 0; opacity: 1; }");
+  });
+});

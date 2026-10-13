@@ -21,11 +21,14 @@ export default function ListingRow({ listing, onMode, onPrice, onCategory }: {
 }) {
   return (
     <div className="pe-row pe-listing">
-      <Segmented role="radiogroup" ariaLabel="Listing" value={listing.mode} onChange={onMode} options={[
+      <Segmented slide role="radiogroup" ariaLabel="Listing" value={listing.mode} onChange={onMode} options={[
         { key: "free", label: "Open", title: MODE_TITLE.free },
         { key: "premium", label: <><span className="pe-diamond" aria-hidden />Premium</>, title: MODE_TITLE.premium },
       ]} />
-      {listing.mode === "premium" && <PriceStepper price={listing.price} onPrice={onPrice} />}
+      {/* The price slides out of the switch on Premium and back in on Open, the category following (Kev, 2026-10-13). Inert while in: not in the tab order. */}
+      <span className="pe-price-slot" data-open={listing.mode === "premium" || undefined} inert={listing.mode !== "premium" || undefined}>
+        <span className="pe-price-slot-in"><PriceStepper price={listing.price} onPrice={onPrice} /></span>
+      </span>
       <span className="pe-category">
         <PillMenu
           trigger={listing.category ?? <span className="pe-unset">Category</span>}

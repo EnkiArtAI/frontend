@@ -176,6 +176,28 @@
 }
 .kit-seg-btn[aria-checked="true"],
 .kit-seg-btn[aria-selected="true"] { background: var(--enki-ink); color: var(--enki-paper); }
+/* Slide: equal-width choices under one thumb that glides to the chosen one,
+   like a switch (Kev, 2026-10-13: Open | Premium). */
+.kit-seg--slide { position: relative; isolation: isolate; display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr; }
+.kit-seg--slide::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: -1;
+  width: calc(100% / var(--kit-seg-n, 2));
+  border-radius: 999px;
+  background: var(--enki-ink);
+  transform: translateX(calc(var(--kit-seg-i, 0) * 100%));
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.kit-seg--slide .kit-seg-btn { padding: 0 16px; transition: color 0.18s; }
+.kit-seg--slide .kit-seg-btn[aria-checked="true"],
+.kit-seg--slide .kit-seg-btn[aria-selected="true"] { background: transparent; }
+@media (prefers-reduced-motion: reduce) {
+  .kit-seg--slide::before, .kit-seg--slide .kit-seg-btn { transition: none; }
+}
 @media (pointer: coarse) {
   .kit-seg-btn { position: relative; }
   .kit-seg-btn::after {

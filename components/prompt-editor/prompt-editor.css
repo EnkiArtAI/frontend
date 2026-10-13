@@ -206,6 +206,19 @@
 .pe-note,
 .pe-hint { font-size: 11.5px; color: var(--enki-ink-3); }
 .pe-diamond { width: 7px; height: 7px; background: currentColor; transform: rotate(45deg); }
+/* The price's slot: a grid track that opens from 0 to the stepper's width,
+   so the category glides right as the price comes out and back as it goes.
+   Closed, it also gives its row gap back. */
+.pe-price-slot {
+  display: grid;
+  grid-template-columns: 0fr;
+  margin-right: -6px;
+  opacity: 0;
+  transition: grid-template-columns 0.26s cubic-bezier(0.2, 0.8, 0.2, 1), margin-right 0.26s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.18s;
+}
+.pe-price-slot[data-open] { grid-template-columns: 1fr; margin-right: 0; opacity: 1; }
+.pe-price-slot-in { min-width: 0; overflow: hidden; }
+@media (prefers-reduced-motion: reduce) { .pe-price-slot { transition: none; } }
 .pe-price {
   display: inline-flex;
   flex-shrink: 0;
