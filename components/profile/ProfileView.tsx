@@ -9,6 +9,7 @@ import { useSolanaAuth } from "@/hooks/useSolanaAuth";
 import { sessionAuthHeaders, viewerHeaders } from "@/lib/session-headers";
 import EnkiCard from "@/components/enki/EnkiCard";
 import EnkiDetailPanel from "@/components/enki/EnkiDetailPanel";
+import PromptWall from "@/components/enki/PromptWall";
 import { seedFromEnkiPrompt } from "@/lib/ui/image-view/seed";
 import {
   mapMarketplacePromptToEnkiPrompt
@@ -1007,28 +1008,16 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
             </div>
           )
         ) : activeTab === "Likes" ? (
-          myLikes === null ? (
-            <div style={{ padding: "60px 0", textAlign: "center", color: "var(--enki-ink-3)" }}>Loading…</div>
-          ) : myLikes.length === 0 ? (
-            <div style={{ padding: "80px 0", textAlign: "center" }}>
-              <div className="serif" style={{ fontSize: 24, color: "var(--enki-ink-3)" }}>Nothing liked yet.</div>
-              <p style={{ fontSize: 14, color: "var(--enki-ink-3)", maxWidth: 420, margin: "8px auto 0" }}>
-                Only you see this tab. Tap the heart on any image and it lands here.
-              </p>
-            </div>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12, padding: "18px 0" }}>
-              {myLikes.map((l) => (
-                <button key={l.promptId} type="button" onClick={() => router.push(`/generator/${l.promptId}`)}
-                  style={{ padding: 0, border: "1px solid var(--enki-rule)", borderRadius: 12, overflow: "hidden", background: "var(--enki-paper-2)", cursor: "pointer", textAlign: "left" }}>
-                  {l.imageUrl
-                    ? <img src={l.imageUrl} alt={l.title} style={{ width: "100%", aspectRatio: "1", objectFit: "cover", display: "block" }} draggable={false} />
-                    : <div style={{ width: "100%", aspectRatio: "1", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--enki-ink-3)" }}><Heart size={18} /></div>}
-                  <div style={{ padding: "7px 9px", fontSize: 12.5, fontWeight: 600, color: "var(--enki-ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.title}</div>
-                </button>
-              ))}
-            </div>
-          )
+          /* The liked prompts exactly as Home shows them (Kev, 2026-10-13). */
+          <PromptWall ids={(myLikes ?? []).map((l) => l.promptId)} loading={myLikes === null}
+            note={
+              <div style={{ padding: "80px 0", textAlign: "center" }}>
+                <div className="serif" style={{ fontSize: 24, color: "var(--enki-ink-3)" }}>Nothing liked yet.</div>
+                <p style={{ fontSize: 14, color: "var(--enki-ink-3)", maxWidth: 420, margin: "8px auto 0" }}>
+                  Only you see this tab. Tap the heart on any image and it lands here.
+                </p>
+              </div>
+            } />
         ) : activeTab === "History" ? (
           <div style={{ padding: "80px 0", textAlign: "center" }}>
             <div className="serif" style={{ fontSize: 24, color: "var(--enki-ink-3)" }}>

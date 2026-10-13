@@ -3,21 +3,24 @@
 /**
  * The Bookmarks tab (Kev, 2026-08-22): all categories as a grid — each
  * wearing its FIRST bookmark as the logo — and inside a category every
- * bookmark in order, infinitely scrolled. The back arrow sits top-left,
- * leaves when reading scrolls down, and a brief scroll UP brings it back.
- * Drag & drop reorders; a drop between two neighbours takes their position
- * midpoint, so one PATCH moves one row and nothing renumbers.
+ * bookmark in order, read page by page. The bookmarks show exactly like
+ * Home's wall (Kev, 2026-10-13: "the same view on there like on home"): the
+ * feed's cards, a tap opens the image view beside the menu, and the card's
+ * own bookmark button takes it out of the category again. The back arrow
+ * sits top-left, leaves when reading scrolls down, and a brief scroll UP
+ * brings it back.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Bookmark, Loader2, Trash2 } from "lucide-react";
+import { ArrowLeft, Bookmark, Loader2 } from "lucide-react";
+import PromptWall from "@/components/enki/PromptWall";
+import { useBookmarkIndex } from "@/hooks/useBookmarkIndex";
 import {
-  listCategories, listBookmarks, moveBookmark, removeBookmark, bookmarksProblem,
+  listCategories, listBookmarks, bookmarksProblem,
   type Bookmark as Mark, type BookmarkCategory,
 } from "@/hooks/useBookmarks";
 import "@/components/enki/bookmarks.css";
 
-/** `onOpen`: a bookmark's prompt opens in the shell's image view, beside the menu (Kev, 2026-10-13: "nicht im Vollbild"). */
-export default function BookmarksPanel({ onOpen }: { onOpen: (promptId: string) => void }) {
+export default function BookmarksPanel() {
   const [cats, setCats] = useState<BookmarkCategory[] | null>(null);
   const [open, setOpen] = useState<BookmarkCategory | null>(null);
   const [marks, setMarks] = useState<Mark[]>([]);
@@ -58,55 +61,26 @@ export default function BookmarksPanel({ onOpen }: { onOpen: (promptId: string) 
     void loadMore(cat, null);
   };
   const back = () => { epochRef.current += 1; setOpen(null); setMarks([]); listCategories().then(setCats).catch(() => {}); };
+  const more = useCallback(() => {
+    if (open && !loading && cursor != null) void loadMore(open, cursor);
+  }, [open, loading, cursor, loadMore]);
 
-  /* Infinite scroll: a sentinel at the list's end asks for the next page.
-     The scrolling element is this panel's own root. */
-  const rootRef = useRef<HTMLDivElement>(null);
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open || done) return;
-    const el = sentinelRef.current; if (!el) return;
-    const io = new IntersectionObserver((es) => {
-      if (es.some((e) => e.isIntersecting) && !loading && cursor != null) void loadMore(open, cursor);
-    }, { root: rootRef.current, rootMargin: "600px" });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [open, cursor, loading, done, loadMore]);
+  /* A bookmark the card's own button took out of this category leaves the
+     wall at once (the session's bookmark index follows the picker). */
+  const index = useBookmarkIndex(open !== null);
+  const ids = marks
+    .filter((m) => !index || (index.get(m.promptId) ?? []).some((x) => x.categoryId === open?.id))
+    .map((m) => m.promptId);
 
   /* The back arrow: visible at the top, gone once reading scrolls down, back
      the moment the reader scrolls up even briefly. */
+  const rootRef = useRef<HTMLDivElement>(null);
   const [arrowIn, setArrowIn] = useState(true);
   const lastY = useRef(0);
   const onScroll = () => {
     const y = rootRef.current?.scrollTop ?? 0;
     setArrowIn(y < 24 || y < lastY.current);
     lastY.current = y;
-  };
-
-  /* Drag & drop reorder. */
-  const dragI = useRef<number | null>(null);
-  const [overI, setOverI] = useState<number | null>(null);
-  const drop = async (to: number) => {
-    const from = dragI.current; dragI.current = null; setOverI(null);
-    if (from == null || from === to || !marks[from]) return;
-    const next = marks.slice();
-    const [m] = next.splice(from, 1);
-    /* Take-position semantics: the dragged tile lands ON the target's slot.
-       The old to-1 adjustment made one-step-down a no-op and the LAST slot
-       unreachable (found by review, 2026-08-22). */
-    const at = to;
-    next.splice(at, 0, m);
-    // Midpoint of the new neighbours; falling off either end takes a step.
-    const prev = next[at - 1]?.position;
-    const after = next[at + 1]?.position;
-    const pos = prev != null && after != null ? (prev + after) / 2 : prev != null ? prev + 1 : after != null ? after - 1 : m.position;
-    setMarks(next.map((x, i) => (i === at ? { ...x, position: pos } : x)));
-    try { await moveBookmark(m.id, pos); } catch { open && enter(open); /* re-sync on failure */ }
-  };
-
-  const remove = async (m: Mark) => {
-    setMarks((all) => all.filter((x) => x.id !== m.id));
-    try { await removeBookmark(m.id); } catch { open && enter(open); }
   };
 
   if (!open) {
@@ -137,28 +111,10 @@ export default function BookmarksPanel({ onOpen }: { onOpen: (promptId: string) 
       <button type="button" className={"enki-bm-back" + (arrowIn ? "" : " enki-bm-back--out")} onClick={back} aria-label="Back to categories">
         <ArrowLeft size={16} /> {open.name}
       </button>
-      <div className="enki-bm-grid">
-        {marks.map((m, i) => (
-          <div key={m.id}
-            className={"enki-bm-item" + (overI === i && dragI.current !== null && dragI.current !== i ? " over" : "")}
-            draggable
-            onDragStart={(e) => { e.dataTransfer.setData("text/plain", ""); e.dataTransfer.effectAllowed = "move"; dragI.current = i; }}
-            onDragOver={(e) => { e.preventDefault(); if (overI !== i) setOverI(i); }}
-            onDrop={(e) => { e.preventDefault(); void drop(i); }}
-            onDragEnd={() => { dragI.current = null; setOverI(null); }}>
-            {/* The whole tile opens the prompt's image UI, picture or not; dragging still reorders (Kev, 2026-10-13). */}
-            <button type="button" className="enki-bm-open" aria-label="Open this prompt" onClick={() => onOpen(m.promptId)}>
-              {m.imageUrl
-                ? <img src={m.imageUrl} alt="" draggable={false} />
-                : <span className="enki-bm-cat-empty"><Bookmark size={16} /></span>}
-            </button>
-            <button type="button" className="enki-bm-x" title="Remove bookmark" onClick={() => void remove(m)}><Trash2 size={12} /></button>
-          </div>
-        ))}
-      </div>
-      {loading && <div className="enki-bm-note"><Loader2 size={14} className="enki-bmp-spin" /> Loading…</div>}
+      <PromptWall ids={ids} loading={loading && marks.length === 0} more={!done} onMore={more}
+        note={<div className="enki-bm-note"><Bookmark size={15} /> Nothing in this category any more.</div>} />
+      {loading && marks.length > 0 && <div className="enki-bm-note"><Loader2 size={14} className="enki-bmp-spin" /> Loading…</div>}
       {failed && <div className="enki-bm-note">Couldn't load more right now.</div>}
-      <div ref={sentinelRef} style={{ height: 1 }} />
     </div>
   );
 }
