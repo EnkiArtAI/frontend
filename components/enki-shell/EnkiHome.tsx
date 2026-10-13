@@ -334,7 +334,7 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
     switch (key) {
       // Balance chip + billing entries render the EXACT Settings → Payment
       // view (same container, same scale), scrolled to "Add money".
-      case "billing": return <SettingsView initialTab="payment" focusRamp={payFocus} />;
+      case "billing": return <SettingsView initialTab="payment" focusRamp={payFocus} onBack={closePanel} />;
       {/* Analytics brings its own editorial header (design), no PanelHeadline */}
       case "analytics": return <AnalyticsPanel />;
       case "notifications": return (
@@ -344,7 +344,7 @@ export default function EnkiHome({ children }: { children?: React.ReactNode }) {
         </PanelFrame>
       );
       case "messages": return <MessagesPanel toast={showToast} />;
-      case "settings": return <SettingsView initialTab={settingsTab} globalBannerVisible={showRecoveryBanner} focusGuardians={settingsTab === "recovery" && guardianFocus} />;
+      case "settings": return <SettingsView initialTab={settingsTab} globalBannerVisible={showRecoveryBanner} focusGuardians={settingsTab === "recovery" && guardianFocus} onBack={closePanel} />;
       case "profile": return <ProfileView onBack={() => { setPanel(null); setActiveNav("home"); }} />;
       /* A CREATOR's page, in the SAME right-side panel area as everything
          else — the left menu never leaves the screen (Kev, 2026-08-24:
