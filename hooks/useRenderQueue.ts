@@ -8,13 +8,13 @@
  */
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { runGenerationBatch, type GenerationRequest, type GenerationPayment } from "@/lib/generation/run-generation";
-import { fetchFreeGenerationQuota, type FreeGenerationQuota, type PaymentSigner } from "@/lib/generation-checkout";
+import { fetchFreeGenerationQuota, type FreeGenerationQuota } from "@/lib/generation-checkout";
 import { usePaymentSigner } from "@/hooks/usePaymentSigner";
 import { refreshHoldings } from "@/hooks/useHoldings";
 import { openLogin } from "@/lib/openLogin";
 import { notify } from "@/components/kit/notify";
 import { queueReducer, settle, retryPlan, type FreeQuota, type Job, type QueueAction } from "@/lib/ui/kit/render-queue";
-import { serialSigner, trackSigner } from "@/lib/ui/kit/serial-signer";
+import { serialSigner, trackSigner, type SerialTurn } from "@/lib/ui/kit/serial-signer";
 
 /**
  * Where the editor keeps its jobs across reloads. Pass a stable object; a new
@@ -42,7 +42,7 @@ export function useRenderQueue<S>({ toRequest, persist, onLeave, freeModelSelect
   // wallet; made on the first Generate, because refs belong to handlers.
   const sign = usePaymentSigner();
   const latestSign = useRef(sign);
-  const serial = useRef<PaymentSigner | null>(null);
+  const serial = useRef<SerialTurn | null>(null);
 
   const latest = useRef({ jobs, onLeave });
   useEffect(() => {
@@ -82,8 +82,8 @@ export function useRenderQueue<S>({ toRequest, persist, onLeave, freeModelSelect
       return id;
     });
     const requests = setups.map(toRequest);
-    serial.current ??= serialSigner(transaction => latestSign.current(transaction));
-    const signer = trackSigner(serial.current);
+    serial.current ??= serialSigner();
+    const signer = trackSigner(transaction => serial.current!(() => latestSign.current(transaction)));
     void runGenerationBatch(requests, signer.sign, (outcome, index) => {
       const result = settle(ids[index], outcome, signer.state());
       publish(result.action);

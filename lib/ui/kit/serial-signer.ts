@@ -2,13 +2,17 @@
  * Wallet prompts one at a time (plan R7). An external wallet holds a single
  * sign request, so a second one sent while the first is open gets lost. Only
  * the signature waits its turn: the generations themselves still overlap.
+ * What runs at the turn is handed over per call, so it is decided then, not
+ * when the turn was taken.
  */
 import type { PaymentSigner } from "@/lib/generation-checkout";
 
-export function serialSigner(sign: PaymentSigner): PaymentSigner {
+export type SerialTurn = (sign: () => Promise<string>) => Promise<string>;
+
+export function serialSigner(): SerialTurn {
   let turn: Promise<unknown> = Promise.resolve();
-  return (transaction) => {
-    const mine = turn.then(() => sign(transaction));
+  return (sign) => {
+    const mine = turn.then(sign);
     // The next request waits until this one settles, signed or refused.
     turn = mine.catch(() => undefined);
     return mine;
