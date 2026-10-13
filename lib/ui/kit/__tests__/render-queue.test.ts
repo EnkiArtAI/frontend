@@ -161,6 +161,15 @@ describe("Escrow queue retries and honest charge state", () => {
     expect(result.action).toMatchObject({ type: "fail", error: { charged: "unknown", payment } });
     expect(result.toast).not.toMatch(/not charged|nothing was charged/i);
   });
+  it("says once that the payment is being checked (Kev, 2026-10-13: the sentence stood there twice)", () => {
+    const pending = "Your payment is still being checked. Check its status before making another payment.";
+    const result = settle("j", { ok: false, phase: "authorization", error: pending, payment }, "signed");
+    expect(result.toast).toBe(pending);
+    expect(result.action).toMatchObject({ type: "fail", error: { message: pending, charged: "unknown", payment } });
+    // Any other failure with a payment still says first that the charge is open.
+    expect(settle("j", { ok: false, phase: "generation", status: 502, error: "Provider unavailable", payment }, "none").toast)
+      .toBe("Your payment or refund is still being checked. Provider unavailable");
+  });
   it("an HTTP provider error after funding stays subject to refund confirmation", () => {
     const outcome: GenerationOutcome = { ok: false, phase: "generation", status: 502, error: "Provider unavailable", payment: { ...payment, state: "funded", generationSubmitted: true } };
     expect(settle("j", outcome, "none").action).toMatchObject({ type: "fail", error: { charged: "unknown", payment: { intentId: "i-1" } } });

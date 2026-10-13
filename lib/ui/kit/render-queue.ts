@@ -117,7 +117,8 @@ export function settle(id: string, o: GenerationOutcome, sign: SignState): Settl
     return { action: drop, toast: "Cancelled in your wallet · nothing was charged" };
   }
   if (o.payment) {
-    const message = "Your payment or refund is still being checked. " + o.error;
+    // The checkout's own pending message already says it: not twice (Kev, 2026-10-13).
+    const message = /still being checked/i.test(o.error) ? o.error : "Your payment or refund is still being checked. " + o.error;
     return { action: { type: "fail", id, error: { message, charged: "unknown", payment: o.payment } }, toast: message, refresh: true };
   }
   if (o.status === 401 && o.data?.signInRequired) return { action: drop, login: true };
