@@ -499,9 +499,17 @@ export function useImageViewModel(seed: ImageViewSeed | "blank"): ImageViewModel
   const seen = (x: Shot) => {
     if (x.job?.status === "ready" && !x.job.seen) markSeen(x.job.id);
   };
+  /* The image brings its own generator and settings along (Kev, 2026-10-13:
+     "the generator that the image was created with as the default, with the
+     ratios etc"): a job its whole setup, a creator example the prompt's own. */
   const select = (x: Shot) => {
     setSelected(x.key);
-    if (x.job) loadSetup(x.job.setup, false);
+    if (x.job) loadSetup(x.job.setup, true);
+    else if (x.kind === "example") {
+      setPick("");
+      setRatio("");
+      setResolution("");
+    }
     seen(x);
   };
 
