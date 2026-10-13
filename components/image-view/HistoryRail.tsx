@@ -3,6 +3,7 @@
 import { useEffect, useEffectEvent, useRef } from "react";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import JobTile from "@/components/kit/JobTile";
+import PublicMark from "./PublicMark";
 import { jobSaid } from "@/lib/ui/image-view/setups";
 import { formatAgo } from "@/lib/ui/kit/format";
 import type { ImageViewModel, Shot } from "./useImageViewModel";
@@ -65,17 +66,20 @@ export default function HistoryRail({ model: m, drawer, open, onToggle }: {
   );
   const rows = (
     <div ref={list} className="iv-rail-list">
-      {items.map((s) => s.job ? (
+      {items.map((s) => (
         <div key={s.key} className="iv-hitem">
-          <JobTile status={s.job.status} src={s.thumb ?? s.src} ratio={s.ratio} seen={s.job.seen} selected={m.main?.key === s.key}
-            label={`Your render, ${jobSaid(s.job)}`} onClick={() => m.select(s)} />
+          {s.job ? (
+            <JobTile status={s.job.status} src={s.thumb ?? s.src} ratio={s.ratio} seen={s.job.seen} selected={m.main?.key === s.key}
+              label={`Your render, ${jobSaid(s.job)}`} onClick={() => m.select(s)} />
+          ) : (
+            <button type="button" className="iv-hitem-pick" aria-pressed={m.main?.key === s.key} onClick={() => m.select(s)}>
+              <img src={s.thumb} alt="" loading="lazy" decoding="async" draggable={false} />
+            </button>
+          )}
           <span>{when(s, m.now)}</span>
+          {/* A recorded render of the viewer's: private (grey) or public (lit), a press asks before it switches. */}
+          {s.record && <PublicMark record={s.record} onSet={m.setPublic} />}
         </div>
-      ) : (
-        <button key={s.key} type="button" className="iv-hitem" aria-pressed={m.main?.key === s.key} onClick={() => m.select(s)}>
-          <img src={s.thumb} alt="" loading="lazy" decoding="async" draggable={false} />
-          <span>{when(s, m.now)}</span>
-        </button>
       ))}
       {st.loading ? <p className="iv-rail-note">Loading…</p>
         : st.failed ? <p className="iv-rail-note">Your renders could not load. <button type="button" className="iv-link" onClick={st.retry}>Try again</button></p>

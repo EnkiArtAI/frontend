@@ -120,7 +120,8 @@ describe("the phone Image View", () => {
   it("loads a history selection through the model and returns to its composer", () => {
     const history = { key: "history:h", kind: "history", ratio: "4:5", thumb: "/h.png" } as Shot;
     model.history = [history]; press(tab(draw(), "History"));
-    const entry = [...walk(draw())].find((el) => el.props.className === "iv-mobile-hitem")!;
+    // The pick is its own button inside the item, beside the public mark (Kev, 2026-10-13).
+    const entry = [...walk(draw())].find((el) => el.props.className === "iv-mobile-hpick")!;
     press(entry); expect(model.select).toHaveBeenCalledWith(history);
     expect(tab(draw(), "Generate").props["aria-selected"]).toBe(true);
   });

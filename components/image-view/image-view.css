@@ -663,7 +663,8 @@ button.iv-c-who:hover { color: var(--enki-ember); }
   scrollbar-width: thin;
   animation: kit-fade 0.2s ease;
 }
-.iv-hitem { display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
+.iv-hitem { position: relative; display: flex; flex-direction: column; gap: 4px; text-align: left; }
+.iv-hitem-pick { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: pointer; }
 .iv-hitem img {
   box-sizing: border-box;
   display: block;
@@ -673,7 +674,31 @@ button.iv-c-who:hover { color: var(--enki-ember); }
   border-radius: 10px;
   background: var(--enki-paper-3);
 }
-.iv-hitem[aria-pressed="true"] img { border-color: var(--enki-ember); }
+.iv-hitem-pick[aria-pressed="true"] img { border-color: var(--enki-ember); }
+/* The globe on the viewer's own image: grey while private, lit once public (Kev, 2026-10-13). */
+.iv-hpub {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--enki-stage) 55%, transparent);
+  color: var(--enki-on-stage);
+  opacity: 0.55;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s;
+}
+.iv-hpub:hover, .iv-hpub:focus-visible { opacity: 1; }
+.iv-hpub[data-on] { opacity: 1; background: var(--enki-ember); color: var(--enki-paper); }
 /* A render of this tab: the kit's job tile (spinner, "!", turq until seen), as wide as the rail's column. */
 .iv-rail-list .kit-tile { --kit-tile-radius: 10px; width: 100%; box-shadow: none; }
 .iv-hitem span { font: 400 9.5px/1.2 var(--font-mono), monospace; letter-spacing: 0.04em; color: var(--enki-ink-3); }

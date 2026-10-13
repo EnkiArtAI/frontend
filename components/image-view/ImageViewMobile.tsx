@@ -20,6 +20,7 @@ import AgentRow from "./AgentRow";
 import ComposerHeader from "./ComposerHeader";
 import Discussion from "./Discussion";
 import MainImage from "./MainImage";
+import PublicMark from "./PublicMark";
 import PromptPanel from "./PromptPanel";
 import ViewerPanel from "./ViewerPanel";
 import type { ImageViewModel, Shot } from "./useImageViewModel";
@@ -124,10 +125,13 @@ export default function ImageViewMobile({ model: m, onClose }: { model: ImageVie
         </div>
         {active === "history" && <div className="iv-mobile-history">
           {m.history.map((s) => (
-            <button key={s.key} type="button" className="iv-mobile-hitem" aria-pressed={m.main?.key === s.key}
-              onClick={() => { m.select(s); setTab("generate"); }}>
-              <img src={s.thumb} alt="" loading="lazy" draggable={false} /><span>{formatAgo(s.createdAt ?? "", m.now)}</span>
-            </button>
+            <div key={s.key} className="iv-mobile-hitem">
+              <button type="button" className="iv-mobile-hpick" aria-pressed={m.main?.key === s.key}
+                onClick={() => { m.select(s); setTab("generate"); }}>
+                <img src={s.thumb} alt="" loading="lazy" draggable={false} /><span>{formatAgo(s.createdAt ?? "", m.now)}</span>
+              </button>
+              {s.record && <PublicMark record={s.record} onSet={m.setPublic} />}
+            </div>
           ))}
           {history.loading ? <p className="iv-rail-note">Loading…</p> : history.failed
             ? <p className="iv-rail-note">Your renders could not load. <button type="button" className="iv-link" onClick={history.retry}>Try again</button></p>

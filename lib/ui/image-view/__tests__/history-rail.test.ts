@@ -72,6 +72,24 @@ describe("the History rail", () => {
   it("says so when there is nothing yet", () => {
     expect(rail(model([], []))).toContain("No renders of this prompt yet");
   });
+
+  it("marks a recorded render of the viewer's as private or public, and nothing that is not recorded (Kev, 2026-10-13)", () => {
+    const record = (id: string, visibility: "public" | "private") => ({
+      id, image_url: `/${id}.png`, image_urls: [], thumbnail_url: null, isUploaded: false, visibility, prompt_id: "p1", created_at: "2026-10-13T09:00:00Z",
+    });
+    const mine = { ...row("a"), record: record("a", "private") };
+    const shared = { ...row("b"), record: record("b", "public") };
+    const html = rail(model([job("c", "rendering")], [mine, shared]));
+    const marks = html.match(/<button type="button" class="iv-hpub kit-hit"[^>]*>/g) ?? [];
+    expect(marks).toHaveLength(2);
+    expect(marks[0]).toContain('aria-pressed="false"');
+    expect(marks[0]).toContain('aria-label="Private · share it"');
+    expect(marks[0]).not.toContain("data-on");
+    expect(marks[1]).toContain('data-on="true"');
+    expect(marks[1]).toContain('aria-label="Public · make it private"');
+    // The mark is a sibling of the pick, never a button inside a button.
+    expect(html).not.toMatch(/<button[^>]*class="iv-hitem-pick"[^>]*>(?:(?!<\/button>).)*<button/);
+  });
 });
 
 describe("the strip under the stage", () => {
