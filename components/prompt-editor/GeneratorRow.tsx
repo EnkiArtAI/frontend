@@ -28,10 +28,10 @@ export default function GeneratorRow({ models, selected, prices, onToggle }: {
           const on = selected.includes(m.id);
           const primary = selected[0] === m.id;
           return (
+            // Colour alone marks on and primary: a chip never changes its words or width when pressed (Kev, 2026-10-13).
             <button key={m.id} type="button" role="checkbox" aria-checked={on} className="kit-pill kit-hit pe-gen" data-primary={primary || undefined}
               title={primary ? `${m.name} · primary: buyers start with it` : on ? `${m.name} · on offer` : `${m.name} · not on offer`}
               onClick={() => onToggle(m.id)}>
-              {primary && <span className="kit-dot" aria-hidden />}
               <GeneratorLogo name={m.name} size={15} />
               {m.name}
               <span className="pe-gen-sub">{m.free ? "$0.00" : quoteLabel(prices[i]) ?? "…"}</span>
@@ -39,7 +39,7 @@ export default function GeneratorRow({ models, selected, prices, onToggle }: {
           );
         })}
       </span>
-      <span className="pe-note">{selected.length ? "buyers pick from these · the first is where they start" : "pick the generators buyers may use"}</span>
+      <span className="pe-note">buyers pick from these · the first you pick is where they start</span>
     </div>
   );
 }

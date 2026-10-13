@@ -193,9 +193,12 @@
 }
 .pe-listing { --kit-pill-h: 32px; }
 .pe-gen-row { --kit-pill-h: 30px; gap: 8px; }
-/* The generators on offer: toggles, the primary (first picked) with a dot. */
+/* The generators on offer: toggles marked by colour alone, so nothing moves
+   when one is pressed (Kev, 2026-10-13): on = filled, the primary (first
+   picked) in ember. */
 .pe-gens { display: flex; flex-wrap: wrap; gap: 6px; }
 .pe-gen[aria-checked="true"] { border-color: var(--enki-ink); background: var(--enki-ink); color: var(--enki-paper); }
+.pe-gen[data-primary] { border-color: var(--enki-ember); background: var(--enki-ember); color: var(--enki-paper); }
 .pe-gen-sub { font: 400 11px/1 var(--font-mono), monospace; opacity: 0.7; }
 .pe-category { display: contents; }
 .pe-unset { color: var(--enki-ink-3); }
@@ -238,7 +241,7 @@
    same mono font and metrics, so an arrow press rolls single digits. */
 .pe-price-field { position: relative; display: inline-block; }
 .pe-price-field:not([data-typing]) input { color: transparent; }
-.pe-price-digits { position: absolute; inset: 0; display: flex; pointer-events: none; }
+.pe-price-digits { position: absolute; inset: 0; display: flex; align-items: center; pointer-events: none; }
 .pe-price-digits span { display: inline-block; }
 
 /* ── Prompt. The kit mirror takes its metrics from these variables. */
