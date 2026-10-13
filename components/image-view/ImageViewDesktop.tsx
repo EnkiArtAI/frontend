@@ -2,7 +2,6 @@
 
 import { useCallback, useState } from "react";
 import NftPickerModal from "@/components/enki/NftPickerModal";
-import BoostToggle from "@/components/generation/BoostToggle";
 import AddFundsPopover from "@/components/kit/AddFundsPopover";
 import CostLine from "@/components/kit/CostLine";
 import FullscreenViewer from "@/components/kit/FullscreenViewer";
@@ -97,8 +96,7 @@ export default function ImageViewDesktop({ model: m, onClose }: { model: ImageVi
             <RatioPill core={m.core} value={m.ratio} onChange={m.setRatio} />
             <ResolutionPill core={m.core} value={m.resolution} onChange={m.setResolution} prices={m.tierPrices} />
             {m.core.supportsQuality && <QualityPill value={m.quality} onChange={m.setQuality} prices={m.qualityPrices} />}
-            <BoostToggle label boost={m.boost} onChange={m.setBoost} available={m.core.boostAvailable}
-              sameHost={!m.core.boostAt(m.resolution)} />
+            {/* No Boost toggle for now: it will pick the cheapest or fastest host by itself later (Kev, 2026-10-13). */}
           </>
         )}
       </div>

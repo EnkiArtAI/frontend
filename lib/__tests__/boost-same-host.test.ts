@@ -55,11 +55,16 @@ describe("every generate surface", () => {
     expect(limits).toContain('? r.boostTiers.filter((t): t is "1K" | "2K" | "4K" => t === "1K" || t === "2K" || t === "4K")');
   });
 
-  it("passes the size to the toggle", () => {
-    expect(editor).toContain("sameHost={!core.boostAt(tier)}");
-    expect(viewer).toContain("sameHost={!m.core.boostAt(m.resolution)}");
+  it("shows no toggle for now (Kev, 2026-10-13: it will pick the cheapest or fastest host by itself later), the flag wired and off", () => {
+    const mobile = src("components", "image-view", "ImageViewMobile.tsx");
+    for (const s of [editor, viewer, mobile, modal]) {
+      expect(s).not.toContain("<BoostToggle");
+      expect(s).not.toContain("BoostToggle from");
+    }
     expect(launcher).toContain("boostSameHost={!core.boostAt(resolution)}");
-    expect(modal).toContain("sameHost={boostSameHost}");
+    // The flag still travels: a surface that turns it on later needs nothing else.
+    expect(src("lib", "ui", "image-view", "setups.ts")).toContain("boost: c.boost && boostAt(model, c.resolution),");
+    expect(src("components", "image-view", "useImageViewModel.ts")).toContain("const [boost, setBoost] = useState(false);");
   });
 
   it("keeps the flag out of quotes and generations at such a size", () => {

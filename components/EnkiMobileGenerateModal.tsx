@@ -1,4 +1,3 @@
-import BoostToggle from "@/components/generation/BoostToggle";
 import DiceButton from "@/components/DiceButton";
 import type { DiceValue, DiceVariable } from "@/lib/generation/variable-dice";
 import { sessionAuthHeaders } from "@/lib/session-headers";
@@ -1385,9 +1384,7 @@ export default function EnkiMobileGenerateModal({
               <div className="mobile-modal-pay-inline">
                 <span className="mobile-modal-pay-inline-price">{priceFor(genCountNum)}</span>
               </div>
-              {onBoostChange && (
-                <BoostToggle boost={!!boost} onChange={onBoostChange} sameHost={boostSameHost} disabled={isGenerating} />
-              )}
+              {/* No Boost toggle for now: it will pick the cheapest or fastest host by itself later (Kev, 2026-10-13); the flag stays wired, off. */}
               {/* 🎲 — invents one coherent set of variable values. Without an
                   onVariableChange there is nowhere to put a roll, so no dice.
                   setPromptBody absent = locked paid (vars-only) prompt: its

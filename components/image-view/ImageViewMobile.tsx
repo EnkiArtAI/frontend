@@ -2,7 +2,6 @@
 
 import { useId, useState } from "react";
 import NftPickerModal from "@/components/enki/NftPickerModal";
-import BoostToggle from "@/components/generation/BoostToggle";
 import AddFundsPopover from "@/components/kit/AddFundsPopover";
 import CostLine from "@/components/kit/CostLine";
 import FullscreenViewer from "@/components/kit/FullscreenViewer";
@@ -112,7 +111,7 @@ export default function ImageViewMobile({ model: m, onClose }: { model: ImageVie
                 <RatioPill core={m.core} value={m.ratio} onChange={m.setRatio} />
                 <ResolutionPill core={m.core} value={m.resolution} onChange={m.setResolution} prices={m.tierPrices} />
                 {m.core.supportsQuality && <QualityPill value={m.quality} onChange={m.setQuality} prices={m.qualityPrices} />}
-                <BoostToggle label boost={m.boost} onChange={m.setBoost} available={m.core.boostAvailable} sameHost={!m.core.boostAt(m.resolution)} />
+                {/* No Boost toggle for now (Kev, 2026-10-13). */}
               </>}
             </div>
             <div className="iv-gen">

@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { Dice5 } from "lucide-react";
-import BoostToggle from "@/components/generation/BoostToggle";
 import CostLine from "@/components/kit/CostLine";
 import GenerateButton from "@/components/kit/GenerateButton";
 import GeneratorPill from "@/components/kit/GeneratorPill";
@@ -17,8 +16,8 @@ type Quotes = Array<GenerationQuote | null>;
 
 /**
  * The bottom of Craft, sticky: the live strip (below 1024 px), the test
- * generator and its settings, Vary, Boost, Generate with the price it
- * charges, and the cost line. The row wraps and never scrolls sideways.
+ * generator and its settings, Vary, Generate with the price it charges,
+ * and the cost line. The row wraps and never scrolls sideways.
  * Toasts sit above it, and a pane scrolled to the end follows when the bar
  * grows, so the references stay in view above the strip (handoff §5).
  */
@@ -63,7 +62,6 @@ export default function GenerateBar({ live, models, testId, onTest, core, picks,
     return () => ro.disconnect();
   }, []);
 
-  const tier = core.clampTier(picks.resolution);
   return (
     <div ref={bar} className="pe-bar">
       {live}
@@ -81,8 +79,7 @@ export default function GenerateBar({ live, models, testId, onTest, core, picks,
           title={vary.unavailable ? "Vary is not configured on this deployment" : "The AI writes new values into your variables. Check them, then Generate. Undo any time."}>
           <Dice5 size={16} strokeWidth={2} aria-hidden />Vary
         </button>
-        <BoostToggle label boost={picks.boost} onChange={(boost) => onPicks({ boost })}
-          available={core.boostAvailable} sameHost={!core.boostAt(tier)} />
+        {/* No Boost toggle for now: it will pick the cheapest or fastest host by itself later (Kev, 2026-10-13); the flag stays wired, off. */}
         <GenerateButton {...generate} />
       </div>
       <CostLine {...cost} />
