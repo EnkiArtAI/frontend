@@ -32,13 +32,16 @@ function nameIssues(names: string[]): Map<string, string> {
  * one included. Rows are keyed by position, and so are their undo steps
  * (a rename folds under rename:<index>, typing under var:<index>).
  */
-export default function VariableList({ doc, commit, isHeld, release, onAdd }: {
+export default function VariableList({ doc, commit, isHeld, release, onAdd, suggested, onNamed }: {
   doc: EditorDoc;
   commit: (patch: DocPatch, key?: string) => void;
   /** Grow-only fields (useGrowOnly), keyed var:<name>. */
   isHeld: (key: string) => boolean;
   release: (key: string) => void;
   onAdd: () => void;
+  /** Names the "+ Variable" pill made up: red until their row is edited or left. */
+  suggested: ReadonlySet<string>;
+  onNamed: (name: string) => void;
 }) {
   const names = varNames(doc.prompt);
   const issues = nameIssues(names);
@@ -75,12 +78,15 @@ export default function VariableList({ doc, commit, isHeld, release, onAdd }: {
       )}
       {names.map((name, i) => (
         <VariableRow key={i} name={name} value={doc.vars[name] ?? ""} kind={doc.kinds[name] ?? "text"}
-          ai={doc.aiNames.includes(name)} issue={issues.get(name) ?? null}
+          ai={doc.aiNames.includes(name)} issue={issues.get(name) ?? null} suggested={suggested.has(name)}
           growOnly={isHeld(`var:${name}`)} onUserInput={() => release(`var:${name}`)}
-          onRename={(to) => rename(i, name, to)}
+          onRename={(to) => rename(i, name, to)} onNamed={() => onNamed(name)}
           onValue={(v) => commit((d) => ({ vars: { ...d.vars, [name]: v }, aiNames: d.aiNames.filter((n) => n !== name) }), `var:${i}`)}
           onKind={(k) => commit((d) => ({ kinds: { ...d.kinds, [name]: k } }))}
-          onRemove={() => commit((d) => ({ prompt: removeVar(d.prompt, name, d.vars[name] ?? "") }))} />
+          onRemove={() => {
+            onNamed(name);
+            commit((d) => ({ prompt: removeVar(d.prompt, name, d.vars[name] ?? "") }));
+          }} />
       ))}
     </section>
   );

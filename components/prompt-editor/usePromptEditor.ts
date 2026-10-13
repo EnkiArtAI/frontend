@@ -145,13 +145,14 @@ export function editorReducer(s: EditorState, a: EditorAction): EditorState {
 }
 
 /**
- * The "+ Variable" pill (handoff §4): the selected words become the unnamed
- * variable, their text its value, and the name is still to be typed.
+ * The "+ Variable" pill (handoff §4): the selected words become a variable
+ * under `name` (lib/editor/selection-variable suggestedName), their text its
+ * example value. The row shows the name red until it is changed.
  */
-export const variableFrom = (range: VariableRange): DocPatch => (d) => ({
-  prompt: d.prompt.slice(0, range.start) + "[]" + d.prompt.slice(range.end),
-  vars: { ...d.vars, "": range.name },
-  kinds: { ...d.kinds, "": "text" },
+export const variableFrom = (range: VariableRange, name: string): DocPatch => (d) => ({
+  prompt: d.prompt.slice(0, range.start) + `[${name}]` + d.prompt.slice(range.end),
+  vars: { ...d.vars, [name]: range.name },
+  kinds: { ...d.kinds, [name]: "text" },
 });
 
 /** "+ Add variable": an empty unnamed variable at the end. There is only ever one unnamed. */

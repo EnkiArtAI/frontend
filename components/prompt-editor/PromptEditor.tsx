@@ -41,7 +41,7 @@ import {
 import { insertToken, parseTokens, removeRef, varNames } from "@/lib/editor/prompt-tokens";
 import { MAX_QUOTES, quoteBatch, quoteIn, quoteRequest } from "@/lib/editor/quote-batch";
 import { listingOnly, releaseBlock, releaseBody, storedRefs, updateBody, type Listing, type ReleaseBody } from "@/lib/editor/release";
-import type { VariableRange } from "@/lib/editor/selection-variable";
+import { suggestedName, type VariableRange } from "@/lib/editor/selection-variable";
 import { needFor, starred, starsForFree, toggleStar, variationKey, variations, type Variation } from "@/lib/editor/variations";
 import { openLogin } from "@/lib/openLogin";
 import { sessionAuthHeaders } from "@/lib/session-headers";
@@ -148,6 +148,8 @@ export default function PromptEditor({ promptId, onReleased }: {
   const [refDrag, setRefDrag] = useState<string | null>(null);
   const [releasing, setReleasing] = useState(false);
   const [openStacks, setOpenStacks] = useState<ReadonlySet<string>>(() => new Set());
+  // Names the "+ Variable" pill made up, shown red until the row is edited or left.
+  const [suggested, setSuggested] = useState<ReadonlySet<string>>(() => new Set());
 
   const root = useRef<HTMLDivElement>(null);
   const caretKnown = useRef(false);
@@ -258,13 +260,17 @@ export default function PromptEditor({ promptId, onReleased }: {
 
   // ── The doc.
   const createVariable = (range: VariableRange) => {
-    if (varNames(doc.prompt).includes("")) {
-      notify("Name the open variable first");
-      return focus(fieldOf("", "name"));
-    }
-    after.current = () => root.current?.querySelector<HTMLElement>(fieldOf("", "name"))?.focus();
-    commit(variableFrom(range));
+    const name = suggestedName(range.name, varNames(doc.prompt));
+    setSuggested((s) => new Set(s).add(name));
+    // The suggestion is selected in its field, so typing replaces it.
+    after.current = () => {
+      const field = root.current?.querySelector<HTMLInputElement>(fieldOf(name, "name"));
+      field?.focus();
+      field?.select();
+    };
+    commit(variableFrom(range, name));
   };
+  const named = (name: string) => setSuggested((s) => (s.has(name) ? new Set([...s].filter((n) => n !== name)) : s));
   const addVariable = () => {
     if (varNames(doc.prompt).includes("")) return focus(fieldOf("", "name"));
     after.current = () => root.current?.querySelector<HTMLElement>(fieldOf("", "name"))?.focus();
@@ -509,7 +515,8 @@ export default function PromptEditor({ promptId, onReleased }: {
                   redo: () => dispatch({ type: "redo" }),
                 }}
                 refDrag={refDrag} />
-              <VariableList doc={doc} commit={commit} isHeld={isHeld} release={release} onAdd={addVariable} />
+              <VariableList doc={doc} commit={commit} isHeld={isHeld} release={release} onAdd={addVariable}
+                suggested={suggested} onNamed={named} />
               <ReferenceStrip doc={doc} refs={state.refs} pending={reads.pending} cap={cap} accept={accept}
                 nft={tabs ? "tile" : "link"} onAddFiles={(files) => files.forEach(addRef)}
                 onRemove={(refId) => commit((d) => ({ prompt: removeRef(d.prompt, d.refIds.indexOf(refId) + 1), refIds: d.refIds.filter((r) => r !== refId) }))}

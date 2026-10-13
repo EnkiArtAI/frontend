@@ -123,14 +123,14 @@ describe("the draft in this browser", () => {
 });
 
 describe("making a variable", () => {
-  it("the + Variable pill turns the checked selection into the unnamed variable, its text the value", () => {
+  it("the + Variable pill turns the checked selection into a variable under the suggested name, its text the value", () => {
     const text = "a red fox at dawn";
     const range = variableRange(text, 1, 6);
     expect(range).not.toBeNull();
-    const next = apply(doc(text), variableFrom(range!));
-    expect(next.prompt).toBe("a [] fox at dawn");
-    expect(next.vars[""]).toBe("red");
-    expect(next.kinds[""]).toBe("text");
+    const next = apply(doc(text, { vars: { fox: "x" } }), variableFrom(range!, "red"));
+    expect(next.prompt).toBe("a [red] fox at dawn");
+    expect(next.vars).toEqual({ fox: "x", red: "red" });
+    expect(next.kinds.red).toBe("text");
   });
 
   it("+ Add variable puts one empty unnamed variable at the end, spaced, and never a second", () => {

@@ -124,10 +124,19 @@ describe("opening a released prompt", () => {
 });
 
 describe("the + Variable pill", () => {
-  it("is wired to making the variable from the checked selection", () => {
+  it("is wired to making the variable from the checked selection, under a suggested name it selects for retyping", () => {
     expect(src("PromptField.tsx")).toContain("selectionPill={{ onCreate: onCreateVariable }}");
     expect(EDITOR).toContain("onCreateVariable={createVariable}");
-    expect(EDITOR).toMatch(/const createVariable = \(range: VariableRange\) => \{[\s\S]*?commit\(variableFrom\(range\)\);\n {2}\};/);
+    expect(EDITOR).toMatch(/const createVariable = \(range: VariableRange\) => \{\n\s*const name = suggestedName\(range\.name, varNames\(doc\.prompt\)\);\n\s*setSuggested\(\(s\) => new Set\(s\)\.add\(name\)\);[\s\S]*?field\?\.focus\(\);\n\s*field\?\.select\(\);[\s\S]*?commit\(variableFrom\(range, name\)\);\n {2}\};/);
+  });
+
+  it("shows the suggested name red until the row is edited or left", () => {
+    expect(EDITOR).toContain("suggested={suggested} onNamed={named}");
+    expect(src("VariableList.tsx")).toContain("suggested={suggested.has(name)}");
+    expect(src("VariableList.tsx")).toContain("onNamed={() => onNamed(name)}");
+    expect(src("VariableRow.tsx")).toContain('data-state={draft || issue ? "error" : suggested ? "suggested" : !name ? "unnamed" : undefined}');
+    expect(src("VariableRow.tsx")).toMatch(/onBlur=\{\(\) => \{\n\s*setDraft\(null\);\n\s*onNamed\(\);\n\s*\}\}/);
+    expect(src("prompt-editor.css")).toContain('.pe-var-name[data-state="suggested"] { color: var(--enki-danger); border-bottom-color: var(--enki-danger); }');
   });
 });
 

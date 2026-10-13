@@ -346,6 +346,8 @@
 .pe-var-name:focus-visible { border-bottom-style: solid; border-bottom-color: var(--enki-ember); }
 .pe-var-name[data-state="unnamed"] { border-bottom-color: var(--enki-ember); }
 .pe-var-name[data-state="error"] { border-bottom-color: var(--enki-danger); }
+/* A name the pill made up: red until it is edited or the field is left. */
+.pe-var-name[data-state="suggested"] { color: var(--enki-danger); border-bottom-color: var(--enki-danger); }
 .pe-var-issue { margin: -2px 0 0; color: var(--enki-danger); font-size: 11px; }
 .pe-ai {
   display: inline-flex;
