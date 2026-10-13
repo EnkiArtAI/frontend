@@ -114,6 +114,10 @@ describe("release", () => {
     for (const [file, text] of all) expect(text, file).not.toContain("/showcase");
     // The button cannot be pressed a second time while the editor is on its way out.
     expect(src("ReleaseBar.tsx")).toContain("onClick={onRelease} disabled={busy || released}");
+    // Releasing costs nothing, whatever the listing: no money on the button (Kev, 2026-10-13).
+    const bar = src("ReleaseBar.tsx");
+    expect(bar).toContain('    : mode === "premium" ? "✦ Release premium"\n    : "✦ Release free";');
+    expect(bar).not.toMatch(/\$\$|price|toFixed/);
   });
 
   it("never pulls the user back into an editor they left while the release was on its way", () => {

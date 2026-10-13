@@ -569,7 +569,7 @@ export default function PromptEditor({ promptId }: {
                     ? loaded.saved.uploadedPhotos.map((src) => ({ key: src, src, ratio: null }))
                     : starredJobs.map((j) => ({ key: j.id, src: j.imageUrl ?? "", ratio: j.setup.ratio }))}
                   released={state.released} blocked={!!verdict && verdict.check !== "busy"} busy={releasing} anyReady={anyReady}
-                  mode={listing.mode} price={listing.price} onRelease={releaseNow} onMore={() => setTab("craft")} />
+                  mode={listing.mode} onRelease={releaseNow} onMore={() => setTab("craft")} />
               } />
           </>
         )}

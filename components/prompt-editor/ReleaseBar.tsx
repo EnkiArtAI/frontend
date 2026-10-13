@@ -14,7 +14,7 @@ export interface ReleasePhoto {
  * cannot go yet, and says why when pressed. After a release it reads
  * "✓ Released"; the next release updates the same prompt (R13).
  */
-export default function ReleaseBar({ need, photos, ratio, listingOnly, released, blocked, busy, anyReady, mode, price, onRelease, onMore }: {
+export default function ReleaseBar({ need, photos, ratio, listingOnly, released, blocked, busy, anyReady, mode, onRelease, onMore }: {
   need: number;
   /** The starred renders in star order, or the live images of a listing-only update. */
   photos: ReleasePhoto[];
@@ -26,17 +26,17 @@ export default function ReleaseBar({ need, photos, ratio, listingOnly, released,
   busy: boolean;
   anyReady: boolean;
   mode: "free" | "premium";
-  price: number;
   onRelease: () => void;
   onMore: () => void;
 }) {
   const tone = released ? "released" : blocked ? "short" : "ok";
   const label = released ? "Released" : listingOnly ? "Live images" : `${photos.length}/${need} starred`;
   const sub = listingOnly ? "Live images kept" : !anyReady ? "Generate first" : photos.length < need ? "All from one variation" : "Ready to release";
+  // Releasing costs nothing: a premium prompt's price is what others pay to generate with it later (Kev, 2026-10-13).
   const action = busy ? "Releasing…"
     : released ? "✓ Released"
     : listingOnly ? "✦ Update listing"
-    : mode === "premium" ? `✦ Release · $${price.toFixed(2)}`
+    : mode === "premium" ? "✦ Release premium"
     : "✦ Release free";
   return (
     <div className="pe-release">
