@@ -35,11 +35,15 @@ export async function signForBuyer(
   const buyer = buyerOf(transaction);
   if (buyer && buyer === cdpAddress) return requestCdpSign(transaction);
 
-  if (buyer && adapter && "signTransaction" in adapter) {
+  if (buyer && adapter) {
     // autoConnect is off (see SolanaWalletProvider), so after a reload the
-    // chosen wallet is remembered but not connected yet.
+    // chosen wallet is remembered but not connected yet. Connect FIRST: a
+    // Wallet Standard adapter (Phantom, Solflare, Backpack) has signTransaction
+    // only while an account is connected, so looking for it before connecting
+    // refused every external wallet after a reload, without ever asking it
+    // (Kev's first browser payment, 2026-10-13).
     if (!adapter.connected) await adapter.connect();
-    if (adapter.publicKey?.toBase58() === buyer) {
+    if (adapter.publicKey?.toBase58() === buyer && "signTransaction" in adapter && adapter.signTransaction) {
       const signed = await adapter.signTransaction(Transaction.from(fromBase64(transaction)));
       return signed.serialize({ requireAllSignatures: false }).toString("base64");
     }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, type Mock } from "vitest";
 import { Keypair, SystemProgram, Transaction } from "@solana/web3.js";
 import type { Adapter } from "@solana/wallet-adapter-base";
 
@@ -30,18 +30,29 @@ function authorization(): string {
   return tx.serialize({ requireAllSignatures: false }).toString("base64");
 }
 
-/** A wallet-adapter stand-in holding `key`, disconnected like after a reload. */
-function wallet(key: Keypair) {
-  const w = {
+/**
+ * A wallet-adapter stand-in holding `key`, disconnected like after a reload.
+ * It behaves like the Wallet Standard adapter every detected wallet gets
+ * (Phantom, Solflare, Backpack): signTransaction is on the adapter only while
+ * an account is connected (@solana/wallet-standard-wallet-adapter-base, #reset).
+ * `signs: false` is a wallet that cannot sign transactions at all.
+ */
+function wallet(key: Keypair, { signs = true } = {}) {
+  const sign = vi.fn(async (tx: Transaction) => {
+    tx.partialSign(key);
+    return tx;
+  });
+  const w: {
+    connected: boolean; publicKey: Keypair["publicKey"] | null; sign: typeof sign;
+    connect: Mock<() => Promise<void>>; signTransaction?: typeof sign;
+  } = {
     connected: false,
-    publicKey: null as Keypair["publicKey"] | null,
+    publicKey: null,
+    sign,
     connect: vi.fn(async () => {
       w.connected = true;
       w.publicKey = key.publicKey;
-    }),
-    signTransaction: vi.fn(async (tx: Transaction) => {
-      tx.partialSign(key);
-      return tx;
+      if (signs) w.signTransaction = sign;
     }),
   };
   return w;
@@ -100,7 +111,34 @@ describe("signForBuyer", () => {
     );
     expect(cdpSign).toHaveBeenCalledWith(tx);
     expect(phantom.connect).not.toHaveBeenCalled();
-    expect(phantom.signTransaction).not.toHaveBeenCalled();
+    expect(phantom.sign).not.toHaveBeenCalled();
+  });
+
+  it("after a reload the wallet is connected first, then asked to sign (Kev's first browser payment, 2026-10-13)", async () => {
+    // Not connected yet, so the adapter has no signTransaction: the old order
+    // looked for it before connecting and refused without ever asking the wallet.
+    const phantom = wallet(buyer);
+    expect("signTransaction" in phantom).toBe(false);
+    const signed = await signForBuyer(escrowDeposit(), { adapter: asAdapter(phantom), cdpAddress: null });
+    expect(phantom.connect).toHaveBeenCalledTimes(1);
+    expect(phantom.sign).toHaveBeenCalledTimes(1);
+    expect(Transaction.from(Buffer.from(signed, "base64")).signatures.find((s) => s.publicKey.equals(buyer.publicKey))?.signature).not.toBeNull();
+  });
+
+  it("a wallet already connected is not connected a second time", async () => {
+    const phantom = wallet(buyer);
+    await phantom.connect();
+    phantom.connect.mockClear();
+    await signForBuyer(escrowDeposit(), { adapter: asAdapter(phantom), cdpAddress: null });
+    expect(phantom.connect).not.toHaveBeenCalled();
+    expect(phantom.sign).toHaveBeenCalledTimes(1);
+  });
+
+  it("a wallet that cannot sign transactions is a refusal, even with the buyer's key", async () => {
+    const readOnly = wallet(buyer, { signs: false });
+    const err = await signForBuyer(escrowDeposit(), { adapter: asAdapter(readOnly), cdpAddress: null }).catch((e) => e);
+    expect(err).toBeInstanceOf(CheckoutError);
+    expect(readOnly.sign).not.toHaveBeenCalled();
   });
 
   it("a wallet holding another key is never asked to sign", async () => {
@@ -113,7 +151,7 @@ describe("signForBuyer", () => {
     expect(err).toBeInstanceOf(CheckoutError);
     expect(err.step).toBe("sign");
     expect(err.message).toMatch(/nothing was charged/);
-    expect(phantom.signTransaction).not.toHaveBeenCalled();
+    expect(phantom.sign).not.toHaveBeenCalled();
     expect(cdpSign).not.toHaveBeenCalled();
   });
 
