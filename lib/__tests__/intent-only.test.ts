@@ -12,40 +12,6 @@ import { readSource } from "@/lib/__tests__/_read-source";
 const ROOT = join(__dirname, "..", "..");
 const src = (...p: string[]) => readSource(join(ROOT, ...p));
 
-describe("the classic editor", () => {
-  const EDITOR = src("components", "EnkiPromptEditor.tsx");
-
-  it("no longer imports the legacy payment hooks", () => {
-    expect(EDITOR).not.toMatch(/useSolanaX402Payment|useX402PaymentProduction/);
-  });
-
-  it("generates through runGeneration with the selected entry, never by prompt type", () => {
-    expect(EDITOR).toMatch(/const picked = resolveCatalogueEntry\(catalogue, models\.selected\[0\]\);/);
-    expect(EDITOR).toMatch(/const outcome = await runGeneration\(\n\s+\{\n\s+model: picked,/);
-    // Display Mode stays a marketplace setting; it no longer picks the route.
-    expect(EDITOR).not.toMatch(/isFreePrompt|\/api\/generate-free/);
-  });
-
-  it("selects nothing on its own and runs one model", () => {
-    expect(EDITOR).not.toMatch(/fetchedModels\[0\]\.id/);
-    expect(EDITOR).not.toMatch(/"nano-banana-pro"/);
-    expect(EDITOR).toMatch(/setModels\(prev => \(\{ \.\.\.prev, selected: \[modelId\] \}\)\);/);
-  });
-
-  it("restores one model from drafts and undo snapshots", () => {
-    expect(EDITOR).toMatch(/selected: draft\.modelsSelected\.slice\(0, 1\)/);
-    expect(EDITOR).toMatch(/selected: snap\.modelsSelected\.slice\(0, 1\)/);
-  });
-
-  it("marks a refused card failed instead of leaving it generating", () => {
-    expect(EDITOR.match(/\n\s+refuse\(\);\n\s+return;/g)?.length).toBe(3);
-  });
-
-  it("refuses without a model at every entry point, before anything is queued or paid", () => {
-    expect(EDITOR.match(/if \(!picked\) \{\n\s+toast\(\{ title: "Pick a model"/g)?.length).toBe(5);
-  });
-});
-
 /** Every .ts/.tsx under the app's source roots, tests excluded. */
 function sources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -67,5 +33,17 @@ describe("the legacy rail's client side is gone", () => {
     expect(files.length).toBeGreaterThan(100);
     const importers = files.filter((f) => /from "@\/(hooks\/useSolanaX402Payment|hooks\/useX402PaymentProduction|lib\/payment-confirm)"/.test(readSource(f)));
     expect(importers).toEqual([]);
+  });
+});
+
+describe("the current editor uses the shared generation queue", () => {
+  it("queues a checked artist request", () => {
+    const editor = src("components", "prompt-editor", "PromptEditor.tsx");
+    expect(editor).toContain('toRequest: (s) => editorRequest(s, catalogue, readyRefs(state.refs, s.refIds) ?? []),');
+    expect(editor).toContain('if (block || !entry) {');
+    expect(editor).not.toMatch(/useSolanaX402Payment|useX402PaymentProduction|\/api\/generate-free/);
+  });
+  it("starts without a preselected generator", () => {
+    expect(src("components", "prompt-editor", "usePromptEditor.ts")).toContain('modelIds: [], testId: null');
   });
 });

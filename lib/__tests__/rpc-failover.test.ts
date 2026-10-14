@@ -17,7 +17,6 @@ vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClientSafe: () => ({})
 
 import { confirmSignature, resetRpcHealth, solanaConnection, solanaRpcUrls } from "@/lib/payments/solana";
 import { submitAndConfirm } from "@/lib/payments/x402-settle";
-import { closeNonceAccount, createNonceAccount } from "@/lib/payments/nonce";
 import { getUsdcBalance } from "@/lib/usdc-balance";
 
 const PRIMARY = "https://primary.example/?api-key=KEY-THAT-MUST-NOT-BE-LOGGED";
@@ -30,16 +29,6 @@ let landed = true;
 let onChainErr: unknown = null;
 const hits: { host: string; method: string; params: unknown[] }[] = [];
 const BLOCKHASH = Keypair.generate().publicKey.toBase58();
-const AUTHORITY = Keypair.generate().publicKey;
-
-/** An initialised nonce account, laid out as NonceAccount.fromAccountData reads it. */
-function nonceAccountData(): string {
-  const b = Buffer.alloc(80);
-  b.writeUInt32LE(1, 4); // initialised
-  AUTHORITY.toBuffer().copy(b, 8);
-  Keypair.generate().publicKey.toBuffer().copy(b, 40); // the nonce
-  return b.toString("base64");
-}
 
 function answer(method: string, id: unknown) {
   const ctx = { context: { slot: 1 } };
@@ -49,8 +38,6 @@ function answer(method: string, id: unknown) {
     : method === "getTokenAccountBalance" ? { ...ctx, value: { amount: "5000000", decimals: 6, uiAmount: 5, uiAmountString: "5" } }
     : method === "getLatestBlockhash" ? { ...ctx, value: { blockhash: BLOCKHASH, lastValidBlockHeight: 100 } }
     : method === "getBlockHeight" ? blockHeight
-    : method === "getMinimumBalanceForRentExemption" ? 1_447_680
-    : method === "getAccountInfo" ? { ...ctx, value: { data: [nonceAccountData(), "base64"], executable: false, lamports: 1_447_680, owner: "11111111111111111111111111111111", rentEpoch: 0, space: 80 } }
     : null;
   return Response.json({ jsonrpc: "2.0", id, result });
 }
@@ -206,23 +193,11 @@ describe("a payment", () => {
   });
 });
 
-describe("the nonce accounts of the human rail", () => {
-  it("are created and closed with the first endpoint down: confirmed over HTTP, no websocket", async () => {
-    primary = "down";
-    const created = await createNonceAccount(solanaConnection(), Keypair.generate());
-    expect(created.address).toMatch(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/);
-    expect(await closeNonceAccount(solanaConnection(), created.address, Keypair.generate())).toBe("closed");
-    expect(sentTo().filter((h) => h === "second.example")).toHaveLength(2);
-  });
-
-  it("leave the rebroadcast to the RPC until expiry, as before; the agent rail keeps its 3 retries", async () => {
-    await createNonceAccount(solanaConnection(), Keypair.generate());
-    const nonceSend = hits.find((h) => h.method === "sendTransaction");
-    expect((nonceSend?.params[1] as { maxRetries?: number }).maxRetries).toBeUndefined();
-    hits.length = 0;
+describe("HTTP payment confirmation", () => {
+  it("the direct-transfer agent rail retains three node retries", async () => {
     await submitAndConfirm(solanaConnection(), signedTx());
-    const agentSend = hits.find((h) => h.method === "sendTransaction");
-    expect((agentSend?.params[1] as { maxRetries?: number }).maxRetries).toBe(3);
+    const sent = hits.find(hit => hit.method === "sendTransaction");
+    expect((sent?.params[1] as { maxRetries?: number }).maxRetries).toBe(3);
   });
 
   it("an expired blockhash ends the wait instead of hanging", async () => {
@@ -231,17 +206,9 @@ describe("the nonce accounts of the human rail", () => {
     await expect(confirmSignature(solanaConnection(), "5".repeat(64), { lastValidBlockHeight: 100 })).rejects.toThrow(/expired/);
   });
 
-  it("the capture confirms a send lost in transit and closes the nonce after the answer", () => {
-    const settle = readSource(join(__dirname, "..", "..", "lib", "payments", "settle.ts"));
-    expect(settle).toMatch(/const signature = bs58\.encode\(tx\.signature!\);/);
-    expect(settle).toMatch(/if \(e instanceof SendTransactionError\) throw e;\s+await confirmSignature\(connection, signature, \{ timeoutMs: 10_000 \}\);/);
-    expect(settle).toMatch(/after\(\(\) => closeNonceAccount\(connection, account, feePayerKeypair\(\)\)/);
-    expect(settle).not.toMatch(/await closeNonceAccount\(connection, held\.nonceAccount/);
-  });
-
   it("no payment path waits on a websocket confirmation", () => {
     const ROOT = join(__dirname, "..", "..");
-    for (const f of [["lib", "payments", "nonce.ts"], ["lib", "payments", "x402-settle.ts"], ["app", "api", "x402", "generate", "route.ts"]]) {
+    for (const f of [["lib", "payments", "escrow", "server-chain.ts"], ["lib", "payments", "x402-settle.ts"], ["app", "api", "x402", "generate", "route.ts"]]) {
       expect(readSource(join(ROOT, ...f)), f.join("/")).not.toMatch(/sendAndConfirmTransaction|confirmTransaction\(/);
     }
   });

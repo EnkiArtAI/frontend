@@ -21,7 +21,7 @@ describe("the reference images", () => {
   it("are judged beside the prompt, before the slot, the claim and the provider", () => {
     const judged = at("Promise.all(refBytes.map((b) => checkImageBytes(b, { signal: request.signal }))),");
     expect(judged).toBeLessThan(at("const slot = await acquireSlot("));
-    expect(judged).toBeLessThan(at("claimForGeneration("));
+    expect(judged).toBeLessThan(at("claimGenerationEscrowUnit("));
     expect(at("if (refsSeen.some(heldBack)) {")).toBeLessThan(at("const slot = await acquireSlot("));
   });
 
@@ -73,7 +73,7 @@ describe("the result", () => {
     const stored = at("if (!imageUrl || Date.now() > storeDeadline(startedAt)) {");
     const judged = at("const seen = await checkImageBytes(generatedImageBuffer, {");
     expect(judged).toBeGreaterThan(stored);
-    expect(judged).toBeLessThan(at("const captured = await captureAndBroadcast(settled.supabase, settled.id);"));
+    expect(judged).toBeLessThan(at("const recorded = await recordGeneration(supabase, {"));
     // A closed tab never cancels it: the buyer still gets the paid render.
     const call = HUMAN.slice(judged, HUMAN.indexOf("});", judged));
     expect(call).toContain("signal: AbortSignal.timeout(Math.max(1, storeDeadline(startedAt) - Date.now())),");
@@ -86,9 +86,9 @@ describe("the result", () => {
     expect(returned).toBeGreaterThan(refused);
     const block = HUMAN.slice(refused, returned);
     expect(block).toContain("after(removeStored([imageUrl, storedName]));");
-    expect(block).toContain('await releaseIfConsumed(seen.verdict === "unavailable" ? "provider_failed" : "rejected");');
+    expect(block).toContain('await failIfClaimed();');
     expect(block).toContain("await releaseHeldSlot();");
-    expect(block).not.toContain("captureAndBroadcast");
+    expect(block).not.toContain("deliverGenerationEscrowUnit");
     expect(block).toContain('? NextResponse.json({ error: IMAGE_UNCHECKED }, { status: 503 })');
   });
 
@@ -97,7 +97,7 @@ describe("the result", () => {
   });
 
   it("is stored under one name the removal knows", () => {
-    expect(HUMAN).toMatch(/const storedName = `generations\/\$\{Date\.now\(\)\}_\$\{Math\.random\(\)\.toString\(36\)\.substring\(2, 9\)\}\.png`;\n\s+const imageUrl =\n\s+\(await putDurably\(\n\s+storedName,/);
+    expect(HUMAN).toMatch(/const storedName = `generations\/\$\{Date\.now\(\)\}_\$\{Math\.random\(\)\.toString\(36\)\.substring\(2, 9\)\}\.png`;\n\s+const imageUrl = await putDurably\(\n\s+storedName,/);
   });
 });
 

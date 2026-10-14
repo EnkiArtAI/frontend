@@ -1,0 +1,646 @@
+/* Kit media and text (components/kit): autosizing fields, the token mirror,
+   job tiles, the fullscreen viewer, value rows, buyer variable fields and
+   reference tiles. Every piece imports this file itself. Colours are tokens
+   only (plan §1.1); the viewer sits at z 9999, under the sheets (10000). */
+
+/* ── Autosize. The height is set from script; the field scrolls inside past
+   its max. On a touch screen never under 16 px, so iOS does not zoom on
+   focus: the selector outranks a surface's own size, and the mirror follows
+   the same rule so its glyphs stay on the textarea's. */
+.kit-autosize { box-sizing: border-box; resize: none; }
+@media (pointer: coarse) {
+  textarea.kit-autosize,
+  div.kit-pm-mirror { font-size: max(16px, var(--kit-fs, 16px)); }
+}
+
+/* ── Prompt mirror. One rule gives the textarea and its mirror the same box
+   and type; a surface tunes them only through these variables. */
+.kit-pm { position: relative; }
+.kit-pm-text,
+.kit-pm-mirror {
+  box-sizing: border-box;
+  margin: 0;
+  padding: var(--kit-pad, 12px 14px);
+  border: 1px solid transparent;
+  border-radius: var(--kit-radius, 14px);
+  font: 400 var(--kit-fs, 14.5px)/var(--kit-lh, 1.55) var(--font-sans), sans-serif;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-indent: 0;
+  text-transform: none;
+  tab-size: 4;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+.kit-pm-text {
+  display: block;
+  width: 100%;
+  border-color: var(--enki-rule);
+  background: var(--enki-paper);
+  color: transparent;
+  caret-color: var(--enki-ink);
+  outline: none;
+  transition: border-color 0.14s;
+}
+.kit-pm-text::placeholder { color: var(--enki-ink-3); }
+.kit-pm-text:focus,
+.kit-pm[data-dragging] .kit-pm-text { border-color: var(--enki-ember); }
+.kit-pm-mirror {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  color: var(--enki-ink);
+  pointer-events: none;
+}
+.kit-pm-mirror[data-interactive] .kit-tok,
+.kit-pm[data-dragging] .kit-pm-mirror { pointer-events: auto; }
+/* A double-tap on a token is the surface's (it doubles a reference), never the browser's zoom. */
+.kit-pm-mirror[data-interactive] .kit-tok { touch-action: manipulation; }
+.kit-pm-probe { visibility: hidden; }
+
+/* A token changes background and colour only, never the box or the type,
+   so every glyph after it stays over the textarea's. */
+.kit-tok { border-radius: 5px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.kit-tok--var {
+  background: color-mix(in oklab, var(--enki-ember) 16%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--enki-ember) 16%, transparent);
+  color: var(--enki-ember);
+}
+.kit-tok--blank { box-shadow: 0 0 0 1.5px var(--enki-ember); color: var(--enki-ember); }
+.kit-tok--ref {
+  background: linear-gradient(90deg, var(--enki-ref-a), var(--enki-ref-b));
+  box-shadow: 0 0 0 2px var(--enki-ref-a);
+  color: var(--enki-ref-ink);
+}
+.kit-tok--ref.is-missing { box-shadow: 0 0 0 2px var(--enki-danger); }
+.kit-tok-br { opacity: 0.45; }
+
+.kit-pm-pill {
+  position: absolute;
+  z-index: 2;
+  height: 28px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--enki-ink);
+  color: var(--enki-paper);
+  font: 600 12px/1 var(--font-sans), sans-serif;
+  white-space: nowrap;
+  box-shadow: var(--enki-shadow-card);
+  cursor: pointer;
+  animation: kit-fade 120ms ease;
+}
+@media (pointer: coarse) {
+  .kit-pm-pill { height: 32px; padding: 0 13px; font-size: 13px; }
+}
+
+/* ── Job tile. Width from the column (or the strip's height and ratio),
+   height from the ratio; a container, so overlays can size to it. */
+.kit-tile {
+  position: relative;
+  box-sizing: border-box;
+  flex: none;
+  width: 100%;
+  border: 2px solid transparent;
+  border-radius: var(--kit-tile-radius, 12px);
+  overflow: hidden;
+  background: var(--enki-paper-3);
+  box-shadow: var(--enki-shadow-card);
+  container-type: inline-size;
+}
+.kit-tile[data-status="rendering"] { background: var(--enki-stage); }
+.kit-tile[data-frame="ember"] { border-color: var(--enki-ember); box-shadow: 0 0 0 3px color-mix(in oklab, var(--enki-ember) 25%, transparent); }
+.kit-tile[data-frame="danger"] { border-color: var(--enki-danger); }
+.kit-tile[data-frame="turq"] { border-color: var(--enki-turq); box-shadow: 0 0 0 3px color-mix(in oklab, var(--enki-turq) 22%, transparent); }
+.kit-tile-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+button.kit-tile-face { cursor: pointer; }
+.kit-tile-face img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.kit-spinner {
+  box-sizing: border-box;
+  width: clamp(16px, 25cqw, 26px);
+  aspect-ratio: 1;
+  border: 2px solid color-mix(in oklab, var(--enki-on-stage) 25%, transparent);
+  border-top-color: var(--enki-on-stage);
+  border-radius: 50%;
+  animation: kit-spin 0.9s linear infinite;
+}
+/* Its request has gone out: the spinner lights up; one still in line stays white (Kev, 2026-10-13). */
+.kit-tile[data-sent] .kit-spinner {
+  border-color: color-mix(in oklab, var(--enki-turq) 30%, transparent);
+  border-top-color: var(--enki-turq);
+  box-shadow: 0 0 10px color-mix(in oklab, var(--enki-turq) 60%, transparent);
+}
+/* Take back a render still in line: top-right, where the ✓ of a finished one goes. */
+.kit-tile-x {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid color-mix(in oklab, var(--enki-on-stage) 30%, transparent);
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--enki-stage) 70%, transparent);
+  color: var(--enki-on-stage);
+  cursor: pointer;
+}
+.kit-tile-x:hover { border-color: transparent; background: var(--enki-danger); color: var(--enki-paper); }
+.kit-tile-bang {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: clamp(20px, 34cqw, 44px);
+  aspect-ratio: 1;
+  border: 2px solid var(--enki-danger);
+  border-radius: 50%;
+  color: var(--enki-danger);
+  font: 600 clamp(11px, 17cqw, 22px)/1 var(--font-sans), sans-serif;
+}
+.kit-tile-you,
+.kit-tile-check,
+.kit-tile-star { position: absolute; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.kit-tile-you {
+  top: 3px;
+  left: 3px;
+  height: 14px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--enki-stage) 60%, transparent);
+  color: var(--enki-on-stage);
+  font: 400 8px/1 var(--font-mono), monospace;
+  letter-spacing: 0.06em;
+}
+.kit-tile-check {
+  top: 3px;
+  right: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--enki-turq);
+  color: var(--enki-on-stage);
+  font-size: 9px;
+}
+.kit-tile-star {
+  right: 4px;
+  bottom: 4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--enki-ember);
+  color: var(--enki-paper);
+  font-size: 9px;
+}
+button.kit-tile-star {
+  right: 6px;
+  bottom: 6px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid color-mix(in oklab, var(--enki-on-stage) 30%, transparent);
+  background: color-mix(in oklab, var(--enki-stage) 55%, transparent);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  color: var(--enki-on-stage);
+  font-size: 14px;
+  pointer-events: auto;
+  cursor: pointer;
+}
+button.kit-tile-star[aria-pressed="true"] { border-color: transparent; background: var(--enki-ember); color: var(--enki-paper); }
+button.kit-tile-star[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
+
+/* ── Fullscreen viewer. Always dark (stage), whatever the theme. */
+.kit-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(20px + env(safe-area-inset-bottom, 0px));
+  background: color-mix(in oklab, var(--enki-stage) 94%, transparent);
+  color: var(--enki-on-stage);
+  font-family: var(--font-sans), sans-serif;
+  overscroll-behavior: contain;
+  animation: kit-fade 160ms ease;
+}
+.kit-viewer[data-layout="stacked"] > * { width: 100%; max-width: 560px; margin-inline: auto; }
+.kit-viewer[data-layout="side"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: 0;
+}
+.kit-viewer-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 36px;
+  margin-bottom: 12px;
+}
+.kit-viewer[data-layout="side"] .kit-viewer-top { grid-area: 1 / 1; padding: 20px 28px 0; }
+.kit-viewer-count {
+  font: 400 11px/1 var(--font-mono), monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--enki-on-stage) 60%, transparent);
+}
+.kit-viewer-x {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid color-mix(in oklab, var(--enki-on-stage) 25%, transparent);
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--enki-on-stage) 8%, transparent);
+  color: var(--enki-on-stage);
+  cursor: pointer;
+}
+.kit-viewer-stage { position: relative; display: flex; flex-shrink: 0; align-items: center; justify-content: center; }
+.kit-viewer[data-layout="side"] .kit-viewer-stage { grid-area: 2 / 1; min-height: 0; padding: 0 28px 28px; container-type: size; }
+/* Height-based: as tall as the room allows, as wide as the ratio makes it. */
+.kit-viewer-box {
+  position: relative;
+  box-sizing: border-box;
+  height: min(56dvh, calc(min(100vw - 32px, 560px) / var(--r)));
+  aspect-ratio: var(--r);
+  max-width: 100%;
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--enki-stage);
+  box-shadow: var(--enki-shadow-pop);
+  touch-action: pan-y;
+}
+.kit-viewer[data-layout="side"] .kit-viewer-box { height: min(100cqh, calc(100cqw / var(--r))); }
+.kit-viewer-box img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.kit-viewer-box[data-failed] { background: color-mix(in oklab, var(--enki-danger) 14%, var(--enki-stage)); }
+.kit-viewer-failed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  padding: 16px;
+  box-sizing: border-box;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: center;
+  text-wrap: pretty;
+  color: color-mix(in oklab, var(--enki-on-stage) 90%, transparent);
+}
+.kit-viewer-bang {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  box-sizing: border-box;
+  border: 2px solid var(--enki-danger);
+  border-radius: 50%;
+  color: var(--enki-danger);
+  font: 600 22px/1 var(--font-sans), sans-serif;
+}
+.kit-viewer-nav {
+  position: absolute;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--enki-stage) 45%, transparent);
+  color: var(--enki-on-stage);
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+.kit-viewer-nav[data-dir="prev"] { left: 8px; }
+.kit-viewer-nav[data-dir="next"] { right: 8px; }
+.kit-viewer-nav[aria-disabled="true"] { opacity: 0.25; cursor: default; }
+/* Thumbs show while the pointer is in the bottom 120 px or a thumb has
+   focus, and fade 1 s after; a touch screen always shows them. */
+.kit-viewer-thumbzone {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 120px;
+  padding: 0 28px 16px;
+}
+.kit-viewer-thumbs {
+  display: flex;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px;
+  overflow-x: auto;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease 1s;
+}
+.kit-viewer-thumbzone:hover .kit-viewer-thumbs,
+.kit-viewer-thumbs:focus-within { opacity: 1; pointer-events: auto; transition-delay: 0s; }
+@media (hover: none) {
+  .kit-viewer-thumbs { opacity: 1; pointer-events: auto; }
+}
+.kit-viewer-thumb {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 56px;
+  aspect-ratio: var(--r);
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--enki-stage);
+  color: var(--enki-danger);
+  opacity: 0.7;
+  cursor: pointer;
+}
+.kit-viewer-thumb[aria-current="true"] { border-color: var(--enki-on-stage); opacity: 1; }
+.kit-viewer-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.kit-viewer-dots { display: flex; justify-content: center; gap: 6px; margin-top: 12px; }
+.kit-viewer-dots span { width: 6px; height: 6px; border-radius: 50%; background: color-mix(in oklab, var(--enki-on-stage) 30%, transparent); }
+.kit-viewer-dots span[data-on] { background: var(--enki-on-stage); }
+.kit-viewer-panel { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.kit-viewer[data-layout="stacked"] .kit-viewer-panel { flex: 1; margin-top: 14px; }
+.kit-viewer[data-layout="side"] .kit-viewer-panel { grid-area: 1 / 2 / 3 / 3; }
+@media (prefers-reduced-motion: reduce) {
+  .kit-viewer { animation: none; }
+  .kit-viewer-thumbs { transition: none; }
+}
+
+/* ── Value rows. Stage: names in amber on the dark viewer; paper: in ember. */
+.kit-values { display: flex; flex-direction: column; gap: 10px; margin: 0; }
+.kit-value { display: flex; flex-direction: column; gap: 4px; }
+.kit-value-name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font: 400 10.5px/1.3 var(--font-mono), monospace;
+  color: var(--enki-ember);
+}
+.kit-values[data-tone="stage"] .kit-value-name { color: var(--enki-amber); }
+.kit-value-text {
+  margin: 0;
+  padding: 8px 11px;
+  border: 1px solid var(--enki-rule-2);
+  border-radius: 10px;
+  background: var(--enki-paper-2);
+  color: var(--enki-ink-2);
+  font-size: 13.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+.kit-values[data-tone="stage"] .kit-value-text {
+  border-color: color-mix(in oklab, var(--enki-on-stage) 12%, transparent);
+  background: color-mix(in oklab, var(--enki-on-stage) 6%, transparent);
+  color: color-mix(in oklab, var(--enki-on-stage) 90%, transparent);
+}
+.kit-copy {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--enki-ink-3);
+  font: 400 10.5px/1 var(--font-sans), sans-serif;
+  cursor: pointer;
+}
+.kit-values[data-tone="stage"] .kit-copy {
+  border-color: color-mix(in oklab, var(--enki-on-stage) 25%, transparent);
+  color: color-mix(in oklab, var(--enki-on-stage) 70%, transparent);
+}
+
+/* ── Buyer variable field. */
+.kit-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.kit-field-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.kit-field-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font: 400 11px/1.3 var(--font-mono), monospace;
+  color: var(--enki-ember);
+  overflow-wrap: anywhere;
+}
+.kit-field-name::before { content: ""; flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--enki-ember); }
+.kit-field-copy {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--enki-rule-2);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--enki-ink-3);
+  cursor: pointer;
+}
+.kit-field-copy:hover { color: var(--enki-ink); }
+.kit-field-text {
+  --kit-fs: 13.5px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in oklab, var(--enki-ember) 32%, var(--enki-rule));
+  border-radius: 11px;
+  background: color-mix(in oklab, var(--enki-ember) 5%, var(--enki-paper));
+  color: var(--enki-ink);
+  font: 400 var(--kit-fs)/1.5 var(--font-sans), sans-serif;
+  outline: none;
+}
+.kit-field-text::placeholder { color: var(--enki-ink-3); }
+.kit-field-text:focus { border-color: var(--enki-ember); }
+.kit-field-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.kit-chip {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 999px;
+  background: var(--enki-paper);
+  color: var(--enki-ink);
+  font: 400 13px/1 var(--font-sans), sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.kit-chip[aria-checked="true"],
+.kit-chip[aria-pressed="true"] { border-color: var(--enki-ember); background: color-mix(in oklab, var(--enki-ember) 14%, transparent); }
+.kit-field-check {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  font-size: 13.5px;
+  color: var(--enki-ink-2);
+  cursor: pointer;
+}
+.kit-field-check input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+.kit-switch {
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--enki-paper-3);
+  transition: background 0.14s;
+}
+.kit-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--enki-paper);
+  box-shadow: var(--enki-shadow-card);
+  transition: transform 0.14s;
+}
+.kit-field-check input:checked + .kit-switch { background: var(--enki-ember); }
+.kit-field-check input:checked + .kit-switch::after { transform: translateX(14px); }
+.kit-field-check input:focus-visible + .kit-switch { outline: 2px solid var(--enki-ember); outline-offset: 2px; }
+.kit-field-slider { display: flex; align-items: center; gap: 10px; min-height: 36px; }
+.kit-field-slider input { flex: 1; min-width: 0; accent-color: var(--enki-ember); }
+.kit-field-num { font: 400 12px/1 var(--font-mono), monospace; color: var(--enki-ink); }
+@media (pointer: coarse) {
+  .kit-field-check { min-height: 44px; font-size: 14px; }
+  .kit-field-slider { min-height: 44px; }
+  .kit-chip { height: 36px; padding: 0 14px; font-size: 14px; }
+}
+
+/* ── Reference tiles: a fixed column per image, so a label never moves the row. */
+.kit-refs { display: flex; flex-direction: column; gap: 8px; }
+.kit-refs-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.kit-refs-hint { font-size: 11.5px; color: var(--enki-ink-3); text-align: right; text-wrap: pretty; }
+.kit-refs-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--enki-ember);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.kit-refs-link:disabled { opacity: 0.45; cursor: not-allowed; }
+.kit-refs-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.kit-ref { position: relative; flex: none; width: var(--kit-ref); height: var(--kit-ref); }
+.kit-ref-img {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 1.5px solid color-mix(in oklab, var(--enki-ember) 45%, var(--enki-rule));
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--enki-paper-3);
+}
+button.kit-ref-img { cursor: pointer; }
+.kit-ref[draggable="true"] .kit-ref-img { cursor: grab; }
+.kit-ref-img img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.kit-ref[data-used] .kit-ref-img { outline: 2px solid var(--enki-ember); outline-offset: 2px; }
+.kit-ref[data-failed] .kit-ref-img { border-color: var(--enki-danger); }
+.kit-ref[data-over] .kit-ref-img { box-shadow: 0 0 0 2px var(--enki-danger); }
+.kit-ref[data-drop]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--enki-ember);
+}
+.kit-ref[data-drop="before"]::before { left: -6px; }
+.kit-ref[data-drop="after"]::before { right: -6px; }
+.kit-ref-label {
+  position: absolute;
+  left: 50%;
+  bottom: 5px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--enki-ref-ink);
+  color: var(--enki-ref-b);
+  font: 400 8.5px/1 var(--font-mono), monospace;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.kit-ref-x {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 2px solid var(--enki-paper);
+  border-radius: 50%;
+  background: var(--enki-ink);
+  color: var(--enki-paper);
+  cursor: pointer;
+}
+.kit-ref-add {
+  box-sizing: border-box;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: var(--kit-ref);
+  height: var(--kit-ref);
+  padding: 0;
+  border: 1.5px dashed var(--enki-rule);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--enki-ink-3);
+  font: 400 8.5px/1 var(--font-sans), sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.kit-ref-add:hover:not(:disabled) { border-color: var(--enki-ink-2); color: var(--enki-ink); }
+.kit-ref-add:disabled { opacity: 0.4; cursor: not-allowed; }
+.kit-ref-glyph { font-size: 18px; line-height: 1; letter-spacing: normal; }

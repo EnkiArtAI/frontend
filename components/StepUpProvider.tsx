@@ -95,8 +95,8 @@ export function StepUpProvider({ children }: { children: React.ReactNode }) {
       {children}
       <Dialog open={pending !== null} onOpenChange={(open) => { if (!open && !busy) finish(null); }}>
         {/* Above every layer of the app: the wallet unlock can ask from inside
-            the node editor (z 118) or the key export overlay (z 1200). */}
-        <DialogContent className="max-w-sm z-[10001]" overlayClassName="z-[10000]">
+            a bottom sheet (z 10000), an alert dialog (10010) or under a toast (10020). */}
+        <DialogContent className="max-w-sm z-[10031]" overlayClassName="z-[10030]">
           <DialogHeader>
             <DialogTitle>Confirm it&apos;s you</DialogTitle>
             <DialogDescription>This needs your second factor. Nothing happens until you confirm.</DialogDescription>

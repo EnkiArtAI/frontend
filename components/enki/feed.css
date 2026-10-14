@@ -1,0 +1,256 @@
+/* Home feed (feed-): the category bar, the masonry wall and its cards.
+   Colours come from the tokens only; anything always dark (the card's
+   gradient, the glass on artwork) is a mix of --enki-stage. */
+
+.feed { padding: calc(48px + var(--ek-banner-h, 0px)) 0 96px; }
+
+/* ── Category bar: one 44 px row, always on screen ── */
+.feed-bar {
+  position: fixed; top: var(--ek-banner-h, 0px); left: var(--ek-sw, 0px); right: 0; z-index: 45;
+  display: flex; align-items: center; height: 44px; padding: 0 24px;
+  background: var(--header-bg);
+  backdrop-filter: blur(64px) saturate(200%); -webkit-backdrop-filter: blur(64px) saturate(200%);
+  border-bottom: 1px solid color-mix(in oklab, var(--enki-ink) 8%, transparent);
+  transition: left 0.26s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.feed-chips {
+  flex: 1; min-width: 0; height: 100%; display: flex; gap: 2px; overflow-x: auto;
+  transition: opacity 0.2s ease, visibility 0.2s;
+}
+.feed-chip {
+  flex-shrink: 0; height: 44px; padding: 0 14px;
+  border: 0; border-bottom: 2px solid transparent; background: none;
+  color: var(--enki-ink-3); font: inherit; font-size: 12px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; cursor: pointer;
+  transition: color 0.15s;
+}
+.feed-chip:hover, .feed-chip[aria-pressed="true"] { color: var(--enki-ink); }
+.feed-chip[aria-pressed="true"] { border-bottom-color: var(--enki-ink); }
+.feed-chip:focus-visible { outline-offset: -6px; }
+
+.feed-tools { display: flex; align-items: center; gap: 6px; padding-left: 6px; flex-shrink: 0; }
+.feed-pill {
+  display: inline-flex; align-items: center; height: 28px; padding: 0 10px;
+  border: 1px solid var(--enki-rule); border-radius: 999px; background: transparent;
+  color: var(--enki-ink-3); font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  white-space: nowrap; cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.feed-pill:hover { color: var(--enki-ink); border-color: color-mix(in oklab, var(--enki-ember) 45%, var(--enki-rule)); }
+.feed-pill.on {
+  color: var(--enki-ember); border-color: var(--enki-ember);
+  background: color-mix(in oklab, var(--enki-ember) 10%, transparent);
+}
+.feed-pill-n { white-space: pre; }
+
+/* Generator popover, right-aligned under its chip */
+.feed-gen { position: relative; }
+.feed-gen-pop {
+  position: absolute; top: 40px; right: 0; min-width: 240px; max-width: calc(100vw - 40px);
+  display: flex; flex-direction: column; gap: 8px; padding: 8px;
+  border: 1px solid var(--enki-rule); border-radius: 12px; background: var(--enki-paper);
+  box-shadow: var(--enki-shadow-pop);
+}
+.feed-gen-reset {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px;
+  border: 0; border-radius: 999px; background: none; color: var(--enki-ember);
+  font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.feed-gen-reset:disabled { color: var(--enki-ink-3); cursor: default; }
+.feed-gen-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.feed-gen-label {
+  flex-basis: 100%; padding: 2px 4px; border: 0; background: none; text-align: left;
+  color: var(--enki-ink-3); font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer;
+}
+.feed-gen-label:hover { color: var(--enki-ink); }
+.feed-gen-label.on { color: var(--enki-ember); }
+.feed-gen-chip {
+  display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 11px;
+  border: 1px solid var(--enki-rule); border-radius: 999px; background: transparent;
+  color: var(--enki-ink-3); font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.feed-gen-chip:hover { color: var(--enki-ink); border-color: color-mix(in oklab, var(--enki-ember) 45%, var(--enki-rule)); }
+.feed-gen-chip.on {
+  color: var(--enki-ember); border-color: var(--enki-ember);
+  background: color-mix(in oklab, var(--enki-ember) 10%, transparent);
+}
+
+/* Search: a glyph that unrolls into a field. The width animates so the row
+   keeps its rhythm instead of jumping by 240 px in one frame. */
+.feed-search { position: relative; display: flex; align-items: center; }
+.feed-search input {
+  width: 0; padding: 0; border: 0; border-bottom: 1px solid transparent; background: none;
+  color: var(--enki-ink); font: inherit; font-size: 13px; outline: none;
+  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1), padding 0.22s, border-color 0.22s;
+}
+.feed-search.open input { width: 240px; padding: 4px 2px; border-bottom-color: var(--enki-rule); }
+.feed-search.open input:focus { border-bottom-color: var(--enki-ember); }
+.feed-search input::placeholder { color: var(--enki-ink-3); }
+.feed-search-btn {
+  flex-shrink: 0; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 999px; background: none; color: var(--enki-ink-3); cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.feed-search-btn:hover { color: var(--enki-ember); background: var(--enki-paper-2); }
+.feed-suggest {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 2; margin: 0; padding: 4px 0; list-style: none;
+  border: 1px solid var(--enki-rule); border-radius: 10px; background: var(--enki-paper); box-shadow: var(--enki-shadow-pop);
+}
+.feed-suggest-item {
+  display: flex; align-items: baseline; gap: 8px; padding: 7px 12px; overflow: hidden; white-space: nowrap;
+  color: var(--enki-ink); font-size: 13px; cursor: pointer;
+}
+.feed-suggest-item.active { background: var(--enki-paper-2); color: var(--enki-ember); }
+.feed-suggest-label { overflow: hidden; text-overflow: ellipsis; }
+.feed-suggest-item small { color: var(--enki-ink-3); font-size: 11px; }
+.feed-suggest-kind { flex: 0 0 auto; color: var(--enki-ink-3); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+
+/* Below 1024 px an open search owns the row; the chips step back. */
+.feed-bar--takeover .feed-chips { flex: 0 0 0; opacity: 0; visibility: hidden; }
+.feed-bar--takeover .feed-tools { flex: 1; min-width: 0; padding-left: 0; }
+.feed-bar--takeover .feed-search { flex: 1; min-width: 0; }
+.feed-bar--takeover .feed-search input { flex: 1; width: 100%; }
+
+/* ── Creators found by a search ── */
+.feed-creators { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 8px 4px; }
+.feed-creator {
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px;
+  border: 1px solid var(--enki-rule); border-radius: 999px; background: var(--enki-paper-2);
+  color: var(--enki-ink); font: inherit; font-size: 13px; cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.feed-creator:hover { border-color: var(--enki-ember); color: var(--enki-ember); }
+.feed-creator img, .feed-creator-initial { flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%; object-fit: cover; }
+.feed-creator-initial {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--enki-paper-3); color: var(--enki-ink-2); font-size: 12px; font-weight: 600;
+}
+.feed-creator small { color: var(--enki-ink-3); font-size: 11px; }
+
+/* ── The wall: MasonryGrid places every cell ── */
+/* On its own (a bookmark category, the Likes tab): the same grid, no fixed bar above it. */
+.feed-wall { padding: 8px 0 40px; }
+.feed-wall-note { margin: 18px 0; font-size: 13px; color: var(--enki-ink-3); }
+.feed-wall-note .ek-btn { width: auto; min-height: 32px; margin-left: 8px; padding: 0 12px; }
+.feed-grid { position: relative; }
+.feed-cell { position: absolute; top: 0; left: 0; }
+.feed-cell:hover { z-index: 1; } /* a lifted card's shadow falls over its neighbours */
+.feed-skel { border-radius: 4px; background: var(--enki-paper-2); animation: kit-pulse 1.2s ease-in-out infinite; }
+.feed-sentinel { height: 1px; }
+
+.feed-note {
+  max-width: 520px; margin: 28px auto; padding: 18px;
+  border: 1px solid var(--enki-rule); background: var(--enki-paper-2);
+}
+.feed-note h2 { margin: 0 0 8px; font-size: 28px; line-height: 1.15; }
+.feed-note p { margin: 0; color: var(--enki-ink-2); font-size: 14px; }
+.feed-note .ek-btn { width: auto; min-height: 40px; margin-top: 16px; padding: 0 18px; }
+
+/* ── Card: the picture, the price top left, the bookmark top right once
+   saved; no title, no artist (Kev, 2026-10-13). Slightly rounded. ── */
+.feed-card {
+  position: relative; width: 100%; height: 100%; overflow: hidden; border-radius: 10px;
+  background: var(--enki-paper-3);
+  box-shadow: 0 2px 8px color-mix(in oklab, var(--enki-stage) 6%, transparent);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s;
+}
+/* On dark paper the artwork's edge needs a hairline. */
+.dark .feed-card { border: 1px solid color-mix(in oklab, var(--enki-ink) 6%, transparent); }
+.feed-card-img {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+  opacity: 0; transition: opacity 0.2s ease;
+}
+.feed-card.is-loaded .feed-card-img { opacity: 1; }
+.feed-card-hit {
+  position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; padding: 0;
+  border: 0; background: none; cursor: pointer;
+}
+.feed-card-hit:focus-visible { outline-offset: -2px; }
+
+/* Always visible, top left, on the picture: the one fact a card carries. */
+.feed-card-price {
+  position: absolute; top: 8px; left: 8px; z-index: 2; padding: 3px 7px; border-radius: 4px;
+  border: 1px solid var(--enki-rule); background: color-mix(in oklab, var(--enki-paper) 92%, transparent);
+  color: var(--enki-ink); font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.04em; pointer-events: none;
+}
+.feed-card-price.is-free {
+  border-color: transparent; background: color-mix(in oklab, var(--enki-stage) 55%, transparent); color: var(--enki-on-stage);
+}
+/* Title and artist: hidden until a hover or the keyboard focus (Kev,
+   2026-10-13), then they rise in over a gradient; the artist is a link. */
+.feed-card-foot {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+  display: flex; flex-direction: column; gap: 4px; padding: 38px 10px 10px 12px; pointer-events: none;
+}
+.feed-card-foot::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; opacity: 0; transition: opacity 0.2s ease;
+  background: linear-gradient(to top,
+    color-mix(in oklab, var(--enki-stage) 78%, transparent) 0%,
+    color-mix(in oklab, var(--enki-stage) 45%, transparent) 55%,
+    transparent 100%);
+}
+.feed-card-title {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  color: var(--enki-on-stage); font-family: var(--font-serif), Georgia, serif; font-size: 18px; line-height: 1.15;
+  text-shadow: 0 1px 2px color-mix(in oklab, var(--enki-stage) 35%, transparent);
+}
+.feed-card-artist {
+  align-self: flex-start; max-width: 100%; padding: 0; border: 0; background: none; text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--enki-on-stage); font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer;
+}
+.feed-card-title, .feed-card-artist {
+  opacity: 0; transform: translateY(6px);
+  transition: opacity 0.2s ease, transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* The bookmark: top right, shown on hover; a set one stays. */
+.feed-card-mark {
+  position: absolute; top: 8px; right: 8px; z-index: 3; width: 30px; height: 30px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 50%; background: color-mix(in oklab, var(--enki-stage) 38%, transparent);
+  color: var(--enki-on-stage); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); cursor: pointer;
+  opacity: 0; pointer-events: none; transition: opacity 0.18s ease, background 0.15s;
+}
+.feed-card-mark:hover { background: color-mix(in oklab, var(--enki-stage) 60%, transparent); }
+.feed-card-mark:focus-visible { outline-color: var(--enki-on-stage); }
+.feed-card.is-marked .feed-card-mark { opacity: 1; pointer-events: auto; }
+.feed-card:focus-within :is(.feed-card-title, .feed-card-artist) { opacity: 1; transform: none; }
+.feed-card:focus-within .feed-card-artist { pointer-events: auto; }
+.feed-card:focus-within .feed-card-foot::before { opacity: 1; }
+.feed-card:focus-within .feed-card-mark { opacity: 1; pointer-events: auto; }
+
+@media (hover: hover) and (pointer: fine) {
+  .feed-card:hover { transform: translateY(-4px); box-shadow: 0 16px 32px color-mix(in oklab, var(--enki-stage) 8%, transparent); }
+  .feed-card:hover :is(.feed-card-title, .feed-card-artist) { opacity: 1; transform: none; }
+  .feed-card:hover .feed-card-artist { pointer-events: auto; }
+  .feed-card:hover .feed-card-foot::before { opacity: 1; }
+  .feed-card:hover .feed-card-mark { opacity: 1; pointer-events: auto; }
+}
+
+/* ── Phones, tablets, touch ── */
+@media (max-width: 1023.98px) {
+  .feed-bar { padding: 0 12px; }
+}
+@media (max-width: 767.98px) {
+  /* .ek-main already clears the phone header and the tab bar. */
+  .feed { padding: 48px 0 76px; }
+  .feed-bar { top: calc(54px + var(--ek-banner-h, 0px)); }
+  .feed-chip { padding: 0 12px; }
+}
+@media (pointer: coarse) {
+  .feed-chip { min-width: 44px; }
+  .feed-search-btn { width: 44px; height: 44px; }
+  .feed-search input { font-size: 16px; }
+  .feed-card-mark { width: 44px; height: 44px; }
+  .feed-card-mark svg { width: 19px; height: 19px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .feed-card, .feed-card *, .feed-card-foot::before, .feed-bar, .feed-chips, .feed-search input { transition: none; }
+  .feed-card:hover { transform: none; }
+  .feed-skel { animation: none; opacity: 0.6; }
+}

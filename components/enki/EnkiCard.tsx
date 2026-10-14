@@ -95,8 +95,8 @@ export default function EnkiCard({ prompt, onOpen, onEdit }: EnkiCardProps) {
             className="enki-edit"
             onClick={(event) => { event.preventDefault(); event.stopPropagation(); onEdit(prompt); }}
             type="button"
-            aria-label="Edit this prompt in the node editor"
-            title="Edit in Create Prompt 2"
+            aria-label="Edit this prompt"
+            title="Edit prompt"
           >
             <PencilLine size={14} />
           </button>

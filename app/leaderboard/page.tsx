@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { promptPage } from "@/lib/ui/image-view/open-link";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import { failureSentence } from "@/lib/search/client";
 
@@ -106,7 +107,8 @@ export default function LeaderboardPage() {
     return () => { dead = true; };
   }, []);
 
-  const openPrompt = (id: string | null) => { if (id) router.push(`/generator/${id}`); };
+  // Opens in the shell, beside the menu, never on a page of its own (Kev, 2026-10-13).
+  const openPrompt = (id: string | null) => { if (id) router.push(promptPage(id)); };
 
   const isGens = metric === "generations";
   const periodLabel = (PERIODS.find((p) => p.key === period)?.label ?? "This week").toLowerCase();

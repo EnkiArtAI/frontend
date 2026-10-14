@@ -55,11 +55,6 @@ function initials(name: string) {
     .join("") || "EA";
 }
 
-function dollars(value: unknown) {
-  if (typeof value !== "number" || Number.isNaN(value)) return 0;
-  return value > 20 ? value / 100 : value;
-}
-
 function asRecord(value: unknown): UnknownRecord {
   return value && typeof value === "object" ? value as UnknownRecord : {};
 }
@@ -150,7 +145,9 @@ export function mapMarketplacePromptToEnkiPrompt(prompt: unknown, index = 0): En
   const variables = variablesFromUnknown(prompt);
   const art = imageFromUnknown(prompt);
   const pricing = asRecord(record.pricing);
-  const price = dollars(readNumber(record.priceUsdCents) ?? readNumber(record.price) ?? readNumber(pricing.pricePerGeneration));
+  // priceUsdCents is integer cents by its name; the older price fields are dollars.
+  const cents = readNumber(record.priceUsdCents);
+  const price = cents !== undefined ? cents / 100 : readNumber(record.price) ?? readNumber(pricing.pricePerGeneration) ?? 0;
   const id = String(readString(record.id) || readString(record._id) || `prompt_${index}`);
   const stats = asRecord(record.stats);
   const reviews = asRecord(stats.reviews);
