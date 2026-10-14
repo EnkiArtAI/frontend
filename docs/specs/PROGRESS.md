@@ -53,7 +53,53 @@ Full detail in docs/specs/batches/batch-01.md, batch-03.md, batch-06-cdp1-soc8.m
 | #169 | SOC-8 | Open, green |
 | #173 | ENV-01 (forgot-password honesty, narrowed) | Open, proved red->green before CI got billing-blocked; done directly by the coordinator (no subagent), not reviewed by anyone else |
 
-## CRITICAL — GitHub Actions is blocked repo-wide (2026-10-10, ~13:59 UTC)
+## CRITICAL — main merged 195 commits (PR #192, escrow/redesign cutover) while this
+session was idle (2026-10-10 to 2026-10-14). Full reconciliation done 2026-10-14:
+- `ci/setup` and 6 of 7 dependent branches (fix/rec-7-remove-stale-comment,
+  feat/mfa-1-single-use-stepup, feat/ban-8-withdraw-request-stepup,
+  feat/cdp-1-upgrade-wallet, feat/soc-8-betagate-whitelist,
+  fix/env-01-forgot-password-honesty) merged current `main` in cleanly (no
+  conflicts except a generated-lockfile conflict on CDP-1, resolved with a
+  targeted `npm install --package-lock-only` per rule 4A.1 — see commit
+  020471f for a loosened-pin regression that install caused and was then
+  fixed). All pushed. REC-7's own change (a stale-comment deletion) turned
+  out to be **fully superseded** — the escrow rewrite deleted the same code
+  more thoroughly — so #163's diff against current `ci/setup` is now empty;
+  recommend closing #163 as moot rather than merging a no-op.
+- `feat/rec-1-payment-link-imageid` (#164) needed substantial manual
+  reconciliation, not just conflict resolution: the escrow rewrite restructured
+  the exact code REC-1 touched (payment-intent reading moved after auth, added
+  an ownership check; `recordGeneration`'s error-handling model changed from
+  REC-1's own alert-based design back to upstream's throw-based
+  `requireAcceptedImage` gate, now load-bearing for escrow safety). Resolved by
+  keeping the escrow throw-safety behavior and re-applying REC-1's actual
+  additions (imageId capture, payment_intent_id/transactionHash/amountPaidCents
+  wiring) on top of it, confirmed the `total_micro`/`tx_signature` columns are
+  real via `migrations/generation_payment_intents.sql`, and fixed 2 further
+  test files whose mocks assumed the old bare-string return type. **Verified:
+  tests, build and typecheck all pass on the reconciled branch** — this was
+  real, careful rework, not a guess. Full narrative in this file's git history
+  (commit messages) and the diff itself.
+- `feat/rec-3-x402-recording` (#168) merged the updated REC-1 branch cleanly,
+  no conflicts (its target file, the x402 route, was untouched by the escrow
+  cutover, as already established in batch-03.md).
+
+## NEW CRITICAL BLOCKER — main's own CI has been red since the merge
+Every one of the 9 PRs (162-169, 173) now fails the `lint` job identically:
+`components/enki/EnkiFeedPage.tsx:71:13 error: Calling setState synchronously
+within an effect can trigger cascading renders`. Confirmed via `main`'s own
+CI run (38365847365, 2026-10-13) that this is pre-existing on `main` itself,
+not introduced by anything in this bundle — nobody has fixed it since the
+merge landed. `components/**` is Frontend-owned per CONTRIBUTING.md; this
+coordinator has not touched it, pending the human's call on whether to fix it
+(quick, likely a few lines) or leave it for the Frontend owner. **Every PR in
+this bundle will show a red lint check until this is fixed on `main`, through
+no fault of its own** — don't mistake this for a regression in any of our work.
+
+## RESOLVED 2026-10-14 — GitHub Actions billing block (was: 2026-10-10, ~13:59 UTC)
+Confirmed fixed: CI runs now take normal time (minutes, not seconds) and reach
+real pass/fail results. Original note kept below for the record.
+
 Every CI job (build/typecheck/lint/tests) now fails in ~1-4 seconds with:
 "The job was not started because recent account payments have failed or your
 spending limit needs to be increased. Please check the 'Billing & plans'
