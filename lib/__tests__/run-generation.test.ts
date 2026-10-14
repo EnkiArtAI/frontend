@@ -9,7 +9,7 @@ import { describe, it, expect, vi } from "vitest";
 
 vi.mock("@/lib/session-headers", () => ({ sessionAuthHeaders: () => ({ "X-Session-Token": "t" }) }));
 
-import { runGeneration } from "@/lib/generation/run-generation";
+import { runGeneration, runGenerationBatch } from "@/lib/generation/run-generation";
 import { registerCdpEnsure } from "@/lib/cdp-bridge";
 import type { CatalogueEntry } from "@/hooks/useModelLimits";
 import { REQUEST_MAX_BYTES, REFS_TOO_LARGE } from "@/lib/request-size";
@@ -27,18 +27,20 @@ let calls: Call[] = [];
 
 function scriptFetch(script: Record<string, unknown>) {
   calls = [];
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const path = String(url);
-    calls.push({ path, body: JSON.parse(String(init.body)), headers: init.headers as Record<string, string> });
+    calls.push({ path, body: init?.body ? JSON.parse(String(init.body)) : {}, headers: (init?.headers ?? {}) as Record<string, string> });
     if (!(path in script)) throw new Error(`unscripted fetch: ${path}`);
+    if (script[path] instanceof Error) throw script[path];
     return { ok: true, status: 200, json: async () => script[path] } as Response;
   }));
 }
 
 const PAID = {
   "/api/payments/generation/intent": { intent: { id: "i-1" } },
-  "/api/payments/generation/authorize": { transaction: "dHg=" },
-  "/api/payments/generation/submit": { authorized: true },
+  "/api/payments/generation/authorize": { intentId: "i-1", transaction: "dHg=", units: 1, paymentScheme: "escrow" },
+  "/api/payments/generation/submit": { intentId: "i-1", paymentScheme: "escrow", state: "funded", funded: true },
+  "/api/payments/generation/cancel": { ok: true },
   "/api/generate-image": { imageUrl: "https://img/1.png" },
 };
 const BASE = { prompt: "a cat", aspectRatio: "1:1", resolution: "4K" as const };
@@ -51,14 +53,6 @@ describe("an artist's draft", () => {
     scriptFetch({ "/api/generate-free": { imageUrl: "https://img/2.png" } });
     await runGeneration({ ...BASE, model: FLUX, authoring: true }, vi.fn());
     expect(calls[0].body.authoring).toBe(true);
-  });
-
-  it("comes from both editors", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const ROOT = join(__dirname, "..", "..");
-    expect(readFileSync(join(ROOT, "components", "EnkiPromptEditor.tsx"), "utf8")).toMatch(/referenceImages: cardRefs\.length \? cardRefs : undefined,\s*authoring: true,/);
-    expect(readFileSync(join(ROOT, "components", "enki-shell", "NodeCreator.tsx"), "utf8")).toMatch(/workflow: buildExportJSON\(\),\s*authoring: true,/);
   });
 });
 
@@ -87,9 +81,10 @@ describe("a paid model", () => {
       "/api/payments/generation/authorize",
       "/api/payments/generation/submit",
       "/api/generate-image",
+      "/api/payments/generation/cancel",
     ]);
     expect(calls[0].body).toEqual({ promptId: "p-1", modelId: GPT.id, resolution: "4K", quality: "high", boost: false, referenceImageCount: 2 });
-    expect(calls[3].body).toEqual({ intentId: "i-1", prompt: "a cat", variableValues: { animal: "fox" }, aspectRatio: "1:1", referenceImages: ["data:a", "data:b"] });
+    expect(calls[3].body).toEqual({ intentId: "i-1", unitIndex: 0, prompt: "a cat", variableValues: { animal: "fox" }, aspectRatio: "1:1", referenceImages: ["data:a", "data:b"] });
     expect(calls[3].headers["X-Session-Token"]).toBe("t");
   });
 
@@ -131,7 +126,7 @@ describe("a paid model", () => {
   it("generates nothing when the buyer cancels in the wallet", async () => {
     scriptFetch(PAID);
     const out = await runGeneration({ ...BASE, model: GPT }, vi.fn(() => { throw new Error("User rejected the request"); }));
-    expect(out).toMatchObject({ ok: false, error: expect.stringMatching(/nothing was charged/) });
+    expect(out).toMatchObject({ ok: false, error: expect.stringMatching(/nothing was charged/i) });
     expect(calls.map((c) => c.path)).not.toContain("/api/generate-image");
   });
 });
@@ -160,7 +155,7 @@ describe("a request too large to arrive", () => {
     const ensure = vi.fn(async () => {});
     registerCdpEnsure(ensure);
     try {
-      expect(await runGeneration({ ...BASE, model: GPT, referenceImages: huge }, sign)).toEqual({ ok: false, error: REFS_TOO_LARGE });
+      expect(await runGeneration({ ...BASE, model: GPT, referenceImages: huge }, sign)).toEqual({ ok: false, phase: "prepare", error: REFS_TOO_LARGE });
     } finally {
       registerCdpEnsure(null);
     }
@@ -171,13 +166,242 @@ describe("a request too large to arrive", () => {
 
   it("is refused on the free route too, unsent", async () => {
     scriptFetch({ "/api/generate-free": { imageUrl: "https://img/free.png" } });
-    expect(await runGeneration({ ...BASE, model: FLUX, referenceImages: huge }, vi.fn())).toEqual({ ok: false, error: REFS_TOO_LARGE });
+    expect(await runGeneration({ ...BASE, model: FLUX, referenceImages: huge }, vi.fn())).toEqual({ ok: false, phase: "prepare", error: REFS_TOO_LARGE });
     expect(calls).toEqual([]);
   });
 
   it("is measured whole: a request that fits still goes", async () => {
     scriptFetch(PAID);
     await runGeneration({ ...BASE, model: GPT, referenceImages: ["data:image/webp;base64," + "A".repeat(REQUEST_MAX_BYTES / 2)] }, vi.fn(async () => "s"));
-    expect(calls.at(-1)?.path).toBe("/api/generate-image");
+    expect(calls.some(call => call.path === "/api/generate-image")).toBe(true);
   });
+});
+
+
+describe("the failure phase of a generation", () => {
+  it.each(["intent", "authorize", "submit"])("a network error in %s is still before generation", async (step) => {
+    scriptFetch({ ...PAID, ["/api/payments/generation/" + step]: new Error("Connection lost") });
+    const sign = vi.fn(async () => "signed");
+    const out = await runGeneration({ ...BASE, model: GPT }, sign);
+    expect(out).toMatchObject({ ok: false, phase: "authorization", error: expect.any(String) });
+    expect(calls.map((c) => c.path)).not.toContain("/api/generate-image");
+    expect(sign).toHaveBeenCalledTimes(step === "submit" ? 1 : 0);
+  });
+
+  it("the wallet setup can fail before any payment request", async () => {
+    scriptFetch(PAID);
+    registerCdpEnsure(async () => { throw new Error("Wallet unavailable"); });
+    try {
+      expect(await runGeneration({ ...BASE, model: GPT }, vi.fn())).toMatchObject({ ok: false, phase: "prepare" });
+      expect(calls).toEqual([]);
+    } finally { registerCdpEnsure(null); }
+  });
+
+  it("a signed request lost during generation has an uncertain outcome", async () => {
+    scriptFetch({ ...PAID, "/api/generate-image": new Error("Connection lost") });
+    expect(await runGeneration({ ...BASE, model: GPT }, vi.fn(async () => "signed"))).toMatchObject({ ok: false, phase: "generation" });
+    expect(calls.some(call => call.path === "/api/generate-image")).toBe(true);
+  });
+
+  it("a free request lost during generation also records that phase", async () => {
+    scriptFetch({ "/api/generate-free": new Error("Connection lost") });
+    expect(await runGeneration({ ...BASE, model: FLUX }, vi.fn())).toMatchObject({ ok: false, phase: "generation" });
+  });
+
+  it("a successful response without an image came from the generation phase", async () => {
+    scriptFetch({ ...PAID, "/api/generate-image": {} });
+    expect(await runGeneration({ ...BASE, model: GPT }, vi.fn(async () => "signed"))).toMatchObject({ ok: false, phase: "generation", error: "No image returned" });
+  });
+});
+
+describe("a batch is one paid click", () => {
+  const authorise = (units: number) => ({ ...PAID, "/api/payments/generation/authorize": { intentId: "i-1", transaction: "dHg=", units, paymentScheme: "escrow" } });
+  const requests = (count: number) => Array.from({ length: count }, () => ({ ...BASE, model: GPT }));
+  it("four paid images use one escrow deposit, one signature and four unique server unit indexes", async () => {
+    scriptFetch(authorise(4));
+    const sign = vi.fn(async () => "signed");
+    const outcomes = await runGenerationBatch(requests(4), sign);
+    expect(outcomes.every(outcome => outcome.ok)).toBe(true);
+    expect(calls.filter(call => call.path.endsWith("/intent"))).toHaveLength(1);
+    expect(calls.find(call => call.path.endsWith("/authorize"))?.body).toEqual({ intentId: "i-1", units: 4 });
+    expect(sign).toHaveBeenCalledTimes(1);
+    const generated = calls.filter(call => call.path === "/api/generate-image");
+    expect(generated.map(call => call.body.unitIndex)).toEqual([0, 1, 2, 3]);
+    expect(generated.every(call => call.body.intentId === "i-1" && call.body.modelId === undefined)).toBe(true);
+  });
+  it("an explicit one-free plus three-paid selection keeps the chosen models and one paid deposit", async () => {
+    scriptFetch({ ...authorise(3), "/api/generate-free": { imageUrl: "https://img/free.png" } });
+    const outcomes = await runGenerationBatch([{ ...BASE, model: FLUX }, ...requests(3)], vi.fn(async () => "signed"));
+    expect(outcomes).toHaveLength(4);
+    expect(calls.filter(call => call.path === "/api/generate-free")).toHaveLength(1);
+    expect(calls.find(call => call.path === "/api/generate-free")?.body.modelId).toBe(FLUX.id);
+    expect(calls.find(call => call.path.endsWith("/intent"))?.body.modelId).toBe(GPT.id);
+    expect(calls.find(call => call.path.endsWith("/authorize"))?.body.units).toBe(3);
+    expect(calls.filter(call => call.path === "/api/generate-image").map(call => call.body.unitIndex)).toEqual([0, 1, 2]);
+  });
+  it("never auto-switches an exhausted or oversized free-model order to a paid model", async () => {
+    scriptFetch({});
+    const sign = vi.fn();
+    expect((await runGenerationBatch(Array.from({ length: 4 }, () => ({ ...BASE, model: FLUX })), sign)).every(outcome => !outcome.ok)).toBe(true);
+    expect(calls).toEqual([]);
+    expect(sign).not.toHaveBeenCalled();
+  });
+  it("refuses inconsistent paid terms or an oversized reference before signing or calling providers", async () => {
+    scriptFetch({});
+    await runGenerationBatch([{ ...BASE, model: GPT }, { ...BASE, model: NANO }], vi.fn());
+    await runGenerationBatch([{ ...BASE, model: GPT }, { ...BASE, model: GPT, referenceImages: ["A".repeat(REQUEST_MAX_BYTES)] }], vi.fn());
+    expect(calls).toEqual([]);
+  });
+  it("an ambiguous deposit blocks every provider and retains all unit indexes for same-intent resume", async () => {
+    scriptFetch({ ...authorise(4), "/api/payments/generation/submit": new Error("lost response") });
+    const pending = await runGenerationBatch(requests(4), vi.fn(async () => "original-wire"));
+    expect(pending.every(outcome => !outcome.ok && outcome.payment?.intentId === "i-1" && !outcome.payment.generationSubmitted)).toBe(true);
+    expect(calls.some(call => call.path.startsWith("/api/generate-"))).toBe(false);
+    const payments = pending.map(outcome => outcome.payment!);
+    expect(payments.map(payment => payment.unitIndex)).toEqual([0, 1, 2, 3]);
+    scriptFetch({ ...authorise(4), "/api/payments/generation/status?intentId=i-1": PAID["/api/payments/generation/submit"] });
+    const sign = vi.fn();
+    const resumed = await runGenerationBatch(requests(4), sign, undefined, payments);
+    expect(resumed.every(outcome => outcome.ok)).toBe(true);
+    expect(sign).not.toHaveBeenCalled();
+    expect(calls.some(call => call.path.endsWith("/intent") || call.path.endsWith("/authorize") || call.path.endsWith("/submit"))).toBe(false);
+    expect(calls.filter(call => call.path === "/api/generate-image").map(call => call.body.unitIndex)).toEqual([0, 1, 2, 3]);
+  });
+  it("a lost generation response is reconciled, never requested or paid twice", async () => {
+    scriptFetch({ ...PAID, "/api/generate-image": new Error("lost response") });
+    const original = await runGeneration({ ...BASE, model: GPT }, vi.fn(async () => "signed"));
+    expect(original).toMatchObject({ ok: false, phase: "generation", payment: { intentId: "i-1", generationSubmitted: true } });
+    scriptFetch({ "/api/payments/generation/status?intentId=i-1": PAID["/api/payments/generation/submit"] });
+    const sign = vi.fn();
+    expect(await runGeneration({ ...BASE, model: GPT }, sign, original.payment)).toMatchObject({ ok: false, payment: { intentId: "i-1", generationSubmitted: true } });
+    expect(calls.map(call => call.path)).toEqual(["/api/payments/generation/status?intentId=i-1", "/api/payments/generation/cancel"]);
+    expect(sign).not.toHaveBeenCalled();
+  });
+  it("a provider HTTP refusal also preserves the funded deposit without claiming nothing was charged", async () => {
+    scriptFetch(PAID);
+    const fetchMock = vi.mocked(fetch);
+    const ordinary = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url, init) => String(url) === "/api/generate-image" ? {
+      ok: false, status: 502, json: async () => ({ error: "Provider unavailable" }),
+    } as Response : ordinary(url, init));
+    expect(await runGeneration({ ...BASE, model: GPT }, vi.fn(async () => "signed"))).toMatchObject({
+      ok: false, status: 502, payment: { intentId: "i-1", state: "funded", generationSubmitted: true },
+    });
+  });
+});
+
+it("reconciles delivered and running units while requesting only never-started pending units", async () => {
+  const units = [
+    { unit_index: 0, state: "delivered", generation_id: "33333333-3333-4333-8333-333333333333", imageUrl: "https://img/already-delivered.png" },
+    { unit_index: 1, state: "running", generation_id: null },
+    { unit_index: 2, state: "pending", generation_id: null },
+    { unit_index: 3, state: "failed", generation_id: null },
+  ];
+  scriptFetch({ ...PAID, "/api/payments/generation/status?intentId=i-1": { ...PAID["/api/payments/generation/submit"], units } });
+  const resume = units.map(unit => ({ intentId: "i-1", units: 4, unitIndex: unit.unit_index,
+    paymentScheme: "escrow" as const, state: "funded" as const, generationSubmitted: unit.state !== "pending" }));
+  const sign = vi.fn();
+  const outcomes = await runGenerationBatch(Array.from({ length: 4 }, () => ({ ...BASE, model: GPT })), sign, undefined, resume);
+  expect(outcomes[0]).toMatchObject({ ok: true, imageUrl: "https://img/already-delivered.png" });
+  expect(outcomes[1]).toMatchObject({ ok: false, payment: { unitIndex: 1, generationSubmitted: true } });
+  expect(outcomes[2]).toMatchObject({ ok: true });
+  expect(outcomes[3]).toMatchObject({ ok: false, error: expect.stringMatching(/unused payment is being refunded/) });
+  expect(calls.filter(call => call.path === "/api/generate-image").map(call => call.body.unitIndex)).toEqual([2]);
+  expect(calls.some(call => call.path.endsWith("/intent") || call.path.endsWith("/authorize") || call.path.endsWith("/submit"))).toBe(false);
+  expect(sign).not.toHaveBeenCalled();
+});
+
+it("awaits unit payment checkpoints before any provider request and preserves sent flags across restore", async () => {
+  scriptFetch(PAID);
+  const checkpoints: unknown[] = [];
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const providerCheckpointEntered = new Promise<void>(resolve => { entered = resolve; });
+  const running = runGenerationBatch([{ ...BASE, model: GPT }], vi.fn(async () => "signed"), undefined, undefined, async payments => {
+    checkpoints.push(payments.map(payment => ({ ...payment })));
+    if (payments.some(payment => payment.generationSubmitted)) {
+      entered();
+      await gate;
+    }
+  });
+  await providerCheckpointEntered;
+  expect(calls.some(call => call.path === "/api/generate-image")).toBe(false);
+  expect(checkpoints.at(-1)).toEqual([expect.objectContaining({ intentId: "i-1", unitIndex: 0, state: "funded", generationSubmitted: true })]);
+  release();
+  expect((await running)[0]).toMatchObject({ ok: true });
+});
+
+describe("a batch watched by its queue (Kev, 2026-10-13: cancel while the request is not yet sent)", () => {
+  const authorise = (units: number) => ({ ...PAID, "/api/payments/generation/authorize": { intentId: "i-1", transaction: "dHg=", units, paymentScheme: "escrow" } });
+  const never = () => false;
+
+  it("says onSend right before each image request goes out, free and paid, and never for a unit that was not requested", async () => {
+    scriptFetch({ ...authorise(2), "/api/generate-free": { imageUrl: "https://img/free.png" } });
+    const sent: number[] = [];
+    const seenAtSend: number[] = [];
+    await runGenerationBatch([{ ...BASE, model: FLUX }, { ...BASE, model: GPT }, { ...BASE, model: GPT }], vi.fn(async () => "signed"), undefined, undefined, undefined, {
+      onSend: (index) => { sent.push(index); seenAtSend.push(calls.filter((c) => c.path.startsWith("/api/generate-")).length); },
+      cancelled: (index) => index === 2,
+    });
+    expect(sent.sort()).toEqual([0, 1]);
+    // Before its own request: at most the other unit's request had gone out by then.
+    expect(seenAtSend.every((n) => n <= 1)).toBe(true);
+    expect(calls.filter((c) => c.path === "/api/generate-image").map((c) => c.body.unitIndex)).toEqual([0]);
+  });
+
+  it("a cancelled unit of a paid batch is never requested, carries its deposit, and the batch still closes the unstarted units", async () => {
+    scriptFetch(authorise(2));
+    const outcomes = await runGenerationBatch([{ ...BASE, model: GPT }, { ...BASE, model: GPT }], vi.fn(async () => "signed"), undefined, undefined, undefined, { cancelled: (index) => index === 1 });
+    expect(outcomes[0]).toMatchObject({ ok: true });
+    expect(outcomes[1]).toMatchObject({ ok: false, error: "Cancelled before it was sent.", payment: { intentId: "i-1", unitIndex: 1, generationSubmitted: false } });
+    expect(outcomes[1]).not.toMatchObject({ phase: "generation" });
+    expect(calls.filter((c) => c.path === "/api/generate-image").map((c) => c.body.unitIndex)).toEqual([0]);
+    expect(calls.at(-1)?.path).toBe("/api/payments/generation/cancel");
+  });
+
+  it("a cancelled free unit is simply never requested and carries no payment", async () => {
+    scriptFetch({ "/api/generate-free": { imageUrl: "https://img/free.png" } });
+    const [out] = await runGenerationBatch([{ ...BASE, model: FLUX }], vi.fn(), undefined, undefined, undefined, { cancelled: () => true });
+    expect(out).toEqual({ ok: false, phase: "prepare", error: "Cancelled before it was sent." });
+    expect(calls).toEqual([]);
+  });
+
+  it("a batch whose every unit was taken back before it started opens no wallet and sends nothing", async () => {
+    scriptFetch(PAID);
+    const ensure = vi.fn(async () => {});
+    registerCdpEnsure(ensure);
+    const sign = vi.fn(async () => "signed");
+    try {
+      const outcomes = await runGenerationBatch([{ ...BASE, model: GPT }], sign, undefined, undefined, undefined, { cancelled: () => true });
+      expect(outcomes).toEqual([{ ok: false, phase: "prepare", error: "Cancelled before it was sent." }]);
+    } finally { registerCdpEnsure(null); }
+    expect(ensure).not.toHaveBeenCalled();
+    expect(sign).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+  });
+
+  it("taken back while the wallet was open: the signature is never submitted, nothing is charged", async () => {
+    scriptFetch(PAID);
+    let gone = false;
+    const sign = vi.fn(async () => { gone = true; return "signed"; });
+    const [out] = await runGenerationBatch([{ ...BASE, model: GPT }], sign, undefined, undefined, undefined, { cancelled: () => gone });
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(out).toMatchObject({ ok: false, phase: "authorization", error: "Cancelled before anything was charged." });
+    expect(out).not.toHaveProperty("payment");
+    expect(calls.map((c) => c.path)).toEqual(["/api/payments/generation/intent", "/api/payments/generation/authorize"]);
+  });
+
+  it("a watch that cancels nothing changes nothing", async () => {
+    scriptFetch(PAID);
+    const [out] = await runGenerationBatch([{ ...BASE, model: GPT }], vi.fn(async () => "signed"), undefined, undefined, undefined, { cancelled: never });
+    expect(out).toMatchObject({ ok: true });
+    expect(calls.map((c) => c.path)).toContain("/api/generate-image");
+  });
+});
+
+it("a disappeared catalogue entry during resume never discards the existing payment identity", async () => {
+  scriptFetch({});
+  const payment = { intentId: "i-1", units: 1, unitIndex: 0, paymentScheme: "escrow" as const, state: "funded" as const, generationSubmitted: true };
+  expect(await runGeneration({ ...BASE, model: undefined }, vi.fn(), payment)).toMatchObject({ ok: false, payment: { intentId: "i-1", generationSubmitted: true } });
+  expect(calls).toEqual([]);
 });

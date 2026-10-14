@@ -13,7 +13,7 @@ request automatically once branch protection is on.
 | Area | Paths | Owner (review) |
 | --- | --- | --- |
 | Backend | `app/api/**`, `lib/**` except the UI helpers listed under Frontend, `migrations/**`, `backend/**`, `proxy.ts`, `shared/**` | Backend owner (see roster) |
-| Frontend | `components/**`, `hooks/**`, `providers/**`, `app/**/page.tsx`, `app/**/layout.tsx`, `app/**/*.css`, `public/**`, `lib/editor/**`, `lib/enkiPromptAdapter.ts`, `lib/variableColors.ts`, `lib/promptTextareaCaret.ts` | Frontend owner (see roster) |
+| Frontend | `components/**`, `hooks/**`, `providers/**`, `app/**/page.tsx`, `app/**/layout.tsx`, `app/**/*.css`, `public/**`, `lib/editor/**`, `lib/ui/**`, `lib/enkiPromptAdapter.ts`, `lib/variableColors.ts`, `lib/promptTextareaCaret.ts` | Frontend owner (see roster) |
 | Money and security | `lib/payments/**`, `app/api/payments/**`, `app/api/x402/**`, `app/api/auth/**`, `lib/webauthn.ts`, `lib/crypto.ts`, `lib/wallet-jwt.ts`, `lib/allowlist.ts`, `lib/session-user.ts`, `lib/auth.ts`, `lib/moderation/**`, `lib/moderation-enforcement.ts`, `proxy.ts` | Backend owner **and** Kev, both approvals |
 | Config, CI, docs | `package.json`, `tsconfig*.json`, `next.config.*`, `vercel.json`, `eslint.config.*`, `vitest*.ts`, `.github/**`, `*.md`, `docs/**`, `scripts/**` | Kev |
 

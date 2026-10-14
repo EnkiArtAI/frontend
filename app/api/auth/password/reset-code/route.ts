@@ -13,7 +13,7 @@ import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/ra
 import { completePasswordReset, sha256 } from "@/lib/password-reset";
 import { loginRefusal } from "@/lib/password-login";
 import { activeBanFor } from "@/lib/session-user";
-import { grantGateCookie, revokeGateCookie } from "@/lib/allowlist";
+import { admitAllowlisted, grantGateCookie, revokeGateCookie } from "@/lib/allowlist";
 
 const bodySchema = z.object({
   email: z.string().email().max(320),
@@ -63,6 +63,8 @@ export async function POST(req: NextRequest) {
   // The code came through the inbox: the email is confirmed (Kev, 2026-10-07).
   const result = await completePasswordReset(supabase, row.user_id, parsed.data.password, { inboxProven: true, ipHash: gate.ipHash });
   if ("error" in result) return NextResponse.json({ error: result.error }, { status: 500 });
+  // It passed the access list like a login: the account is a beta member.
+  if (!banned) await admitAllowlisted(supabase, row.user_id);
   // Enters like a login: the gate cookie, and /banned for a banned account.
   const res = NextResponse.json({ ...result, ...(banned ? { banned: true } : {}) });
   // A banned account loses the gate cookie, as at every login (BAN-1).

@@ -22,7 +22,6 @@
 /app/**/page.tsx                    @KiriKev @TODO-frontend
 /app/**/layout.tsx                  @KiriKev @TODO-frontend
 /app/**/*.css                       @KiriKev @TODO-frontend
-/lib/editor/                        @KiriKev @TODO-frontend
 
 # Backend
 /app/api/                           @TODO-backend
@@ -31,6 +30,12 @@
 /backend/                           @TODO-backend
 /shared/                            @TODO-backend
 /proxy.ts                           @TODO-backend @KiriKev
+
+# Frontend code under /lib/: after /lib/, so it wins
+/lib/editor/                        @KiriKev @TODO-frontend
+/lib/ui/                            @KiriKev @TODO-frontend
+/lib/enkiPromptAdapter.ts           @KiriKev @TODO-frontend
+/lib/variableColors.ts              @KiriKev @TODO-frontend
 
 # Money and security: backend owner AND Kev
 /lib/payments/                      @TODO-backend @KiriKev

@@ -11,8 +11,10 @@ import { toModelFamily } from "@/lib/generation/model-family";
  * brand's blue→violet gradient. GPT rides a six-petal knot built
  * geometrically — simple-icons removed the OpenAI mark on trademark
  * request, so this is our own rotationally-symmetric echo in the familiar
- * green. Flux gets a bolt in ember→amber. Unknown models fall back to a
- * neutral dot so a new row is never iconless.
+ * green. Flux carries the Black Forest Labs triangle (handoff §0, Kev's
+ * product call 3, 2026-10-09), in currentColor because that mark is
+ * monochrome: it follows the text it sits in on every theme. Unknown models
+ * fall back to a neutral dot so a new row is never iconless.
  */
 export default function GeneratorLogo({ name, size = 14 }: { name: string; size?: number }) {
   const family = toModelFamily(name);
@@ -44,14 +46,10 @@ export default function GeneratorLogo({ name, size = 14 }: { name: string; size?
   }
   if (/flux/i.test(name)) {
     return (
-      <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
-        <defs>
-          <linearGradient id="gl-flux" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#F97316" />
-            <stop offset="100%" stopColor="#FBBF24" />
-          </linearGradient>
-        </defs>
-        <path fill="url(#gl-flux)" d="M13 2 L4.5 13.5 H10.5 L9 22 L19.5 9.5 H12.8 Z" />
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+        <path d="M12 3 2.5 19.5h19z" opacity=".35" />
+        <path d="M12 8.5 6.3 18.3h11.4z" opacity=".7" />
+        <path d="M12 13.4 9.6 17.6h4.8z" />
       </svg>
     );
   }

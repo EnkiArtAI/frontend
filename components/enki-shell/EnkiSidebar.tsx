@@ -27,15 +27,14 @@ interface SidebarProps {
   onNav: (id: string) => void;
   rail: boolean;
   onCreate: () => void;
-  onCreate2: () => void;
-  nodeActive?: boolean;
   onFeedback?: () => void;
   /** Team-cookie browsing: earn buttons deactivate and say so. */
   guest?: boolean;
   account: { name: string; handle: string; initials: string; avatarUrl?: string | null };
   onToggleCollapse: () => void;
   collapsed: boolean;
-  balance: number;
+  /** "$4.20", "…" while it loads, or "Add funds" with no Solana wallet. */
+  balance: string;
   onProfile: () => void;
   onTopUp: () => void;
   onLogoff?: () => void;
@@ -46,7 +45,7 @@ interface SidebarProps {
 }
 
 export default function EnkiSidebar({
-  nav, active, onNav, rail, onCreate, onCreate2, nodeActive, onFeedback, guest = false,
+  nav, active, onNav, rail, onCreate, onFeedback, guest = false,
   account, onToggleCollapse, collapsed, balance, onProfile, onTopUp, onLogoff, theme, setTheme,
   mobileOpen = false, onCloseMobile,
 }: SidebarProps) {
@@ -87,7 +86,7 @@ export default function EnkiSidebar({
     <aside className={"ek-sidebar" + (mobileOpen ? " ek-sidebar--mobile-open" : "")}>
       {onCloseMobile && (
         <button
-          className="ek-sidebar-mobile-close"
+          className="ek-sidebar-mobile-close kit-hit"
           type="button"
           onClick={onCloseMobile}
           aria-label="Close menu"
@@ -158,10 +157,11 @@ export default function EnkiSidebar({
         )}
       </div>
 
-      <nav className="ek-nav">
+      <nav className="ek-nav" aria-label="Main">
         {nav.map((item) => {
           return (
-            <button key={item.id} className={"ek-nav-item" + (active === item.id ? " active" : "")} onClick={() => onNav(item.id)} type="button">
+            <button key={item.id} className={"ek-nav-item" + (active === item.id ? " active" : "")} onClick={() => onNav(item.id)} type="button"
+              aria-current={active === item.id ? "page" : undefined}>
               <span className="ek-nav-ico"><Icon name={item.icon} size={23} stroke={active === item.id ? 2.4 : 1.9} /></span>
               {!rail && <span className="ek-nav-label">{item.label}</span>}
               {item.badge ? <span className="ek-nav-badge">{item.badge}</span> : null}
@@ -189,16 +189,10 @@ export default function EnkiSidebar({
         </button>
       )}
 
-      <button className="ek-create" onClick={onCreate} type="button" title="Create Prompt" style={{ marginTop: 12 }}>
+      <button className="ek-create" onClick={onCreate} type="button" title="Create Prompt">
         <Icon name="pen" size={20} stroke={2.2} />
         {!rail && <span className="ek-create-label">Create Prompt</span>}
         {rail && <span className="ek-nav-tip">Create Prompt</span>}
-      </button>
-
-      <button className={"ek-create ek-create2" + (nodeActive ? " active" : "")} onClick={onCreate2} type="button" title="Create Prompt 2 — Node Creator">
-        <Icon name="grid" size={19} stroke={2.2} />
-        {!rail && <span className="ek-create-label">Create Prompt 2</span>}
-        {rail && <span className="ek-nav-tip">Node Creator</span>}
       </button>
 
       <div className="ek-side-spacer" />
@@ -223,7 +217,7 @@ export default function EnkiSidebar({
             <span className="ek-account-side">
               {!guest && (
                 <span className="ek-balance" onClick={(e) => { e.stopPropagation(); onTopUp(); }} title="Add funds">
-                  <Icon name="dollar" size={11} stroke={2.4} />{balance.toFixed(2)}
+                  {balance}
                 </span>
               )}
               {onLogoff && (

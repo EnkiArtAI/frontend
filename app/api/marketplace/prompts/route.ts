@@ -190,7 +190,7 @@ export async function GET(request: NextRequest) {
 
       // Released prompts only. Without this a draft was on the marketplace the
       // moment it was saved — see app/api/prompts/route.ts for the same fix.
-      dbQuery = dbQuery.eq("is_listed", true);
+      dbQuery = dbQuery.eq("is_listed", true).eq("listing_status", "active").is("deleted_at", null);
 
       /* ?models=<alias>&models=… narrows to prompts made with the picked
          generators (Kev, 2026-08-24: filter the wall by launcher). The
@@ -200,6 +200,18 @@ export async function GET(request: NextRequest) {
       const modelAliases = searchParams.getAll("models").filter(Boolean);
       if (modelAliases.length > 0) {
         dbQuery = dbQuery.in("ai_model", modelAliases);
+      }
+
+      /* ?ids=<uuid>&ids=… answers exactly these prompts, as feed cards: the
+         Likes tab and a bookmark category show them like Home (Kev,
+         2026-10-13). The caller keeps its own order; the listing, 18+ and
+         hidden-creator rules above and below still apply. Only uuids go to
+         the database, and a list without one answers nothing. */
+      const askedIds = searchParams.getAll("ids");
+      if (askedIds.length > 0) {
+        const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const ids = [...new Set(askedIds.filter((id) => UUID.test(id)))].slice(0, limit);
+        dbQuery = dbQuery.in("id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"]);
       }
 
       /* ?creator=<handle|uuid> narrows to one artist's shelf — the foreign

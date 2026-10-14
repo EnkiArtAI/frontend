@@ -5,7 +5,9 @@ import pg from 'pg';
 // by the generated Kit client; these bytes deliberately are not RPC fixtures.
 export async function checkEscrowDeposits({ db, row, check, rejects, id, intent, reserve, pgOptions }) {
   const address = char => char.repeat(32);
-  const message = Buffer.from([2,0,4,6,...Array(200).fill(7)]);
+  // Header 02 01: two required signatures, one of them read-only. The deposit's
+  // buyer is a read-only signer (Deposit.buyer has no mut), as found on devnet 2026-10-12.
+  const message = Buffer.from([2,1,4,6,...Array(200).fill(7)]);
   const unsigned = Buffer.concat([Buffer.from([2]),Buffer.alloc(128),message]);
   const signed = Buffer.concat([Buffer.from([2]),Buffer.alloc(64,8),Buffer.alloc(64,9),message]);
   const bytea = bytes => Buffer.from(bytes);
@@ -56,6 +58,20 @@ export async function checkEscrowDeposits({ db, row, check, rejects, id, intent,
     assert.equal(prepared.intent_id,intentId);
     assert.equal(Number(recovery.treasury_unit_micro),12_500_000);
     assert.equal(Number(recovery.recovery_unit_micro),0);
+  });
+
+  await check('deposit structure check pins the signature count, not the read-only header byte', async () => {
+    // Three required signatures: refused by the table check (23514), after a real reservation.
+    const three = Buffer.from([3,0,4,6,...Array(200).fill(7)]);
+    const refused = await intent(null,1_000_000,0);
+    await reserve(refused,4);
+    await rejects(() => prepare(args(refused,{ message: bytea(three), unsigned: bytea(Buffer.concat([Buffer.from([2]),Buffer.alloc(128),three])) })),'23514');
+    // A writable buyer (header 02 00) is still accepted: only byte 1 is pinned.
+    const writableBuyer = Buffer.from([2,0,4,6,...Array(200).fill(7)]);
+    const accepted = await intent(null,1_000_000,0);
+    await reserve(accepted,4);
+    const prepared = await prepare(args(accepted,{ message: bytea(writableBuyer), unsigned: bytea(Buffer.concat([Buffer.from([2]),Buffer.alloc(128),writableBuyer])) }));
+    assert.equal(prepared.state,'prepared');
   });
 
   await check('deposit rerun preserves service-only read and RPC privileges', async () => {

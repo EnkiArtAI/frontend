@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readSource } from "@/lib/__tests__/_read-source";
 import { join } from "node:path";
-import { toModelFamily } from "@/lib/generation-checkout";
+import { toModelFamily } from "@/lib/generation/model-family";
 
 /**
  * The buyer must receive the model they paid for.
@@ -18,27 +18,23 @@ const ROOT = join(__dirname, "..", "..", "..");
 const ROUTE = readSource(join(ROOT, "app", "api", "generate-image", "route.ts"));
 
 describe("the paid model family is enforced before generating", () => {
-  it("compares what was paid for against what would run", () => {
-    expect(ROUTE).toMatch(/runningFamily !== redemption\.modelFamily/);
+  it("compares the server-selected model with the stored paid family", () => {
+    expect(ROUTE).toContain("toModelFamily(paidModel.name) !== paid.model_family");
+    expect(ROUTE).toContain("await resolveModel(getSupabaseServerClientSafe(), [paid.model_id])");
   });
 
-  it("derives the running family from the resolved model, not from the request body", () => {
-    // body.modelIds is the attacker-controlled half; preflightModel is what
-    // resolveModel actually settled on.
-    expect(ROUTE).toMatch(/toModelFamily\(preflightModel\.name\)/);
+  it("uses only the stored model for provider preflight, never a body fallback", () => {
+    expect(ROUTE).toContain("const preflightModel = paidModel;");
+    expect(ROUTE).not.toContain("resolveModel(getSupabaseServerClientSafe(), body.modelIds)");
   });
 
-  it("refuses before anything is generated, and undoes the claim", () => {
-    const block = ROUTE.slice(ROUTE.indexOf("runningFamily !== redemption.modelFamily"));
-    const decision = block.slice(0, block.indexOf("status: 400"));
-    // releaseIfConsumed knows an AUTHORIZED intent must be voided rather than
-    // released — returning the claim would leave a live signature behind.
-    expect(decision).toMatch(/releaseIfConsumed\("rejected"\)/);
-    expect(decision).not.toMatch(/releaseGenerationIntent\(/);
-  });
-
-  it("says which family was paid for and which would have run", () => {
-    expect(ROUTE).toMatch(/This payment is for \$\{redemption\.modelFamily\}/);
+  it("refuses a missing or mismatched model before claiming a unit or calling a provider", () => {
+    const guard = ROUTE.indexOf("toModelFamily(paidModel.name) !== paid.model_family");
+    const claim = ROUTE.indexOf("await claimGenerationEscrowUnit(");
+    expect(guard).toBeGreaterThan(-1);
+    expect(claim).toBeGreaterThan(guard);
+    expect(ROUTE.slice(guard, claim)).toContain("status: 409");
+    expect(ROUTE.indexOf("generateImagesWithWaveSpeed(shared)")).toBeGreaterThan(claim);
   });
 });
 

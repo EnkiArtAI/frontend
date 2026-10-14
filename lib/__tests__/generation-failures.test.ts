@@ -89,8 +89,10 @@ describe("every failure point records it", () => {
   const AGENT = readSource(join(ROOT, "app", "api", "x402", "generate", "route.ts"));
   const count = (src: string) => (src.match(/after\(recordGenerationFailure\(/g) ?? []).length;
 
-  it("the human rail at the provider failure, the empty result, the unstored image, the image check and the catch-all", () => {
-    expect(count(HUMAN)).toBe(5);
+  it("the human rail at the provider failure, the empty result, the unstored image, the image check, the refused record and the catch-all", () => {
+    expect(count(HUMAN)).toBe(6);
+    // The refused record names its step (devnet 2026-10-13: a provider CHECK refused every WaveSpeed/OpenAI row silently).
+    expect(HUMAN).toMatch(/const reason = `record: \$\{e\.reason \?\? "unknown"\}`;/);
   });
 
   it("the free generator at the provider failure, the image check and the catch-all", () => {
