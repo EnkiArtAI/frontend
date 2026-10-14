@@ -39,6 +39,26 @@ html.ek-2fa-bar:not(.ek-in-shell) body { padding-top: var(--ek-page-top); }
   --enki-ember: #c96838;
   --enki-turq: #0d9488;
   --enki-danger: #b3271e;
+  /* The image UI's set. Stage = the always-dark surfaces (viewer, rendering
+     tile, glass on artwork); vary = one colour per variation. The shadows are
+     rgba, which the parity test cannot read: keep them equal by hand. */
+  --enki-amber: #e0a35c;
+  --enki-price-bg: #e0a35c;
+  --enki-price-ink: #1a1715;
+  --enki-stage: #1a1715;
+  --enki-on-stage: #faf8f4;
+  --enki-ref-a: #cfe3f2;
+  --enki-ref-b: #cdeee3;
+  --enki-ref-ink: #1e4b5a;
+  --enki-vary-1: #c96838;
+  --enki-vary-2: #0d9488;
+  --enki-vary-3: #a8822a;
+  --enki-vary-4: #3d3a36;
+  --enki-vary-5: #8b5cf6;
+  --enki-vary-6: #5b7a91;
+  --enki-shadow-pop: 0 18px 50px rgba(26, 23, 21, 0.12);
+  --enki-shadow-card: 0 8px 24px rgba(26, 23, 21, 0.1);
+  --enki-shadow-bar: 0 -16px 20px -12px rgba(26, 23, 21, 0.08);
   --font-sans: var(--font-geist-sans), system-ui, sans-serif;
   --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
   --font-serif: var(--font-instrument-serif), 'Georgia', serif;
@@ -56,6 +76,23 @@ html.ek-2fa-bar:not(.ek-in-shell) body { padding-top: var(--ek-page-top); }
   --enki-ember: #cba24a;
   --enki-turq: #2dd4bf;
   --enki-danger: #e0584f;
+  --enki-amber: #e0a35c;
+  --enki-price-bg: #0a1825;
+  --enki-price-ink: #e0a35c;
+  --enki-stage: #050c13;
+  --enki-on-stage: #faf8f4;
+  --enki-ref-a: #cfe3f2;
+  --enki-ref-b: #cdeee3;
+  --enki-ref-ink: #1e4b5a;
+  --enki-vary-1: #cba24a;
+  --enki-vary-2: #2dd4bf;
+  --enki-vary-3: #e07a4f;
+  --enki-vary-4: #97aebb;
+  --enki-vary-5: #c084fc;
+  --enki-vary-6: #7fb3d5;
+  --enki-shadow-pop: 0 18px 50px rgba(0, 0, 0, 0.45);
+  --enki-shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --enki-shadow-bar: 0 -16px 20px -12px rgba(0, 0, 0, 0.35);
 }
 
 .dark.theme-purple {
@@ -70,6 +107,23 @@ html.ek-2fa-bar:not(.ek-in-shell) body { padding-top: var(--ek-page-top); }
   --enki-ember: #a855f7;
   --enki-turq: #2dd4bf;
   --enki-danger: #e0584f;
+  --enki-amber: #e0a35c;
+  --enki-price-bg: #140e1f;
+  --enki-price-ink: #e0a35c;
+  --enki-stage: #0b0713;
+  --enki-on-stage: #faf8f4;
+  --enki-ref-a: #cfe3f2;
+  --enki-ref-b: #cdeee3;
+  --enki-ref-ink: #1e4b5a;
+  --enki-vary-1: #a855f7;
+  --enki-vary-2: #2dd4bf;
+  --enki-vary-3: #e0a35c;
+  --enki-vary-4: #a99fc0;
+  --enki-vary-5: #f472b6;
+  --enki-vary-6: #7fb3d5;
+  --enki-shadow-pop: 0 18px 50px rgba(0, 0, 0, 0.45);
+  --enki-shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --enki-shadow-bar: 0 -16px 20px -12px rgba(0, 0, 0, 0.35);
 }
 
 /* ConnectWallet Button - Theme-aware styling */
@@ -142,6 +196,9 @@ textarea {
   --header-bg: rgba(255, 255, 255, 0.98);
   --qc-bg: #1a1715;   /* generate launcher pill */
   --qc-ink: #ffffff;
+  /* Generate / Release outside .ek-app (/generator/[id]); same as the shell's. */
+  --cta-bg: #1a1715;
+  --cta-ink: #ffffff;
   --background: 45 45% 97%;
   --foreground: 190 30% 12%;
   --border: 182 16% 78%;

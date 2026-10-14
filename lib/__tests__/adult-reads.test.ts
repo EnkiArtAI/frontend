@@ -111,7 +111,7 @@ describe("the routes", () => {
     const profile = src("components", "profile", "ProfileView.tsx");
     expect(profile).toMatch(/fetch\(`\/api\/marketplace\/prompts\?\$\{params\.toString\(\)\}`, \{ headers: viewerHeaders\(\)/);
     expect(profile).toMatch(/fetch\(`\/api\/generations\?userId=\$\{encodeURIComponent\(galleryWallet\)\}&limit=50`, \{ headers: viewerHeaders\(\) \}\)/);
-    expect(src("components", "PromptGeneratorView.tsx")).toMatch(/&limit=20`, \{ headers: viewerHeaders\(\) \}\)/);
+    expect(src("components", "image-view", "useOwnRenders.ts")).toContain("{ headers: viewerHeaders() }");
     expect(src("app", "my-gallery", "page.tsx")).toMatch(/&limit=100`, \{ headers: viewerHeaders\(\) \}\)/);
   });
 });

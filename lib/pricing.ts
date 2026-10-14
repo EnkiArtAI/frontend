@@ -12,9 +12,12 @@ export type PriceRow = Record<ResolutionTier, number> & { "1K"?: number };
 
 /** Real per-image API cost (USD) by model id and resolution tier. */
 export const MODEL_IMAGE_PRICING: Record<string, PriceRow> = {
-  /* nano-banana-pro runs Gemini direct since 2026-09-05: WaveSpeed raised
-     its 1K/2K to $0.14 while Gemini stays $0.134 (official page). */
-  "nano-banana-pro": { "2K": 0.134, "4K": 0.24 },
+  /* nano-banana-pro runs Gemini direct since 2026-09-05. Gemini bills every
+     output token of the answer (candidatesTokenCount x $120/1M), not only the
+     image's: measured on devnet 2026-10-13 at 1230 tokens for 2K and 2104 for
+     4K, above the official 1120/2000. The table carries the measured bill
+     (Kev: the table equals the API price; the fee comes on top). */
+  "nano-banana-pro": { "2K": 0.1476, "4K": 0.2525 },
   /* gpt-image-2 runs OpenAI direct on EVERY quality since 2026-09-05 —
      WaveSpeed dropped its flat $0.167/$0.25 for a quality matrix that would
      have lost us money at high ($0.40/$0.72 vs our $0.167/$0.25). This row
@@ -22,8 +25,9 @@ export const MODEL_IMAGE_PRICING: Record<string, PriceRow> = {
      charged price per quality is GPT_OPENAI below. */
   "gpt-image-2": { "2K": 0.107, "4K": 0.178 },
   /* nano-banana-2 runs WaveSpeed Fast at 2K/4K and Google direct at 1K, where
-     Fast has no tier: the cheapest host per size (checked 2026-10-05). */
-  "nano-banana-2": { "1K": 0.0672, "2K": 0.045, "4K": 0.05 },
+     Fast has no tier: the cheapest host per size (checked 2026-10-05). 1K is
+     the measured Gemini bill of 2026-10-13 (1522 tokens x $60/1M). */
+  "nano-banana-2": { "1K": 0.0913, "2K": 0.045, "4K": 0.05 },
 };
 
 
@@ -77,11 +81,14 @@ export function effectiveQuality(resolution: string | undefined, quality?: strin
  *   medium 2K 3568 tok   4K  5930 tok
  *   high   2K 14272 tok  4K 23719 tok
  * Rounded up to the next tenth of a cent, never down.
+ * 1K (1024x1024) measured on devnet 2026-10-13: OpenAI bills it at about half
+ * of 2K; without its own cell the 2K price was charged (Kev: the table
+ * equals the API price).
  */
-const GPT_OPENAI: Record<GptQuality, Record<ResolutionTier, number>> = {
-  low: { "2K": 0.012, "4K": 0.02 },
-  medium: { "2K": 0.107, "4K": 0.178 },
-  high: { "2K": 0.428, "4K": 0.712 },
+const GPT_OPENAI: Record<GptQuality, PriceRow> = {
+  low: { "1K": 0.006, "2K": 0.012, "4K": 0.02 },
+  medium: { "1K": 0.0539, "2K": 0.107, "4K": 0.178 },
+  high: { "1K": 0.2153, "2K": 0.428, "4K": 0.712 },
 };
 
 /**
@@ -96,9 +103,8 @@ const GPT_OPENAI: Record<GptQuality, Record<ResolutionTier, number>> = {
  * remaining WaveSpeed gpt row is an outage fallback only.
  */
 export function apiPricePerImage(modelId: string, resolution: string, quality?: string | null): number {
-  const tier = toResolutionTier(resolution);
   if (modelId === "gpt-image-2") {
-    return GPT_OPENAI[effectiveQuality(resolution, quality)][tier];
+    return priceAt(GPT_OPENAI[effectiveQuality(resolution, quality)], resolution);
   }
   // No default: a family without a price table has no price, it does not
   // borrow Nano Banana Pro's.
@@ -121,9 +127,11 @@ export function apiPricePerImage(modelId: string, resolution: string, quality?: 
  * the routed normal price.
  */
 const GEMINI_DIRECT: Record<string, PriceRow> = {
-  "nano-banana-pro": { "2K": 0.134, "4K": 0.24 },
-  // gemini-3.1-flash-image: 1120 / 1680 / 2520 tokens at $60 per 1M (official page, 2026-10-05).
-  "nano-banana-2": { "1K": 0.0672, "2K": 0.1008, "4K": 0.1512 },
+  // Measured bills, 2026-10-13 (see MODEL_IMAGE_PRICING).
+  "nano-banana-pro": { "2K": 0.1476, "4K": 0.2525 },
+  // gemini-3.1-flash-image at $60 per 1M, every cell measured on devnet 2026-10-13
+  // (1522 / 2085 / 2938 tokens; the official page says 1120 / 1680 / 2520).
+  "nano-banana-2": { "1K": 0.0913, "2K": 0.1251, "4K": 0.1763 },
 };
 
 /** Google direct's price for this model, or null when the model does not run there. */

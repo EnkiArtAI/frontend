@@ -25,6 +25,7 @@ vi.mock("@/lib/supabaseServer", () => ({ getSupabaseServerClient: () => ({}), ge
 import { authRefusal, requireAuth } from "@/lib/auth";
 import { resolveRecordingUserId } from "@/lib/generation/record";
 import { POST as authorize } from "../../app/api/payments/generation/authorize/route";
+import { POST as submit } from "../../app/api/payments/generation/submit/route";
 import { POST as passkeyOptions } from "../../app/api/auth/passkey/register/options/route";
 
 const signedIn = (path: string) =>
@@ -53,7 +54,7 @@ describe("a database outage", () => {
 
   it("answers 503 on the paid rail and on passkey setup instead of 'sign in'", async () => {
     outage.kind = "down";
-    for (const res of [await authorize(signedIn("/api/payments/generation/authorize")), await passkeyOptions(signedIn("/api/auth/passkey/register/options"))]) {
+    for (const res of [await authorize(signedIn("/api/payments/generation/authorize")), await submit(signedIn("/api/payments/generation/submit")), await passkeyOptions(signedIn("/api/auth/passkey/register/options"))]) {
       expect(res.status).toBe(503);
       expect((await res.json()).code).toBe("DB_UNAVAILABLE");
     }
@@ -63,9 +64,11 @@ describe("a database outage", () => {
 
   it("is answered the same way by every route that signs its caller in", () => {
     const src = (...p: string[]) => readSource(join(__dirname, "..", "..", ...p));
-    for (const r of ["intent", "quote", "submit"]) {
+    for (const r of ["intent", "quote"]) {
       expect(src("app", "api", "payments", "generation", r, "route.ts")).toMatch(/\} catch \(e\) \{\n\s+return authRefusal\(e\);/);
     }
+    expect(src("app", "api", "payments", "generation", "submit", "route.ts")).toContain('return escrowRoute(req, "submit",');
+    expect(src("lib", "payments", "escrow", "server-route.ts")).toContain("catch (error) { return authRefusal(error); }");
     expect(src("app", "api", "workflow", "variables", "route.ts")).toMatch(/\} catch \(e\) \{\n\s+return authRefusal\(e\);/);
     expect(src("app", "api", "auth", "passkey", "register", "verify", "route.ts")).toMatch(/\} catch \(e\) \{\n\s+return authRefusal\(e, "Not signed in"\);/);
     expect(src("app", "api", "prompts", "[id]", "route.ts")).toMatch(/\} catch \(e\) \{\n\s+if \(isDbUnreachable\(e\)\) return dbUnavailableResponse\(\);\n\s+return NextResponse\.json\(\{ error: "Authentication required" \}, \{ status: 401 \}\);/);
@@ -74,9 +77,16 @@ describe("a database outage", () => {
     }
   });
 
-  it("never costs a paying buyer the image they were charged for", () => {
+  it("persists the accepted paid image before acknowledging delivery, with safe pending failures", () => {
     const paid = readSource(join(__dirname, "..", "..", "app", "api", "generate-image", "route.ts"));
-    expect(paid).toMatch(/const recUserId = await resolveRecordingUserId\(recSupabase, request\)\.catch\(\(e\) => \{\n\s+console\.error\("\[generate\] delivered image not recorded:"/);
+    const record = paid.indexOf("const generationId = await recordGeneration(");
+    const deliver = paid.indexOf("await deliverGenerationEscrowUnit(");
+    expect(record).toBeGreaterThan(-1);
+    expect(deliver).toBeGreaterThan(record);
+    expect(paid).toContain("requireAcceptedImage: true");
+    expect(paid).toContain("if (e instanceof GenerationRecordError)");
+    expect(paid).toContain("refundPending: true");
+    expect(paid).toContain("reconciliationPending");
   });
 });
 

@@ -107,7 +107,7 @@ describe("the clients", () => {
     const profile = src("components", "profile", "ProfileView.tsx");
     expect(profile).toMatch(/fetch\("\/api\/prompts\/likes\/mine", \{ headers: viewerHeaders\(\) \}\)/);
     expect(profile).toMatch(/\/profile`, \{ headers: viewerHeaders\(\) \}\);/);
-    expect(src("components", "PromptGeneratorView.tsx")).toMatch(/headers=\{viewerHeaders\(\)\}/);
+    expect(src("components", "image-view", "useOwnRenders.ts")).toContain("{ headers: viewerHeaders() }");
   });
 
   it("dice answer an 18+ prompt like a missing one to anyone who may not see it", () => {

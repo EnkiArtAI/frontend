@@ -1,0 +1,305 @@
+/* Kit controls (components/kit): pill menus and their sheets, segmented
+   controls, Generate, the cost line and the low-balance popover. Every
+   control imports this file itself (the boost-toggle.css pattern). Colours
+   are tokens only (plan §1.1). Layers follow the plan's z table: popovers
+   9000, bottom sheets 10000. */
+
+/* ── Pill trigger. A bar sets --kit-pill-h (34 px by default, 36 in the
+   editor bar) and every pill in it follows, Boost and Generate included. */
+.kit-menu { display: contents; }
+.kit-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  flex-shrink: 0;
+  height: var(--kit-pill-h, 34px);
+  padding: 0 11px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 999px;
+  background: var(--enki-paper);
+  color: var(--enki-ink);
+  font: 400 13px/1 var(--font-sans), sans-serif;
+  letter-spacing: normal;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.14s;
+}
+.kit-pill:hover:not(:disabled),
+.kit-pill[aria-expanded="true"] { border-color: var(--enki-ink-2); }
+.kit-pill:disabled { opacity: 0.45; cursor: not-allowed; }
+.kit-caret { font-size: 10px; color: var(--enki-ink-3); }
+.kit-dot { width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: var(--enki-ember); }
+.kit-unset { color: var(--enki-ember); }
+
+/* ── Popover (≥ 1024 px). Fixed and portaled; PillMenu places it. */
+.kit-menu-panel {
+  z-index: 9000;
+  box-sizing: border-box;
+  min-width: 170px;
+  max-width: calc(100vw - 40px);
+  padding: 6px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 12px;
+  background: var(--enki-paper);
+  color: var(--enki-ink);
+  box-shadow: var(--enki-shadow-pop);
+  overscroll-behavior: contain;
+}
+.kit-menu-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 10px 6px;
+  font-size: 11px;
+  color: var(--enki-ink-3);
+}
+.kit-opts { display: grid; gap: 2px; }
+.kit-opts--2 { grid-template-columns: 1fr 1fr; min-width: 256px; }
+.kit-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--enki-ink);
+  font: 400 13px/1.3 var(--font-sans), sans-serif;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.kit-opt:hover:not(:disabled):not([aria-selected="true"]) { background: var(--enki-paper-3); }
+.kit-opt[aria-selected="true"] { background: var(--enki-ink); color: var(--enki-paper); }
+/* A multi-select menu: a box before each row, filled while the row is on. */
+.kit-check { flex-shrink: 0; width: 14px; height: 14px; border: 1.5px solid currentColor; border-radius: 4px; }
+.kit-opt[aria-selected="true"] .kit-check { background: currentColor; box-shadow: inset 0 0 0 2px var(--enki-ink); }
+.kit-opt:disabled { opacity: 0.45; cursor: not-allowed; }
+.kit-opt-sub {
+  margin-left: auto;
+  padding-left: 12px;
+  font: 400 11.5px/1 var(--font-mono), monospace;
+  opacity: 0.7;
+}
+@media (pointer: coarse) {
+  .kit-opt { min-height: 44px; }
+}
+
+/* ── Bottom sheet (< 1024 px). Up in 280 ms, down in 260 ms. While it
+   closes the whole layer lets taps through, so a tap on the next pill
+   lands. The page behind is locked by lockScroll (no scrollbar flash). */
+.kit-sheet-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+}
+.kit-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+  background: color-mix(in oklab, var(--enki-stage) 45%, transparent);
+  animation: kit-fade 180ms ease;
+}
+.kit-sheet {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-width: 560px;
+  max-height: 70dvh;
+  margin: 0 auto;
+  padding: 0 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--enki-rule);
+  border-radius: 22px 22px 0 0;
+  background: var(--enki-paper);
+  color: var(--enki-ink);
+  box-shadow: var(--enki-shadow-pop);
+  outline: none;
+  animation: kit-sheet-up 280ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.kit-sheet-grab {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  touch-action: none;
+  cursor: grab;
+}
+.kit-sheet-grab::before { content: ""; width: 40px; height: 4px; border-radius: 2px; background: var(--enki-rule); }
+.kit-sheet-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.kit-sheet-title { font: 600 15px/1.3 var(--font-sans), sans-serif; }
+.kit-sheet-hint { font-size: 12px; color: var(--enki-ink-3); text-align: right; }
+.kit-sheet-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.kit-sheet .kit-opt { min-height: 46px; padding: 0 12px; border-radius: 12px; font-size: 14px; }
+.kit-sheet .kit-opt:active:not(:disabled):not([aria-selected="true"]) { background: var(--enki-paper-3); }
+.kit-sheet-layer.is-closing { pointer-events: none; }
+.kit-sheet-layer.is-closing .kit-sheet-backdrop { animation: kit-sheet-out 220ms ease forwards; }
+.kit-sheet-layer.is-closing .kit-sheet { animation: kit-sheet-down 260ms cubic-bezier(0.32, 0.72, 0, 1) forwards; }
+@keyframes kit-sheet-up { from { transform: translateY(100%); } }
+@keyframes kit-sheet-down { to { transform: translateY(100%); } }
+@keyframes kit-sheet-out { to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .kit-sheet-backdrop,
+  .kit-sheet { animation: kit-fade 120ms ease; }
+  .kit-sheet-layer.is-closing .kit-sheet-backdrop,
+  .kit-sheet-layer.is-closing .kit-sheet { animation: kit-sheet-out 120ms ease forwards; }
+}
+
+/* ── Segmented control. Each button is its own pill, so on a touch screen
+   its hit area can grow upwards and downwards without being clipped and
+   without reaching into its neighbour. */
+.kit-seg { display: inline-flex; border: 1px solid var(--enki-rule); border-radius: 999px; }
+.kit-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--kit-seg-h, 32px);
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--enki-ink-2);
+  font: 500 12.5px/1 var(--font-sans), sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.kit-seg-btn[aria-checked="true"],
+.kit-seg-btn[aria-selected="true"] { background: var(--enki-ink); color: var(--enki-paper); }
+/* Slide: equal-width choices under one thumb that glides to the chosen one,
+   like a switch (Kev, 2026-10-13: Open | Premium). */
+.kit-seg--slide { position: relative; isolation: isolate; display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr; }
+.kit-seg--slide::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: -1;
+  width: calc(100% / var(--kit-seg-n, 2));
+  border-radius: 999px;
+  background: var(--enki-ink);
+  transform: translateX(calc(var(--kit-seg-i, 0) * 100%));
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.kit-seg--slide .kit-seg-btn { padding: 0 16px; transition: color 0.18s; }
+.kit-seg--slide .kit-seg-btn[aria-checked="true"],
+.kit-seg--slide .kit-seg-btn[aria-selected="true"] { background: transparent; }
+@media (prefers-reduced-motion: reduce) {
+  .kit-seg--slide::before, .kit-seg--slide .kit-seg-btn { transition: none; }
+}
+@media (pointer: coarse) {
+  .kit-seg-btn { position: relative; }
+  .kit-seg-btn::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: max(100%, 44px);
+    transform: translateY(-50%);
+  }
+}
+
+/* ── Generate. The label is centred and the price chip sits on the right,
+   inset so it is always the button's height minus a margin. Dimmed still
+   takes the click (the surface explains why), so it never lifts. */
+.kit-gen {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: var(--cta-bg);
+  color: var(--cta-ink);
+  font: 500 14.5px/1 var(--font-sans), sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform 0.14s;
+}
+.kit-gen--bar { flex: 1 1 170px; min-width: 170px; height: var(--kit-pill-h, 34px); padding: 0 66px; font-size: 14px; }
+.kit-gen--block { width: 100%; height: 44px; padding: 0 72px; }
+.kit-gen:hover:not([aria-disabled="true"]) { transform: translateY(-1px); }
+.kit-gen:active:not([aria-disabled="true"]) { transform: scale(0.98); }
+.kit-gen[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
+.kit-gen-chip {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  bottom: 6px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--enki-price-bg);
+  color: var(--enki-price-ink);
+  font: 600 12.5px/1 var(--font-mono), monospace;
+}
+.kit-gen--bar .kit-gen-chip { top: 5px; right: 5px; bottom: 5px; padding: 0 10px; font-size: 12px; }
+.kit-gen-chip[data-pending] { animation: kit-pulse 1.2s ease-in-out infinite; }
+/* A short balance: the button turns red and carries the balance beside the
+   price; its press opens Add funds (Kev, 2026-10-13). The chip leaves its
+   inset for the row's end so the two figures never run under the label. */
+.kit-gen[data-short] { justify-content: space-between; gap: 10px; padding: 0 5px 0 16px; background: var(--enki-danger); color: #fff; }
+.kit-gen--block[data-short] { padding: 0 6px 0 18px; }
+.kit-gen[data-short] .kit-gen-chip { position: static; padding: 6px 10px; }
+.kit-gen-short { margin-right: 8px; padding-right: 8px; border-right: 1px solid color-mix(in oklab, currentColor 30%, transparent); color: var(--enki-danger); }
+@media (max-width: 1023.98px) {
+  .kit-gen--block { height: 48px; font-size: 15px; }
+  .kit-gen--block .kit-gen-chip { top: 8px; right: 8px; bottom: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kit-gen { transition: none; }
+  .kit-gen:hover:not([aria-disabled="true"]) { transform: none; }
+  .kit-gen-chip[data-pending] { animation: none; opacity: 0.6; }
+}
+
+/* ── Cost line and balance. */
+.kit-cost {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 10px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--enki-ink-3);
+}
+.kit-cost-left { min-width: 0; text-wrap: pretty; }
+
+/* ── Low-balance popover, above the Generate block, as wide as it. */
+.kit-funds {
+  position: fixed;
+  z-index: 9000;
+  box-sizing: border-box;
+  max-width: calc(100vw - 40px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 12px;
+  background: var(--enki-paper);
+  color: var(--enki-ink);
+  box-shadow: var(--enki-shadow-pop);
+  font-size: 12.5px;
+  line-height: 1.45;
+  animation: kit-fade 140ms ease;
+}
+.kit-funds-text { margin: 0; text-wrap: pretty; }
+.kit-funds-acts { display: flex; gap: 8px; }
+.kit-funds-acts button { height: 34px; padding: 0 14px; border-radius: 999px; font: 500 12.5px/1 var(--font-sans), sans-serif; cursor: pointer; }
+.kit-funds-add { border: 0; background: var(--cta-bg); color: var(--cta-ink); }
+.kit-funds-try { border: 1px solid var(--enki-rule); background: transparent; color: var(--enki-ink-2); }
+.kit-funds-try:hover { border-color: var(--enki-ink-3); color: var(--enki-ink); }

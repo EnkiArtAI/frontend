@@ -8,6 +8,9 @@ import fs from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
 import { checkEscrowDeposits } from './escrow-deposit-migration-checks.mjs';
+import { checkEscrowUnits } from './escrow-unit-migration-checks.mjs';
+import { checkEscrowTransactions } from './escrow-settlement-migration-checks.mjs';
+import { checkEscrowOrphans } from './escrow-orphan-migration-checks.mjs';
 
 globalThis.fetch = async () => { throw new Error('HTTP calls are forbidden in migration tests'); };
 const postgres = process.argv.includes('--postgres');
@@ -263,7 +266,20 @@ try {
   const depositSql = fs.readFileSync(new URL('../migrations/2026-10-06-escrow-deposit-persistence.sql',import.meta.url),'utf8');
   await db.exec(depositSql);
   await db.exec(depositSql);
+  // Databases that ran the earlier deposit file get the structure check re-created (idempotent).
+  const readonlyBuyerSql=fs.readFileSync(new URL('../migrations/2026-10-13-escrow-deposit-readonly-buyer.sql',import.meta.url),'utf8');
+  await db.exec(readonlyBuyerSql);await db.exec(readonlyBuyerSql);
   await checkEscrowDeposits({db,row,check,rejects,id,intent,reserve,pgOptions});
+  await db.exec(fs.readFileSync(new URL('./fixtures/escrow-generation-live-columns.sql',import.meta.url),'utf8'));
+  const unitSql=fs.readFileSync(new URL('../migrations/2026-10-12-escrow-unit-claims.sql',import.meta.url),'utf8');
+  await db.exec(unitSql); await db.exec(unitSql);
+  const units=await checkEscrowUnits({db,row,check,rejects,id,intent,reserve,pgOptions});
+  const transactionSql=fs.readFileSync(new URL('../migrations/2026-10-12-escrow-settlement-attempts.sql',import.meta.url),'utf8');
+  await db.exec(transactionSql);await db.exec(transactionSql);
+  await checkEscrowTransactions({db,row,check,rejects,id,units});
+  const orphanSql=fs.readFileSync(new URL('../migrations/2026-10-12-escrow-orphan-reservations.sql',import.meta.url),'utf8');
+  await db.exec(orphanSql);await db.exec(orphanSql);
+  await checkEscrowOrphans({db,row,check,rejects,id,intent,reserve,pgOptions});
   console.log(`PASS ${passed} escrow migration checks; live database was not used.`);
 } finally {
   await db.close();

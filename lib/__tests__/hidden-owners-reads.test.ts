@@ -127,7 +127,7 @@ describe("a prompt's comments and ratings", () => {
   it("leave out a banned account's comment and its rating", async () => {
     ban();
     expect(await read()).toEqual({
-      comments: [{ id: "c1", handle: "kept", rating: 4, body: "lovely", createdAt: undefined }],
+      comments: [{ id: "c1", handle: "kept", rating: 4, body: "lovely", imageUrl: null, createdAt: undefined }],
       stats: { count: 1, avgRating: 4 },
     });
   });

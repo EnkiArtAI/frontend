@@ -59,3 +59,32 @@
   outline-offset: 2px;
 }
 
+/* The label variant ("⚡ Boost", BoostToggle label): a pill as tall as the
+   kit's settings pills (--kit-pill-h, set by the bar it sits in) and as wide
+   as its word. On a touch screen the hit area grows to 44px, not the pill. */
+.enki-boost[data-label] {
+  gap: 5px;
+  width: auto;
+  height: var(--kit-pill-h, 34px);
+  padding: 0 11px;
+  background: var(--enki-paper);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: normal;
+}
+.enki-boost[data-label].enki-boost--on {
+  border-color: var(--enki-ember);
+  background: color-mix(in oklab, var(--enki-ember) 14%, transparent);
+}
+@media (pointer: coarse) {
+  .enki-boost[data-label] { position: relative; }
+  .enki-boost[data-label]::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+}
