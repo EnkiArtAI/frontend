@@ -9,7 +9,35 @@
  * is pure and lives here, shared by every prompt editor so their rules
  * cannot drift.
  */
+import { storedName } from "@/lib/generation/stored-name";
+
 export type VariableRange = { start: number; end: number; name: string };
+
+/** The most characters a variable name holds (VariableRow's maxLength). */
+export const NAME_MAX = 60;
+
+const REF_NAME = /^Reference image \d+$/i;
+
+/**
+ * The name the "+ Variable" pill gives the selected words (Kev, 2026-10-13:
+ * "just input an example variable name"): the selection itself, one space
+ * between words, cut to NAME_MAX, and numbered (" 2", " 3"…) while another
+ * variable has that name or would be saved under it (storedName), or it
+ * would read as a reference. The row shows it red until it is changed.
+ */
+export function suggestedName(selection: string, taken: readonly string[]): string {
+  const base = selection.trim().replace(/\s+/g, " ").slice(0, NAME_MAX).trim() || "variable";
+  const clash = (n: string) => {
+    const stored = storedName(n);
+    return REF_NAME.test(n) || taken.some((t) => t === n || (stored !== null && storedName(t) === stored));
+  };
+  if (!clash(base)) return base;
+  for (let i = 2; ; i++) {
+    const suffix = ` ${i}`;
+    const n = base.slice(0, NAME_MAX - suffix.length).trimEnd() + suffix;
+    if (!clash(n)) return n;
+  }
+}
 
 /** Source of the [token] pattern — NodeCreator's TOKEN_RE is built on it. */
 export const TOKEN_SRC = "\\[[^\\]\\n]+\\]";

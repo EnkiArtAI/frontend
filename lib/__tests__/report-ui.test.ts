@@ -12,7 +12,8 @@ import { readSource } from "./_read-source";
 
 const src = (...p: string[]) => readSource(join(__dirname, "..", "..", ...p));
 const BUTTON = src("components", "ReportButton.tsx");
-const VIEW = src("components", "PromptGeneratorView.tsx");
+const HEADER = src("components", "image-view", "ComposerHeader.tsx");
+const PANEL = src("components", "image-view", "ViewerPanel.tsx");
 const PROFILE = src("components", "profile", "ProfileView.tsx");
 
 describe("the popup", () => {
@@ -32,7 +33,7 @@ describe("the popup", () => {
   it("sits over the lightbox (level, and later in the page), under the step-up dialog, 16px clear of a phone's edges", () => {
     expect(BUTTON).toContain('className="w-[calc(100%-32px)] max-w-md rounded-lg z-[9999]"');
     expect(BUTTON).toContain('overlayClassName="z-[9999]"');
-    expect(src("components", "prompt-generator.css")).toMatch(/\.pgv-lightbox \{\n\s+position: fixed; inset: 0; z-index: 9999;/);
+    expect(src("components", "kit", "kit-media.css")).toMatch(/\.kit-viewer \{\n\s+position: fixed;\n\s+inset: 0;\n\s+z-index: 9999;/);
   });
 
   it("keeps clicks and keys from the lightbox around it: typing never pages it, Escape closes the popup alone", () => {
@@ -42,14 +43,6 @@ describe("the popup", () => {
 });
 
 describe("where it opens", () => {
-  it("on the prompt page, next to Download", () => {
-    expect(VIEW).toMatch(/<Download size=\{13\} \/>\n\s+<\/button>\n\s+<ReportButton targetType="prompt" targetId=\{promptId\} className="pgv-icon-btn">/);
-  });
-
-  it("in the lightbox, on a public image that is not the viewer's own", () => {
-    expect(VIEW).toContain("const other = own || ownImages.has(url) ? undefined : publicImages.find((p) => p.url === url);");
-    expect(VIEW).toContain('<ReportButton targetType="generation" targetId={other.id} className="pgv-lb-public pgv-lb-report pgv-lb-chrome">');
-  });
 
   it("on someone else's profile, never on your own", () => {
     expect(PROFILE).toContain("setCreatorId(d.creator?.id ? String(d.creator.id) : null);");
@@ -58,4 +51,10 @@ describe("where it opens", () => {
     expect(HOME).toContain("<ProfileView key={creatorHandle} handle={creatorHandle} isOwnProfile={false} onBack={closePanel} />");
     expect(PROFILE).toMatch(/\{!own && creatorId && \(\n\s+<ReportButton targetType="user" targetId=\{creatorId\}/);
   });
+});
+
+it("the current header reports the prompt and the viewer reports a public image", () => {
+  expect(HEADER).toContain('targetType="prompt" targetId={m.promptId}');
+  expect(PANEL).toContain('{shot.publicId && !m.guest && (');
+  expect(PANEL).toContain('targetType="generation" targetId={shot.publicId}');
 });

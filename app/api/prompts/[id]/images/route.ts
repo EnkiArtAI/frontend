@@ -9,10 +9,27 @@ import { hiddenOwners } from "@/lib/hidden-owners";
  * What people made with a prompt and chose to show (Kev, 2026-10-08). Every
  * generation is private until its owner makes it public, in My Gallery or in
  * the image UI's history; uploads are never public. Only a listed prompt shows
- * them, and 18+ images only to a viewer who may see 18+.
+ * them, and 18+ images only to a viewer who may see 18+. Each carries who made
+ * it, for the strip's hover (Kev, 2026-10-13: the maker's name, a link to
+ * their profile unless it is you), by handle and display name, never by id.
  */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LIMIT = 24;
+
+type Maker = { handle: string | null; name: string | null };
+
+/** The makers of these rows, by user id; one read for the page. */
+async function makersOf(supabase: ReturnType<typeof getSupabaseServerClient>, rows: { user_id: unknown }[]): Promise<Map<string, Maker>> {
+  const ids = [...new Set(rows.map((r) => String(r.user_id ?? "")).filter(Boolean))];
+  const makers = new Map<string, Maker>();
+  if (!ids.length) return makers;
+  const { data, error } = await supabase.from("users").select("id, handle, display_name").in("id", ids);
+  if (error) throw error;
+  for (const u of data ?? []) {
+    makers.set(String(u.id), { handle: typeof u.handle === "string" && u.handle ? u.handle : null, name: typeof u.display_name === "string" && u.display_name ? u.display_name : null });
+  }
+  return makers;
+}
 
 export async function GET(req: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -45,12 +62,14 @@ export async function GET(req: Request, context: { params: Promise<{ id: string 
     const hidden = await hiddenOwners(supabase, [String(prompt.creator_id ?? ""), ...(data ?? []).map((r) => String(r.user_id ?? ""))]);
     if (!hidden) return NextResponse.json({ error: "Could not load the images" }, { status: 500 });
     if (hidden.has(String(prompt.creator_id))) return NextResponse.json({ images: [] });
+    const makers = await makersOf(supabase, (data ?? []).filter((r) => !hidden.has(String(r.user_id))));
     return NextResponse.json({
       images: (data ?? []).filter((r) => !hidden.has(String(r.user_id))).map((r) => ({
         id: r.id,
         url: r.preview_url ?? r.storage_url,
         thumbnailUrl: r.thumbnail_url ?? r.preview_url ?? r.storage_url,
         createdAt: r.created_at,
+        maker: { ...(makers.get(String(r.user_id)) ?? { handle: null, name: null }), mine: v.userId !== null && String(r.user_id) === v.userId },
       })),
     });
   } catch (e) {

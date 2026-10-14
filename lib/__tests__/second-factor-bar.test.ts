@@ -79,17 +79,11 @@ describe("the page under the bar", () => {
   });
 
   it("keeps full-height pages, fixed layers and sticky headers out from under it", () => {
-    const pgv = css("components", "prompt-generator.css");
-    expect(pgv).toMatch(/\.pgv-page \{\s*display: flex;\s*height: calc\(100vh - var\(--ek-banner-h, 0px\)\);/);
-    // Every viewport height the generator page takes subtracts the bar, the phone override included.
-    const pageHeights = [...pgv.matchAll(/\.pgv-page \{([^}]*)\}/g)].flatMap((m) => [...m[1].matchAll(/height: ([^;]*);/g)].map((h) => h[1]));
-    const viewport = pageHeights.filter((h) => /\d+d?vh/.test(h));
-    expect(viewport.length).toBeGreaterThanOrEqual(2);
-    for (const h of viewport) expect(h).toMatch(/^calc\(100d?vh - var\(--ek-banner-h, 0px\)\)( !important)?$/);
-    const history = [...pgv.matchAll(/\.pgv-history(-handle)? \{([^}]*)\}/g)].filter((m) => /\btop:/.test(m[2]));
-    expect(history).toHaveLength(4);
-    for (const m of history) expect(m[2]).toMatch(/top: (calc\(12px \+ )?var\(--ek-banner-h, 0px\)/);
-    expect(readSource(join(ROOT, "app", "editor", "page.tsx"))).toMatch(/position: "fixed", inset: "var\(--ek-banner-h, 0px\) 0 0 0"/);
+    const frame = css("components", "image-view", "image-view-frame.css");
+    expect(frame).toMatch(/\.iv-frame \{[^}]*top: var\(--ek-banner-h, 0px\);/);
+    expect(frame).toMatch(/\.iv-page \{[^}]*height: calc\(100dvh - var\(--ek-banner-h, 0px\)\);/);
+    // The Prompt Editor's fixed layer starts below it (plan R1).
+    expect(css("components", "prompt-editor", "prompt-editor.css")).toMatch(/\n\.pe-root \{[^}]*\n {2}top: var\(--ek-banner-h, 0px\);/);
     // Admin: .ek-app's min-height: 100vh would beat the subtracted height.
     const admin = readSource(join(ROOT, "app", "admin", "page.tsx"));
     const roots = [...admin.matchAll(/className="ek-app" style=\{\{([^}]*)\}\}/g)].map((m) => m[1]);

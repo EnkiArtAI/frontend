@@ -60,7 +60,7 @@ import { recordGenerationFailure } from "@/lib/generation/record";
 import { addressWarnedOut, addressWarningMessage, byAddress, recordWarning } from "@/lib/moderation/warnings";
 import { childSafetyScore, recordModerationEvent } from "@/lib/moderation-enforcement";
 import { agentBlocked, recordExtractionHit, silentFailure } from "@/lib/moderation/extraction-hits";
-import { findMissingAtas } from "@/lib/payments/authorize-flow";
+import { findMissingAtas } from "@/lib/payments/solana-transfer";
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 import { TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import { moderate, screenFirst, CLIENT_BLOCK_MESSAGE } from "@/lib/moderation";

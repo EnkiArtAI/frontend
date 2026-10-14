@@ -191,8 +191,4 @@ describe("the callers", () => {
     const zone = readSource(join(ROOT, "components", "ShowroomUploadZone.tsx"));
     expect(zone).toMatch(/const authenticated = emailAuthed \|\| !!account \|\| solanaConnected;/);
   });
-
-  it("the node editor no longer posts JSON to the multipart upload route", () => {
-    expect(readSource(join(ROOT, "components", "enki-shell", "generation.ts"))).not.toMatch(/gallery\/upload/);
-  });
 });

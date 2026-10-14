@@ -25,18 +25,16 @@ describe("apiRequest", () => {
   });
 });
 
-describe("the prompt editor", () => {
-  const EDITOR = readSource(join(__dirname, "..", "..", "components", "EnkiPromptEditor.tsx"));
-
-  it("saves, releases and rolls dice with the signed-in session", () => {
-    expect(EDITOR).toMatch(/fetch\("\/api\/prompt", \{\n\s+method: "POST",\n\s+headers: \{ "Content-Type": "application\/json", \.\.\.sessionAuthHeaders\(\) \},/);
-    // A release is that same save (lib/__tests__/editor-release.test.ts), so it carries the session too.
-    expect(EDITOR).toContain("await savePromptMutation.mutateAsync({ release: true });");
-    expect(EDITOR).toMatch(/headers=\{sessionAuthHeaders\(\)\}/);
+describe("the current prompt editor's session", () => {
+  const EDITOR = readSource(join(__dirname, "..", "..", "components", "prompt-editor", "PromptEditor.tsx"));
+  const DICE = readSource(join(__dirname, "..", "..", "hooks", "useDiceRoll.ts"));
+  it("sends the signed-in session with Release and Vary", () => {
+    for (const code of [EDITOR, DICE]) expect(code).toContain('headers: { "Content-Type": "application/json", ...sessionAuthHeaders() }');
+    expect(EDITOR).toContain('fetch("/api/prompt", {');
+    expect(DICE).toContain('fetch("/api/workflow/variables", {');
   });
-
-  it("never reads the retired Turnkey token", () => {
-    expect(EDITOR).not.toMatch(/turnkey_session_token/);
-    expect(readSource(join(__dirname, "..", "queryClient.ts"))).not.toMatch(/turnkey_session_token/);
+  it("does not read the retired session token", () => {
+    for (const code of [EDITOR, DICE]) expect(code).not.toContain('turnkey_session_token');
+    expect(readSource(join(__dirname, "..", "queryClient.ts"))).not.toContain('turnkey_session_token');
   });
 });

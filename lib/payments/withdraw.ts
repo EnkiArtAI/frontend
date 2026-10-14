@@ -44,8 +44,8 @@ import {
   createTransferCheckedInstruction,
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
-import { USDC_DECIMALS } from "@/lib/payments/authorize-tx";
-import { priorityFeeMicroLamports } from "@/lib/payments/generation-pay";
+import { USDC_DECIMALS } from "@/lib/payments/solana-transfer";
+import { priorityFeeMicroLamports } from "@/lib/payments/solana-transfer";
 import { resolveSessionUserWithBan } from "@/lib/session-user";
 import { sendMail } from "@/lib/mailer";
 

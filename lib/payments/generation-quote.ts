@@ -183,7 +183,8 @@ async function quote(
   //    artist share. Applied here so quote and intent can't disagree.
   let appliedRule: AppliedRule | null = null;
   if (buyer) {
-    appliedRule = await resolvePricingRule(supabase, { buyerWalletOrId: buyer, modelFamily, promptId });
+    appliedRule = await resolvePricingRule(supabase, { buyerWalletOrId: buyer, modelFamily, promptId, excludeFreeGeneration: true });
+    if (appliedRule?.effect.type === "free_generation") appliedRule = null;
     if (appliedRule) split = applyRuleToSplit(split, appliedRule);
   }
 

@@ -88,6 +88,16 @@ export const FALLBACK_BUCKET = "generations";
 
 /** One store's turn: the Blob SDK retries outages inside a put, so a turn needs its own end. */
 const TURN_MS = 20_000;
+/** A turn grows with the payload: an 8.6 MB 4K image never landed in 20 s turns (devnet 2026-10-13). */
+const PER_MB_MS = 5_000;
+const MB = 1024 * 1024;
+/** From this size Blob uploads in parallel parts and retries a failed part on its own. */
+const MULTIPART_MIN_BYTES = 5 * MB;
+
+/** How long one store gets for `bytes`, never past `remaining` ms. */
+export function storeTurnMs(bytes: number, remaining: number): number {
+  return Math.min(remaining, TURN_MS + Math.ceil(bytes / MB) * PER_MB_MS);
+}
 
 type Store = {
   put: (name: string, buf: Buffer, contentType: string, signal: AbortSignal) => Promise<string>;
@@ -102,7 +112,7 @@ async function stores(): Promise<Store[]> {
     const blob = await loadBlob();
     out.push({
       put: (name, buf, contentType, abortSignal) =>
-        blob.put(name, buf, { access: "public", contentType, addRandomSuffix: false, allowOverwrite: true, abortSignal }).then((r) => r.url),
+        blob.put(name, buf, { access: "public", contentType, addRandomSuffix: false, allowOverwrite: true, abortSignal, multipart: buf.length >= MULTIPART_MIN_BYTES }).then((r) => r.url),
       passing: (e) =>
         !(e instanceof blob.BlobError) ||
         e instanceof blob.BlobServiceRateLimited ||
@@ -148,7 +158,7 @@ export async function putDurably(name: string, buf: Buffer, contentType: string,
   const live = deadline > Date.now() ? await stores() : [];
   for (let wait = 1_000; live.length; wait = Math.min(wait * 2, 8_000)) {
     for (const store of [...live]) {
-      const turn = Math.min(TURN_MS, deadline - Date.now());
+      const turn = storeTurnMs(buf.length, deadline - Date.now());
       if (turn <= 0) return null;
       const ac = new AbortController();
       const timer = setTimeout(() => ac.abort(), turn);

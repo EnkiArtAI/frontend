@@ -11,8 +11,8 @@ export type Bookmark = { id: string; promptId: string; imageUrl: string | null; 
 
 const HEADERS = () => ({ "Content-Type": "application/json", ...viewerHeaders() });
 
-export async function listCategories(): Promise<BookmarkCategory[]> {
-  const res = await fetch("/api/bookmarks/categories", { headers: HEADERS() });
+export async function listCategories(signal?: AbortSignal): Promise<BookmarkCategory[]> {
+  const res = await fetch("/api/bookmarks/categories", { headers: HEADERS(), signal });
   if (!res.ok) {
     // The status travels with the error so the UI can say the real thing:
     // 401 = sign in; 503 = the migration has not been run yet.
@@ -49,10 +49,11 @@ export async function addBookmark(categoryId: string, promptId: string, imageUrl
   return d.bookmark;
 }
 
-export async function listBookmarks(categoryId: string, cursor?: number | null): Promise<{ bookmarks: Bookmark[]; nextCursor: number | null }> {
+export async function listBookmarks(categoryId: string, cursor?: number | null, limit?: number, signal?: AbortSignal): Promise<{ bookmarks: Bookmark[]; nextCursor: number | null }> {
   const q = new URLSearchParams({ category: categoryId });
   if (cursor != null) q.set("cursor", String(cursor));
-  const res = await fetch(`/api/bookmarks?${q}`, { headers: HEADERS() });
+  if (limit) q.set("limit", String(limit));
+  const res = await fetch(`/api/bookmarks?${q}`, { headers: HEADERS(), signal });
   if (!res.ok) throw new Error("bookmarks unavailable");
   return await res.json();
 }
