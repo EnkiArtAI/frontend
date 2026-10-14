@@ -124,7 +124,7 @@ describe("the routes", () => {
     // A refusal on 18+ still counts the extraction attempt it refuses.
     expect(HUMAN).toMatch(/if \(check\.verdict === "extraction" && asker\) \{\n\s+after\(recordExtractionHit\([^\n]+\n\s+\}\n\s+return NextResponse\.json\(ADULT_REFUSAL, \{ status: 403 \}\);/);
     expect(refuse).toBeGreaterThan(-1);
-    expect(HUMAN.indexOf("await claimForGeneration(")).toBeGreaterThan(refuse);
+    expect(HUMAN.indexOf("await claimGenerationEscrowUnit(")).toBeGreaterThan(refuse);
   });
 
   it("refuse 18+ on the free generator to anyone unconfirmed", () => {
@@ -150,13 +150,13 @@ describe("the routes", () => {
     expect(HUMAN).toMatch(/\} else if \(paid\.prompt_id\) \{\n\s+const marked = await promptMarkedAdult\(getSupabaseServerClient\(\), paid\.prompt_id as string\);/);
     expect(FREE).toMatch(/const named = await freeRenderPrompt\(\n\s+supabaseForChecks,\n\s+UUID_RE\.test\(String\(body\?\.promptId \?\? ""\)\) \? String\(body\.promptId\) : null,/);
     // A mark that cannot be read refuses the request rather than guessing either way.
-    expect(HUMAN).toMatch(/if \(marked === null\) \{\n\s+return NextResponse\.json\(\{ error: "This prompt could not be checked right now\. Nothing was generated and nothing was charged\." \}, \{ status: 503 \}\);/);
+    expect(HUMAN).toMatch(/if \(marked === null\) \{\n\s+return NextResponse\.json\(\{ error: "This prompt could not be checked right now\. No image was generated\. Check your payment status before trying again\." \}, \{ status: 503 \}\);/);
     expect(FREE).toMatch(/if \(named === null\) \{\n\s+return NextResponse\.json\(\{ error: "This prompt could not be checked right now\. Nothing was generated\." \}, \{ status: 503 \}\);/);
   });
 
   it("mark the images they record", () => {
     // And the image check's own 18+ verdict marks what it delivers.
-    expect(HUMAN).toMatch(/recordGeneration\(recSupabase, \{\n\s+adult: adult \|\| seen\.verdict === "adult",/);
+    expect(HUMAN).toMatch(/recordGeneration\(supabase, \{\n\s+adult: adult \|\| seen\.verdict === "adult",/);
     expect(FREE).toMatch(/recordGeneration\(supabase, \{\n\s+adult: adult \|\| seen\.verdict === "adult",/);
   });
 
@@ -192,9 +192,8 @@ describe("a stored prompt's own mark", () => {
   });
 });
 
-describe("the editor", () => {
-  it("shows the server's reason when a save is refused", () => {
-    const EDITOR = readSource(join(__dirname, "..", "..", "components", "EnkiPromptEditor.tsx"));
-    expect(EDITOR).toMatch(/throw new Error\(typeof reason === "string" && reason \? reason : "Failed to save prompt"\);/);
-  });
+it("the current editor shows the server's reason on a refused release", () => {
+  const editor = readSource(join(__dirname, "..", "..", "components", "prompt-editor", "PromptEditor.tsx"));
+  expect(editor).toContain('const why = data.error ?? "Release failed — nothing was published";');
+  expect(editor).toContain('notify(res.status === 409 ?');
 });

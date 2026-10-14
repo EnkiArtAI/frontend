@@ -71,13 +71,10 @@ describe("the free route", () => {
   });
 });
 
-describe("the pickers", () => {
-  it("offer no free model on a paid prompt", () => {
-    const view = readSource(join(__dirname, "..", "..", "components", "PromptGeneratorView.tsx"));
-    expect(view).toContain("const generators = isFree ? GENERATORS : GENERATORS.filter((g) => !onFreeHost(g));");
-    expect(view).toContain("{generators.map(g => <option key={g}>{g}</option>)}");
-    expect(view).toContain('const generator = generatorPick || (!isFree && onFreeHost(promptModelName) ? "" : promptModelName);');
-    const launcher = readSource(join(__dirname, "..", "..", "components", "GenerateLauncher.tsx"));
-    expect(launcher).toContain("core.catalogue.filter((m) => !(locked && m.free))");
-  });
+it("the current Image View and Quick Create offer no free host on a premium prompt", async () => {
+  const { modelOptions } = await import("@/lib/ui/image-view/models");
+  const free = { id: "free", name: "Free", price: 0, free: true, mediaType: "image" as const, supportsQuality: false, maxResolution: "1K" as const, ratios: ["1:1"] };
+  expect(modelOptions([free], true)).toEqual([]);
+  expect(modelOptions([free], false)).toEqual([free]);
+  expect(readSource(join(__dirname, "..", "..", "components", "GenerateLauncher.tsx"))).toContain("core.catalogue.filter((m) => !(locked && m.free))");
 });

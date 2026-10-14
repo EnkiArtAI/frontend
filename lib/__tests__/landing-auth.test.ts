@@ -110,15 +110,15 @@ describe("the landing login", () => {
     expect([page.step(), page.el("signupPassField").style.display, page.el("signupPass").required, page.el("applyFields").style.display]).toEqual(["apply", "none", false, ""]);
     expect(page.el("formSignup").note?.textContent).toMatch(/isn't on the access list/);
 
-    page.el("signupEmail").value = "kev@gmail.com";
+    page.el("signupEmail").value = "kev@example.com";
     page.el("signupEmail").listeners.input();
     expect([page.step(), page.el("signupPass").required, page.el("signupLabel").textContent]).toEqual(["account", true, "Create account"]);
     expect(page.el("formSignup").note).toBeNull();
-    page.answer("/api/auth/password/register", true, { token: "t", email: "kev@gmail.com" });
+    page.answer("/api/auth/password/register", true, { token: "t", email: "kev@example.com" });
     page.submit();
     await settle();
     expect(page.posts.map((p) => p.url)).toEqual(["/api/auth/password/register", "/api/auth/password/register"]);
-    expect(page.adopted).toEqual([{ token: "t", email: "kev@gmail.com" }]);
+    expect(page.adopted).toEqual([{ token: "t", email: "kev@example.com" }]);
   });
 
   it("once open, checks the email in the field: one corrected while the check ran is checked again", async () => {
@@ -127,15 +127,15 @@ describe("the landing login", () => {
     page.el("signupEmail").value = "kev@gmial.com";
     page.el("signupPass").value = "a long password";
     page.submit(); // the answer for the typo is still on its way
-    page.el("signupEmail").value = "kev@gmail.com";
+    page.el("signupEmail").value = "kev@example.com";
     page.el("signupEmail").listeners.input();
     await settle();
     expect([page.step(), page.el("formSignup").note]).toEqual(["account", null]);
-    page.answer("/api/auth/password/register", true, { token: "t", email: "kev@gmail.com" });
+    page.answer("/api/auth/password/register", true, { token: "t", email: "kev@example.com" });
     page.submit();
     await settle();
     expect(page.posts.map((p) => p.url)).toEqual(["/api/auth/password/register", "/api/auth/password/register"]);
-    expect(page.adopted).toEqual([{ token: "t", email: "kev@gmail.com" }]);
+    expect(page.adopted).toEqual([{ token: "t", email: "kev@example.com" }]);
   });
 
   it("once open on the landing but not yet on the server, falls back to the application", async () => {

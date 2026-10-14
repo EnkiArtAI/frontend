@@ -3,14 +3,38 @@
 // Force dynamic rendering to prevent static generation issues
 export const dynamic = 'force-dynamic';
 
-import "./enki-editor.css";
-import EnkiPromptEditor from "@/components/EnkiPromptEditor";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import EnkiHome from "@/components/enki-shell/EnkiHome";
+import PromptEditor from "@/components/prompt-editor/PromptEditor";
+import { useViewerWallets } from "@/hooks/useViewerWallets";
+import { useBetaAccess } from "@/components/BetaGate";
+import { editorMount, editorOwner, type EditorMount } from "@/lib/editor/editor-mount";
+
+/**
+ * The Prompt Editor inside the shell (plan R1): the shell keeps its menu,
+ * login, billing panel and 2FA bar, and the editor's fixed layer covers its
+ * feed. Another ?id= or another account gets a fresh editor (editorMount).
+ */
+function EditorRoute() {
+  const id = useSearchParams().get("id");
+  const { userKey } = useViewerWallets();
+  const { userId } = useBetaAccess();
+  const owner = editorOwner(userId, userKey);
+  const [mount, setMount] = useState<EditorMount>({ id, n: 0, user: owner });
+  const next = editorMount(mount, id, owner);
+  if (next !== mount) setMount(next);
+  return (
+    <EnkiHome>
+      <PromptEditor key={mount.n} promptId={id ?? undefined} />
+    </EnkiHome>
+  );
+}
 
 export default function Editor() {
   return (
-    // Below the 2FA bar when it shows (--ek-banner-h).
-    <div style={{ position: "fixed", inset: "var(--ek-banner-h, 0px) 0 0 0", zIndex: 100 }}>
-      <EnkiPromptEditor />
-    </div>
+    <Suspense fallback={null}>
+      <EditorRoute />
+    </Suspense>
   );
 }

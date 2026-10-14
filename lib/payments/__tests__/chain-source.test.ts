@@ -36,7 +36,8 @@ describe("the caller cannot choose the settlement chain", () => {
   it("it records the server's chain, not a default a caller could steer", () => {
     // Intent-paid generations used to be recorded with the query string's
     // fallback, 'base-sepolia', on a rail that only ever settles on Solana.
-    expect(ROUTE).toMatch(/chainKey: solanaChainKey\(\),/);
+    expect(ROUTE).toMatch(/chainKey: paymentChain\.cluster,/);
+    expect(ROUTE).toMatch(/paymentChain = escrowServerChain\(\)/);
   });
 });
 

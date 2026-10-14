@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { Sparkles } from "lucide-react";
 import { useActiveAccount } from "thirdweb/react";
 import { useWallet } from "@solana/wallet-adapter-react";
+import { useBetaAccess } from "@/components/BetaGate";
+import { openLogin } from "@/lib/openLogin";
 import { useCdpAddress } from "@/hooks/useCdpAddress";
 import { useToast } from "@/hooks/use-toast";
 import { useModelLimits } from "@/hooks/useModelLimits";
@@ -12,10 +14,15 @@ import PromptEngagement from "@/components/PromptEngagement";
 import { addCreation } from "@/lib/creations";
 import EnkiMobileGenerateModal from "@/components/EnkiMobileGenerateModal";
 import type { EnkiPrompt } from "@/lib/enkiPromptAdapter";
-import { runGeneration } from "@/lib/generation/run-generation";
+import { runGenerationBatch, type GenerationPayment, type GenerationRequest } from "@/lib/generation/run-generation";
+import { cancelPaidGeneration, checkPaidGenerationStatus, CheckoutError, readPendingEscrowPayments, storePendingEscrowPayments } from "@/lib/generation-checkout";
+import { tiersUpTo } from "@/lib/generation/resolution";
+import { useFreeGenerationQuota } from "@/hooks/useRenderQueue";
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel } from "@/components/ui/alert-dialog";
 import { usePaymentSigner } from "@/hooks/usePaymentSigner";
 import { useServerQuotes, quoteLabel } from "@/hooks/useServerQuotes";
 import { useGenerationCore } from "@/hooks/useGenerationCore";
+import { DEFAULT_GENERATOR } from "@/lib/ui/image-view/models";
 import NftPickerModal from "@/components/enki/NftPickerModal";
 import { useReferenceReads, REFS_LOADING, type NftPick } from "@/hooks/useReferenceReads";
 
@@ -49,6 +56,8 @@ type GenerateLauncherProps = {
 
 export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: GenerateLauncherProps) {
   const router = useRouter();
+  const { access, role, userId } = useBetaAccess();
+  const signedIn = access === "ok" && role !== "team";
   const { toast } = useToast();
   const account = useActiveAccount();
   const { publicKey: solanaPublicKey } = useWallet();
@@ -65,10 +74,36 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
   const [boost, setBoost] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [valueByToken, setValueByToken] = useState<Record<string, string>>({});
-  // No preselected model: the user picks (Kev, 2026-10-02: "IMMER DAS AUSGEWÄHLTE").
-  const [model, setModel] = useState("");
+  // Starts on the default generator (Kev, 2026-10-13: "just pick a generator as
+  // default like NBP"); what is selected is what renders (2026-10-02: "IMMER
+  // DAS AUSGEWÄHLTE"), and nothing renders without a selection.
+  const [model, setModel] = useState<string>(DEFAULT_GENERATOR);
   const signPayment = usePaymentSigner();
   const core = useGenerationCore(model);
+  const { quota: freeQuota, refresh: refreshFreeQuota } = useFreeGenerationQuota(open && signedIn && core.entry?.free === true, signedIn ? userId : null);
+  const [mixed, setMixed] = useState<{ base: GenerationRequest; count: number; freeCount: number } | null>(null);
+  const [mixedPaidId, setMixedPaidId] = useState("");
+  const pendingAccount = signedIn && userId ? userId : null;
+  const [pendingState, setPendingState] = useState<{ account: string; requests: GenerationRequest[]; payments: GenerationPayment[] } | null>(null);
+  const [pendingLoadedAccount, setPendingLoadedAccount] = useState<string | null>(null);
+  const pendingOrder = pendingState?.account === pendingAccount ? pendingState : null;
+  const setPendingOrder = (value: { requests: GenerationRequest[]; payments: GenerationPayment[] } | null) =>
+    setPendingState(value && pendingAccount ? { ...value, account: pendingAccount } : null);
+  useEffect(() => {
+    if (!pendingAccount) return;
+    let active = true;
+    void Promise.resolve().then(() => {
+      const payments = readPendingEscrowPayments(sessionStorage, pendingAccount);
+      if (active) {
+        setPendingState(payments.length ? { account: pendingAccount, requests: [], payments } : null);
+        setPendingLoadedAccount(pendingAccount);
+      }
+    });
+    return () => { active = false; };
+  }, [pendingAccount]);
+  useEffect(() => {
+    if (pendingAccount && pendingLoadedAccount === pendingAccount) storePendingEscrowPayments(sessionStorage, pendingAccount, pendingOrder?.payments ?? null);
+  }, [pendingAccount, pendingLoadedAccount, pendingOrder]);
   const [resolution, setResolution] = useState("2K");
   const [nftPickerOpen, setNftPickerOpen] = useState(false);
   // Per-model limits (max reference images, allowed filetypes) from the DB.
@@ -93,11 +128,19 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
     paidEntry
       ? [resolution, ...quoteTiers].flatMap((t) => {
           const tier = asTier(t);
-          return tier ? [{ modelId: paidEntry.id, resolution: tier, boost: core.boostAt(tier) && boost, referenceImageCount: refCount }] : [];
+          return tier ? [{ promptId: seedPrompt?.id || undefined, modelId: paidEntry.id, resolution: tier, boost: core.boostAt(tier) && boost, referenceImageCount: refCount }] : [];
         })
       : [],
   );
-  const priceFor = (n: number) => (core.entry?.free ? "Free" : !core.entry ? "" : quoteLabel(quotes[0], n) ?? "…");
+  const priceFor = (n: number) => (core.entry?.free ? !freeQuota ? "Checking allowance…" : n <= freeQuota.remaining ? "1 free today" : `${Math.min(n, freeQuota.remaining)} free · choose a paid model for ${n - Math.min(n, freeQuota.remaining)}` : !core.entry ? "" : quoteLabel(quotes[0], n) ?? "…");
+  const mixedPaidOptions = core.catalogue.filter(entry => entry.mediaType === "image" && !entry.free && mixed &&
+    tiersUpTo(entry.maxResolution).includes(mixed.base.resolution) && entry.ratios.includes(mixed.base.aspectRatio) &&
+    (mixed.base.referenceImages?.length ?? 0) <= (entry.maxRefs ?? 0));
+  const mixedPaid = mixedPaidOptions.find(entry => entry.id === mixedPaidId);
+  const mixedQuotes = useServerQuotes(mixed && mixedPaid ? [{ promptId: mixed.base.promptId, modelId: mixedPaid.id,
+    resolution: mixed.base.resolution, boost: false, referenceImageCount: mixed.base.referenceImages?.length ?? 0 }] : []);
+  const mixedPaidCount = mixed ? mixed.count - mixed.freeCount : 0;
+  const mixedTotal = quoteLabel(mixedQuotes[0], mixedPaidCount);
   const tierLabel = (i: number) => (core.entry?.free ? "Free" : quoteLabel(quotes[i + 1]));
   const [results, setResults] = useState<string[]>([]);
   // When opened from a clicked feed prompt: lock the body for paid prompts and
@@ -176,70 +219,106 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
     return out;
   }, [prompt, valueByToken]);
 
-  const generate = async (count: number) => {
-    if (generating) return;
-    if (refsLoading) {
-      toast({ title: "Images still loading", description: REFS_LOADING });
-      return;
-    }
-    const final = prompt.replace(/\[[^\]]+\]/g, (tok) => valueByToken[tok] || tok);
-    if (!final.trim()) {
-      toast({ title: "Error", description: "Please enter a prompt.", variant: "destructive" });
-      return;
-    }
-    const tier = resolution === "1K" || resolution === "2K" || resolution === "4K" ? resolution : null;
-    if (!core.entry || !tier) {
-      toast({ title: "Pick a model", description: "Choose the model to generate with. Nothing was generated.", variant: "destructive" });
-      return;
-    }
+  const executeOrder = async (requests: GenerationRequest[], resume?: GenerationPayment[]) => {
     setGenerating(true);
     try {
-      const refs = [...referenceImages, ...nftImages].filter(Boolean);
-      // A clicked feed prompt travels as itself: its artist share is priced
-      // and, for a paid prompt, the server fills the artist's own text.
-      const variableValues = Object.fromEntries(
-        Object.entries(valueByToken).map(([tok, v]) => [tok.replace(/^\[|\]$/g, ""), v]),
-      );
-      // The count the sheet shows and prices is the count generated, one
-      // payment each.
-      for (let n = 0; n < count; n++) {
-        const outcome = await runGeneration(
-          {
-            model: core.entry,
-            resolution: tier,
-            boost: core.boostAt(tier) && boost,
-            prompt: final.trim(),
-            promptId: seedPrompt?.id || undefined,
-            variableValues: seedPrompt ? variableValues : undefined,
-            aspectRatio: ratio,
-            referenceImages: refs.length ? refs : undefined,
-          },
-          signPayment,
-        );
-        if (!outcome.ok) throw new Error(outcome.error);
-        const data = { imageUrl: outcome.imageUrl };
-
-        // Surface the new image ABOVE the modal (newest first); keep the modal open.
-        setResults((prev) => [data.imageUrl as string, ...prev]);
+      const outcomes = await runGenerationBatch(requests, signPayment, (outcome, index) => {
+        if (!outcome.ok) return;
+        setResults(previous => [outcome.imageUrl, ...previous]);
         if (userKey) {
-          addCreation(userKey, {
-            id: `gl-${Date.now()}`,
-            imageUrl: data.imageUrl,
-            prompt: final,
-            createdAt: new Date().toISOString(),
-          });
+          addCreation(userKey, { id: crypto.randomUUID(), imageUrl: outcome.imageUrl,
+            prompt: requests[index].prompt, createdAt: new Date().toISOString() });
           window.dispatchEvent(new Event("gallery-refresh"));
         }
-      }
-      toast({ title: "Generated & saved to gallery", description: `Your ${core.entry.name} image${count > 1 ? "s are" : " is"} ready.` });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      toast({ title: "Generation failed", description: msg, variant: "destructive" });
-    } finally {
-      setGenerating(false);
-    }
+      }, resume, payments => {
+        if (!pendingAccount || !storePendingEscrowPayments(sessionStorage, pendingAccount, payments)) throw new Error("Payment checkpoint unavailable");
+        setPendingOrder({ requests: requests.filter(request => request.model && !request.model.free), payments });
+      });
+      const unresolved = outcomes.flatMap((outcome, index) => !outcome.ok && outcome.payment ? [{ request: requests[index], payment: outcome.payment }] : []);
+      setPendingOrder(unresolved.length ? { requests: unresolved.map(item => item.request), payments: unresolved.map(item => item.payment) } : null);
+      const completed = outcomes.filter(outcome => outcome.ok).length;
+      const failure = outcomes.find(outcome => !outcome.ok);
+      toast({ title: completed ? `${completed} image${completed === 1 ? "" : "s"} generated` : "Generation could not finish",
+        description: failure && !failure.ok ? failure.error : "Your images are saved to your gallery.",
+        ...(completed === 0 ? { variant: "destructive" as const } : {}) });
+      if (requests.some(request => request.model?.free)) void refreshFreeQuota();
+    } finally { setGenerating(false); }
   };
-
+  const generate = async (count: number) => {
+    if (generating || pendingOrder || (pendingAccount && pendingLoadedAccount !== pendingAccount)) return;
+    if (!signedIn) return openLogin();
+    if (!Number.isInteger(count) || count < 1 || count > 24) return;
+    if (refsLoading) return toast({ title: "Images still loading", description: REFS_LOADING });
+    const final = prompt.replace(/\[[^\]]+\]/g, token => valueByToken[token] || token);
+    if (!final.trim() && !locked) return toast({ title: "Enter a prompt", description: "Please enter a prompt before generating.", variant: "destructive" });
+    const tier = asTier(resolution);
+    if (!core.entry || !tier) return toast({ title: "Pick a model", description: "Choose the model to generate with. Nothing was generated.", variant: "destructive" });
+    if (!core.entry.free && !quotes[0]) return toast({ title: "Price unavailable", description: "Wait for the server price before continuing.", variant: "destructive" });
+    const refs = [...referenceImages, ...nftImages].filter(Boolean);
+    const base: GenerationRequest = {
+      model: core.entry, resolution: tier, boost: core.boostAt(tier) && boost, prompt: final.trim(),
+      promptId: seedPrompt?.id || undefined,
+      variableValues: seedPrompt ? Object.fromEntries(Object.entries(valueByToken).map(([token, value]) => [token.replace(/^\[|\]$/g, ""), value])) : undefined,
+      aspectRatio: ratio, referenceImages: refs.length ? refs : undefined,
+    };
+    if (core.entry.free) {
+      // Refresh immediately before planning. The provider route still claims the daily allowance atomically.
+      const quota = await refreshFreeQuota();
+      if (!quota) return toast({ title: "Allowance unavailable", description: "Your daily free image allowance could not be checked. Please try again.", variant: "destructive" });
+      if (count > quota.remaining) {
+        setMixedPaidId("");
+        setMixed({ base, count, freeCount: Math.min(count, quota.remaining) });
+        return;
+      }
+    }
+    await executeOrder(Array.from({ length: count }, () => base));
+  };
+  const confirmMixedOrder = () => {
+    if (!mixed || !mixedPaid || !mixedTotal || generating) return;
+    const requests = [
+      ...Array.from({ length: mixed.freeCount }, () => mixed.base),
+      ...Array.from({ length: mixedPaidCount }, () => ({ ...mixed.base, model: mixedPaid, boost: false })),
+    ];
+    setMixed(null);
+    void executeOrder(requests);
+  };
+  const checkPendingOrder = async () => {
+    if (!pendingOrder || generating) return;
+    if (!pendingOrder.requests.length) {
+      setGenerating(true);
+      try {
+        const receipt = await checkPaidGenerationStatus(pendingOrder.payments[0]);
+        if (receipt.state === "expired") {
+          setPendingOrder(null);
+          toast({ title: "Payment expired", description: "This deposit was not funded. Check your balance before starting another order." });
+          return;
+        }
+        const finished = receipt.unitStatuses?.filter(unit => unit.state === "delivered" || unit.state === "failed");
+        const images = receipt.unitStatuses?.flatMap(unit => unit.imageUrl ? [unit.imageUrl] : []) ?? [];
+        if (images.length) setResults(previous => [...new Set([...images, ...previous])]);
+        if (finished?.length === receipt.units) setPendingOrder(null);
+        toast({ title: "Existing payment checked", description: finished?.length === receipt.units
+          ? "All image requests have finished. Any unused payment is being refunded."
+          : "This order was restored after a reload. Check your gallery or cancel the remaining images. No new images were requested." });
+      } catch (error) {
+        if (error instanceof CheckoutError && error.payment?.state === "expired") setPendingOrder(null);
+        toast({ title: "Payment status", description: error instanceof Error ? error.message : "The payment is still being checked." });
+      } finally { setGenerating(false); }
+      return;
+    }
+    await executeOrder(pendingOrder.requests, pendingOrder.payments);
+  };
+  const cancelPendingOrder = async () => {
+    if (!pendingOrder || generating) return;
+    setGenerating(true);
+    try {
+      await cancelPaidGeneration(pendingOrder.payments[0]);
+      setPendingOrder(null);
+      toast({ title: "Remaining images cancelled", description: "Running images may still finish. The unused payment is being refunded." });
+    } catch (error) {
+      toast({ title: "Cancellation pending", description: error instanceof Error ? error.message : "Check this payment again before starting another order.", variant: "destructive" });
+    } finally { setGenerating(false); }
+  };
   /* The NFT button opens the WALLET picker — it used to click the hidden
      file input, so "NFTs" opened an upload-from-PC dialog (Kev, 2026-08-22).
      The file input stays for the plain image-upload path only. */
@@ -309,6 +388,33 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
 
   return (
     <>
+      <AlertDialog open={!!mixed} onOpenChange={value => { if (!value) setMixed(null); }}>
+        <AlertDialogContent className="z-[2000]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Choose a model for the paid images</AlertDialogTitle>
+            <AlertDialogDescription>
+              {mixed?.freeCount ?? 0} image is free. The other {mixedPaidCount} image{mixedPaidCount === 1 ? "" : "s"} require a paid model you choose.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <label htmlFor="mixed-paid-model">Paid model</label>
+          <select id="mixed-paid-model" value={mixedPaidId} onChange={event => setMixedPaidId(event.target.value)}>
+            <option value="">Choose a paid model</option>
+            {mixedPaidOptions.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+          </select>
+          {!mixedPaidOptions.length && <p>No paid model supports these settings. Close this dialog and change the settings.</p>}
+          <p role="status">{mixedPaid ? mixedTotal ? `${mixed?.freeCount ?? 0} free + ${mixedPaidCount} paid · ${mixedTotal} total` : "Checking the server price…" : "Choose a model to see the total price."}</p>
+          <p>The payment is reserved. Unused images are refunded.</p>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Back</AlertDialogCancel>
+            <button type="button" disabled={!mixedPaid || !mixedTotal || generating} onClick={confirmMixedOrder}>Confirm {mixedTotal ?? "order"}</button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {pendingOrder && <div role="status" style={{ position: "fixed", zIndex: 10015, bottom: 16, left: 16, right: 16, background: "var(--qc-bg)", color: "var(--qc-ink)", padding: 16, borderRadius: 16 }}>
+        <p>Your existing payment is being checked. Starting another order is paused.</p>
+        <button type="button" disabled={generating} onClick={() => void checkPendingOrder()}>Check existing payment</button>
+        <button type="button" disabled={generating} onClick={() => void cancelPendingOrder()}>Cancel remaining images</button>
+      </div>}
       {/* The wallet NFT picker — capped by the model's own reference limit. */}
       {nftPickerOpen && (
         <NftPickerModal
@@ -353,13 +459,14 @@ export default function GenerateLauncher({ seedPrompt = null, onSeedClose }: Gen
         onReorderReferenceImages={(from, to) =>
           setReferenceImages((prev) => reorder(prev, from, to))
         }
-        // No NFT button for a model that takes no references (Flux takes none).
-        onPickNFT={modelLimits.maxRefs > 0 ? pickNFT : undefined}
+        // A model that takes no references (Flux) keeps both add buttons, greyed, and says so (Kev, 2026-10-13).
+        onPickNFT={pickNFT}
+        referencesNote={modelLimits.maxRefs === 0 ? `${core.entry?.name ?? "This generator"} takes no images` : null}
         nftImages={nftImages}
         onRemoveNFT={(i) => setNftImages((prev) => prev.filter((_, idx) => idx !== i))}
         onReorderNFTs={(from, to) => setNftImages((prev) => reorder(prev, from, to))}
         generateLabel={generating ? "Generating…" : refsLoading ? "Loading images…" : "Generate"}
-        generateBlocked={refsLoading}
+        generateBlocked={refsLoading || !!pendingOrder || !!(pendingAccount && pendingLoadedAccount !== pendingAccount) || (core.entry?.free === true && !freeQuota)}
         boost={boost}
         onBoostChange={core.boostAvailable ? setBoost : undefined}
         boostSameHost={!core.boostAt(resolution)}

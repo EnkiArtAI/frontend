@@ -89,6 +89,50 @@ export interface RecordedGeneration {
   imageId: string | null;
 }
 
+/** Paid escrow can be delivered only after its accepted image row exists. */
+export class GenerationRecordError extends Error {
+  /** Which step refused, for the server log and generation_failures; never shown to the user. */
+  constructor(readonly reason: string) { super("The generated image could not be saved. Please check your image history before trying again."); }
+}
+
+export interface GenerationRecordOptions {
+  requireAcceptedImage?: boolean;
+}
+
+/** Optional input history never decides whether a generated image was delivered. */
+export async function recordGenerationReferences(
+  supabase: SupabaseClient,
+  generationId: string,
+  references: (StoredReference | null)[],
+): Promise<void> {
+  const rows = references
+    .map((ref, i) => (ref ? { ...ref, sequence_index: i } : null))
+    .filter((r): r is StoredReference & { sequence_index: number } => r !== null);
+  if (!rows.length) return;
+  const { error } = await supabase.from("generation_reference_images").insert(
+    rows.map((r) => ({
+      generation_id: generationId, sequence_index: r.sequence_index,
+      storage_url: r.url, mime_type: r.mimeType, bytes: r.bytes, content_hash: r.contentHash,
+    })),
+  );
+  if (error) console.warn("[generation] could not record references:", error.message);
+}
+
+/** Optional WebP previews can arrive after the original image is delivered. */
+export async function recordGenerationRenditions(
+  supabase: SupabaseClient, generationId: string, userId: string, imageUrl: string, deadline: number,
+): Promise<void> {
+  const stored = await storeGeneratedImage(imageUrl, userId, deadline);
+  const updates = {
+    ...(stored.previewUrl ? { preview_url: stored.previewUrl } : {}),
+    ...(stored.thumbnailUrl ? { thumbnail_url: stored.thumbnailUrl } : {}),
+  };
+  if (!Object.keys(updates).length) return;
+  const { error } = await supabase.from("generated_images").update(updates)
+    .eq("generation_id", generationId).eq("user_id", userId);
+  if (error) throw new GenerationRecordError(`generated_images update: ${error.code ?? ""} ${error.message}`);
+}
+
 /** Encrypt into the four columns this schema uses everywhere. */
 function envelope(prefix: string, plaintext: string): Record<string, string> {
   const p = encryptString(plaintext);
@@ -191,11 +235,18 @@ async function alertLostRecording(supabase: SupabaseClient, rec: GenerationRecor
 export async function recordGeneration(
   supabase: SupabaseClient,
   rec: GenerationRecord,
+  options: GenerationRecordOptions = {},
 ): Promise<RecordedGeneration | null> {
   try {
+    if (options.requireAcceptedImage) {
+      // The paid route supplies the URL returned by putDurably. Inline bytes
+      // or a missing image cannot become the durable billing record.
+      if (!rec.imageUrl || new URL(rec.imageUrl).protocol !== "https:") throw new GenerationRecordError("image url is not https");
+    }
     const promptId =
       rec.promptId ?? (await ensurePromptRow(supabase, rec.userId, rec.finalPrompt, rec.model, rec.adult === true));
     if (!promptId) {
+      if (options.requireAcceptedImage) throw new GenerationRecordError("no prompt row");
       if (isPaid(rec)) await alertLostRecording(supabase, rec, "no prompt row could be created for it");
       return null;
     }
@@ -233,32 +284,21 @@ export async function recordGeneration(
       .single();
 
     if (error) {
+      if (options.requireAcceptedImage) throw new GenerationRecordError(`generations insert: ${error.code ?? ""} ${error.message}`);
       console.warn("[generation] could not record:", error.message);
       if (isPaid(rec)) await alertLostRecording(supabase, rec, "the generations insert failed");
       return null;
     }
-    const generationId = data.id as string;
+    const generationId = data?.id as string | undefined;
+    if (!generationId) {
+      if (options.requireAcceptedImage) throw new GenerationRecordError("generations insert returned no id");
+      return null;
+    }
 
     // The inputs, in prompt order — "@Image 2" refers to sequence_index 1, so
     // the index comes from the ORIGINAL position and never from a filtered
     // array. A reference that failed to store simply has no row.
-    const rows = (rec.references ?? [])
-      .map((ref, i) => (ref ? { ...ref, sequence_index: i } : null))
-      .filter((r): r is StoredReference & { sequence_index: number } => r !== null);
-
-    if (rows.length) {
-      const { error: refErr } = await supabase.from("generation_reference_images").insert(
-        rows.map((r) => ({
-          generation_id: generationId,
-          sequence_index: r.sequence_index,
-          storage_url: r.url,
-          mime_type: r.mimeType,
-          bytes: r.bytes,
-          content_hash: r.contentHash,
-        })),
-      );
-      if (refErr) console.warn("[generation] could not record references:", refErr.message);
-    }
+    await recordGenerationReferences(supabase, generationId, rec.references ?? []);
 
     // The image itself. generations records what PRODUCED it; generated_images
     // is what the gallery reads, and nothing was ever writing a row there for a
@@ -302,6 +342,7 @@ export async function recordGeneration(
         .select("id")
         .single();
       if (imgErr) {
+        if (options.requireAcceptedImage) throw new GenerationRecordError(`generated_images insert: ${imgErr.code ?? ""} ${imgErr.message}`);
         // The generations row above is real and stays: the caller still gets
         // a generationId. What it loses is imageId — the gallery/share-preview
         // row simply does not exist for this one.
@@ -314,6 +355,7 @@ export async function recordGeneration(
 
     return { generationId, imageId };
   } catch (e) {
+    if (options.requireAcceptedImage) throw e instanceof GenerationRecordError ? e : new GenerationRecordError(`record failed: ${e instanceof Error ? e.message : String(e)}`);
     console.warn("[generation] record failed:", e instanceof Error ? e.message : e);
     if (isPaid(rec)) await alertLostRecording(supabase, rec, "recording threw an exception").catch(() => {});
     return null;

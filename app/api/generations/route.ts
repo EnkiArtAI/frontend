@@ -72,7 +72,7 @@ export async function GET(req: Request) {
     }
     let gallery = supabase
       .from("generated_images")
-      .select("id, prompt_id, storage_url, preview_url, thumbnail_url, description, is_uploaded, visibility, created_at", { count: 'exact' })
+      .select("id, prompt_id, generation_id, storage_url, preview_url, thumbnail_url, description, is_uploaded, visibility, created_at", { count: 'exact' })
       .eq("user_id", ownerId)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
@@ -89,9 +89,28 @@ export async function GET(req: Request) {
       return createErrorResponse('Failed to fetch generations', 500, error.message);
     }
 
+    // The settings each render was made with (Kev, 2026-10-13: a click on a
+    // history image loads them into the composer): the generation row's
+    // model, ratio, size and boost, read once for the page. Uploads have none.
+    const rows = Array.isArray(data) ? data : [];
+    const generationIds = [...new Set(rows.flatMap((r) => (typeof r.generation_id === "string" ? [r.generation_id] : [])))];
+    const settingsById = new Map<string, { model_id: string | null; aspect_ratio: string | null; resolution: string | null; boost: boolean | null }>();
+    if (generationIds.length) {
+      const { data: gens, error: gensError } = await supabase
+        .from("generations")
+        .select("id, model_id, aspect_ratio, resolution, boost")
+        .in("id", generationIds);
+      if (gensError) throw gensError;
+      for (const g of gens ?? []) settingsById.set(g.id, g);
+    }
+    const settingsOf = (generationId: unknown) => {
+      const s = typeof generationId === "string" ? settingsById.get(generationId) : undefined;
+      return s ? { modelId: s.model_id ?? null, aspectRatio: s.aspect_ratio ?? null, resolution: s.resolution ?? null, boost: s.boost === true } : null;
+    };
+
     // Keep the shape the galleries already consume (image_url / prompt /
     // isUploaded) so this is a server-side fix with no client changes.
-    const generations = (Array.isArray(data) ? data : []).map((row) => ({
+    const generations = rows.map((row) => ({
       id: row.id,
       // image_url stays the ORIGINAL (downloads); image_urls is what the
       // galleries DISPLAY, so the WebP preview leads when one exists.
@@ -104,6 +123,8 @@ export async function GET(req: Request) {
       visibility: row.visibility === "public" ? "public" : "private",
       // Which prompt it was made with: the image UI says where a public one shows.
       prompt_id: row.prompt_id ?? null,
+      // What it was made with, for the image UI's composer; null for an upload.
+      settings: settingsOf(row.generation_id),
       created_at: row.created_at,
     }));
 
