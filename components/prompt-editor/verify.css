@@ -1,0 +1,417 @@
+/* Verify (components/prompt-editor): variations, stacks and result tiles,
+   the release bar, the live images of a loaded prompt, and the viewer's
+   panel. A variation's colour comes in as --pe-vc (one of --enki-vary-1…6).
+   Overlays on images are glass: the stage at 55 %, on-stage ink. Colours
+   are tokens only (plan §1.1). */
+
+.pe-verify {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.pe-results {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-height: 0;
+  padding: 22px 24px 18px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* ── Nothing rendered yet. */
+.pe-blank {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 320px;
+  padding: 32px;
+  border: 1.5px dashed var(--enki-rule);
+  border-radius: 22px;
+  color: var(--enki-ink-3);
+  text-align: center;
+}
+.pe-blank-title { font-size: 28px; line-height: 1.2; }
+.pe-blank-text { max-width: 360px; font-size: 13.5px; line-height: 1.55; text-wrap: pretty; }
+.pe-blank-back {
+  margin-top: 6px;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 999px;
+  background: var(--enki-paper);
+  color: var(--enki-ink);
+  font: 500 13.5px/1 var(--font-sans), sans-serif;
+  cursor: pointer;
+}
+
+/* ── A variation. */
+.pe-group { display: flex; flex-direction: column; gap: 8px; }
+.pe-group-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.pe-chip,
+.pe-pv-chip {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 10px 0 8px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--pe-vc) 14%, transparent);
+  color: var(--enki-ink);
+  font: 600 12px/1 var(--font-sans), sans-serif;
+  white-space: nowrap;
+}
+.pe-chip::before,
+.pe-pv-chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--pe-vc); }
+.pe-summary {
+  display: -webkit-box;
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--enki-ink-2);
+  font-size: 12.5px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.pe-load {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--enki-ink-2);
+  font: 400 11.5px/1 var(--font-sans), sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pe-load:hover { border-color: var(--enki-ink-3); color: var(--enki-ink); }
+
+/* At most four columns (three for a wide ratio), never narrower than 130 px, no JS measuring. */
+.pe-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(max(130px, calc((100% - 3 * 8px) / 4)), 1fr));
+  align-items: start;
+  gap: 8px;
+}
+.pe-verify[data-wide] .pe-grid { grid-template-columns: repeat(auto-fill, minmax(max(130px, calc((100% - 2 * 8px) / 3)), 1fr)); }
+
+/* ── Overlays on a result tile (the kit's JobTile is a size container). */
+.pe-tile-pill {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px 0 7px;
+  border: 1px solid color-mix(in oklab, var(--enki-on-stage) 30%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--enki-stage) 55%, transparent);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  color: var(--enki-on-stage);
+  font: 400 10.5px/1 var(--font-sans), sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pe-short { display: none; }
+@container (width < 170px) {
+  .pe-tile-pill .pe-long { display: none; }
+  .pe-tile-pill .pe-short { display: inline; }
+}
+.pe-tile-meta {
+  position: absolute;
+  left: 8px;
+  right: 44px;
+  bottom: 9px;
+  overflow: hidden;
+  color: color-mix(in oklab, var(--enki-on-stage) 85%, transparent);
+  font: 400 9px/1 var(--font-mono), monospace;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px color-mix(in oklab, var(--enki-stage) 60%, transparent);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.pe-tile-retry {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--enki-danger);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--enki-danger);
+  font: 400 10.5px/1 var(--font-sans), sans-serif;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  cursor: pointer;
+}
+
+/* ── A stack, closed: two cards fanned down and right behind the newest. */
+.pe-stack {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0 8px 8px 0;
+  border: 0;
+  background: none;
+  text-align: inherit;
+  cursor: pointer;
+}
+.pe-deck {
+  position: absolute;
+  overflow: hidden;
+  border: 1.5px solid var(--enki-paper);
+  border-radius: 12px;
+  background: var(--enki-paper-3);
+  box-shadow: var(--enki-shadow-card);
+}
+.pe-deck[data-layer="1"] { inset: 4px 4px 4px 4px; }
+.pe-deck[data-layer="2"] { inset: 8px 0 0 8px; background: var(--enki-rule); }
+.pe-deck img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.pe-stack-n {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--enki-stage) 70%, transparent);
+  color: var(--enki-on-stage);
+  font: 600 10.5px/1 var(--font-mono), monospace;
+  pointer-events: none;
+}
+.pe-stack-star {
+  position: absolute;
+  top: -6px;
+  right: 8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--enki-paper);
+  border-radius: 50%;
+  background: var(--enki-ember);
+  color: var(--enki-paper);
+  font-size: 11px;
+}
+
+/* ── A stack, open: a tray across the row in the variation's tint. */
+.pe-tray {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1.5px solid color-mix(in oklab, var(--pe-vc) 45%, transparent);
+  border-radius: 16px;
+  background: color-mix(in oklab, var(--pe-vc) 7%, var(--enki-paper));
+}
+.pe-tray-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.pe-tray-n { flex-shrink: 0; color: var(--enki-ink); font: 600 12px/1.3 var(--font-sans), sans-serif; white-space: nowrap; }
+.pe-tray-values { flex: 1; min-width: 0; color: var(--enki-ink-3); font-size: 12px; overflow-wrap: anywhere; text-wrap: pretty; }
+.pe-tray-x {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in oklab, var(--pe-vc) 45%, transparent);
+  border-radius: 999px;
+  background: var(--enki-paper);
+  color: var(--enki-ink);
+  font: 500 11.5px/1 var(--font-sans), sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pe-tray .kit-tile { outline: 2px solid color-mix(in oklab, var(--pe-vc) 45%, transparent); outline-offset: 1px; }
+
+/* ── The live images of a loaded prompt. */
+.pe-showcase { display: flex; flex-direction: column; gap: 8px; }
+.pe-showcase-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.pe-showcase-row img { height: 48px; width: auto; border: 1px solid var(--enki-rule); border-radius: 8px; }
+
+/* ── Release bar. */
+.pe-release {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px 12px;
+  min-width: 0;
+  padding: 12px 24px 14px;
+  border-top: 1px solid var(--enki-rule);
+  background: var(--enki-paper);
+}
+.pe-pick {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  height: 50px;
+  padding: 0 14px 0 12px;
+  border: 1.5px solid var(--enki-rule);
+  border-radius: 14px;
+  background: var(--enki-paper);
+}
+.pe-pick[data-tone="short"] {
+  border-color: color-mix(in oklab, var(--enki-ember) 45%, transparent);
+  background: color-mix(in oklab, var(--enki-ember) 6%, transparent);
+}
+.pe-pick[data-tone="released"] {
+  border-color: var(--enki-turq);
+  background: color-mix(in oklab, var(--enki-turq) 8%, transparent);
+}
+.pe-slots { display: flex; align-items: center; gap: 5px; }
+.pe-slot {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  max-height: 38px;
+  overflow: hidden;
+  border: 1.5px dashed color-mix(in oklab, var(--enki-ember) 55%, var(--enki-rule));
+  border-radius: 6px;
+  color: color-mix(in oklab, var(--enki-ember) 60%, transparent);
+  font-size: 12px;
+}
+.pe-slot[data-filled] { border-style: solid; border-color: var(--enki-ember); }
+.pe-slot img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.pe-pick-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.pe-pick-label { color: var(--enki-ink); font: 600 13px/1.25 var(--font-sans), sans-serif; white-space: nowrap; }
+.pe-pick[data-tone="short"] .pe-pick-label { color: var(--enki-ember); }
+.pe-pick[data-tone="released"] .pe-pick-label { color: var(--enki-turq); }
+.pe-pick-sub { color: var(--enki-ink-3); font-size: 11px; white-space: nowrap; }
+.pe-more {
+  flex-shrink: 0;
+  margin-left: auto;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 999px;
+  background: var(--enki-paper);
+  color: var(--enki-ink);
+  font: 500 12.5px/1 var(--font-sans), sans-serif;
+  cursor: pointer;
+}
+.pe-release-btn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 22px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--cta-bg);
+  color: var(--cta-ink);
+  font: 600 15px/1 var(--font-sans), sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform 0.14s;
+}
+.pe-release-btn:hover:not([aria-disabled="true"]):not(:disabled) { transform: translateY(-1px); }
+.pe-release-btn[data-released] { background: var(--enki-turq); color: var(--enki-paper); }
+.pe-release-btn[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
+.pe-release-btn:disabled { cursor: progress; }
+.pe-spin {
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in oklab, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: kit-spin 0.9s linear infinite;
+}
+
+/* ── The viewer's panel, on the stage. */
+.pe-pv { display: flex; flex-direction: column; gap: 14px; padding: 22px; }
+.pe-pv-chip { background: color-mix(in oklab, var(--enki-on-stage) 12%, transparent); color: var(--enki-on-stage); }
+.pe-pv-meta { margin: 0; color: color-mix(in oklab, var(--enki-on-stage) 55%, transparent); font-size: 12px; }
+.pe-pv-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.pe-pv-use,
+.pe-pv-btn {
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font: 500 12.5px/1 var(--font-sans), sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pe-pv-use { grid-column: 1 / -1; height: 38px; border: 0; background: var(--enki-on-stage); color: var(--enki-stage); font-weight: 600; }
+.pe-pv-btn {
+  border: 1px solid color-mix(in oklab, var(--enki-on-stage) 18%, transparent);
+  background: color-mix(in oklab, var(--enki-on-stage) 8%, transparent);
+  color: var(--enki-on-stage);
+}
+.pe-pv-btn[aria-pressed="true"] { border-color: transparent; background: var(--enki-ember); color: var(--enki-paper); }
+.pe-sibs { display: flex; flex-direction: column; gap: 6px; }
+.pe-sibs-label {
+  color: color-mix(in oklab, var(--enki-on-stage) 55%, transparent);
+  font: 400 10.5px/1 var(--font-mono), monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.pe-sibs-strip { display: flex; gap: 8px; padding: 2px; overflow-x: auto; --kit-tile-radius: 9px; }
+.pe-sib-tag {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: 3px;
+  overflow: hidden;
+  padding: 3px 4px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--enki-stage) 75%, transparent);
+  color: var(--enki-amber);
+  font: 400 8.5px/1 var(--font-mono), monospace;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ── Below 1024 px: three columns, the release bar stacked. */
+@media (max-width: 1023.98px) {
+  .pe-results { padding: 14px max(24px, calc((100% - 720px) / 2)) 18px; gap: 18px; }
+  .pe-grid,
+  .pe-verify[data-wide] .pe-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .pe-release {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 10px;
+    padding: 10px max(24px, calc((100% - 720px) / 2)) calc(12px + env(safe-area-inset-bottom, 0px));
+    border-top-color: var(--enki-rule-2);
+    box-shadow: var(--enki-shadow-bar);
+  }
+  .pe-release-btn { height: 48px; }
+  .pe-pv { padding: 0; }
+  .pe-pv-acts { grid-template-columns: 1.4fr 1fr 1fr; gap: 8px; }
+  .pe-pv-use { grid-column: auto; }
+  .pe-pv-use,
+  .pe-pv-btn { height: 48px; border-radius: 14px; font-size: 11px; white-space: normal; }
+}
+@media (max-width: 767.98px) {
+  .pe-results { padding-inline: 16px; }
+  .pe-grid,
+  .pe-verify[data-wide] .pe-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pe-release { padding-inline: 16px; }
+}
+@media (pointer: coarse) {
+  .pe-tile-pill { height: 30px; padding: 0 10px; font-size: 11px; }
+  .pe-tile-retry { height: 28px; padding: 0 10px; }
+}

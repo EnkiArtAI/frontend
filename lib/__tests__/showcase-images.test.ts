@@ -100,9 +100,6 @@ describe("the prompt save", () => {
   });
 });
 
-describe("the editor", () => {
-  it("offers only stored renders as showcase images: an inline one cannot be matched to a render", () => {
-    const editor = readSource(join(__dirname, "..", "..", "components", "EnkiPromptEditor.tsx"));
-    expect(editor).toContain('.filter((v) => v.status === "complete" && v.sourceUrl?.startsWith("https://"))');
-  });
+it("the current release accepts only stored HTTPS renders as showcase images", () => {
+  expect(readSource(join(__dirname, "..", "..", "lib", "editor", "release.ts"))).toContain('.filter((u) => u.startsWith("https://"))');
 });

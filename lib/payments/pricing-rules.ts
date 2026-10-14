@@ -79,7 +79,7 @@ async function resolveBuyerId(supabase: SupabaseClient, walletOrId: string): Pro
  */
 export async function resolvePricingRule(
   supabase: SupabaseClient,
-  args: { buyerWalletOrId: string; modelFamily: string; promptId?: string },
+  args: { buyerWalletOrId: string; modelFamily: string; promptId?: string; excludeFreeGeneration?: boolean },
 ): Promise<AppliedRule | null> {
   const rules = await loadActiveRules(supabase);
   if (rules.length === 0) return null;
@@ -102,6 +102,8 @@ export async function resolvePricingRule(
   }
 
   for (const r of rules) {
+    // Daily free baseline is handled by its atomic quota; paid catalogue models stay paid.
+    if (args.excludeFreeGeneration && r.effect?.type === "free_generation") continue;
     const a = r.audience ?? {};
     if (a.roles && !a.roles.includes(role)) continue;
     if (a.ranks && (!rank || !a.ranks.includes(rank))) continue;

@@ -1,4 +1,3 @@
-import BoostToggle from "@/components/generation/BoostToggle";
 import DiceButton from "@/components/DiceButton";
 import type { DiceValue, DiceVariable } from "@/lib/generation/variable-dice";
 import { sessionAuthHeaders } from "@/lib/session-headers";
@@ -152,6 +151,8 @@ interface EnkiMobileGenerateModalProps {
   nftImages?: string[];
   onRemoveNFT?: (index: number) => void;
   onReorderNFTs?: (from: number, to: number) => void;
+  /** Why no image can be added right now ("Flux (free) takes no images"): the add buttons grey out and say it (Kev, 2026-10-13). */
+  referencesNote?: string | null;
   generateLabel?: string;
   /** Boost: same model on a priority host. Omit onBoostChange to hide it. */
   boost?: boolean;
@@ -230,14 +231,15 @@ function MiniSelect({
 
   return (
     <div className="mobile-modal-setting" title={title}>
-      {icon}
       <div className="mobile-modal-minisel" ref={ref}>
+        {/* The icon sits inside the trigger: one compact control (Kev, 2026-10-13). */}
         <button
           type="button"
           className="mobile-modal-select mobile-modal-select--mini mobile-modal-minisel-trigger"
           style={fixedWidth ? { width: fixedWidth } : maxWidth ? { maxWidth } : undefined}
           onClick={() => setOpen((o) => !o)}
         >
+          {icon}
           <span className="mobile-modal-minisel-value">{(current as { short?: string } | undefined)?.short ?? current?.label ?? value}</span>
         </button>
         {open && (
@@ -292,6 +294,7 @@ export default function EnkiMobileGenerateModal({
   nftImages,
   onRemoveNFT,
   onReorderNFTs,
+  referencesNote = null,
   generateLabel,
   boost,
   onBoostChange,
@@ -744,7 +747,15 @@ export default function EnkiMobileGenerateModal({
           onPointerDown={fixedSheet ? onHandlePointerDown : undefined}
           onClick={fixedSheet ? undefined : () => requestClose()}
           style={fixedSheet ? { cursor: "ns-resize", touchAction: "none" } : undefined}
-        ></div>
+        >
+          {/* Quick Create: the grip is a small pill that names the sheet; no tab row, the close in the corner (Kev, 2026-10-13). */}
+          {fixedSheet && <span className="mobile-modal-handle-title">Generate</span>}
+        </div>
+        {fixedSheet && (
+          <button type="button" className="mobile-modal-close mobile-modal-corner-close" onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </button>
+        )}
 
         {/* Header */}
         <div className="mobile-modal-header">
@@ -1262,7 +1273,8 @@ export default function EnkiMobileGenerateModal({
                         type="button"
                         className="mobile-modal-ref-btn"
                         onClick={() => refInputRef.current?.click()}
-                        title="Upload an image"
+                        disabled={!!referencesNote}
+                        title={referencesNote ?? "Upload an image"}
                         aria-label="Upload an image"
                       >
                         <Plus size={13} />
@@ -1303,7 +1315,8 @@ export default function EnkiMobileGenerateModal({
                             type="button"
                             className="mobile-modal-ref-btn"
                             onClick={() => onPickNFT()}
-                            title="Pick an NFT from your wallet"
+                            disabled={!!referencesNote}
+                            title={referencesNote ?? "Pick an NFT from your wallet"}
                             aria-label="Pick an NFT"
                           >
                             <Plus size={13} />
@@ -1328,6 +1341,7 @@ export default function EnkiMobileGenerateModal({
                           )}
                       </div>
                     )}
+                    {referencesNote && <span className="mobile-modal-ref-note">{referencesNote}</span>}
                   </div>
                 )}
                 {/* Sized to the LONGEST model name and pinned there: a
@@ -1339,18 +1353,18 @@ export default function EnkiMobileGenerateModal({
                   value={models.selected[0] || ""}
                   options={models.available.map((m) => ({ value: m.id, label: m.name }))}
                   onChange={(v) => setModel && setModel(v)}
-                  fixedWidth={Math.min(230, Math.round(Math.max(8, ...models.available.map((m) => String(m.name ?? "").length)) * 7.2) + 34)}
+                  fixedWidth={Math.min(230, Math.round(Math.max(8, ...models.available.map((m) => String(m.name ?? "").length)) * 6.4) + 28)}
                 />
                 <MiniSelect
                   title="Aspect ratio"
-                  icon={<Ratio size={14} style={{ color: "#8A7F72", flexShrink: 0 }} aria-label="Aspect ratio" />}
+                  icon={<Ratio size={12} style={{ color: "#8A7F72", flexShrink: 0 }} aria-label="Aspect ratio" />}
                   value={ratios.selected}
                   options={ratios.available.map((r) => ({ value: r, label: r }))}
                   onChange={(v) => setRatio && setRatio(v)}
                 />
                 <MiniSelect
                   title="Resolution"
-                  icon={<Maximize2 size={14} style={{ color: "#8A7F72", flexShrink: 0 }} aria-label="Resolution" />}
+                  icon={<Maximize2 size={12} style={{ color: "#8A7F72", flexShrink: 0 }} aria-label="Resolution" />}
                   value={genResolution}
                   options={resolutionOptions ?? [{ value: "2K", label: "2K" }, { value: "4K", label: "4K" }]}
                   onChange={setGenResolution}
@@ -1361,7 +1375,7 @@ export default function EnkiMobileGenerateModal({
                     guarantees. */}
                 <MiniSelect
                   title="Generations"
-                  icon={<Copy size={14} style={{ color: "#8A7F72", flexShrink: 0 }} aria-label="Generations" />}
+                  icon={<Copy size={12} style={{ color: "#8A7F72", flexShrink: 0 }} aria-label="Generations" />}
                   value={genCount}
                   options={[1, 2, 3, 4, 5, 6, 7, 8].map((qn) => ({ value: `x ${qn}`, label: `x ${qn}` }))}
                   onChange={setGenCount}
@@ -1370,9 +1384,7 @@ export default function EnkiMobileGenerateModal({
               <div className="mobile-modal-pay-inline">
                 <span className="mobile-modal-pay-inline-price">{priceFor(genCountNum)}</span>
               </div>
-              {onBoostChange && (
-                <BoostToggle boost={!!boost} onChange={onBoostChange} sameHost={boostSameHost} disabled={isGenerating} />
-              )}
+              {/* No Boost toggle for now: it will pick the cheapest or fastest host by itself later (Kev, 2026-10-13); the flag stays wired, off. */}
               {/* 🎲 — invents one coherent set of variable values. Without an
                   onVariableChange there is nowhere to put a roll, so no dice.
                   setPromptBody absent = locked paid (vars-only) prompt: its

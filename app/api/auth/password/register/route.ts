@@ -19,7 +19,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { hashPassword } from "@/lib/password-auth";
 import { mintUserSession } from "@/lib/user-session";
 import { getClientIp, hashIp, isIpBanned } from "@/lib/ip-hash";
-import { whitelistStageActive, isEmailAllowed, grantGateCookie } from "@/lib/allowlist";
+import { whitelistStageActive, isEmailAllowed, admitAllowlisted, grantGateCookie } from "@/lib/allowlist";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 
 const bodySchema = z.object({
@@ -97,6 +97,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // The email passed the access list above: the new account is a beta member.
+  await admitAllowlisted(supabase, user.id);
   const session = await mintUserSession(user.id, ipHash);
   // Whitelisted registration → grant app access (gate cookie).
   return grantGateCookie(NextResponse.json({ email, ...session }));

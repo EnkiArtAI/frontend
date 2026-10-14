@@ -13,7 +13,7 @@ import { PublicKey } from "@solana/web3.js";
 import { ed25519 } from "@noble/curves/ed25519";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
-import { whitelistStageActive, isWalletAllowed, grantGateCookie, revokeGateCookie } from "@/lib/allowlist";
+import { whitelistStageActive, isWalletAllowed, admitAllowlisted, grantGateCookie, revokeGateCookie } from "@/lib/allowlist";
 import { getClientIp, hashIp, isIpBanned } from "@/lib/ip-hash";
 import { activeBanFor } from "@/lib/session-user";
 import { APP_NAME } from "@/shared/app-config";
@@ -212,9 +212,11 @@ export async function POST(req: NextRequest) {
       : NextResponse.json({ error: "Your account could not be read right now. Try again." }, { status: 503 });
   }
 
+  let userId: string | null = walletRow?.user_id ? String(walletRow.user_id) : null;
   if (!walletRow?.user_id) {
     const userInsert = await supabase.from("users").insert({}).select("id").single();
     if (!userInsert.error && userInsert.data?.id) {
+      userId = String(userInsert.data.id);
       await supabase.from("user_wallets").insert({
         user_id: userInsert.data.id,
         address: storedWallet,
@@ -234,6 +236,8 @@ export async function POST(req: NextRequest) {
   // Banned users still get a session — it only opens /api/ban/* (status,
   // appeal, funds). The banned flag routes the client to /banned.
   const banned = walletRow?.user_id ? !!(await activeBanFor(supabase, String(walletRow.user_id))) : false;
+  // This login passed the access list: the account, new or old, is a beta member.
+  if (userId && !banned) await admitAllowlisted(supabase, userId);
 
   // Whitelisted login → grant app access (sets the gate cookie the proxy
   // checks). A banned account loses it: /banned is public without it.

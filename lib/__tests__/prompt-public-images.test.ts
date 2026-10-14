@@ -54,10 +54,34 @@ describe("the images people made public with a prompt", () => {
     ];
     const { status, body } = await read();
     expect(status).toBe(200);
+    const nobody = { handle: null, name: null, mine: false };
     expect(body.images).toEqual([
-      { id: "g1", url: "https://blob/g1.preview.webp", thumbnailUrl: "https://blob/g1.thumb.webp", createdAt: "2026-10-08T10:00:00Z" },
-      { id: "g6", url: "https://blob/g6.png", thumbnailUrl: "https://blob/g6.png", createdAt: "2026-10-08T10:00:00Z" },
+      { id: "g1", url: "https://blob/g1.preview.webp", thumbnailUrl: "https://blob/g1.thumb.webp", createdAt: "2026-10-08T10:00:00Z", maker: nobody },
+      { id: "g6", url: "https://blob/g6.png", thumbnailUrl: "https://blob/g6.png", createdAt: "2026-10-08T10:00:00Z", maker: nobody },
     ]);
+  });
+
+  it("name who made each one by handle and display name, never by id, and say which are the viewer's own (Kev, 2026-10-13)", async () => {
+    db.current!.tables.generated_images = [img("g1", { user_id: "ada" }), img("g2", { user_id: "me" }), img("g3", { user_id: "nameless" })];
+    db.current!.tables.users = [
+      { id: "ada", handle: "ada", display_name: "Ada L.", deleted_at: null, account_status: "active" },
+      { id: "me", handle: "kiri", display_name: null, deleted_at: null, account_status: "active" },
+      { id: "nameless", handle: null, display_name: "", deleted_at: null, account_status: "active" },
+    ];
+    seen.userId = "me";
+    const { body } = await read();
+    expect(body.images.map((i: { maker: unknown }) => i.maker)).toEqual([
+      { handle: "ada", name: "Ada L.", mine: false },
+      { handle: "kiri", name: null, mine: true },
+      { handle: null, name: null, mine: false },
+    ]);
+    expect(JSON.stringify(body)).not.toMatch(/user_id|"id":"ada"|"id":"me"/);
+    // Signed out, nothing is anyone's, a row without an owner included.
+    seen.userId = null;
+    db.current!.tables.generated_images.push(img("g4", { user_id: null }));
+    const out = (await read()).body.images;
+    expect(out).toHaveLength(4);
+    expect(out.every((i: { maker: { mine: boolean } }) => i.maker.mine === false)).toBe(true);
   });
 
   it("show 18+ ones only to a viewer who may see 18+", async () => {
@@ -90,6 +114,22 @@ describe("the images people made public with a prompt", () => {
     expect((await read()).body.images.map((i: { id: string }) => i.id)).toEqual(["g1"]);
   });
 
+  it("a makers read that fails answers like any failed read, never a row without its maker", async () => {
+    db.current!.tables.generated_images = [img("g1", { user_id: "ada" })];
+    db.current!.tables.users = [{ id: "ada", handle: "ada", display_name: null, deleted_at: null, account_status: "active" }];
+    const client = db.current!.client as unknown as { from: (table: string) => unknown };
+    const from = client.from.bind(client);
+    let reads = 0;
+    client.from = (table: string) => {
+      // The first users read is hiddenOwners'; the second is the makers'.
+      if (table === "users" && ++reads === 2) {
+        return { select: () => ({ in: async () => ({ data: null, error: new Error("users down") }) }) };
+      }
+      return from(table);
+    };
+    expect((await read()).status).toBe(500);
+  });
+
   it("are none for a banned creator's prompt, whoever made them", async () => {
     db.current!.tables.generated_images = [img("g1", { user_id: "kept" })];
     db.current!.tables.users = [{ id: "kept", deleted_at: null, account_status: "active" }];
@@ -102,39 +142,32 @@ describe("the images people made public with a prompt", () => {
   });
 });
 
-describe("the image UI", () => {
-  const VIEW = readSource(join(__dirname, "..", "..", "components", "PromptGeneratorView.tsx"));
-
-  it("shows them in a row below the showcase strip, above the comments", () => {
-    const row = VIEW.indexOf('aria-label="Made with this prompt"');
-    expect(row).toBeGreaterThan(VIEW.indexOf('className="pgv-thumb-row"'));
-    expect(row).toBeLessThan(VIEW.indexOf('className="pgv-center-tabs"'));
-    expect(VIEW).toContain("fetch(`/api/prompts/${encodeURIComponent(promptId)}/images`, { headers: viewerHeaders() })");
+describe("the current image UI", () => {
+  const view = readSource(join(__dirname, "..", "..", "components", "image-view", "useImageViewModel.ts"));
+  const panel = readSource(join(__dirname, "..", "..", "components", "image-view", "ViewerPanel.tsx"));
+  it("reads public images with the viewer headers and keeps them in the strip", () => {
+    expect(view).toContain('/images'); expect(view).toContain('headers: viewerHeaders()');
+    expect(readSource(join(__dirname, "..", "..", "components", "image-view", "PreviewStrip.tsx"))).toContain('const tiles = [...m.examples, ...m.community];');
   });
-
-  it("offers the Public switch on your own image in the large view, and makes it public or private", () => {
-    expect(VIEW).toMatch(/for \(const url of \[g\.image_url, \.\.\.\(g\.image_urls \?\? \[\]\)\]\)/);
-    expect(VIEW).toContain("const own = history.includes(url) ? ownImages.get(url) : undefined;");
-    expect(VIEW).toContain('body: JSON.stringify({ visibility: isPublic ? "public" : "private" })');
-    expect(VIEW).toContain("onChange={(e) => void setImagePublic(own.id, e.target.checked)}");
-    expect(VIEW).toContain('queryClient.invalidateQueries({ queryKey: ["prompt-public-images"] });');
-    expect(VIEW).toContain('queryClient.invalidateQueries({ queryKey: ["user-generations"] });');
+  it("offers the public switch on a recorded render and updates its two lists", () => {
+    expect(panel).toContain('onChange={(e) => void m.setPublic(record, e.target.checked)}');
+    expect(view).toContain('body: JSON.stringify({ visibility: on ? "public" : "private" }),');
+    expect(view).toContain('queryKey: ["user-generations"]'); expect(view).toContain('queryKey: ["prompt-public-images"]');
   });
-
-  it("offers no switch on an upload, which never goes public", () => {
-    expect(VIEW).toMatch(/for \(const g of genData\?\.data\?\.generations \?\? genData\?\.generations \?\? \[\]\) \{\n\s+if \(g\.isUploaded\) continue;/);
+  it("does not give an upload a public record", async () => {
+    const { recordOf } = await import("@/lib/ui/image-view/history");
+    const row = { id: "upload", image_url: "https://local.example/u.png", image_urls: [], thumbnail_url: null, isUploaded: true, visibility: "private" as const, prompt_id: null, created_at: "" };
+    expect(recordOf([row], row.image_url)).toBeUndefined();
   });
-
-  it("says where a public image shows: under this prompt only when it was made with it, and on the profile", () => {
-    expect(VIEW).toContain('{!own.isPublic ? "Only you see it" : own.promptId === promptId ? "Shown under this prompt and on your profile" : "Shown on your profile"}');
+  it("says where a public image shows and retains its prompt relation", () => {
+    expect(panel).toContain('record.prompt_id === m.promptId ? "Shown under this prompt and on your profile" : "Shown on your profile"');
     const list = readSource(join(__dirname, "..", "..", "app", "api", "generations", "route.ts"));
-    expect(list).toContain("prompt_id: row.prompt_id ?? null,");
-    expect(list).toMatch(/\.select\("id, prompt_id, storage_url/);
+    expect(list).toContain('prompt_id: row.prompt_id ?? null,');
   });
-
-  it("checks back while a fresh render is not recorded yet, every 3 s for 60 s at most", () => {
-    expect(VIEW).toContain("return waiting && query.state.dataUpdatedAt - lastRunAt < 60_000 ? 3000 : false;");
-    expect(VIEW).toContain("const waiting = localHistory.some((url) => !known.has(url));");
-    expect(VIEW).toMatch(/setLastRunAt\(Date\.now\(\)\);\n\s+if \(userKey\) queryClient\.invalidateQueries\(\{ queryKey: genQueryKey \}\);/);
+  it("polls for an unrecorded render for at most one minute", () => {
+    const own = readSource(join(__dirname, "..", "..", "components", "image-view", "useOwnRenders.ts"));
+    expect(own).toContain('setInterval(refetch, 3000)');
+    expect(own).toContain('setTimeout(() => clearInterval(tick), 60_000)');
+    expect(own).toContain('waiting ? pollWhile(() => void refetch()) : undefined');
   });
 });

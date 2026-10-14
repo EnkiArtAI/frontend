@@ -9,11 +9,16 @@ import { useSolanaAuth } from "@/hooks/useSolanaAuth";
 import { sessionAuthHeaders, viewerHeaders } from "@/lib/session-headers";
 import EnkiCard from "@/components/enki/EnkiCard";
 import EnkiDetailPanel from "@/components/enki/EnkiDetailPanel";
+import PromptWall from "@/components/enki/PromptWall";
+import BookmarksPanel from "@/components/enki-shell/BookmarksPanel";
+import { seedFromEnkiPrompt } from "@/lib/ui/image-view/seed";
 import {
   mapMarketplacePromptToEnkiPrompt
 } from "@/lib/enkiPromptAdapter";
 import type { EnkiPrompt } from "@/lib/enkiPromptAdapter";
-import { requestPromptEdit } from "@/components/enki-shell/editorBridge";
+import { stashEditorSeed } from "@/components/enki-shell/editorBridge";
+import { librarySeed } from "@/lib/editor/editor-seed";
+import { notify } from "@/components/kit/notify";
 import { useBetaAccess } from "@/components/BetaGate";
 import { openLogin } from "@/lib/openLogin";
 import { listCreations, subscribeCreations, type StoredCreation } from "@/lib/creations";
@@ -451,7 +456,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
   /* Library is PRIVATE too (Kev, 2026-09-05): the owner's saved prompts and
      workflows, one click from the editor. */
   const TABS = own
-    ? ["Released", "Gallery", "Library", "Likes", "Reviews", "About", "History"]
+    ? ["Released", "Gallery", "Library", "Likes", "Bookmarks", "Reviews", "About", "History"]
     : ["Released", "Gallery", "Reviews", "About"];
   const router = useRouter();
   const [activeTab, setActiveTab] = useState("Released");
@@ -502,13 +507,13 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
     (solanaSessionActive ? solanaSessionAddress : null) ??
     solanaPublicKey?.toBase58() ??
     cdpAddress ?? null;
-  const isAuthed = !!walletAddress;
 
   // The user's name, bio and images live in the DB. The gate check already
   // fetched them at app boot, so the profile paints instantly from that cache
   // and only the prompt count arrives with the background refresh — no more
   // blank header or default-bio flash.
-  const { setHandle: setSidebarHandle, profile: gateProfile, setProfile: setGateProfile } = useBetaAccess();
+  const { access, role, userId: seedOwner, setHandle: setSidebarHandle, profile: gateProfile, setProfile: setGateProfile } = useBetaAccess();
+  const isAuthed = !!walletAddress || (access === "ok" && role !== "team");
   const [me, setMe] = useState<Me | null>(!handle && gateProfile ? { ...gateProfile } : null);
   useEffect(() => {
     if (!handle && gateProfile) setMe((cur) => cur ?? { ...gateProfile });
@@ -614,13 +619,15 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
     });
   };
 
+  // Both profiles read one creator's shelf. Wait for the own handle rather
+  // than requesting the public feed; the cache follows the current creator.
+  const shelf = handle ?? gateProfile?.handle ?? null;
   const { data, isError } = useQuery({
-    queryKey: ["/api/marketplace/prompts", "profile", handle ?? "own"],
+    queryKey: ["/api/marketplace/prompts", "profile", shelf],
+    enabled: !!shelf,
     queryFn: async () => {
-      const params = new URLSearchParams({ limit: "20", sortBy: "newest" });
-      // Foreign: only this creator's shelf — same query and mapping as the
-      // feed, narrowed server-side by ?creator.
-      if (handle) params.set("creator", handle);
+      if (!shelf) return { prompts: [] };
+      const params = new URLSearchParams({ limit: "20", sortBy: "newest", creator: shelf });
       const res = await fetch(`/api/marketplace/prompts?${params.toString()}`, { headers: viewerHeaders(), credentials: "include" });
       if (!res.ok) throw new Error("Failed to load prompts");
       return res.json();
@@ -797,7 +804,8 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
             {/* Title & Actions */}
             <div style={{ flex: 1, paddingBottom: 10, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-                <h1 className="serif" style={{ fontSize: "clamp(48px, 5vw, 72px)", fontWeight: 400, margin: 0, lineHeight: 1 }}>
+                {/* Shrinks on a phone and breaks a long handle, never past the edge (Kev, 2026-10-13: "skewed wenn browser zu schmal"). */}
+                <h1 className="serif" style={{ fontSize: "clamp(32px, 9vw, 72px)", fontWeight: 400, margin: 0, lineHeight: 1, minWidth: 0, overflowWrap: "anywhere" }}>
                   <em>{displayName}</em>
                 </h1>
                 {/* Edit is the owner's; a foreign profile can be reported
@@ -853,7 +861,8 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
           alignItems: "center",
           justifyContent: "space-between"
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "clamp(14px, 3vw, 32px)", flexWrap: "wrap" }}>
+          {/* One row that scrolls sideways on a phone instead of wrapping into two (Kev, 2026-10-13). */}
+          <div className="kit-noscroll" style={{ display: "flex", alignItems: "center", gap: "clamp(14px, 3vw, 32px)", flexWrap: "nowrap", overflowX: "auto", minWidth: 0 }}>
             {TABS.map(tab => (
               <button
                 key={tab}
@@ -867,7 +876,9 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
                   fontSize: 14,
                   fontWeight: activeTab === tab ? 600 : 400,
                   cursor: "pointer",
-                  transition: "all 0.2s ease"
+                  transition: "all 0.2s ease",
+                  flexShrink: 0,
+                  whiteSpace: "nowrap"
                 }}
               >
                 {tab}
@@ -880,7 +891,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
               </button>
             ))}
             
-            <button className="enki-catbar-all" style={{ height: 36, fontSize: 11, gap: 6, marginLeft: 16 }}>
+            <button className="enki-catbar-all" style={{ height: 36, fontSize: 11, gap: 6, marginLeft: 16, flexShrink: 0, whiteSpace: "nowrap" }}>
               <Sparkles size={14} /> Filter by NFT <ChevronDown size={12} />
             </button>
           </div>
@@ -897,7 +908,7 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
                 key={prompt.id}
                 prompt={prompt}
                 onOpen={setOpen}
-                onEdit={own ? requestPromptEdit : undefined}
+                onEdit={own ? (p) => router.push(`/editor?id=${encodeURIComponent(p.id)}`) : undefined}
               />
             ))}
           </div>
@@ -978,49 +989,43 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
             <div style={{ padding: "80px 0", textAlign: "center" }}>
               <div className="serif" style={{ fontSize: 24, color: "var(--enki-ink-3)" }}>Your library is empty.</div>
               <p style={{ fontSize: 14, color: "var(--enki-ink-3)", maxWidth: 440, margin: "8px auto 0" }}>
-                Only you see this tab. In the prompt editor, choose “Save to my library” — saved prompts and workflows open here in one click and can be inserted into other prompts as workflow nodes.
+                Only you see this tab. Saved prompt text opens in the editor. Older workflows stay in your library.
               </p>
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12, padding: "18px 0" }}>
-              {library.map((it) => (
+              {library.map((it) => { const seed = librarySeed(it); return (
                 <div key={it.id} style={{ border: "1px solid var(--enki-rule)", borderRadius: 12, background: "var(--enki-paper-2)", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                     <span style={{ fontWeight: 700, fontSize: 14, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{it.name}</span>
                     <span className="mono" style={{ fontSize: 10.5, color: "var(--enki-ink-3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{it.kind}</span>
                   </div>
-                  <div style={{ fontSize: 12, color: "var(--enki-ink-3)", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{it.prompt_text || "—"}</div>
+                  <div style={{ fontSize: 12, color: "var(--enki-ink-3)", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{seed?.promptText ?? "This saved workflow can’t be opened in the new editor yet."}</div>
                   <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
-                    <button type="button" className="ek-btn" style={{ minHeight: 32, flex: 1 }} onClick={() => requestPromptEdit({ title: it.name, libraryGraph: it.graph })}>Open in editor</button>
+                    {seed && <button type="button" className="ek-btn" style={{ minHeight: 32, flex: 1 }} onClick={() => {
+                      if (stashEditorSeed(seed, seedOwner)) router.push("/editor");
+                      else notify("Couldn't open this prompt. Try again.", { tone: "error" });
+                    }}>Open in editor</button>}
                     <button type="button" style={{ minHeight: 32, padding: "0 10px", border: "1px solid var(--enki-rule)", borderRadius: 8, background: "transparent", color: "var(--enki-ink-3)", cursor: "pointer" }} title="Delete from library" onClick={() => void deleteLibraryItem(it.id)}>Delete</button>
                   </div>
                 </div>
-              ))}
+              ); })}
             </div>
           )
+        ) : activeTab === "Bookmarks" ? (
+          /* The owner's bookmarks, here instead of a menu entry (Kev, 2026-10-13): the categories, then a category as the feed's wall. */
+          <BookmarksPanel />
         ) : activeTab === "Likes" ? (
-          myLikes === null ? (
-            <div style={{ padding: "60px 0", textAlign: "center", color: "var(--enki-ink-3)" }}>Loading…</div>
-          ) : myLikes.length === 0 ? (
-            <div style={{ padding: "80px 0", textAlign: "center" }}>
-              <div className="serif" style={{ fontSize: 24, color: "var(--enki-ink-3)" }}>Nothing liked yet.</div>
-              <p style={{ fontSize: 14, color: "var(--enki-ink-3)", maxWidth: 420, margin: "8px auto 0" }}>
-                Only you see this tab. Tap the heart on any image and it lands here.
-              </p>
-            </div>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12, padding: "18px 0" }}>
-              {myLikes.map((l) => (
-                <button key={l.promptId} type="button" onClick={() => router.push(`/generator/${l.promptId}`)}
-                  style={{ padding: 0, border: "1px solid var(--enki-rule)", borderRadius: 12, overflow: "hidden", background: "var(--enki-paper-2)", cursor: "pointer", textAlign: "left" }}>
-                  {l.imageUrl
-                    ? <img src={l.imageUrl} alt={l.title} style={{ width: "100%", aspectRatio: "1", objectFit: "cover", display: "block" }} draggable={false} />
-                    : <div style={{ width: "100%", aspectRatio: "1", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--enki-ink-3)" }}><Heart size={18} /></div>}
-                  <div style={{ padding: "7px 9px", fontSize: 12.5, fontWeight: 600, color: "var(--enki-ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.title}</div>
-                </button>
-              ))}
-            </div>
-          )
+          /* The liked prompts exactly as Home shows them (Kev, 2026-10-13). */
+          <PromptWall ids={(myLikes ?? []).map((l) => l.promptId)} loading={myLikes === null}
+            note={
+              <div style={{ padding: "80px 0", textAlign: "center" }}>
+                <div className="serif" style={{ fontSize: 24, color: "var(--enki-ink-3)" }}>Nothing liked yet.</div>
+                <p style={{ fontSize: 14, color: "var(--enki-ink-3)", maxWidth: 420, margin: "8px auto 0" }}>
+                  Only you see this tab. Tap the heart on any image and it lands here.
+                </p>
+              </div>
+            } />
         ) : activeTab === "History" ? (
           <div style={{ padding: "80px 0", textAlign: "center" }}>
             <div className="serif" style={{ fontSize: 24, color: "var(--enki-ink-3)" }}>
@@ -1069,10 +1074,8 @@ export default function ProfilePage({ onBack, isOwnProfile = true, handle }: { o
       )}
       {open && (
         <EnkiDetailPanel
-          prompt={open}
+          seed={seedFromEnkiPrompt(open)}
           onClose={() => setOpen(null)}
-          faved={Boolean(favs[open.id])}
-          toggleFav={toggleFav}
         />
       )}
     </div>

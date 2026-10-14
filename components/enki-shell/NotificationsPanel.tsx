@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import { sessionAuthHeaders } from "@/lib/session-headers";
 import { useNotifications, markNotificationsSeen, type Notif } from "@/hooks/useNotifications";
 import { Icon } from "./icons";
+import { promptPage } from "@/lib/ui/image-view/open-link";
 
 const KIND_ICON: Record<string, string> = {
   comment: "message",
@@ -76,7 +77,7 @@ function RecommendedEmpty() {
         Nothing new — here&apos;s one for you
       </div>
       <button
-        onClick={() => router.push(`/generator/${rec.id}`)}
+        onClick={() => router.push(promptPage(rec.id))}
         style={{
           display: "flex", alignItems: "center", gap: 14, width: "100%", textAlign: "left",
           padding: "14px 12px", borderRadius: 12, cursor: "pointer",
@@ -119,7 +120,7 @@ export default function NotificationsPanel({ onSeen, onOpenRecovery }: { onSeen?
     }
     if (n.targetType === "prompt" && n.targetId) {
       const id = n.targetId;
-      return () => router.push(`/generator/${id}`);
+      return () => router.push(promptPage(id));
     }
     return null;
   };
