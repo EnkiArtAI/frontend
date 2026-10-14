@@ -15,7 +15,13 @@ html:has(.set-page) { scrollbar-gutter: stable; }
 .set-btn.set-btn-sent:disabled { color: #22a06b; border-color: #22a06b; opacity: 1; display: inline-flex; align-items: center; gap: 5px; }
 .set-remind-next { font-size: 10px; color: var(--enki-ink-3); line-height: 1.4; }
 
+/* A reading column with free space either side; Back sits in the left space,
+   against the column (Kev, 2026-10-13: "links in der freien Fläche, rechts
+   an der UI mit leichtem Abstand"). */
 .set-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 760px) minmax(0, 1fr);
+  align-items: start;
   min-height: 100vh;
   background-color: var(--enki-paper);
   color: var(--enki-ink);
@@ -25,9 +31,40 @@ html:has(.set-page) { scrollbar-gutter: stable; }
 .set-container {
   /* Narrow reading column — at 1080px the section cards were mostly empty
      air to the right of their content (Kev, 2026-07-21). */
+  grid-column: 2;
+  width: 100%;
   max-width: 760px;
   margin: 0 auto;
   padding: 40px;
+}
+
+/* Back: a pill that stays at the top left while the page scrolls under it
+   (Kev, 2026-10-13: "beim scrollen oben links bleibt"). */
+.set-back {
+  grid-column: 1;
+  justify-self: end;
+  position: sticky;
+  top: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  margin: 40px -24px 0 12px;
+  padding: 0 12px 0 9px;
+  border: 1px solid var(--enki-rule);
+  border-radius: 999px;
+  background: var(--enki-paper);
+  color: var(--enki-ink-2);
+  font: 400 12.5px/1 var(--font-sans), sans-serif;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+}
+.set-back:hover { border-color: var(--enki-ink-3); color: var(--enki-ink); }
+/* No free space beside the column: Back goes above it, still sticky. */
+@media (max-width: 959.98px) {
+  .set-page { display: block; }
+  .set-back { margin: 12px 0 -18px 16px; }
 }
 
 /* Breadcrumbs */

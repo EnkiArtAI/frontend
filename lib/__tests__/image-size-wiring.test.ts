@@ -10,22 +10,6 @@ import { readSource } from "@/lib/__tests__/_read-source";
 const ROOT = join(__dirname, "..", "..");
 const src = (...p: string[]) => readSource(join(ROOT, ...p));
 
-describe("the prompt editor's save", () => {
-  const EDITOR = src("components", "EnkiPromptEditor.tsx");
-
-  it("is refused before it is sent when it is too large to arrive", () => {
-    expect(EDITOR).toMatch(/if \(tooLargeToSend\(payload\)\) throw new Error\(SAVE_TOO_LARGE\);\n\s+const response = await fetch\("\/api\/prompt", \{/);
-  });
-
-  it("reads an answer that is not JSON as a failed save, not a parse error", () => {
-    expect(EDITOR).toContain("const savedPrompt: unknown = await response.json().catch(() => null);");
-  });
-
-  it("is no save without the prompt it answers with, whatever the status", () => {
-    expect(EDITOR).toMatch(/await response\.json\(\)\.catch\(\(\) => null\);\n\s+if \(!response\.ok \|\| !savedPrompt\) \{/);
-  });
-});
-
 describe("an upload", () => {
   it("to the gallery is made smaller until it arrives, and the fitted file is sent", () => {
     const zone = src("components", "ShowroomUploadZone.tsx");
@@ -59,5 +43,22 @@ describe("an upload", () => {
     expect(modal).toMatch(/setAttaching\(true\);\n\s+try \{[\s\S]+\} finally \{\n\s+setAttaching\(false\);/);
     expect(modal).toContain("const canSend = !!sev && text.trim().length >= 10 && !busy && !attaching;");
     expect(modal.match(/disabled=\{attaching\}/g)).toHaveLength(2);
+  });
+});
+
+describe("the current editor's release", () => {
+  const EDITOR = src("components", "prompt-editor", "PromptEditor.tsx");
+  const BODY = src("lib", "editor", "release.ts");
+  it("refuses an oversized body before sending it", () => {
+    expect(BODY).toContain('return tooLargeToSend(body) ? { error: SAVE_TOO_LARGE } : { body, refIds: cover.refIds };');
+    expect(EDITOR).toContain('if ("error" in made) return notify(made.error, { tone: "error" });');
+    expect(EDITOR.indexOf('if ("error" in made)')).toBeLessThan(EDITOR.indexOf('void send(made);'));
+  });
+  it("reads a non-JSON answer as a failed release rather than a parse error", () => {
+    expect(EDITOR).toContain('await res.json().catch(() => ({}))');
+  });
+  it("requires a successful status and a prompt id before recording release", () => {
+    expect(EDITOR).toContain('if (!res.ok || !data.id) {');
+    expect(EDITOR.indexOf('if (!res.ok || !data.id)')).toBeLessThan(EDITOR.indexOf('dispatch({ type: "released"'));
   });
 });

@@ -1,0 +1,49 @@
+/* The frame and loading state before the Image View chunk arrives.
+   Colours are tokens only (plan §1.1); the kit pieces carry their own CSS.
+   Layers follow the plan's z table: the frame 162, popovers 9000, the
+   viewer 9999, sheets 10000. */
+
+/* ── The frame (moved from .pgv-detail-panel). It starts where the shell's
+   menu ends (--ek-sw, 0 outside the shell) and below the recovery banner,
+   which publishes its height as --ek-banner-h. Under the sidebar (165) and
+   above the panel scrim (160): no panel covers the menu's chevron. */
+.iv-frame {
+  position: fixed;
+  top: var(--ek-banner-h, 0px);
+  right: 0;
+  bottom: 0;
+  left: var(--ek-sw, 0px);
+  z-index: 162;
+  background: var(--enki-paper);
+  transition: left 0.26s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* Hidden by a shell panel, back on Home: visibility keeps every scroll position. */
+.iv-frame.is-hidden { visibility: hidden; pointer-events: none; }
+@media (max-width: 767.98px) {
+  .iv-frame { left: 0; }
+}
+/* /generator/[id]: the view is the page. */
+.iv-page { position: relative; height: calc(100dvh - var(--ek-banner-h, 0px)); background: var(--enki-paper); }
+
+/* ── Loading, unavailable, failed: centred in the frame. */
+.iv-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px;
+  background: var(--enki-paper);
+  color: var(--enki-ink);
+  font-family: var(--font-sans), sans-serif;
+  text-align: center;
+}
+.iv-state-title { margin: 0; font-size: 27px; line-height: 1.1; text-wrap: balance; }
+.iv-state-acts { display: flex; gap: 8px; }
+.iv-spin { color: var(--enki-ember); animation: kit-spin 0.9s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .iv-frame { transition: none; }
+}

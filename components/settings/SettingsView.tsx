@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Instagram, AlertCircle, ArrowUpRight, CheckCircle2, X } from "lucide-react";
 
@@ -32,8 +33,11 @@ function XLogo({ size = 12 }: { size?: number }) {
   );
 }
 
-export default function SettingsPage({ initialTab, focusRamp = false, globalBannerVisible = false, focusGuardians: focusGuardiansProp = false }: { initialTab?: string; focusRamp?: boolean; globalBannerVisible?: boolean; focusGuardians?: boolean } = {}) {
+export default function SettingsPage({ initialTab, focusRamp = false, globalBannerVisible = false, focusGuardians: focusGuardiansProp = false, onBack }: { initialTab?: string; focusRamp?: boolean; globalBannerVisible?: boolean; focusGuardians?: boolean; onBack?: () => void } = {}) {
   const { toast } = useToast();
+  const router = useRouter();
+  // Back (Kev, 2026-10-13): the shell closes its panel; standalone /settings goes to the page before, or Home when there is none.
+  const back = onBack ?? (() => (window.history.length > 1 ? router.back() : router.push("/home")));
 
   // initialTab lets embedders (sidebar balance chip → Payment) open a tab
   // directly; the URL deep-link below still wins when present.
@@ -250,6 +254,7 @@ export default function SettingsPage({ initialTab, focusRamp = false, globalBann
     <>
       <div>
         <SettingsLayout
+          onBack={back}
           breadcrumbs={`Settings > ${TABS.find(t => t.id === activeTab)?.label}`}
           title={titleMap[activeTab] || "Settings."}
           description={descMap[activeTab]}

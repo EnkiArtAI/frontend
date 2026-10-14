@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { LayoutGrid, Search, X, Cpu } from "lucide-react";
+import { Search, X, Cpu } from "lucide-react";
 import GeneratorLogo from "@/components/generation/GeneratorLogo";
-import "@/components/generation/ratio-select.css";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { openCreator } from "@/lib/openCreator";
+import { TABS } from "@/lib/ui/kit/breakpoints";
 import { SUGGEST_DEBOUNCE_MS, flattenSuggestions, stepActive, type SuggestItem } from "@/lib/search/client";
 import { viewerHeaders } from "@/lib/session-headers";
 
@@ -17,13 +18,10 @@ import { viewerHeaders } from "@/lib/session-headers";
 import { ENKI_CATEGORIES } from "@/lib/categories";
 export { ENKI_CATEGORIES };
 
-const CATEGORIES = ENKI_CATEGORIES.map((label) => ({ label }));
-
 type EnkiFiltersProps = {
   active: string[];
-  toggle: (tag: string) => void;
-  /** When true, only one category can be active at a time (radio behavior) */
-  exclusive?: boolean;
+  /** A category key, or null for All. The active chip does not toggle off. */
+  onPick: (key: string | null) => void;
   /** Generator filter — the catalogue grouped by media type. */
   generators?: GeneratorGroup[];
   /** Selected generator ids; empty = all. */
@@ -40,114 +38,77 @@ export type GeneratorGroup = {
   entries: Array<{ id: string; name: string }>;
 };
 
-export default function EnkiFilters({ active, toggle, generators, generatorFilter, onGeneratorFilter, showAdult, onShowAdult }: EnkiFiltersProps) {
-  const allActive = active.length === 0;
-  const [visible, setVisible] = useState(true);
-  /* Lifted out of SearchChip: while the search is open it OWNS the row —
-     the categories fade back and the field spreads over them (Kev,
-     2026-08-24: "predominant temporarily aufgeklappt über den rubriken"). */
+/**
+ * The feed's one 44 px bar: the categories, then the Generator and 18+
+ * chips and the search. Always on screen (handoff: sticky). Below 1024 px an
+ * open search owns the row and the chips step back (Kev, 2026-08-24).
+ */
+export default function EnkiFilters({ active, onPick, generators, generatorFilter, onGeneratorFilter, showAdult, onShowAdult }: EnkiFiltersProps) {
   const [searchOpen, setSearchOpen] = useState(false);
-  const lastScrollY = useRef(0);
-  const ticking = useRef(false);
-
-  useEffect(() => {
-    const handleScroll = () => {
-      if (!ticking.current) {
-        window.requestAnimationFrame(() => {
-          const currentY = window.scrollY;
-          if (currentY < 80) setVisible(true);
-          else if (currentY < lastScrollY.current - 4) setVisible(true);
-          else if (currentY > lastScrollY.current + 4) setVisible(false);
-          lastScrollY.current = currentY;
-          ticking.current = false;
-        });
-        ticking.current = true;
-      }
-    };
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
+  const takeover = useMediaQuery(TABS) && searchOpen;
+  const chip = (key: string | null, label: string) => {
+    const on = key === null ? active.length === 0 : active.includes(key);
+    return (
+      <button key={label} type="button" className="feed-chip kit-hit" aria-pressed={on} tabIndex={takeover ? -1 : 0}
+        onClick={(e) => {
+          if (on) return;
+          onPick(key);
+          e.currentTarget.scrollIntoView({ inline: "nearest", block: "nearest" });
+        }}>
+        {label}
+      </button>
+    );
+  };
 
   return (
-    <div className={`enki-catbar enki-catbar--tworow${visible ? "" : " enki-catbar--hidden"}${searchOpen ? " enki-catbar--searching" : ""}`}>
-      {/* Row 1: categories + search. The open search spreads over the
-          chips; the FILTER row below stays put, so search + filters work
-          together (Kev, 2026-08-24). */}
-      <div className="enki-catbar-row">
-        <button
-          className={`enki-catbar-all${allActive ? " active" : ""}`}
-          onClick={() => active.forEach((tag) => toggle(tag))}
-          type="button"
-          aria-label="All categories"
-          tabIndex={searchOpen ? -1 : 0}
-        >
-          <LayoutGrid size={14} />
-          All
-        </button>
-
-        <div className="enki-catbar-divider" />
-
-        {/* All categories, inline in a single row */}
-        <div className="enki-catbar-scroll">
-          {CATEGORIES.map((cat) => {
-            const key = cat.label.toLowerCase();
-            const isActive = active.includes(key);
-            return (
-              <button
-                key={key}
-                className={`enki-catbar-chip${isActive ? " active" : ""}`}
-                onClick={() => toggle(key)}
-                type="button"
-                tabIndex={searchOpen ? -1 : 0}
-              >
-                {cat.label}
-              </button>
-            );
-          })}
-        </div>
-
+    <div className={"feed-bar" + (takeover ? " feed-bar--takeover" : "")}>
+      <div className="feed-chips kit-noscroll" role="group" aria-label="Categories">
+        {chip(null, "All")}
+        {ENKI_CATEGORIES.map((label) => chip(label.toLowerCase(), label))}
+      </div>
+      <div className="feed-tools">
+        {/* No chip until the catalogue answered: an empty tree pretends the
+            platform has no models. */}
+        {generators && generators.length > 0 && onGeneratorFilter && (
+          <GeneratorChip groups={generators} selected={generatorFilter ?? []} onChange={onGeneratorFilter} />
+        )}
+        {onShowAdult && (
+          <span className="enki-fltr-group">
+            <button type="button" aria-pressed={showAdult === true}
+              className={"feed-pill kit-hit" + (showAdult ? " on" : "")}
+              title={showAdult ? "Hide 18+ prompts" : "Show 18+ prompts"}
+              onClick={() => onShowAdult(!showAdult)}>
+              18+
+            </button>
+          </span>
+        )}
         <SearchChip open={searchOpen} setOpen={setSearchOpen} />
       </div>
-
-      {/* Row 2: the filters, DIRECTLY under the category row (Kev,
-          2026-08-24), right-aligned so they sit beside an open search. Part
-          of the fixed bar — page scrolling can neither move nor close them.
-          No chip until the catalogue answered: an empty tree pretends the
-          platform has no models. */}
-      {((generators && generators.length > 0 && onGeneratorFilter) || onShowAdult) && (
-        <div className="enki-filterrow">
-          {generators && generators.length > 0 && onGeneratorFilter && (
-            <GeneratorInline groups={generators} selected={generatorFilter ?? []} onChange={onGeneratorFilter} />
-          )}
-          {onShowAdult && (
-            <span className="enki-fltr-group">
-              <button type="button" aria-pressed={showAdult === true}
-                className={"enki-fltr-chip" + (showAdult ? " active" : "")}
-                title={showAdult ? "Hide 18+ prompts" : "Show 18+ prompts"}
-                onClick={() => onShowAdult(!showAdult)}>
-                18+
-              </button>
-            </span>
-          )}
-        </div>
-      )}
     </div>
   );
 }
 
 /**
- * Generator filter, laid out FLAT along the filter row (Kev, 2026-08-24:
- * "pack alle möglichkeiten längs auf das menü") — every option is one click
- * away, no dropdown between you and it. Group labels (IMAGE / VIDEO) toggle
- * their whole group; each generator chip toggles alone. MULTIPLE CHOICE
- * throughout, "All" resets. Lives in the fixed bar, so scrolling the page
- * cannot move it and nothing here ever scrolls.
+ * The generator filter behind one chip. Group labels (IMAGE / VIDEO) toggle
+ * their whole group; each generator chip toggles alone; multiple choice
+ * throughout, and the Cpu button resets.
  */
-function GeneratorInline({ groups, selected, onChange }: {
+function GeneratorChip({ groups, selected, onChange }: {
   groups: GeneratorGroup[];
   selected: string[];
   onChange: (ids: string[]) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => { if (!wrapRef.current?.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); } };
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey, true);
+    return () => { document.removeEventListener("mousedown", onDown); window.removeEventListener("keydown", onKey, true); };
+  }, [open]);
+
   const flip = (id: string) =>
     onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
   const flipGroup = (g: GeneratorGroup) => {
@@ -157,43 +118,40 @@ function GeneratorInline({ groups, selected, onChange }: {
   };
 
   return (
-    <>
-      {/* The icon IS the reset (Kev, 2026-08-24): it sat there without a
-          job, and the "All" chip on the far right doubled the row's width
-          promise for a one-tap action. Ember while a filter is active, so
-          it reads as pressable exactly when pressing it does something. */}
-      <button type="button" className={"enki-fltr-icon" + (selected.length ? " active" : "")}
-        title={selected.length ? "Reset generator filter" : "Generator filter"}
-        aria-label="Reset generator filter" disabled={!selected.length}
-        onClick={() => onChange([])}>
-        <Cpu size={13} />
+    <span className="feed-gen" ref={wrapRef}>
+      <button type="button" className={"feed-pill kit-hit" + (selected.length ? " on" : "")}
+        aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        Generator{selected.length > 0 && <span className="feed-pill-n"> · {selected.length}</span>}
       </button>
-      {groups.map((g) => {
-        const ids = g.entries.map((e) => e.id);
-        const all = ids.length > 0 && ids.every((id) => selected.includes(id));
-        return (
-          /* Each medium sits in its own SUPER-SOFT outline (Kev,
-             2026-08-24) — the frame does the grouping, no divider needed. */
-          <span key={g.label} className="enki-fltr-group">
-            <button type="button" className={"enki-fltr-glabel" + (all ? " active" : "")}
-              title={all ? `Deselect all ${g.label} generators` : `Select all ${g.label} generators`}
-              onClick={() => flipGroup(g)}>
-              {g.label}
-            </button>
-            {/* Selection is COLOR ONLY — a checkmark grew the chip and
-                shoved its neighbours (Kev, 2026-08-24). */}
-            {g.entries.map((e) => (
-              <button key={e.id} type="button" aria-pressed={selected.includes(e.id)}
-                className={"enki-fltr-chip" + (selected.includes(e.id) ? " active" : "")}
-                onClick={() => flip(e.id)}>
-                <GeneratorLogo name={e.name} size={13} />
-                {e.name}
-              </button>
-            ))}
-          </span>
-        );
-      })}
-    </>
+      {open && (
+        <div className="feed-gen-pop" role="dialog" aria-label="Generator filter">
+          <button type="button" className="feed-gen-reset" disabled={!selected.length} onClick={() => onChange([])}>
+            <Cpu size={13} /> All generators
+          </button>
+          {groups.map((g) => {
+            const ids = g.entries.map((e) => e.id);
+            const all = ids.length > 0 && ids.every((id) => selected.includes(id));
+            return (
+              <div key={g.label} className="feed-gen-group">
+                <button type="button" className={"feed-gen-label" + (all ? " on" : "")} aria-pressed={all}
+                  title={all ? `Deselect all ${g.label} generators` : `Select all ${g.label} generators`}
+                  onClick={() => flipGroup(g)}>
+                  {g.label}
+                </button>
+                {g.entries.map((e) => (
+                  <button key={e.id} type="button" aria-pressed={selected.includes(e.id)}
+                    className={"feed-gen-chip" + (selected.includes(e.id) ? " on" : "")}
+                    onClick={() => flip(e.id)}>
+                    <GeneratorLogo name={e.name} size={13} />
+                    {e.name}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </span>
   );
 }
 
@@ -274,21 +232,7 @@ function SearchChip({ open, setOpen }: { open: boolean; setOpen: (v: boolean | (
   };
 
   return (
-    <div className={`enki-catbar-search${open ? " open" : ""}`}>
-      <button
-        type="button"
-        className="enki-catbar-searchbtn"
-        aria-label={open ? "Close search" : "Search prompts"}
-        aria-expanded={open}
-        title="Search prompts (Ctrl K)"
-        onClick={() => {
-          if (open && query) push("");
-          setOpen((v) => !v);
-          if (!open) requestAnimationFrame(() => inputRef.current?.focus());
-        }}
-      >
-        {open ? <X size={14} /> : <Search size={14} />}
-      </button>
+    <div className={`feed-search${open ? " open" : ""}`}>
       <input
         ref={inputRef}
         value={query}
@@ -318,28 +262,43 @@ function SearchChip({ open, setOpen }: { open: boolean; setOpen: (v: boolean | (
             return;
           }
           if (e.key === "Escape") {
+            e.stopPropagation();
             if (listShown) { setDismissed(true); return; }
             if (query) push("");
             setOpen(false);
           }
         }}
       />
+      <button
+        type="button"
+        className="feed-search-btn kit-hit"
+        aria-label={open ? "Close search" : "Search prompts"}
+        aria-expanded={open}
+        title="Search prompts (Ctrl K)"
+        onClick={() => {
+          if (open && query) push("");
+          setOpen((v) => !v);
+          if (!open) requestAnimationFrame(() => inputRef.current?.focus());
+        }}
+      >
+        {open ? <X size={14} strokeWidth={2.2} /> : <Search size={14} strokeWidth={2.2} />}
+      </button>
       {listShown && (
-        <ul className="enki-search-suggest" id="enki-search-suggest" role="listbox">
+        <ul className="feed-suggest" id="enki-search-suggest" role="listbox">
           {items.map((item, i) => (
             <li
               key={`${item.kind}-${item.id}`}
               id={`enki-suggest-${i}`}
               role="option"
               aria-selected={i === active}
-              className={`enki-search-suggest-item${i === active ? " active" : ""}`}
+              className={`feed-suggest-item${i === active ? " active" : ""}`}
               /* mousedown, not click: the input's blur would hide the list
                  before a click could land. */
               onMouseDown={(e) => { e.preventDefault(); choose(item); }}
               onMouseEnter={() => setActive(i)}
             >
-              {item.kind === "creator" && <span className="enki-search-suggest-kind">Creator</span>}
-              <span className="enki-search-suggest-label">{item.label}</span>
+              {item.kind === "creator" && <span className="feed-suggest-kind">Creator</span>}
+              <span className="feed-suggest-label">{item.label}</span>
               {item.kind === "creator" && <small>@{item.handle}</small>}
             </li>
           ))}

@@ -12,6 +12,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { decryptPrompt } from "@/backend/encryption";
 import { isPublicText } from "@/lib/prompt-visibility";
 import { dbOutage, isDbUnreachable, type DbOutage } from "@/lib/db-error";
+import { slug, storedName } from "@/lib/generation/stored-name";
+
+export { storedName };
 
 /** A stored variable, by the name app/api/prompt saved it under. */
 export interface StoredVariable {
@@ -81,22 +84,6 @@ export function overLong(values: unknown): string | null {
   if (!values || typeof values !== "object") return null;
   const hit = Object.entries(values as Record<string, unknown>).find(([, v]) => typeof v === "string" && v.length > VALUE_MAX);
   return hit ? hit[0] : null;
-}
-
-/** The slug app/api/prompt stores a variable name as (chk_var_name_format). */
-const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
-
-/**
- * The name app/api/prompt's toDbVarName saved a slot under, before its
- * tie-breaks: the slug, with "v_" in front when it does not start with a
- * letter ("2nd subject" -> v_2nd_subject). Null when nothing survives the
- * slug (a name with no ASCII letters or digits is saved as var_N, which the
- * slot text cannot be traced back to).
- */
-export function storedName(slotText: string): string | null {
-  const s = slug(slotText);
-  if (!s) return null;
-  return /^[a-z]/.test(s) ? s : `v_${s}`;
 }
 
 export interface Filled {
