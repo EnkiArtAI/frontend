@@ -12,7 +12,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { checkRequestRateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit";
 import { numericCode, sha256 } from "@/lib/password-reset";
 import { sendMail } from "@/lib/mailer";
-import { createErrorResponse } from "@/middleware/validation";
+import { createErrorResponse } from "../../../../middleware/validation";
 
 const RESET_TTL_MS = 15 * 60 * 1000;
 const bodySchema = z.object({ email: z.string().email().max(320) });
