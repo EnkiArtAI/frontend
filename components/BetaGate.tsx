@@ -32,6 +32,8 @@ export type GateProfile = {
 interface BetaAccess {
   access: "checking" | "ok" | "denied";
   role: string | null;
+  /** Stable account identity returned by the session check, including email-only accounts. */
+  userId: string | null;
   /** users.handle — undefined while loading, null = signed in but not picked yet. */
   handle: string | null | undefined;
   setHandle: (h: string | null) => void;
@@ -46,7 +48,7 @@ interface BetaAccess {
 }
 
 const Ctx = createContext<BetaAccess>({
-  access: "checking", role: null, handle: undefined, setHandle: () => {},
+  access: "checking", role: null, userId: null, handle: undefined, setHandle: () => {},
   profile: null, setProfile: () => {},
   adultConfirmed: false, setAdultConfirmed: () => {},
   adultPill: false, setAdultPill: () => {},
@@ -184,7 +186,7 @@ export default function BetaGate({ children }: { children: React.ReactNode }) {
   const isPublic = PUBLIC_PATHS.has(pathname ?? "/");
 
   return (
-    <Ctx.Provider value={{ access, role, handle, setHandle, profile, setProfile, adultConfirmed, setAdultConfirmed, adultPill, setAdultPill }}>
+    <Ctx.Provider value={{ access, role, userId: meId, handle, setHandle, profile, setProfile, adultConfirmed, setAdultConfirmed, adultPill, setAdultPill }}>
       {isPublic || access === "ok" ? (
         children
       ) : access === "denied" ? (

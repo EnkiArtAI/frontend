@@ -22,6 +22,7 @@ export const AGENT_TEXT_MAX = VALUE_MAX;
 type Declared = {
   name: string;
   label: string | null;
+  description: string | null;
   data_type: string | null;
   options: unknown;
   min_value: number | null;
@@ -85,7 +86,7 @@ function fit(v: Declared, raw: string, paid: boolean): { value: string } | { err
     }
     case "checkbox":
       // As the generator does it: a ticked box writes its phrase, an unticked one nothing.
-      return raw === "true" || raw === "false" ? { value: raw === "true" ? v.label || v.name : "" } : bad;
+      return raw === "true" || raw === "false" ? { value: raw === "true" ? v.description || v.label || v.name : "" } : bad;
     default: {
       // A paid prompt's text values are short single lines without brackets;
       // every text value keeps the one length limit of both rails.
@@ -112,7 +113,7 @@ export async function checkAgentPromptInputs(
 
   const { data: rows, error: varsError } = await supabase
     .from("prompt_variables")
-    .select("name, label, data_type, options, min_value, max_value")
+    .select("name, label, description, data_type, options, min_value, max_value")
     .eq("prompt_id", promptId)
     .is("deleted_at", null);
   if (isDbUnreachable(varsError)) return dbOutage();
