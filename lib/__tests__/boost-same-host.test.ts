@@ -43,10 +43,9 @@ describe("the toggle at a size with nothing to boost", () => {
 
 describe("every generate surface", () => {
   const core = src("hooks", "useGenerationCore.ts");
-  const editor = src("components", "EnkiPromptEditor.tsx");
+  const editor = src("components", "prompt-editor", "GenerateBar.tsx");
   const launcher = src("components", "GenerateLauncher.tsx");
-  const viewer = src("components", "PromptGeneratorView.tsx");
-  const node = src("components", "enki-shell", "NodeCreator.tsx");
+  const viewer = src("components", "image-view", "ImageViewDesktop.tsx");
   const modal = src("components", "EnkiMobileGenerateModal.tsx");
 
   it("asks the core per size, from the sizes the catalogue answer carries", () => {
@@ -56,22 +55,19 @@ describe("every generate surface", () => {
     expect(limits).toContain('? r.boostTiers.filter((t): t is "1K" | "2K" | "4K" => t === "1K" || t === "2K" || t === "4K")');
   });
 
-  it("passes the size to the toggle", () => {
-    expect(editor).toContain("sameHost={!boostAt(picked, genResolution)}");
-    expect(viewer).toContain("sameHost={!core.boostAt(quoteResolution)}");
-    expect(node).toContain("sameHost={!!selectedModel && !boostAt(selectedModel, tierFor(selectedModel))}");
+  it("shows no toggle for now (Kev, 2026-10-13: it will pick the cheapest or fastest host by itself later), the flag wired and off", () => {
+    const mobile = src("components", "image-view", "ImageViewMobile.tsx");
+    for (const s of [editor, viewer, mobile, modal]) expect(s).not.toContain("BoostToggle");
     expect(launcher).toContain("boostSameHost={!core.boostAt(resolution)}");
-    expect(modal).toContain("sameHost={boostSameHost}");
+    // The flag still travels: a surface that turns it on later needs nothing else.
+    expect(src("lib", "ui", "image-view", "setups.ts")).toContain("boost: c.boost && boostAt(model, c.resolution),");
+    expect(src("components", "image-view", "useImageViewModel.ts")).toContain("const [boost, setBoost] = useState(false);");
   });
 
   it("keeps the flag out of quotes and generations at such a size", () => {
-    expect(editor).toContain("boost: boost && boostAt(m, genResolution),");
-    expect(editor).toContain("boost: boost && boostAt(picked, genResolution),");
+    expect(src("lib", "editor", "generate-checks.ts")).toContain("boost: picks.boost && boostAt(entry, resolution) && entry.boostAvailable === true,");
     expect(launcher.split("core.boostAt(tier) && boost")).toHaveLength(3);
-    expect(viewer.split("core.boostAt(quoteResolution) && boost")).toHaveLength(4);
-    expect(viewer).toContain("resolution: t, boost: core.boostAt(t) && boost, quality, referenceImageCount: refs.length }))");
-    expect(node).toContain("boost: boostRef.current && boostAt(picked, tier),");
-    expect(node).toContain("boost: boost && boostAt(m, tier),");
-    for (const s of [editor, launcher, viewer, node]) expect(s).not.toMatch(/boostAvailable && boost|boost && !!m\\.boostAvailable/);
+    expect(src("lib", "ui", "image-view", "setups.ts")).toContain("boost: c.boost && boostAt(model, c.resolution),");
+    for (const s of [editor, launcher, viewer]) expect(s).not.toMatch(/boostAvailable && boost|boost && !!m\\.boostAvailable/);
   });
 });

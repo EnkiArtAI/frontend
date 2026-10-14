@@ -16,6 +16,7 @@ import { extractTags, storedTags } from "@/lib/search/tags";
 import { artistPayoutWallet } from "@/lib/payments/generation-quote";
 import { DEFAULT_PROMPT_PRICE_USD } from "@/shared/revenue-config";
 import { storedName } from "@/lib/generation/prompt-text";
+import { offeredModels } from "@/lib/offered-models";
 import { checkRequestRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 type VariableType =
@@ -38,6 +39,8 @@ type PromptPayload = {
   userId?: string | null;
   category?: string;
   aiModel?: string;
+  /** The generators the prompt offers, by catalogue name, the primary first (kept in ai_settings.models). */
+  aiModels?: string[];
   price?: number;
   aspectRatio?: string | null;
   photoCount?: number;
@@ -313,6 +316,13 @@ export async function POST(req: Request) {
        a model overwrote the creator's pick with it. Absent on an update now
        leaves the stored value; absent on a new prompt is refused below. */
     const aiModel = typeof body.aiModel === "string" ? body.aiModel.trim() : "";
+    /* The generators the prompt offers (Kev, 2026-10-13: a multi-select in
+       the editor; buyers pick among these). Catalogue names, each once, at
+       most 20, kept beside the other settings in ai_settings.models. Absent
+       leaves the stored list as it is. */
+    const aiModels = Array.isArray(body.aiModels)
+      ? [...new Set(body.aiModels.filter((m): m is string => typeof m === "string").map((m) => m.trim()).filter((m) => m && m.length <= 80))].slice(0, 20)
+      : null;
     const dbPromptType = PROMPT_TYPE_TO_DB[clientPromptType] ?? clientPromptType;
     const isFreeShowcase = Boolean(body.isFreeShowcase ?? false);
     // A free prompt: its text is public and it has no price.
@@ -403,6 +413,8 @@ export async function POST(req: Request) {
     // The model is kept when a save sends none, and is handed out with a
     // listed prompt like the description: judged with the rest as well.
     let storedModel = "";
+    // The stored ai_settings, so a new offered-generators list keeps the rest of it.
+    let storedSettings: Record<string, unknown> = {};
     // A release lists the prompt (Kev, 2026-10-05: the artist lists when they
     // want, once the checks have passed). A first listing keeps its dates.
     let listedSince: { listed_at?: unknown; published_at?: unknown } = {};
@@ -423,7 +435,7 @@ export async function POST(req: Request) {
       // A session whose wallet maps to no user row owns no prompts, and
       // .in() with an empty list is a PostgREST parse error, not a no-op.
       if (owners.length === 0) return NextResponse.json({ error: "not found" }, { status: 404 });
-      const { data: own } = await supabase.from("prompts").select("id, creator_id, description, ai_model, encrypted_content_iv, is_listed, delisted_at, listed_at, published_at, showcase_images, showcase_before_images").eq("id", body.id).in("creator_id", owners).maybeSingle();
+      const { data: own } = await supabase.from("prompts").select("id, creator_id, description, ai_model, ai_settings, encrypted_content_iv, is_listed, delisted_at, listed_at, published_at, showcase_images, showcase_before_images").eq("id", body.id).in("creator_id", owners).maybeSingle();
       if (!own) return NextResponse.json({ error: "not found" }, { status: 404 });
       // What a moderator took down stays down: releasing it again would undo the takedown.
       if (body.release === true && own.delisted_at) {
@@ -438,6 +450,7 @@ export async function POST(req: Request) {
       savedShowcase = Array.isArray(own.showcase_images) ? own.showcase_images.filter((u: unknown): u is string => typeof u === "string") : [];
       savedBefore = Array.isArray(own.showcase_before_images) ? own.showcase_before_images.filter((u: unknown): u is string => typeof u === "string") : [];
       storedModel = typeof own.ai_model === "string" ? own.ai_model : "";
+      if (own.ai_settings && typeof own.ai_settings === "object" && !Array.isArray(own.ai_settings)) storedSettings = own.ai_settings as Record<string, unknown>;
       ownerIds = owners;
     } else {
       creatorId = await resolveCreatorId(supabase, req);
@@ -628,6 +641,7 @@ export async function POST(req: Request) {
       category: body.category ?? "",
       tags: searchTags,
       ...(aiModel ? { ai_model: aiModel } : {}),
+      ...(aiModels ? { ai_settings: { ...storedSettings, models: aiModels } } : {}),
       price_usd_cents: priceCents,
       aspect_ratio: body.aspectRatio ?? null,
       photo_count: typeof body.photoCount === "number" ? body.photoCount : 1,
@@ -826,7 +840,7 @@ export async function GET(req: Request) {
     const { data: prompt, error: promptError } = await supabase
       .from("prompts")
       .select(
-        "id,title,encrypted_content,encrypted_content_iv,encrypted_content_tag,encrypted_content_kid,creator_id,category,tags,ai_model,price_usd_cents,aspect_ratio,photo_count,prompt_type,showcase_images,showcase_before_images,resolution,is_free_showcase"
+        "id,title,encrypted_content,encrypted_content_iv,encrypted_content_tag,encrypted_content_kid,creator_id,category,tags,ai_model,ai_settings,price_usd_cents,aspect_ratio,photo_count,prompt_type,showcase_images,showcase_before_images,resolution,is_free_showcase"
       )
       .eq("id", id)
       .maybeSingle();
@@ -879,6 +893,7 @@ export async function GET(req: Request) {
       category: (prompt.category as string | undefined) ?? "",
       tags: Array.isArray(prompt.tags) ? (prompt.tags as string[]) : [],
       aiModel: (prompt.ai_model as string | undefined) ?? null,
+      aiModels: offeredModels(prompt.ai_settings),
       price:
         typeof prompt.price_usd_cents === "number"
           ? prompt.price_usd_cents / 100

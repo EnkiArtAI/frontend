@@ -647,7 +647,7 @@ describe("the save route's ownership read", () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const src = readFileSync(join(__dirname, "..", "..", "app", "api", "prompt", "route.ts"), "utf8");
-    expect(src).toContain('.select("id, creator_id, description, ai_model, encrypted_content_iv, is_listed, delisted_at, listed_at, published_at, showcase_images, showcase_before_images").eq("id", body.id).in("creator_id", owners)');
+    expect(src).toContain('.select("id, creator_id, description, ai_model, ai_settings, encrypted_content_iv, is_listed, delisted_at, listed_at, published_at, showcase_images, showcase_before_images").eq("id", body.id).in("creator_id", owners)');
     // And, where a listing did not land, for the one column that tells a takedown from another save.
     expect(src).toContain('.from("prompts").select("delisted_at").eq("id", promptId).maybeSingle();');
   });

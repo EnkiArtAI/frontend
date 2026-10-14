@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { queueReducer, settle } from "@/lib/ui/kit/render-queue";
 
 /**
  * A route that generates an image must report the size it actually produced.
@@ -16,7 +17,6 @@ import { join } from "node:path";
 const ROOT = join(__dirname, "..", "..");
 const read = (p: string) => readFileSync(p, "utf8").split("\r\n").join("\n");
 const FREE = read(join(ROOT, "app", "api", "generate-free", "route.ts"));
-const VIEW = read(join(ROOT, "components", "PromptGeneratorView.tsx"));
 
 /** The response literal the handler returns on success. */
 function successPayload(src: string): string {
@@ -44,12 +44,11 @@ describe("generate-free reports the size it produced", () => {
     const calls = FREE.match(/readImageDimensions\(/g) ?? [];
     expect(calls.length, "readImageDimensions is called more than once on the same buffer").toBe(1);
   });
+});
 
-  it("the buyer view stores the server's measurement rather than re-deriving it", () => {
-    expect(VIEW).toMatch(/setResultSize\(/);
-    expect(VIEW).toMatch(/data\.width/);
-    expect(VIEW).toMatch(/data\.height/);
-    // and it must not fabricate a size from the picker
-    expect(VIEW).not.toMatch(/setResultSize\(\s*\{\s*w:\s*resolution/);
-  });
+it("the current queue keeps the measured size rather than the requested tier", () => {
+  const jobs = queueReducer([], { type: "enqueue", id: "render", createdAt: 0, setup: { requestedResolution: "2K" } });
+  const action = settle("render", { ok: true, imageUrl: "https://local.example/render.png", data: { width: 686, height: 858 } }, "none").action;
+  expect(action).toBeDefined();
+  expect(queueReducer(jobs, action!)[0]).toMatchObject({ size: { w: 686, h: 858 } });
 });

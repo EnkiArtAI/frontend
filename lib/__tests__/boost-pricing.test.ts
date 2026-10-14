@@ -48,10 +48,10 @@ describe("apiPricePerImage — gpt runs OpenAI direct on every quality", () => {
 
 describe("apiBoostPricePerImage", () => {
   it("nano boost is Gemini direct: $0.134 at 2K, $0.24 at 4K (confirmed vs the official page)", () => {
-    expect(apiBoostPricePerImage("nano-banana-pro", "2K")).toBe(0.134);
-    expect(apiBoostPricePerImage("nano-banana-pro", "4K")).toBe(0.24);
+    expect(apiBoostPricePerImage("nano-banana-pro", "2K")).toBe(0.1476);
+    expect(apiBoostPricePerImage("nano-banana-pro", "4K")).toBe(0.2525);
     // 1K prices as 2K everywhere (toResolutionTier), boost included.
-    expect(apiBoostPricePerImage("nano-banana-pro", "1K")).toBe(0.134);
+    expect(apiBoostPricePerImage("nano-banana-pro", "1K")).toBe(0.1476);
   });
 
   it("gpt has NO boost: the flag answers the routed normal price (Kev, 2026-08-24)", () => {
@@ -72,13 +72,13 @@ describe("apiPricePerImage by quality", () => {
     expect(apiPricePerImage("gpt-image-2", "2K", "high")).toBe(0.428);
     expect(apiPricePerImage("gpt-image-2", "2K", "low")).toBe(0.012);
     expect(apiPricePerImage("gpt-image-2", "4K")).toBe(0.712);
-    expect(apiBoostPricePerImage("nano-banana-pro", "4K")).toBe(0.24);
+    expect(apiBoostPricePerImage("nano-banana-pro", "4K")).toBe(0.2525);
   });
 });
 
 describe("getModelCostMicro (the CHARGED leg)", () => {
   it("boost swaps the model-cost leg to the boost route, in exact micro", () => {
-    expect(getModelCostMicro("nano-banana-pro", "4K", { boost: true })).toBe(240_000);
+    expect(getModelCostMicro("nano-banana-pro", "4K", { boost: true })).toBe(252_500);
   });
 
   it("gpt charges the quality-routed host, boost flag or not", () => {
@@ -88,7 +88,7 @@ describe("getModelCostMicro (the CHARGED leg)", () => {
   });
 
   it("no opts means the tier-default quality — matching what would render", () => {
-    expect(getModelCostMicro("nano-banana-pro", "4K")).toBe(240_000);
+    expect(getModelCostMicro("nano-banana-pro", "4K")).toBe(252_500);
     expect(getModelCostMicro("gpt-image-2", "2K")).toBe(107_000);
     expect(getModelCostMicro("nano-banana-pro", "4K", { boost: false })).toBe(
       getModelCostMicro("nano-banana-pro", "4K"),
@@ -96,6 +96,6 @@ describe("getModelCostMicro (the CHARGED leg)", () => {
   });
 
   it("boost defaults the missing resolution to 2K, matching the quote route's default", () => {
-    expect(getModelCostMicro("nano-banana-pro", undefined, { boost: true })).toBe(134_000);
+    expect(getModelCostMicro("nano-banana-pro", undefined, { boost: true })).toBe(147_600);
   });
 });

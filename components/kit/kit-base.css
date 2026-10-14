@@ -1,0 +1,47 @@
+/* Shared base for the image UI (kit-, pe-, iv-, ivm-, feed-). Loaded once,
+   globally, by app/layout.tsx. */
+
+.kit-label {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--enki-ink-3);
+}
+
+/* Beats the global h1-h6 rule (600, -0.02em, --foreground). */
+.kit-title {
+  font-family: var(--font-serif), Georgia, serif;
+  font-weight: 400;
+  letter-spacing: normal;
+  color: var(--enki-ink);
+}
+
+/* A surface root opts in; zero specificity, so a field may swap the ring
+   for its own border colour. */
+:where(.kit-focus, .kit-focus *):focus-visible {
+  outline: 2px solid var(--enki-ember);
+  outline-offset: 2px;
+}
+
+/* 44 px touch target without changing the layout. */
+@media (pointer: coarse) {
+  :where(.kit-hit) { position: relative; }
+  .kit-hit::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+}
+
+/* Out-specifies the global *::-webkit-scrollbar. */
+.kit-noscroll { scrollbar-width: none; }
+.kit-noscroll::-webkit-scrollbar { display: none; }
+
+@keyframes kit-spin { to { transform: rotate(360deg); } }
+@keyframes kit-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes kit-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.9; } }

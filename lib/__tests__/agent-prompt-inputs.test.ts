@@ -22,11 +22,13 @@ let variables: Row[];
 
 const fake = {
   from: (table: string) => {
+    let selected: string[] = [];
     const q: Record<string, unknown> = {
+      select: (columns: string) => { selected = columns.split(",").map((c) => c.trim()); return q; },
       maybeSingle: async () => ({ data: prompt, error: null }),
-      then: (ok: (v: unknown) => unknown) => Promise.resolve({ data: table === "prompt_variables" ? variables : [], error: null }).then(ok),
+      then: (ok: (v: unknown) => unknown) => Promise.resolve({ data: table === "prompt_variables" ? variables.map((r) => Object.fromEntries(selected.map((c) => [c, r[c]]))) : [], error: null }).then(ok),
     };
-    for (const m of ["select", "eq", "is"]) q[m] = () => q;
+    for (const m of ["eq", "is"]) q[m] = () => q;
     return q;
   },
 } as unknown as SupabaseClient;
@@ -88,6 +90,27 @@ describe("a checkbox works as it does in the generator", () => {
 
   it("writes its phrase when ticked", async () => {
     expect(await composed("true")).toBe("a cat with glasses");
+  });
+
+  it("uses the stored description rather than the display label when ticked", async () => {
+    variables[0].description = "wearing red spectacles";
+    expect(await composed("true")).toBe("a cat wearing red spectacles");
+  });
+
+  it("still writes nothing for an unticked box with a description", async () => {
+    variables[0].description = "wearing red spectacles";
+    expect(await composed("false")).toBe("a cat ");
+  });
+
+  it.each([null, ""])("falls back to its label with description %s", async (description) => {
+    variables[0].description = description;
+    expect(await composed("true")).toBe("a cat with glasses");
+  });
+
+  it("falls back to its stored name when neither phrase is present", async () => {
+    variables[0].description = null;
+    variables[0].label = null;
+    expect(await composed("true")).toBe("a cat with_glasses");
   });
 
   it("writes nothing when unticked", async () => {
