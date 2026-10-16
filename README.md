@@ -2,7 +2,7 @@
 
 **The link between artists and users to transform reality.**
 
-> **Note (2026-10-16):** The code in this repository is the state submitted to the Colosseum hackathon (tag `colosseum-submission`, commit `8de4399a`); only this README was rewritten since. Development continues in a private repository, and www.enki.gallery runs that newer version. What changed since the submission (123 commits):
+> **This repository is the Colosseum hackathon submission, kept only as a showcase, and stays untouched.** Its code is exactly what was submitted (tag `colosseum-submission`, commit `8de4399a`); only this README was rewritten since. Enki Art's development continues in a separate, private repository, and www.enki.gallery runs that newer version. What changed there since the submission (123 commits):
 >
 > **Added**
 > - GPT-Image-2.5 Flare and Sunburst as generators, up to 4K, with a low / medium / high quality setting; agents can buy them over x402 too.
@@ -100,7 +100,7 @@ npm run build
 
 ## Status
 
-This snapshot is not maintained and is not meant to be deployed as is.
+A frozen showcase of the Colosseum submission: not maintained, no further changes, not meant to be deployed. Development continues in a separate, private repository.
 
 <div align="center">
   <br />
